@@ -1,0 +1,21 @@
+{
+  "name": "36chan-web",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "backend",
+    "frontend"
+  ],
+  "scripts": {
+    "dev": "npm --prefix backend run dev",
+    "dev:backend": "npm --prefix backend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "start": "npm --prefix backend start",
+    "test": "npm --prefix backend test",
+    "build": "npm --prefix frontend run build",
+    "check": "npm --prefix backend run check && npm --prefix frontend run lint"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

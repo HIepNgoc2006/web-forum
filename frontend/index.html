@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>36chan</title>
+    <meta
+      name="description"
+      content="36chan: diễn đàn ảnh sinh viên ẩn danh theo thời gian thực, có AI kiểm duyệt và quản trị viên duyệt bài."
+    />
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="#home" aria-label="Trang chủ 36chan">
+        <span class="brand-mark">36chan</span>
+      </a>
+      <nav id="boardNav" class="board-nav" aria-label="Bảng"></nav>
+      <div class="top-actions">
+        <span id="socketStatus" class="socket-pill">đang kết nối</span>
+        <a href="#home">Trang chủ</a>
+        <a href="#admin">Quản trị</a>
+      </div>
+    </header>
+
+    <main class="layout">
+      <section id="homeScreen" class="screen active" aria-labelledby="homeTitle">
+        <div class="portal">
+          <header class="portal-logo" aria-labelledby="homeTitle">
+            <div class="clover" aria-hidden="true">
+              <span></span><span></span><span></span><span></span>
+            </div>
+            <h1 id="homeTitle">36chan</h1>
+          </header>
+
+          <section class="portal-box" aria-labelledby="whatTitle">
+            <div class="portal-box-title">
+              <h2 id="whatTitle">36chan là gì?</h2>
+              <span class="close-glyph">X</span>
+            </div>
+            <div class="portal-box-body">
+              <p>
+                36chan là bảng tin ảnh ẩn danh đơn giản cho sinh viên. Ai cũng có thể đăng
+                bài tâm sự ẩn danh, bình luận và hình ảnh mà không cần tạo tài khoản. Mỗi bảng dành cho
+                một mảng riêng như đời sống trường lớp, học tập, ảnh chế, sự kiện, việc làm, ký túc xá
+                và thảo luận linh tinh.
+              </p>
+              <p>
+                AI kiểm duyệt sẽ giữ nội dung độc hại, nội dung rác, thù ghét và tin giả khỏi bảng công khai
+                cho đến khi quản trị viên xem xét. Chọn bảng bạn quan tâm và tham gia ngay.
+              </p>
+            </div>
+          </section>
+
+          <section class="portal-box portal-board-box" aria-labelledby="homeBoardsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="homeBoardsTitle">Bảng</h2>
+              <button id="homeFilterButton" class="portal-title-button" type="button">lọc ▼</button>
+            </div>
+            <div id="homeBoards" class="portal-board-grid"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="popularTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="popularTitle">Chủ đề nổi bật</h2>
+              <button id="homeOptionsButton" class="portal-title-button" type="button">tùy chọn ▼</button>
+            </div>
+            <div id="popularThreads" class="popular-grid"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="latestPostsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="latestPostsTitle">Bài mới nhất</h2>
+            </div>
+            <div id="latestPosts" class="latest-post-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="statsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="statsTitle">Thống kê</h2>
+            </div>
+            <div id="homeStats" class="stats-row"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="serverStatsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="serverStatsTitle">Thống Kê Máy Chủ</h2>
+            </div>
+            <div id="serverStats" class="server-stats"></div>
+          </section>
+
+          <nav class="portal-footer-nav" aria-label="Chân trang">
+            <a href="#home">Trang chủ</a>
+            <a href="#board/confession">Thú nhận</a>
+            <a href="#board/hoc-tap">Học tập</a>
+            <a href="#admin">Quản trị</a>
+            <a href="#board/random">Ngẫu nhiên</a>
+          </nav>
+          <p class="portal-small-links">
+            <a href="#board/confession">Giới thiệu</a> •
+            <a href="#board/hoi-dap">Góp ý</a> •
+            <a href="#board/tam-su">Nội quy</a> •
+            <a href="#board/su-kien">Liên hệ</a>
+          </p>
+          <p class="portal-copyright">
+            Bản quyền © 2026 dự án sinh viên 36chan. Không liên kết với 4chan.
+          </p>
+        </div>
+      </section>
+
+      <section id="boardScreen" class="screen" aria-labelledby="boardTitle">
+        <div class="board-hero">
+          <a class="board-logo" href="#home" aria-label="Trang chủ 36chan">
+            <span>GÓC 36CHAN</span>
+          </a>
+          <p>diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt</p>
+        </div>
+        <div class="screen-head">
+          <div>
+            <h1 id="boardTitle">Thú nhận</h1>
+            <p id="boardPath" class="path-chip">/confession/</p>
+            <p id="boardDescription" class="muted">Đăng bài ẩn danh về trường, lớp, người thầm thích, hạn nộp bài và những chuyện khó nói.</p>
+          </div>
+          <button id="boardSummaryButton" class="ghost-button" type="button">[Tóm tắt AI]</button>
+        </div>
+
+        <div id="boardSummary" class="ai-box hidden"></div>
+
+        <div class="board-search-row">
+          <input id="boardSearchInput" type="search" placeholder="Search OPs..." autocomplete="off" aria-label="Tìm OP" />
+          [<a id="boardCatalogLink" href="#catalog/confession">Catalog</a>]
+          [<button class="link-button" data-board-archive type="button">Archive</button>]
+        </div>
+
+        <div class="start-thread-row">
+          <button id="startThreadButton" class="start-thread-button" type="button">[Tạo chủ đề mới]</button>
+        </div>
+        <section id="threadComposer" class="composer hidden" aria-labelledby="newThreadTitle">
+          <h2 id="newThreadTitle">Tạo chủ đề mới</h2>
+          <form id="threadForm" class="stack">
+            <label class="field-row">
+              <span>Tên</span>
+              <input name="displayName" value="Anonymous" autocomplete="off" />
+            </label>
+            <label class="field-row">
+              <span>Tùy chọn</span>
+              <input name="options" autocomplete="off" />
+            </label>
+            <label class="field-row">
+              <span>Chủ đề</span>
+              <input name="subject" autocomplete="off" />
+            </label>
+            <label class="field-row">
+              <span>Bình luận</span>
+              <textarea id="threadBody" rows="4" maxlength="5000" placeholder="Nội dung bài viết..."></textarea>
+            </label>
+            <label class="field-row">
+              <span>Tệp</span>
+              <input id="threadImage" type="file" accept="image/*" />
+            </label>
+            <label class="field-row">
+              <span>Mã xác minh</span>
+              <input id="threadCaptcha" value="dev-pass" autocomplete="off" />
+            </label>
+            <div class="form-actions">
+              <button class="primary-button" type="submit">Gửi</button>
+            </div>
+            <div id="imagePreview" class="image-preview hidden"></div>
+          </form>
+        </section>
+
+        <div class="board-ad">Bảng thú nhận sinh viên chính thức · QUẢNG CÁO Ở ĐÂY</div>
+
+        <section class="threads-panel" aria-labelledby="threadsTitle">
+          <div class="panel-title">
+            <h2 id="threadsTitle">Chủ đề</h2>
+            <button id="refreshThreads" class="icon-button" type="button" aria-label="Cập nhật">[Cập nhật]</button>
+          </div>
+          <div id="threadList" class="thread-list"></div>
+        </section>
+      </section>
+
+      <section id="catalogScreen" class="screen" aria-labelledby="catalogTitle">
+        <div class="catalog-page-title">
+          <h1 id="catalogTitle">Danh mục</h1>
+          <p id="catalogDescription" class="muted">Danh mục bảng</p>
+        </div>
+        <div class="catalog-toolbar">
+          [<a id="catalogReturnTop" href="#board/confession">Quay lại</a>]
+          [<button class="link-button" data-catalog-refresh type="button">Cập nhật</button>]
+        </div>
+        <div class="catalog-controls">
+          <input id="catalogSearchInput" type="search" placeholder="Search OPs..." autocomplete="off" aria-label="Tìm OP trong catalog" />
+          <span>Sắp xếp theo:</span>
+          <button class="link-button" type="button">Thứ tự đẩy lên</button>
+          <button class="link-button" type="button">Trả lời mới nhất</button>
+          <button class="link-button" type="button">Ngày tạo</button>
+          <button class="link-button" type="button">Số trả lời</button>
+          <span>Cỡ ảnh:</span>
+          <button class="link-button" type="button">Nhỏ</button>
+          <button class="link-button" type="button">Lớn</button>
+        </div>
+        <div id="catalogGrid" class="catalog-grid"></div>
+        <div class="catalog-toolbar">
+          [<a id="catalogReturnBottom" href="#board/confession">Quay lại</a>]
+          [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
+          [<button class="link-button" data-catalog-refresh type="button">Cập nhật</button>]
+        </div>
+      </section>
+
+      <section id="threadScreen" class="screen" aria-labelledby="threadTitle">
+        <div class="board-hero">
+          <a class="board-logo" href="#home" aria-label="Trang chủ 36chan">
+            <span>36chan</span>
+          </a>
+          <p>xem ít nhất mỗi ngày một lần</p>
+        </div>
+        <div class="thread-page-title">
+          <h1 id="threadTitle">Chủ đề</h1>
+          <p id="threadBoardPath" class="path-chip">/confession/</p>
+          <p id="threadBoardDescription" class="muted">Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt</p>
+        </div>
+        <div class="post-reply-toggle-row">
+          <button id="postReplyToggle" class="post-reply-toggle" type="button">[Đăng trả lời]</button>
+        </div>
+        <div class="screen-head thread-head">
+          <button id="backToBoard" class="ghost-button" type="button">[Quay lại]</button>
+          <button id="threadStartThreadButton" class="ghost-button start-thread-inline" type="button">[Tạo chủ đề mới]</button>
+          <button id="threadSummaryButton" class="ghost-button" type="button">[Tóm tắt AI]</button>
+        </div>
+        <div id="threadSummary" class="ai-box hidden"></div>
+        <section id="replyComposer" class="composer reply-composer hidden" aria-labelledby="replyTitle">
+          <div class="reply-panel-title">
+            <h2 id="replyTitle">Đăng trả lời</h2>
+            <button id="suggestButton" class="ghost-button" type="button">[AI gợi ý]</button>
+          </div>
+          <div id="suggestions" class="suggestions hidden"></div>
+          <form id="commentForm" class="stack">
+            <label class="field-row">
+              <span>Tên</span>
+              <input name="displayName" value="Anonymous" autocomplete="off" />
+            </label>
+            <div class="field-row">
+              <span>Tùy chọn</span>
+              <div class="reply-options-cell">
+                <input name="options" autocomplete="off" />
+              </div>
+            </div>
+            <label class="field-row">
+              <span>Bình luận</span>
+              <textarea id="commentBody" rows="4" maxlength="5000" placeholder="Viết bình luận..."></textarea>
+            </label>
+            <div class="field-row">
+              <span>Xác minh</span>
+              <div class="reply-verification-cell">
+                <button type="button">Lấy Captcha</button>
+                <button type="button" disabled>Tiếp</button>
+                <input id="commentCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+                <span class="captcha-slider" aria-hidden="true"><span></span></span>
+              </div>
+            </div>
+            <label class="field-row">
+              <span>Tệp</span>
+              <input name="file" type="file" accept="image/*" disabled />
+            </label>
+            <p class="reply-notes">
+              Vui lòng đọc <a href="#board/tam-su">Nội quy</a> và <a href="#board/hoi-dap">Hỏi đáp</a> trước khi đăng.<br />
+              Có thể giữ định dạng code bằng thẻ [code].
+            </p>
+            <div class="form-actions reply-submit-row">
+              <button class="primary-button reply-post-button" type="submit">Gửi</button>
+            </div>
+          </form>
+        </section>
+        <div class="board-ad">Bảng thú nhận sinh viên chính thức · QUẢNG CÁO Ở ĐÂY</div>
+        <div id="threadToolbarTop" class="thread-toolbar"></div>
+        <article id="threadDetail" class="thread-detail"></article>
+        <div id="threadToolbarBottom" class="thread-toolbar"></div>
+        <div class="thread-footer-controls">
+          <span>Xóa bài</span>
+          <label><input name="fileOnly" type="checkbox" /> Chỉ tệp</label>
+          <button class="primary-button" type="button">Xóa</button>
+          <span>Giao diện</span>
+          <select name="style" aria-label="Giao diện">
+            <option>Yotsuba B</option>
+          </select>
+        </div>
+        <div class="board-ad bottom-ad">Bảng thú nhận sinh viên chính thức · QUẢNG CÁO Ở ĐÂY</div>
+      </section>
+
+      <section id="adminScreen" class="screen" aria-labelledby="adminTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/admin/</p>
+            <h1 id="adminTitle">Hàng đợi kiểm duyệt</h1>
+            <p class="muted">Bài bị AI cách ly chờ quản trị viên duyệt.</p>
+          </div>
+          <button id="logoutButton" class="ghost-button hidden" type="button">[Đăng xuất]</button>
+        </div>
+        <form id="loginForm" class="login-panel stack">
+          <label class="field-row">
+            <span>Tài khoản</span>
+            <input id="adminUsername" autocomplete="username" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu</span>
+            <input id="adminPassword" type="password" autocomplete="current-password" />
+          </label>
+          <div class="form-actions">
+            <button class="primary-button" type="submit">Đăng nhập</button>
+          </div>
+        </form>
+        <div id="pendingList" class="pending-list"></div>
+      </section>
+    </main>
+
+    <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+    <div id="refPreview" class="ref-preview hidden"></div>
+    <section id="quickReply" class="quick-reply hidden" aria-labelledby="quickReplyTitle">
+      <div id="quickReplyHandle" class="quick-reply-title">
+        <strong id="quickReplyTitle">Trả lời chủ đề No.</strong>
+        <button id="quickReplyClose" type="button" aria-label="Đóng trả lời nhanh">X</button>
+      </div>
+      <form id="quickReplyForm" class="quick-reply-form">
+        <input id="quickReplyName" value="Anonymous" aria-label="Tên" autocomplete="off" />
+        <input id="quickReplyOptions" aria-label="Tùy chọn" placeholder="Tùy chọn" autocomplete="off" />
+        <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>
+        <div class="quick-reply-captcha">
+          <button id="quickReplyCaptchaButton" type="button">Lấy Captcha</button>
+          <button type="button" disabled>Tiếp</button>
+          <input id="quickReplyCaptcha" value="dev-pass" aria-label="Xác minh" autocomplete="off" />
+          <div class="captcha-slider" aria-hidden="true">
+            <span></span>
+          </div>
+        </div>
+        <div class="quick-reply-bottom">
+          <label class="quick-file-button">
+            Chọn tệp
+            <input id="quickReplyFile" type="file" accept="image/*" disabled />
+          </label>
+          <span id="quickReplyFileName">Chưa chọn tệp</span>
+          <button class="quick-post-button" type="submit">Gửi</button>
+        </div>
+      </form>
+    </section>
+    <script type="module" src="/src/app.js"></script>
+  </body>
+</html>

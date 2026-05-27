@@ -1,0 +1,28 @@
+{
+  "name": "36chan-backend",
+  "version": "0.1.0",
+  "description": "Backend API for 36chan.",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "dev": "node --watch server.js",
+    "start": "node server.js",
+    "test": "node test/run-tests.js",
+    "check": "node --check server.js"
+  },
+  "keywords": [
+    "36chan",
+    "imageboard",
+    "express",
+    "socket.io",
+    "mongoose"
+  ],
+  "author": "",
+  "license": "UNLICENSED",
+  "dependencies": {
+    "@google/generative-ai": "^0.24.1",
+    "express": "^5.2.1",
+    "mongoose": "^9.6.2",
+    "socket.io": "^4.8.3"
+  }
+}

@@ -1,0 +1,12 @@
+node_modules/
+.env
+data/forum.json
+backend/data/forum.json
+*.log
+AGENT_GUIDE.md
+AI_FEATURE_DESIGN.md
+AI_USAGE_POLICY.md
+PRODUCT_ANALYSIS.md
+PRODUCT_DIRECTION.md
+ai-logs/
+docs/
