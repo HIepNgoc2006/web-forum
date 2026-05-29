@@ -3,8 +3,8 @@ const DEFAULT_MODEL = process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash';
 const MODERATION_SYSTEM_PROMPT = `
 Bạn là bộ lọc kiểm duyệt trước khi đăng của 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
 Nhiệm vụ: phân loại nội dung công khai theo mức an toàn, không đoán danh tính người viết, không yêu cầu IP, không dùng dữ liệu ngoài phần nội dung.
-Chỉ trả về JSON hợp lệ theo dạng: {"status":"Safe"|"Flagged","labels":["Toxic"|"Spam"|"Hate Speech"|"Fake News"]}.
-Gắn Flagged khi nội dung có độc hại, spam, thù ghét, kích động bạo lực, quấy rối, lừa đảo, hoặc tin giả nguy hiểm.
+Chỉ trả về JSON hợp lệ theo dạng: {"status":"Safe"|"Flagged","labels":["Toxic"|"Spam"|"Hate Speech"|"Fake News"|"PII Risk"]}.
+Gắn Flagged khi nội dung có độc hại, spam, thù ghét, kích động bạo lực, quấy rối, lừa đảo, tin giả nguy hiểm, hoặc rủi ro lộ thông tin cá nhân.
 Nếu an toàn, trả labels rỗng.
 `.trim();
 
@@ -35,8 +35,23 @@ function heuristicModeration(text) {
   const labels = rules
     .filter((rule) => rule.terms.some((term) => normalized.includes(term)))
     .map((rule) => rule.label);
+  const piiPatterns = [
+    /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i,
+    /(?:\+?84|0)(?:[\s.-]?\d){8,10}\b/,
+    /\b(?:mssv|ma sinh vien|mã sinh viên|student id)\s*[:#-]?\s*[A-Z0-9]{5,}\b/i
+  ];
+  if (piiPatterns.some((pattern) => pattern.test(text)) && !labels.includes('PII Risk')) {
+    labels.push('PII Risk');
+  }
 
   return labels.length ? { status: 'Flagged', labels } : { status: 'Safe', labels: [] };
+}
+
+export function redactSensitiveText(text = '') {
+  return String(text)
+    .replace(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi, '[email da an]')
+    .replace(/(?:\+?84|0)(?:[\s.-]?\d){8,10}\b/g, '[so dien thoai da an]')
+    .replace(/\b(?:mssv|ma sinh vien|mã sinh viên|student id)\s*[:#-]?\s*[A-Z0-9]{5,}\b/gi, '[ma sinh vien da an]');
 }
 
 function requireGoogleAiKey() {
@@ -98,7 +113,7 @@ export function createAiClient() {
       try {
         const result = await generateWithGoogle(`
 Nội dung:
-${text}
+${redactSensitiveText(text)}
 `, MODERATION_SYSTEM_PROMPT);
         const parsed = extractJson(result);
         const labels = Array.isArray(parsed.labels) ? parsed.labels : [];
@@ -111,7 +126,7 @@ ${text}
     },
 
     async summarize(items) {
-      const text = items.map((item, index) => `${index + 1}. ${item.body}`).join('\n');
+      const text = items.map((item, index) => `${index + 1}. ${redactSensitiveText(item.body)}`).join('\n');
       const result = await generateWithGoogle(`
 Nội dung:
 ${text}
@@ -120,7 +135,7 @@ ${text}
     },
 
     async suggest(contextItems) {
-      const text = contextItems.map((item) => item.body).join('\n');
+      const text = contextItems.map((item) => redactSensitiveText(item.body)).join('\n');
       const result = await generateWithGoogle(`
 Ngữ cảnh:
 ${text}

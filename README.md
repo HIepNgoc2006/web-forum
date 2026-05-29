@@ -1,6 +1,13 @@
 # 36chan
 
-Node.js + Vite for the 36chan: anonymous public boards, realtime updates, admin JWT moderation, AI pre-publish moderation, AI summary, and AI reply suggestions.
+Node.js + Vite for fullstack
+Features:
+- Anonymous public boards
+- Realtime updates
+- Admin JWT moderation
+- AI pre-publish moderation
+- AI summary
+- AI reply suggestions.
 
 The app is split into:
 

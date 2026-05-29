@@ -57,6 +57,11 @@
               <h2 id="homeBoardsTitle">Bảng</h2>
               <button id="homeFilterButton" class="portal-title-button" type="button">lọc ▼</button>
             </div>
+            <form id="homeBoardSearchForm" class="home-board-search" role="search">
+              <label for="homeBoardSearchInput">Tìm bảng</label>
+              <input id="homeBoardSearchInput" type="search" placeholder="confession, học tập, ăn uống..." autocomplete="off" />
+              <button type="submit">Đi</button>
+            </form>
             <div id="homeBoards" class="portal-board-grid"></div>
           </section>
 
@@ -73,6 +78,13 @@
               <h2 id="latestPostsTitle">Bài mới nhất</h2>
             </div>
             <div id="latestPosts" class="latest-post-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="hotBoardsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="hotBoardsTitle">Đang nóng</h2>
+            </div>
+            <div id="hotBoards" class="hot-board-list"></div>
           </section>
 
           <section class="portal-box" aria-labelledby="statsTitle">
@@ -127,9 +139,11 @@
         <div id="boardSummary" class="ai-box hidden"></div>
 
         <div class="board-search-row">
-          <input id="boardSearchInput" type="search" placeholder="Search OPs..." autocomplete="off" aria-label="Tìm OP" />
-          [<a id="boardCatalogLink" href="#catalog/confession">Catalog</a>]
-          [<button class="link-button" data-board-archive type="button">Archive</button>]
+          <input id="boardSearchInput" type="search" placeholder="Tìm OP..." autocomplete="off" aria-label="Tìm OP" />
+          [<a id="boardCatalogLink" href="#catalog/confession">Danh mục</a>]
+          [<a id="boardArchiveLink" href="#archive/confession">Kho lưu trữ</a>]
+          [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
+          [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
         </div>
 
         <div class="start-thread-row">
@@ -177,6 +191,12 @@
             <button id="refreshThreads" class="icon-button" type="button" aria-label="Cập nhật">[Cập nhật]</button>
           </div>
           <div id="threadList" class="thread-list"></div>
+          <div class="board-toolbar-bottom">
+            [<a id="boardCatalogLinkBottom" href="#catalog/confession">Danh mục</a>]
+            [<a id="boardArchiveLinkBottom" href="#archive/confession">Kho lưu trữ</a>]
+            [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
+            [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
+          </div>
         </section>
       </section>
 
@@ -190,21 +210,38 @@
           [<button class="link-button" data-catalog-refresh type="button">Cập nhật</button>]
         </div>
         <div class="catalog-controls">
-          <input id="catalogSearchInput" type="search" placeholder="Search OPs..." autocomplete="off" aria-label="Tìm OP trong catalog" />
+          <input id="catalogSearchInput" type="search" placeholder="Tìm OP..." autocomplete="off" aria-label="Tìm OP trong danh mục" />
           <span>Sắp xếp theo:</span>
-          <button class="link-button" type="button">Thứ tự đẩy lên</button>
-          <button class="link-button" type="button">Trả lời mới nhất</button>
-          <button class="link-button" type="button">Ngày tạo</button>
-          <button class="link-button" type="button">Số trả lời</button>
+          <button class="link-button" data-catalog-sort="bump" type="button">Thứ tự đẩy lên</button>
+          <button class="link-button" data-catalog-sort="latest-reply" type="button">Trả lời mới nhất</button>
+          <button class="link-button" data-catalog-sort="created" type="button">Ngày tạo</button>
+          <button class="link-button" data-catalog-sort="replies" type="button">Số trả lời</button>
           <span>Cỡ ảnh:</span>
-          <button class="link-button" type="button">Nhỏ</button>
-          <button class="link-button" type="button">Lớn</button>
+          <button class="link-button" data-catalog-size="small" type="button">Nhỏ</button>
+          <button class="link-button" data-catalog-size="large" type="button">Lớn</button>
         </div>
         <div id="catalogGrid" class="catalog-grid"></div>
         <div class="catalog-toolbar">
           [<a id="catalogReturnBottom" href="#board/confession">Quay lại</a>]
           [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
           [<button class="link-button" data-catalog-refresh type="button">Cập nhật</button>]
+        </div>
+      </section>
+
+      <section id="archiveScreen" class="screen" aria-labelledby="archiveTitle">
+        <div class="catalog-page-title">
+          <h1 id="archiveTitle">Kho lưu trữ</h1>
+          <p id="archiveDescription" class="muted">Chủ đề đã rời khỏi bảng đang hoạt động.</p>
+        </div>
+        <div class="catalog-toolbar">
+          [<a id="archiveReturnTop" href="#board/confession">Quay lại</a>]
+          [<button class="link-button" data-archive-refresh type="button">Cập nhật</button>]
+        </div>
+        <div id="archiveList" class="archive-list"></div>
+        <div class="catalog-toolbar">
+          [<a id="archiveReturnBottom" href="#board/confession">Quay lại</a>]
+          [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
+          [<button class="link-button" data-archive-refresh type="button">Cập nhật</button>]
         </div>
       </section>
 
@@ -311,6 +348,14 @@
           </div>
         </form>
         <div id="pendingList" class="pending-list"></div>
+        <section class="admin-log-section" aria-labelledby="reportLogTitle">
+          <h2 id="reportLogTitle">Báo cáo từ người dùng</h2>
+          <div id="reportList" class="moderation-log"></div>
+        </section>
+        <section class="admin-log-section" aria-labelledby="moderationLogTitle">
+          <h2 id="moderationLogTitle">Nhật ký kiểm duyệt</h2>
+          <div id="moderationActions" class="moderation-log"></div>
+        </section>
       </section>
     </main>
 

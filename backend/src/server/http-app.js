@@ -92,6 +92,43 @@ function requireAdmin(request, jwtSecret) {
   }
 }
 
+function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || parts[0] !== 'api') {
+    return null;
+  }
+
+  if (method === 'POST' && parts[1] === 'boards' && parts[3] === 'threads') {
+    return { limiter: limiters.thread, key: `${ip}:thread:${parts[2]}` };
+  }
+  if (method === 'POST' && parts[1] === 'threads' && parts[3] === 'comments') {
+    return { limiter: limiters.comment, key: `${ip}:comment:${parts[2]}` };
+  }
+  if (method === 'POST' && parts[1] === 'boards' && parts[3] === 'summary') {
+    return { limiter: limiters.ai, key: `${ip}:ai:board:${parts[2]}` };
+  }
+  if (method === 'POST' && parts[1] === 'threads' && ['summary', 'suggestions'].includes(parts[3])) {
+    return { limiter: limiters.ai, key: `${ip}:ai:thread:${parts[2]}:${parts[3]}` };
+  }
+  if (parts[1] === 'admin') {
+    return { limiter: limiters.admin, key: `${ip}:admin:${method}:${pathname}` };
+  }
+
+  return { limiter: limiters.generic, key: `${ip}:generic:${method}:${pathname}` };
+}
+
+function enforceRateLimit(rate) {
+  if (!rate) {
+    return;
+  }
+
+  const result = rate.limiter.check(rate.key);
+  if (!result.ok) {
+    const error = new Error(`Quá nhiều yêu cầu. Thử lại sau ${result.retryAfter}s`);
+    error.statusCode = 429;
+    throw error;
+  }
+}
+
 async function serveStatic(request, response, staticRoot) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return false;
@@ -139,7 +176,13 @@ export function createHttpServer({
   adminPassword,
   staticRoot = path.resolve('public')
 }) {
-  const limiter = createRateLimiter({ limit: 30, windowMs: 60_000 });
+  const limiters = {
+    thread: createRateLimiter({ limit: 5, windowMs: 60_000 }),
+    comment: createRateLimiter({ limit: 20, windowMs: 60_000 }),
+    ai: createRateLimiter({ limit: 8, windowMs: 60_000 }),
+    admin: createRateLimiter({ limit: 30, windowMs: 60_000 }),
+    generic: createRateLimiter({ limit: 60, windowMs: 60_000 })
+  };
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -152,14 +195,7 @@ export function createHttpServer({
         return;
       }
 
-      if (parts[0] === 'api' && ['POST', 'PUT', 'PATCH', 'DELETE'].includes(request.method)) {
-        const rate = limiter.check(`${ip}:${request.method}:${url.pathname}`);
-        if (!rate.ok) {
-          const error = new Error(`Quá nhiều yêu cầu. Thử lại sau ${rate.retryAfter}s`);
-          error.statusCode = 429;
-          throw error;
-        }
-      }
+      enforceRateLimit(rateLimitForRequest({ method: request.method, pathname: url.pathname, parts, ip, limiters }));
 
       if (request.method === 'GET' && url.pathname === '/api/config') {
         ok(response, publicConfig());
@@ -178,6 +214,11 @@ export function createHttpServer({
 
       if (request.method === 'GET' && url.pathname === '/api/posts/latest') {
         ok(response, await service.listLatestPosts(url.searchParams.get('limit') ?? 10));
+        return;
+      }
+
+      if (request.method === 'GET' && url.pathname === '/api/boards/hot') {
+        ok(response, await service.listHotBoards(url.searchParams.get('limit') ?? 8));
         return;
       }
 
@@ -200,6 +241,12 @@ export function createHttpServer({
           }),
           201
         );
+        return;
+      }
+
+      params = match(parts, ['api', 'boards', ':boardSlug', 'archive']);
+      if (params && request.method === 'GET') {
+        ok(response, await service.listArchivedThreads(params.boardSlug));
         return;
       }
 
@@ -249,6 +296,20 @@ export function createHttpServer({
         ok(response, await service.lookupPost(params.globalNumber));
         return;
       }
+      if (params && request.method === 'POST') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.reportPost({
+            globalNumber: params.globalNumber,
+            reason: body.reason,
+            ip,
+            posterToken: body.posterToken
+          }),
+          201
+        );
+        return;
+      }
 
       if (request.method === 'POST' && url.pathname === '/api/admin/login') {
         if (!jwtSecret || !adminUsername || !adminPassword) {
@@ -267,22 +328,40 @@ export function createHttpServer({
       }
 
       if (url.pathname.startsWith('/api/admin')) {
-        requireAdmin(request, jwtSecret);
+        const admin = requireAdmin(request, jwtSecret);
 
         if (request.method === 'GET' && url.pathname === '/api/admin/pending') {
           ok(response, await service.listPending());
           return;
         }
 
+        if (request.method === 'GET' && url.pathname === '/api/admin/moderation-actions') {
+          ok(response, await service.listModerationActions(url.searchParams.get('limit') ?? 50));
+          return;
+        }
+
+        if (request.method === 'GET' && url.pathname === '/api/admin/reports') {
+          ok(response, await service.listReports(url.searchParams.get('limit') ?? 50));
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'threads', ':threadId', 'archive']);
+        if (params && request.method === 'POST') {
+          ok(response, await service.archiveThread(params.threadId, 'manual'));
+          return;
+        }
+
         params = match(parts, ['api', 'admin', 'pending', ':id', 'approve']);
         if (params && request.method === 'POST') {
-          ok(response, await service.approvePending(params.id));
+          const body = await readJson(request, 20_000);
+          ok(response, await service.approvePending(params.id, { reason: body.reason, actor: admin.username ?? 'admin' }));
           return;
         }
 
         params = match(parts, ['api', 'admin', 'pending', ':id']);
         if (params && request.method === 'DELETE') {
-          ok(response, await service.deletePending(params.id));
+          const body = await readJson(request, 20_000);
+          ok(response, await service.deletePending(params.id, { reason: body.reason, actor: admin.username ?? 'admin' }));
           return;
         }
       }

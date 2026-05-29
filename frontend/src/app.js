@@ -10,11 +10,15 @@ const state = {
   selectedImage: null,
   quickReplyDrag: null,
   replyComposerOpen: false,
+  threadIsArchived: false,
   autoUpdate: true,
   autoCountdown: 7,
   autoTimer: null,
   boardThreads: [],
-  catalogThreads: []
+  catalogThreads: [],
+  catalogSort: 'bump',
+  catalogImageSize: 'small',
+  archiveThreads: []
 };
 
 function getPosterToken() {
@@ -34,14 +38,18 @@ function getPosterToken() {
 const els = {
   homeScreen: document.querySelector('#homeScreen'),
   homeBoards: document.querySelector('#homeBoards'),
+  homeBoardSearchForm: document.querySelector('#homeBoardSearchForm'),
+  homeBoardSearchInput: document.querySelector('#homeBoardSearchInput'),
   popularThreads: document.querySelector('#popularThreads'),
   latestPosts: document.querySelector('#latestPosts'),
+  hotBoards: document.querySelector('#hotBoards'),
   homeStats: document.querySelector('#homeStats'),
   serverStats: document.querySelector('#serverStats'),
   boardNav: document.querySelector('#boardNav'),
   socketStatus: document.querySelector('#socketStatus'),
   boardScreen: document.querySelector('#boardScreen'),
   catalogScreen: document.querySelector('#catalogScreen'),
+  archiveScreen: document.querySelector('#archiveScreen'),
   threadScreen: document.querySelector('#threadScreen'),
   adminScreen: document.querySelector('#adminScreen'),
   boardTitle: document.querySelector('#boardTitle'),
@@ -49,6 +57,9 @@ const els = {
   boardDescription: document.querySelector('#boardDescription'),
   boardSearchInput: document.querySelector('#boardSearchInput'),
   boardCatalogLink: document.querySelector('#boardCatalogLink'),
+  boardArchiveLink: document.querySelector('#boardArchiveLink'),
+  boardCatalogLinkBottom: document.querySelector('#boardCatalogLinkBottom'),
+  boardArchiveLinkBottom: document.querySelector('#boardArchiveLinkBottom'),
   threadList: document.querySelector('#threadList'),
   catalogTitle: document.querySelector('#catalogTitle'),
   catalogDescription: document.querySelector('#catalogDescription'),
@@ -56,6 +67,11 @@ const els = {
   catalogGrid: document.querySelector('#catalogGrid'),
   catalogReturnTop: document.querySelector('#catalogReturnTop'),
   catalogReturnBottom: document.querySelector('#catalogReturnBottom'),
+  archiveTitle: document.querySelector('#archiveTitle'),
+  archiveDescription: document.querySelector('#archiveDescription'),
+  archiveReturnTop: document.querySelector('#archiveReturnTop'),
+  archiveReturnBottom: document.querySelector('#archiveReturnBottom'),
+  archiveList: document.querySelector('#archiveList'),
   startThreadButton: document.querySelector('#startThreadButton'),
   threadStartThreadButton: document.querySelector('#threadStartThreadButton'),
   threadComposer: document.querySelector('#threadComposer'),
@@ -89,6 +105,8 @@ const els = {
   adminPassword: document.querySelector('#adminPassword'),
   logoutButton: document.querySelector('#logoutButton'),
   pendingList: document.querySelector('#pendingList'),
+  reportList: document.querySelector('#reportList'),
+  moderationActions: document.querySelector('#moderationActions'),
   toast: document.querySelector('#toast'),
   refPreview: document.querySelector('#refPreview'),
   quickReply: document.querySelector('#quickReply'),
@@ -107,6 +125,19 @@ function showToast(message) {
   els.toast.classList.remove('hidden');
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => els.toast.classList.add('hidden'), 3400);
+}
+
+function setButtonLoading(button, label = 'Đang gửi...') {
+  if (!button) {
+    return () => {};
+  }
+  const previousText = button.textContent;
+  button.disabled = true;
+  button.textContent = label;
+  return () => {
+    button.disabled = false;
+    button.textContent = previousText;
+  };
 }
 
 async function api(path, options = {}) {
@@ -130,15 +161,27 @@ function setScreen(name) {
   if (name !== 'thread') {
     stopAutoUpdateTimer();
   }
-  for (const screen of [els.homeScreen, els.boardScreen, els.catalogScreen, els.threadScreen, els.adminScreen]) {
+  for (const screen of [
+    els.homeScreen,
+    els.boardScreen,
+    els.catalogScreen,
+    els.archiveScreen,
+    els.threadScreen,
+    els.adminScreen
+  ]) {
     screen.classList.remove('active');
   }
   document.body.classList.toggle('home-page', name === 'home');
-  document.body.classList.toggle('board-page', name === 'board' || name === 'catalog' || name === 'thread');
+  document.body.classList.toggle(
+    'board-page',
+    name === 'board' || name === 'catalog' || name === 'archive' || name === 'thread'
+  );
   if (name === 'home') {
     els.homeScreen.classList.add('active');
   } else if (name === 'catalog') {
     els.catalogScreen.classList.add('active');
+  } else if (name === 'archive') {
+    els.archiveScreen.classList.add('active');
   } else if (name === 'thread') {
     els.threadScreen.classList.add('active');
   } else if (name === 'admin') {
@@ -150,6 +193,27 @@ function setScreen(name) {
 
 function currentBoard() {
   return state.boards.find((board) => board.slug === state.boardSlug) || state.boards[0];
+}
+
+function normalizeSearchValue(value = '') {
+  return String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim();
+}
+
+function findBoardByQuery(query) {
+  const normalized = normalizeSearchValue(query);
+  if (!normalized) {
+    return null;
+  }
+  return state.boards.find((board) => {
+    const slug = normalizeSearchValue(board.slug);
+    const path = normalizeSearchValue(board.path).replaceAll('/', '');
+    const name = normalizeSearchValue(board.name);
+    return slug === normalized || path === normalized.replaceAll('/', '') || name.includes(normalized);
+  });
 }
 
 function boardHeading(board) {
@@ -202,14 +266,19 @@ function closeThreadComposer() {
 }
 
 function syncReplyComposer() {
-  els.replyComposer.classList.toggle('hidden', !state.replyComposerOpen);
-  els.postReplyToggle.classList.toggle('hidden', state.replyComposerOpen);
-  if (!state.replyComposerOpen) {
+  const canReply = !state.threadIsArchived;
+  els.replyComposer.classList.toggle('hidden', !state.replyComposerOpen || !canReply);
+  els.postReplyToggle.classList.toggle('hidden', state.replyComposerOpen || !canReply);
+  if (!state.replyComposerOpen || !canReply) {
     els.suggestions.classList.add('hidden');
   }
 }
 
 function openReplyComposer({ focus = true } = {}) {
+  if (state.threadIsArchived) {
+    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+    return;
+  }
   state.replyComposerOpen = true;
   syncReplyComposer();
   if (focus) {
@@ -383,6 +452,44 @@ function renderLatestPosts(posts) {
     .join('');
 }
 
+function renderHotBoards(boards) {
+  if (!boards.length) {
+    els.hotBoards.innerHTML = '<p class="latest-empty">Chưa có bảng nào nóng trong 24 giờ qua.</p>';
+    return;
+  }
+
+  els.hotBoards.innerHTML = `
+    <table class="hot-board-table">
+      <thead>
+        <tr>
+          <th scope="col">Bảng</th>
+          <th scope="col">Bài 24h</th>
+          <th scope="col">Chủ đề</th>
+          <th scope="col">Phản hồi</th>
+          <th scope="col">Hoạt động cuối</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${boards
+          .map((item) => {
+            const board = state.boards.find((entry) => entry.slug === item.boardSlug);
+            const latest = item.latestActivityAt ? formatPostDate(item.latestActivityAt) : '-';
+            return `
+              <tr>
+                <td><a href="#board/${item.boardSlug}">${escapeHtml(board?.path || `/${item.boardSlug}/`)}</a></td>
+                <td>${Number(item.postCountLast24h || 0).toLocaleString()}</td>
+                <td>${Number(item.threadCountLast24h || 0).toLocaleString()}</td>
+                <td>${Number(item.replyCountLast24h || 0).toLocaleString()}</td>
+                <td>${escapeHtml(latest)}</td>
+              </tr>
+            `;
+          })
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
 function renderStats(stats) {
   els.homeStats.innerHTML = `
     <span><strong>Tổng bài viết:</strong> ${stats.totalPosts.toLocaleString()}</span>
@@ -405,17 +512,103 @@ function renderStats(stats) {
   `;
 }
 
+function moderationActionText(action) {
+  return (
+    {
+      'ai:moderate': 'AI kiểm duyệt',
+      'admin:approve': 'Admin duyệt',
+      'admin:delete': 'Admin xóa'
+    }[action] || action
+  );
+}
+
+function renderModerationActions(actions) {
+  if (!actions.length) {
+    els.moderationActions.innerHTML = '<p class="muted">Chưa có nhật ký kiểm duyệt.</p>';
+    return;
+  }
+
+  els.moderationActions.innerHTML = `
+    <table class="moderation-log-table">
+      <thead>
+        <tr>
+          <th>Thời gian</th>
+          <th>Hành động</th>
+          <th>Bài</th>
+          <th>Nhãn</th>
+          <th>Lý do</th>
+          <th>Người xử lý</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${actions
+          .map(
+            (action) => `
+              <tr>
+                <td>${formatPostDate(action.createdAt)}</td>
+                <td>${escapeHtml(moderationActionText(action.action))}</td>
+                <td>${escapeHtml(action.boardSlug)} / No.${action.globalNumber}</td>
+                <td>${escapeHtml((action.moderationLabels || []).map(moderationLabelText).join(', ') || moderationStatusText(action.moderationStatus))}</td>
+                <td>${escapeHtml(action.reason || '-')}</td>
+                <td>${escapeHtml(action.actor || '-')}</td>
+              </tr>
+            `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function renderReports(reports) {
+  if (!reports.length) {
+    els.reportList.innerHTML = '<p class="muted">Chưa có báo cáo nào.</p>';
+    return;
+  }
+
+  els.reportList.innerHTML = `
+    <table class="moderation-log-table">
+      <thead>
+        <tr>
+          <th>Thời gian</th>
+          <th>Bài</th>
+          <th>Loại</th>
+          <th>Lý do</th>
+          <th>Người báo cáo</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${reports
+          .map(
+            (report) => `
+              <tr>
+                <td>${formatPostDate(report.createdAt)}</td>
+                <td>${escapeHtml(report.boardSlug)} / No.${report.globalNumber}</td>
+                <td>${report.postType === 'thread' ? 'Chủ đề' : 'Bình luận'}</td>
+                <td>${escapeHtml(report.reason || '-')}</td>
+                <td>${escapeHtml(posterId({ posterHash: report.reporterHash }))}</td>
+              </tr>
+            `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
 async function loadHome() {
   setScreen('home');
   renderBoards();
-  const [threadsByBoard, latestPosts, stats] = await Promise.all([
+  const [threadsByBoard, latestPosts, hotBoards, stats] = await Promise.all([
     loadHomeThreadsByBoard(),
     api('/api/posts/latest?limit=10'),
+    api('/api/boards/hot?limit=8'),
     api('/api/stats')
   ]);
   renderHomeBoards(threadsByBoard);
   renderPopularThreads(popularThreadsFrom(threadsByBoard));
   renderLatestPosts(latestPosts);
+  renderHotBoards(hotBoards);
   renderStats(stats);
 }
 
@@ -447,7 +640,16 @@ function formatPostDate(value) {
 
 function dataUrlBytes(dataUrl = '') {
   const base64 = String(dataUrl).split(',')[1] || '';
-  return Math.max(0, Math.floor((base64.length * 3) / 4));
+  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
+  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
+}
+
+function imageSizeBytes(image = {}) {
+  const sizeBytes = Number(image.sizeBytes);
+  if (Number.isFinite(sizeBytes) && sizeBytes > 0) {
+    return Math.round(sizeBytes);
+  }
+  return dataUrlBytes(image.dataUrl);
 }
 
 function formatBytes(bytes) {
@@ -460,6 +662,23 @@ function formatBytes(bytes) {
   return `${bytes} B`;
 }
 
+function imageInfoText(image = {}) {
+  const size = formatBytes(imageSizeBytes(image));
+  const width = Number(image.width);
+  const height = Number(image.height);
+  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
+    return `${size}, ${Math.round(width)}x${Math.round(height)}`;
+  }
+  return size;
+}
+
+function fileTextHtml(image) {
+  const name = escapeHtml(image?.name || 'tai-len');
+  const dataUrl = escapeHtml(image?.dataUrl || '');
+  const info = escapeHtml(imageInfoText(image));
+  return `Tệp: <a href="${dataUrl}" target="_blank" rel="noopener">${name}</a> (${info})`;
+}
+
 function imageHtml(post) {
   if (!post.image) {
     return '';
@@ -467,10 +686,9 @@ function imageHtml(post) {
 
   const name = escapeHtml(post.image.name || 'tai-len');
   const dataUrl = escapeHtml(post.image.dataUrl || '');
-  const size = formatBytes(dataUrlBytes(post.image.dataUrl));
   return `
     <div class="thread-thumb-wrap">
-      <div class="file-text">Tệp: <a href="${dataUrl}" target="_blank" rel="noopener">${name}</a> (${size})</div>
+      <div class="file-text">${fileTextHtml(post.image)}</div>
       <button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${name}">
         <img class="post-image" src="${dataUrl}" alt="${name}">
       </button>
@@ -497,6 +715,7 @@ function meta(post, options = {}) {
     : moderationStatusText(post.moderationStatus);
   const showCheckbox = options.checkbox !== false;
   const showReplyAction = options.replyAction !== false;
+  const canReply = options.canReply !== false;
   const permalink = postPermalink(post, options);
   const opNumber = Number(options.opNumber || 0);
   const isOpReply =
@@ -505,16 +724,24 @@ function meta(post, options = {}) {
     options.opPosterHash &&
     post.posterHash === options.opPosterHash;
   const opMarker = isOpReply ? '<span class="op-post-marker">(OP)</span>' : '';
+  const posterIdentity = canReply
+    ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
+    : `<span class="hash">${escapeHtml(posterId(post))}</span>`;
   return `
     <div class="post-meta">
       ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
       <span class="name">Anonymous</span>
       <span class="date">${formatPostDate(post.createdAt)}</span>
       <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" title="Liên kết tới bài này">${post.globalNumber}</a></span>
-      <button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>
+      ${posterIdentity}
       ${opMarker}
       <span class="status">${labels}</span>
-      ${showReplyAction ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>` : ''}
+      ${
+        showReplyAction && canReply
+          ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
+          : ''
+      }
+      <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
     </div>
   `;
 }
@@ -539,11 +766,13 @@ function postHtml(post, type = 'post', options = {}) {
 function threadToolbarHtml(detail, position) {
   const posts = [detail.thread, ...detail.comments];
   const fileCount = posts.filter((post) => post.image).length;
+  const canReply = !detail.thread.isArchived;
   const replyLink =
-    position === 'bottom'
+    position === 'bottom' && canReply
       ? '<button class="link-button toolbar-reply-link" data-open-reply type="button">Đăng trả lời</button>'
       : '<span></span>';
   const checked = state.autoUpdate ? 'checked' : '';
+  const archivedLabel = detail.thread.isArchived ? '<span class="archived-label">Đã lưu trữ</span>' : '';
 
   return `
     <div class="toolbar-links">
@@ -553,6 +782,7 @@ function threadToolbarHtml(detail, position) {
       [<button class="link-button" data-thread-refresh type="button">Cập nhật</button>]
       [<label title="Tự lấy phản hồi mới"><input type="checkbox" data-auto-update ${checked}> Tự động</label>]
       <span class="auto-countdown">${state.autoUpdate ? state.autoCountdown : ''}</span>
+      ${archivedLabel}
     </div>
     ${replyLink}
     <div class="toolbar-counts">${posts.length} / ${detail.comments.length} / ${fileCount}</div>
@@ -565,7 +795,8 @@ function moderationLabelText(label) {
       Toxic: 'Độc hại',
       Spam: 'Nội dung rác',
       'Hate Speech': 'Thù ghét',
-      'Fake News': 'Tin giả'
+      'Fake News': 'Tin giả',
+      'PII Risk': 'Rủi ro thông tin cá nhân'
     }[label] || label
   );
 }
@@ -624,12 +855,17 @@ function setAutoUpdate(enabled) {
   resetAutoUpdateTimer();
 }
 
-function focusPermalinkPost(globalNumber) {
-  if (!globalNumber) {
+function currentPermalinkPost() {
+  return new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('p') || '';
+}
+
+function focusPermalinkPost(globalNumber, { scroll = false } = {}) {
+  const postNumber = String(globalNumber || '').trim();
+  if (!postNumber) {
     return;
   }
 
-  const target = document.getElementById(`p${globalNumber}`);
+  const target = document.getElementById(`p${postNumber}`);
   if (!target) {
     return;
   }
@@ -638,20 +874,25 @@ function focusPermalinkPost(globalNumber) {
     post.classList.remove('permalink-target');
   });
   target.classList.add('permalink-target');
-  window.setTimeout(() => {
-    target.scrollIntoView({ block: 'center' });
-  }, 0);
+  if (scroll) {
+    window.setTimeout(() => {
+      target.scrollIntoView({ block: 'center' });
+    }, 0);
+  }
 }
 
 function threadMatchesSearch(thread, term) {
-  if (!term) {
+  const normalizedTerm = normalizeSearchValue(term);
+  if (!normalizedTerm) {
     return true;
   }
-  const haystack = `${boardHeading(state.boards.find((board) => board.slug === thread.boardSlug))} ${plainPreview(
-    thread.bodyLines,
-    ''
-  )} No.${thread.globalNumber}`.toLowerCase();
-  return haystack.includes(term.toLowerCase());
+  const haystack = normalizeSearchValue(
+    `${boardHeading(state.boards.find((board) => board.slug === thread.boardSlug))} ${plainPreview(
+      thread.bodyLines,
+      ''
+    )} No.${thread.globalNumber}`
+  );
+  return haystack.includes(normalizedTerm);
 }
 
 function catalogThreadHtml(thread) {
@@ -670,9 +911,30 @@ function catalogThreadHtml(thread) {
   `;
 }
 
+function sortedCatalogThreads(threads) {
+  const copy = [...threads];
+  if (state.catalogSort === 'created') {
+    return copy.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+  if (state.catalogSort === 'replies') {
+    return copy.sort((left, right) => Number(right.replyCount || 0) - Number(left.replyCount || 0));
+  }
+  if (state.catalogSort === 'latest-reply') {
+    return copy.sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt));
+  }
+  return copy.sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt));
+}
+
 function renderCatalogThreads(threads) {
   const term = els.catalogSearchInput.value.trim();
-  const visibleThreads = threads.filter((thread) => threadMatchesSearch(thread, term));
+  const visibleThreads = sortedCatalogThreads(threads.filter((thread) => threadMatchesSearch(thread, term)));
+  els.catalogGrid.classList.toggle('catalog-grid-large', state.catalogImageSize === 'large');
+  document.querySelectorAll('[data-catalog-sort]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.catalogSort === state.catalogSort);
+  });
+  document.querySelectorAll('[data-catalog-size]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.catalogSize === state.catalogImageSize);
+  });
   if (!visibleThreads.length) {
     els.catalogGrid.innerHTML = '<p class="muted">Không có OP khớp tìm kiếm.</p>';
     return;
@@ -704,6 +966,49 @@ async function loadCatalog() {
   renderCatalogThreads(threads);
 }
 
+function archiveThreadHtml(thread) {
+  const title = plainPreview(thread.bodyLines, 'Chưa có nội dung').slice(0, 180);
+  const archivedAt = thread.archivedAt ? new Date(thread.archivedAt).toLocaleString('vi-VN') : 'không rõ';
+  return `
+    <a class="archive-row" href="#thread/${thread.id}">
+      <span class="archive-no">No.${thread.globalNumber}</span>
+      <span class="archive-title">${escapeHtml(title)}${title.length >= 180 ? '...' : ''}</span>
+      <span class="archive-meta">${thread.replyCount} trả lời · lưu lúc ${escapeHtml(archivedAt)}</span>
+    </a>
+  `;
+}
+
+function renderArchiveThreads(threads) {
+  if (!threads.length) {
+    els.archiveList.innerHTML = '<p class="muted">Kho lưu trữ chưa có chủ đề.</p>';
+    return;
+  }
+  els.archiveList.innerHTML = threads.map(archiveThreadHtml).join('');
+}
+
+async function loadArchive() {
+  const board = state.boards.find((item) => item.slug === state.boardSlug);
+  setScreen('archive');
+  renderBoards();
+  if (!board) {
+    els.archiveTitle.textContent = 'Không tìm thấy bảng';
+    els.archiveDescription.textContent = `Bảng /${state.boardSlug}/ không tồn tại.`;
+    els.archiveReturnTop.href = '#home';
+    els.archiveReturnBottom.href = '#home';
+    els.archiveList.innerHTML = '<p class="muted">Không có kho lưu trữ để hiển thị.</p>';
+    return;
+  }
+  updateBoardAds(board);
+  els.archiveTitle.textContent = `${board.path} - ${board.name} Kho lưu trữ`;
+  els.archiveDescription.textContent = board.description;
+  els.archiveReturnTop.href = `#board/${board.slug}`;
+  els.archiveReturnBottom.href = `#board/${board.slug}`;
+
+  const threads = await api(`/api/boards/${board.slug}/archive`);
+  state.archiveThreads = threads;
+  renderArchiveThreads(threads);
+}
+
 function renderBoardThreads(threads) {
   const term = els.boardSearchInput.value.trim();
   const visibleThreads = threads.filter((thread) => threadMatchesSearch(thread, term));
@@ -721,7 +1026,7 @@ function renderBoardThreads(threads) {
           <div class="thread-op">
           ${
             thread.image
-              ? `<div class="thread-thumb-wrap"><div class="file-text">Tệp: ${escapeHtml(thread.image.name)}</div><button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${escapeHtml(thread.image.name)}"><img class="thumb" src="${escapeHtml(thread.image.dataUrl)}" alt="${escapeHtml(thread.image.name)}"></button></div>`
+              ? `<div class="thread-thumb-wrap"><div class="file-text">${fileTextHtml(thread.image)}</div><button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${escapeHtml(thread.image.name)}"><img class="thumb" src="${escapeHtml(thread.image.dataUrl)}" alt="${escapeHtml(thread.image.name)}"></button></div>`
               : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
           }
             ${meta(thread, { replyAction: false })}
@@ -751,6 +1056,9 @@ async function loadBoard() {
   els.boardPath.textContent = board.path;
   els.boardDescription.textContent = board.description;
   els.boardCatalogLink.href = `#catalog/${board.slug}`;
+  els.boardArchiveLink.href = `#archive/${board.slug}`;
+  els.boardCatalogLinkBottom.href = `#catalog/${board.slug}`;
+  els.boardArchiveLinkBottom.href = `#archive/${board.slug}`;
   els.boardSearchInput.value = '';
   els.boardSummary.classList.add('hidden');
   const shouldOpenComposer = new URLSearchParams(window.location.hash.split('?')[1] || '').get('new') === '1';
@@ -768,15 +1076,16 @@ async function loadBoard() {
 async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   setScreen('thread');
   els.threadSummary.classList.add('hidden');
-  if (resetReply) {
-    closeReplyComposer({ clear: true });
-  } else {
-    syncReplyComposer();
-  }
   const detail = await api(`/api/threads/${state.threadId}`);
   state.boardSlug = detail.thread.boardSlug;
   state.threadGlobalNumber = detail.thread.globalNumber;
   state.threadPosterHash = detail.thread.posterHash;
+  state.threadIsArchived = Boolean(detail.thread.isArchived);
+  if (resetReply || state.threadIsArchived) {
+    closeReplyComposer({ clear: true });
+  } else {
+    syncReplyComposer();
+  }
   const board = currentBoard();
   renderBoards();
   updateBoardAds(board);
@@ -785,10 +1094,19 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   els.threadBoardDescription.textContent = board?.description || 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt';
   els.threadToolbarTop.innerHTML = threadToolbarHtml(detail, 'top');
   els.threadToolbarBottom.innerHTML = threadToolbarHtml(detail, 'bottom');
+  const archivedNotice = detail.thread.isArchived
+    ? `<div class="archived-notice">
+        Chủ đề đã được lưu trữ${detail.thread.archivedAt ? ` lúc ${escapeHtml(formatPostDate(detail.thread.archivedAt))}` : ''}.
+        Không thể đăng trả lời mới.
+      </div>`
+    : '';
+  const canReply = !detail.thread.isArchived;
   els.threadDetail.innerHTML = `
+    ${archivedNotice}
     ${postHtml(detail.thread, 'post op', {
       opNumber: detail.thread.globalNumber,
-      opPosterHash: detail.thread.posterHash
+      opPosterHash: detail.thread.posterHash,
+      canReply
     })}
     <div class="comment-list">
       ${
@@ -797,7 +1115,8 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
               .map((comment) =>
                 postHtml(comment, 'post comment', {
                   opNumber: detail.thread.globalNumber,
-                  opPosterHash: detail.thread.posterHash
+                  opPosterHash: detail.thread.posterHash,
+                  canReply
                 })
               )
               .join('')
@@ -805,7 +1124,8 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
       }
     </div>
   `;
-  focusPermalinkPost(focusPost);
+  const focusedPost = focusPost || currentPermalinkPost();
+  focusPermalinkPost(focusedPost, { scroll: Boolean(focusPost) });
   resetAutoUpdateTimer();
 }
 
@@ -816,34 +1136,42 @@ async function loadAdmin() {
   els.logoutButton.classList.toggle('hidden', !loggedIn);
   if (!loggedIn) {
     els.pendingList.innerHTML = '';
+    els.reportList.innerHTML = '';
+    els.moderationActions.innerHTML = '';
     return;
   }
 
   try {
-    const pending = await api('/api/admin/pending');
+    const [pending, reports, moderationActions] = await Promise.all([
+      api('/api/admin/pending'),
+      api('/api/admin/reports?limit=30'),
+      api('/api/admin/moderation-actions?limit=30')
+    ]);
     if (!pending.length) {
       els.pendingList.innerHTML = '<p class="muted">Hàng đợi trống.</p>';
-      return;
+    } else {
+      els.pendingList.innerHTML = pending
+        .map(
+          (post) => `
+            <article class="pending-item" data-id="${post.id}">
+              <div class="post-meta">
+                <span>${post.type === 'thread' ? 'chủ đề' : 'bình luận'}</span>
+                <span>No.${post.globalNumber}</span>
+                <span>${post.boardSlug}</span>
+                <span>AI:${post.moderationLabels.map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus)}</span>
+              </div>
+              <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
+              <div class="pending-actions">
+                <button class="primary-button" data-action="approve" type="button">Duyệt</button>
+                <button class="danger-button" data-action="delete" type="button">Xóa</button>
+              </div>
+            </article>
+          `
+        )
+        .join('');
     }
-    els.pendingList.innerHTML = pending
-      .map(
-        (post) => `
-          <article class="pending-item" data-id="${post.id}">
-            <div class="post-meta">
-              <span>${post.type === 'thread' ? 'chủ đề' : 'bình luận'}</span>
-              <span>No.${post.globalNumber}</span>
-              <span>${post.boardSlug}</span>
-              <span>AI:${post.moderationLabels.map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus)}</span>
-            </div>
-            <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
-            <div class="pending-actions">
-              <button class="primary-button" data-action="approve" type="button">Duyệt</button>
-              <button class="danger-button" data-action="delete" type="button">Xóa</button>
-            </div>
-          </article>
-        `
-      )
-      .join('');
+    renderReports(reports);
+    renderModerationActions(moderationActions);
   } catch (error) {
     state.token = '';
     localStorage.removeItem('adminToken');
@@ -865,6 +1193,9 @@ function route() {
   } else if (name === 'catalog') {
     state.boardSlug = id || 'confession';
     loadCatalog().catch((error) => showToast(error.message));
+  } else if (name === 'archive') {
+    state.boardSlug = id || 'confession';
+    loadArchive().catch((error) => showToast(error.message));
   } else if (name === 'admin') {
     loadAdmin().catch((error) => showToast(error.message));
   } else {
@@ -877,20 +1208,42 @@ function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Không thể đọc ảnh'));
-    reader.onload = () =>
-      resolve({
-        name: file.name,
-        type: file.type,
-        dataUrl: reader.result
-      });
+    reader.onload = () => {
+      const dataUrl = String(reader.result || '');
+      const image = new Image();
+      image.onload = () =>
+        resolve({
+          name: file.name,
+          type: file.type,
+          sizeBytes: file.size,
+          width: image.naturalWidth,
+          height: image.naturalHeight,
+          dataUrl
+        });
+      image.onerror = () =>
+        resolve({
+          name: file.name,
+          type: file.type,
+          sizeBytes: file.size,
+          dataUrl
+        });
+      image.src = dataUrl;
+    };
     reader.readAsDataURL(file);
   });
+}
+
+function imagePreviewHtml(image) {
+  return `
+    <img src="${escapeHtml(image.dataUrl)}" alt="${escapeHtml(image.name)}">
+    <div class="file-text">${fileTextHtml(image)}</div>
+  `;
 }
 
 async function submitThread(event) {
   event.preventDefault();
   const button = event.submitter;
-  button.disabled = true;
+  const restoreButton = setButtonLoading(button);
   try {
     const payload = {
       body: els.threadBody.value,
@@ -912,14 +1265,18 @@ async function submitThread(event) {
   } catch (error) {
     showToast(error.message);
   } finally {
-    button.disabled = false;
+    restoreButton();
   }
 }
 
 async function submitComment(event) {
   event.preventDefault();
+  if (state.threadIsArchived) {
+    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+    return;
+  }
   const button = event.submitter || els.commentForm.querySelector('[type="submit"]');
-  button.disabled = true;
+  const restoreButton = setButtonLoading(button);
   try {
     const result = await createComment(els.commentBody.value, els.commentCaptcha.value);
     els.commentBody.value = '';
@@ -929,7 +1286,7 @@ async function submitComment(event) {
   } catch (error) {
     showToast(error.message);
   } finally {
-    button.disabled = false;
+    restoreButton();
   }
 }
 
@@ -966,6 +1323,10 @@ function addQuoteToQuickReply(number) {
 }
 
 function openQuickReply(number, event) {
+  if (state.threadIsArchived) {
+    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+    return;
+  }
   const wasHidden = els.quickReply.classList.contains('hidden');
   const threadNumber = state.threadGlobalNumber || number;
   els.quickReplyTitle.textContent = `Trả lời chủ đề No.${threadNumber}`;
@@ -990,8 +1351,13 @@ function closeQuickReply() {
 
 async function submitQuickReply(event) {
   event.preventDefault();
+  if (state.threadIsArchived) {
+    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+    closeQuickReply();
+    return;
+  }
   const button = event.submitter;
-  button.disabled = true;
+  const restoreButton = setButtonLoading(button);
   try {
     const result = await createComment(els.quickReplyBody.value, els.quickReplyCaptcha.value);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
@@ -1000,7 +1366,7 @@ async function submitQuickReply(event) {
   } catch (error) {
     showToast(error.message);
   } finally {
-    button.disabled = false;
+    restoreButton();
   }
 }
 
@@ -1047,14 +1413,18 @@ async function loadSuggestions() {
 }
 
 async function showReference(number, event) {
+  const previewWidth = Math.min(360, window.innerWidth - 12);
+  const left = clamp(event.clientX + 10, 6, window.innerWidth - previewWidth - 6);
+  const top = clamp(event.clientY + 10, 6, window.innerHeight - 226);
+  els.refPreview.style.left = `${left}px`;
+  els.refPreview.style.top = `${top}px`;
+  els.refPreview.style.maxWidth = `${previewWidth}px`;
   try {
     const result = await api(`/api/posts/${number}`);
     els.refPreview.innerHTML = postHtml(result.post, 'post', {
       opNumber: state.threadGlobalNumber,
       opPosterHash: state.threadPosterHash
     });
-    els.refPreview.style.left = `${Math.min(event.clientX + 10, window.innerWidth - 380)}px`;
-    els.refPreview.style.top = `${Math.min(event.clientY + 10, window.innerHeight - 220)}px`;
     els.refPreview.classList.remove('hidden');
   } catch {
     els.refPreview.textContent = `Bài >>${number} không tồn tại hoặc chưa công khai.`;
@@ -1074,7 +1444,7 @@ function setupRealtime() {
     els.socketStatus.classList.add('offline');
     els.socketStatus.classList.remove('live');
   };
-  for (const eventName of ['thread:created', 'thread:bumped', 'comment:created']) {
+  for (const eventName of ['thread:created', 'thread:bumped', 'comment:created', 'thread:archived']) {
     source.addEventListener(eventName, () => {
       const hash = window.location.hash || '#home';
       if (hash.startsWith('#home') || hash === '') {
@@ -1083,6 +1453,10 @@ function setupRealtime() {
         loadThread().catch(() => {});
       } else if (hash.startsWith('#catalog/')) {
         loadCatalog().catch(() => {});
+      } else if (hash.startsWith('#archive/')) {
+        if (eventName === 'thread:archived') {
+          loadArchive().catch(() => {});
+        }
       } else if (hash.startsWith('#board/')) {
         loadBoard().catch(() => {});
       }
@@ -1092,6 +1466,15 @@ function setupRealtime() {
 
 function bindEvents() {
   window.addEventListener('hashchange', route);
+  els.homeBoardSearchForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    const board = findBoardByQuery(els.homeBoardSearchInput.value);
+    if (!board) {
+      showToast('Không tìm thấy bảng phù hợp.');
+      return;
+    }
+    window.location.hash = `#board/${board.slug}`;
+  });
   els.refreshThreads.addEventListener('click', () => loadBoard().catch((error) => showToast(error.message)));
   els.boardSearchInput.addEventListener('input', () => renderBoardThreads(state.boardThreads));
   els.catalogSearchInput.addEventListener('input', () => renderCatalogThreads(state.catalogThreads));
@@ -1141,17 +1524,29 @@ function bindEvents() {
     const file = els.threadImage.files?.[0];
     if (!file) {
       state.selectedImage = null;
+      els.imagePreview.innerHTML = '';
       els.imagePreview.classList.add('hidden');
       return;
     }
     if (!file.type.startsWith('image/')) {
       showToast('Chỉ hỗ trợ ảnh.');
       els.threadImage.value = '';
+      state.selectedImage = null;
+      els.imagePreview.innerHTML = '';
+      els.imagePreview.classList.add('hidden');
       return;
     }
-    state.selectedImage = await fileToDataUrl(file);
-    els.imagePreview.innerHTML = `<img src="${state.selectedImage.dataUrl}" alt="${state.selectedImage.name}">`;
-    els.imagePreview.classList.remove('hidden');
+    try {
+      state.selectedImage = await fileToDataUrl(file);
+      els.imagePreview.innerHTML = imagePreviewHtml(state.selectedImage);
+      els.imagePreview.classList.remove('hidden');
+    } catch (error) {
+      showToast(error.message);
+      els.threadImage.value = '';
+      state.selectedImage = null;
+      els.imagePreview.innerHTML = '';
+      els.imagePreview.classList.add('hidden');
+    }
   });
 
   document.body.addEventListener('click', async (event) => {
@@ -1175,9 +1570,35 @@ function bindEvents() {
       return;
     }
 
+    const boardRefreshButton = event.target.closest('[data-board-refresh]');
+    if (boardRefreshButton) {
+      await loadBoard().catch((error) => showToast(error.message));
+      return;
+    }
+
     const catalogRefreshButton = event.target.closest('[data-catalog-refresh]');
     if (catalogRefreshButton) {
       await loadCatalog().catch((error) => showToast(error.message));
+      return;
+    }
+
+    const catalogSortButton = event.target.closest('[data-catalog-sort]');
+    if (catalogSortButton) {
+      state.catalogSort = catalogSortButton.dataset.catalogSort;
+      renderCatalogThreads(state.catalogThreads);
+      return;
+    }
+
+    const catalogSizeButton = event.target.closest('[data-catalog-size]');
+    if (catalogSizeButton) {
+      state.catalogImageSize = catalogSizeButton.dataset.catalogSize;
+      renderCatalogThreads(state.catalogThreads);
+      return;
+    }
+
+    const archiveRefreshButton = event.target.closest('[data-archive-refresh]');
+    if (archiveRefreshButton) {
+      await loadArchive().catch((error) => showToast(error.message));
       return;
     }
 
@@ -1191,12 +1612,6 @@ function bindEvents() {
     const pageTopButton = event.target.closest('[data-scroll-page-top]');
     if (pageTopButton) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-
-    const archiveButton = event.target.closest('[data-board-archive]');
-    if (archiveButton) {
-      showToast('Archive chưa có trong MVP.');
       return;
     }
 
@@ -1233,6 +1648,24 @@ function bindEvents() {
       return;
     }
 
+    const reportButton = event.target.closest('[data-report]');
+    if (reportButton) {
+      const reason = window.prompt(`Lý do báo cáo No.${reportButton.dataset.report}:`, '');
+      if (!reason) {
+        return;
+      }
+      try {
+        await api(`/api/posts/${reportButton.dataset.report}`, {
+          method: 'POST',
+          body: JSON.stringify({ reason, posterToken: state.posterToken })
+        });
+        showToast('Đã gửi báo cáo.');
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
     const pendingButton = event.target.closest('[data-action]');
     if (pendingButton) {
       const item = pendingButton.closest('.pending-item');
@@ -1241,12 +1674,17 @@ function bindEvents() {
       if (!ok) {
         return;
       }
+      const reason =
+        window.prompt(action === 'approve' ? 'Lý do duyệt (tùy chọn):' : 'Lý do xóa (tùy chọn):', '') || '';
       try {
         await api(
           action === 'approve'
             ? `/api/admin/pending/${item.dataset.id}/approve`
             : `/api/admin/pending/${item.dataset.id}`,
-          { method: action === 'approve' ? 'POST' : 'DELETE', body: action === 'approve' ? '{}' : undefined }
+          {
+            method: action === 'approve' ? 'POST' : 'DELETE',
+            body: JSON.stringify({ reason })
+          }
         );
         showToast(action === 'approve' ? 'Đã duyệt.' : 'Đã xóa.');
         await loadAdmin();

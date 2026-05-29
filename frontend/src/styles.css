@@ -314,6 +314,29 @@ button {
   line-height: 18px;
 }
 
+.home-board-search {
+  align-items: center;
+  background: #f0e0d6;
+  border-bottom: 1px solid #d9bfb7;
+  display: flex;
+  gap: 6px;
+  justify-content: center;
+  padding: 6px;
+}
+
+.home-board-search label {
+  color: #800000;
+  font-weight: 700;
+}
+
+.home-board-search input {
+  border: 1px solid #aaa;
+  font: inherit;
+  max-width: 260px;
+  padding: 2px 4px;
+  width: 55vw;
+}
+
 .portal-board-table {
   width: 100%;
   min-width: 690px;
@@ -526,6 +549,46 @@ button {
 
 .latest-post-preview {
   overflow-wrap: anywhere;
+}
+
+.hot-board-list {
+  padding: 4px 8px 8px;
+  overflow-x: auto;
+}
+
+.hot-board-table {
+  width: 100%;
+  min-width: 520px;
+  border-collapse: collapse;
+  color: #111;
+  font-size: 13px;
+}
+
+.hot-board-table th {
+  border-bottom: 1px solid #d9bfb7;
+  background: #f0e0d6;
+  color: #800;
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.hot-board-table td {
+  border-bottom: 1px solid #d9bfb7;
+  padding: 4px 6px;
+  text-align: center;
+}
+
+.hot-board-table td:first-child {
+  text-align: left;
+}
+
+.hot-board-table tbody tr:nth-child(even) {
+  background: #f0e0d6;
+}
+
+.hot-board-table a {
+  color: var(--link);
+  font-weight: bold;
 }
 
 .stats-row {
@@ -987,6 +1050,24 @@ select {
   font-weight: bold;
 }
 
+.archived-label {
+  color: #d00;
+  font-weight: bold;
+}
+
+.archived-notice {
+  clear: both;
+  width: fit-content;
+  max-width: calc(100vw - 18px);
+  margin: 4px 0 8px;
+  border: 1px solid #d9bfb7;
+  background: #f0e0d6;
+  color: #800;
+  padding: 4px 7px;
+  font-size: 13px;
+  font-weight: bold;
+}
+
 .quote-button,
 .link-button,
 .post-id-button {
@@ -1064,6 +1145,43 @@ select {
   display: flex;
   gap: 5px;
   margin-top: 6px;
+}
+
+.admin-log-section {
+  max-width: 980px;
+  margin: 14px auto 0;
+}
+
+.admin-log-section h2 {
+  margin: 0 0 5px;
+  color: var(--text);
+  font-size: 16px;
+}
+
+.moderation-log {
+  overflow-x: auto;
+}
+
+.moderation-log-table {
+  width: 100%;
+  min-width: 760px;
+  border-collapse: collapse;
+  background: var(--reply);
+  color: #000;
+  font-size: 12px;
+}
+
+.moderation-log-table th,
+.moderation-log-table td {
+  border: 1px solid var(--reply-border);
+  padding: 3px 5px;
+  vertical-align: top;
+}
+
+.moderation-log-table th {
+  background: #f0e0d6;
+  color: #800;
+  text-align: left;
 }
 
 .toast,
@@ -1482,10 +1600,28 @@ body.board-page {
 }
 
 .board-search-row a,
-.board-search-row button {
+.board-search-row button,
+.board-toolbar-bottom a,
+.board-toolbar-bottom button {
   color: #00005f;
   font-size: 16px;
   line-height: 18px;
+}
+
+.board-toolbar-bottom {
+  margin: 3px 0 0;
+  border-top: 1px solid #b7c5d9;
+  border-bottom: 1px solid #b7c5d9;
+  padding: 2px 4px;
+  color: #34345c;
+  font-size: 11px;
+  line-height: 14px;
+}
+
+.board-toolbar-bottom a,
+.board-toolbar-bottom button {
+  font-size: 11px;
+  line-height: 14px;
 }
 
 .start-thread-row {
@@ -1958,6 +2094,11 @@ body.board-page {
   justify-content: center;
 }
 
+.catalog-controls .active {
+  font-weight: 700;
+  text-decoration: underline;
+}
+
 .catalog-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, 154px);
@@ -2030,6 +2171,59 @@ body.board-page {
 .catalog-thread p {
   margin-top: 2px;
   overflow-wrap: anywhere;
+}
+
+.catalog-grid-large {
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.catalog-grid-large .catalog-thread {
+  width: 190px;
+}
+
+.catalog-grid-large .catalog-thumb {
+  height: 160px;
+  width: 186px;
+}
+
+.catalog-grid-large .catalog-thumb img {
+  max-height: 160px;
+  max-width: 186px;
+}
+
+.archive-list {
+  border-top: 1px solid #b7c5d9;
+  margin: 10px auto;
+  max-width: 980px;
+}
+
+.archive-row {
+  align-items: center;
+  border-bottom: 1px solid #b7c5d9;
+  color: #800000;
+  display: grid;
+  font-size: 13px;
+  gap: 8px;
+  grid-template-columns: 90px minmax(180px, 1fr) 220px;
+  padding: 5px 7px;
+  text-decoration: none;
+}
+
+.archive-row:nth-child(odd) {
+  background: #f0e0d6;
+}
+
+.archive-row:nth-child(even) {
+  background: #ffffee;
+}
+
+.archive-row:hover .archive-title {
+  text-decoration: underline;
+}
+
+.archive-no,
+.archive-meta {
+  color: #707070;
 }
 
 /* Thread pages intentionally mimic the dense, old imageboard thread layout. */
@@ -2350,6 +2544,7 @@ body.board-page {
 
 .board-page #boardScreen,
 .board-page #catalogScreen,
+.board-page #archiveScreen,
 .board-page #threadScreen,
 .board-page .thread-detail,
 .board-page .threads-panel,
@@ -2448,6 +2643,10 @@ body.board-page {
     display: block;
     width: fit-content;
     max-width: calc(100vw - 22px);
+  }
+
+  .archive-row {
+    grid-template-columns: 1fr;
   }
 }
 

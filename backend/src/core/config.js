@@ -95,6 +95,19 @@ export const BOARD_GROUPS = [
 
 export const MODERATION_LABELS = ['Toxic', 'Spam', 'Hate Speech', 'Fake News'];
 
+function readPositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= 1 ? parsed : fallback;
+}
+
+const bumpLimit = readPositiveInteger(process.env.THREAD_BUMP_LIMIT ?? 300, 300);
+
+export const THREAD_LIFECYCLE = {
+  maxActiveThreadsPerBoard: readPositiveInteger(process.env.MAX_ACTIVE_THREADS_PER_BOARD ?? 150, 150),
+  bumpLimit,
+  replyLimit: Math.max(readPositiveInteger(process.env.THREAD_REPLY_LIMIT ?? 500, 500), bumpLimit)
+};
+
 export function getBoard(slug) {
   return BOARDS.find((board) => board.slug === slug);
 }
@@ -106,6 +119,7 @@ export function publicConfig() {
       name: group.name,
       boards: group.slugs.map((slug) => getBoard(slug)).filter(Boolean)
     })),
+    lifecycle: THREAD_LIFECYCLE,
     hcaptchaSiteKey: process.env.HCAPTCHA_SITE_KEY ?? '',
     maxImageBytes: Number(process.env.MAX_IMAGE_BYTES ?? 1_500_000)
   };
