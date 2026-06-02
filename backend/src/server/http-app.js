@@ -3,7 +3,7 @@ import http from 'node:http';
 import path from 'node:path';
 
 import { publicConfig } from '../core/config.js';
-import { createRateLimiter, getClientIp, signJwt, verifyJwt } from '../core/security.js';
+import { createRateLimiter, getClientIp, securityConfigStatus, signJwt, verifyJwt } from '../core/security.js';
 
 const MIME_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
@@ -19,6 +19,11 @@ const MIME_TYPES = new Map([
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload));
+}
+
+function sendText(response, statusCode, text, contentType) {
+  response.writeHead(statusCode, { 'content-type': contentType });
+  response.end(text);
 }
 
 function ok(response, data, statusCode = 200) {
@@ -109,6 +114,9 @@ function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
   if (method === 'POST' && parts[1] === 'threads' && ['summary', 'suggestions'].includes(parts[3])) {
     return { limiter: limiters.ai, key: `${ip}:ai:thread:${parts[2]}:${parts[3]}` };
   }
+  if (method === 'POST' && parts[1] === 'ai' && parts[2] === 'rewrite') {
+    return { limiter: limiters.ai, key: `${ip}:ai:rewrite` };
+  }
   if (parts[1] === 'admin') {
     return { limiter: limiters.admin, key: `${ip}:admin:${method}:${pathname}` };
   }
@@ -127,6 +135,93 @@ function enforceRateLimit(rate) {
     error.statusCode = 429;
     throw error;
   }
+}
+
+function adminFiltersFromSearch(searchParams) {
+  return {
+    boardSlug: searchParams.get('boardSlug') || '',
+    label: searchParams.get('label') || '',
+    since: searchParams.get('since') || '',
+    status: searchParams.get('status') || '',
+    action: searchParams.get('action') || ''
+  };
+}
+
+function escapeXml(value = '') {
+  return String(value).replace(/[<>&'"]/g, (character) => {
+    const entities = {
+      '<': '&lt;',
+      '>': '&gt;',
+      '&': '&amp;',
+      "'": '&apos;',
+      '"': '&quot;'
+    };
+    return entities[character];
+  });
+}
+
+function postPreview(post = {}) {
+  return (post.bodyLines || [])
+    .map((line) => line.text)
+    .join(' ')
+    .replaceAll('&gt;', '>')
+    .replaceAll('&lt;', '<')
+    .replaceAll('&amp;', '&')
+    .trim()
+    .slice(0, 300);
+}
+
+function absoluteUrl(request, pathName) {
+  const protocol = request.headers['x-forwarded-proto'] || 'http';
+  const host = request.headers.host || 'localhost';
+  return `${protocol}://${host}${pathName}`;
+}
+
+function jsonFeed(request, posts = []) {
+  return {
+    version: 'https://jsonfeed.org/version/1.1',
+    title: '36chan - Bài mới nhất',
+    home_page_url: absoluteUrl(request, '/'),
+    feed_url: absoluteUrl(request, '/feeds/latest.json'),
+    items: posts.map((post) => {
+      const threadId = post.threadId || post.id;
+      const url = absoluteUrl(request, `/#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`);
+      return {
+        id: String(post.globalNumber),
+        url,
+        title: `No.${post.globalNumber} /${post.boardSlug}/`,
+        content_text: postPreview(post),
+        date_published: post.createdAt
+      };
+    })
+  };
+}
+
+function rssFeed(request, posts = []) {
+  const items = posts
+    .map((post) => {
+      const threadId = post.threadId || post.id;
+      const url = absoluteUrl(request, `/#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`);
+      return `
+        <item>
+          <title>${escapeXml(`No.${post.globalNumber} /${post.boardSlug}/`)}</title>
+          <link>${escapeXml(url)}</link>
+          <guid isPermaLink="true">${escapeXml(url)}</guid>
+          <pubDate>${new Date(post.createdAt).toUTCString()}</pubDate>
+          <description>${escapeXml(postPreview(post))}</description>
+        </item>
+      `;
+    })
+    .join('');
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>36chan - Bài mới nhất</title>
+    <link>${escapeXml(absoluteUrl(request, '/'))}</link>
+    <description>Bài công khai mới nhất trên 36chan</description>
+    ${items}
+  </channel>
+</rss>`;
 }
 
 async function serveStatic(request, response, staticRoot) {
@@ -158,12 +253,56 @@ async function serveStatic(request, response, staticRoot) {
     }
     return true;
   } catch {
-    if (!url.pathname.startsWith('/api') && !url.pathname.startsWith('/events')) {
+    if (!url.pathname.startsWith('/api') && !url.pathname.startsWith('/events') && !url.pathname.startsWith('/uploads')) {
       const indexPath = path.join(staticRoot, 'index.html');
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
       response.end(await fs.readFile(indexPath));
       return true;
     }
+    return false;
+  }
+}
+
+async function serveUploadedFile(request, response, uploadRoot) {
+  if (request.method !== 'GET' && request.method !== 'HEAD') {
+    return false;
+  }
+
+  const url = new URL(request.url, 'http://localhost');
+  if (!url.pathname.startsWith('/uploads/')) {
+    return false;
+  }
+
+  const requestedName = decodeURIComponent(url.pathname.slice('/uploads/'.length));
+  const fileName = path.basename(requestedName);
+  if (!fileName || fileName !== requestedName) {
+    return false;
+  }
+
+  const safeRoot = path.resolve(uploadRoot);
+  const candidate = path.resolve(safeRoot, fileName);
+  if (!candidate.startsWith(safeRoot)) {
+    return false;
+  }
+
+  try {
+    const stat = await fs.stat(candidate);
+    if (!stat.isFile()) {
+      return false;
+    }
+    const extension = path.extname(candidate).toLowerCase();
+    response.writeHead(200, {
+      'content-type': MIME_TYPES.get(extension) ?? 'application/octet-stream',
+      'content-length': stat.size,
+      'cache-control': 'public, max-age=31536000, immutable'
+    });
+    if (request.method === 'HEAD') {
+      response.end();
+    } else {
+      response.end(await fs.readFile(candidate));
+    }
+    return true;
+  } catch {
     return false;
   }
 }
@@ -174,7 +313,8 @@ export function createHttpServer({
   jwtSecret,
   adminUsername,
   adminPassword,
-  staticRoot = path.resolve('public')
+  staticRoot = path.resolve('public'),
+  uploadRoot = path.resolve('data/uploads')
 }) {
   const limiters = {
     thread: createRateLimiter({ limit: 5, windowMs: 60_000 }),
@@ -186,7 +326,8 @@ export function createHttpServer({
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
-    const parts = url.pathname.split('/').filter(Boolean);
+    const routePath = url.pathname.startsWith('/api/v1/') ? url.pathname.replace('/api/v1', '/api') : url.pathname;
+    const parts = routePath.split('/').filter(Boolean);
     const ip = getClientIp(request);
 
     try {
@@ -195,36 +336,97 @@ export function createHttpServer({
         return;
       }
 
-      enforceRateLimit(rateLimitForRequest({ method: request.method, pathname: url.pathname, parts, ip, limiters }));
+      if (await serveUploadedFile(request, response, uploadRoot)) {
+        return;
+      }
 
-      if (request.method === 'GET' && url.pathname === '/api/config') {
+      enforceRateLimit(rateLimitForRequest({ method: request.method, pathname: routePath, parts, ip, limiters }));
+
+      if (request.method === 'GET' && routePath === '/api/config') {
         ok(response, publicConfig());
         return;
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/boards') {
+      if (request.method === 'GET' && routePath === '/api/boards') {
         ok(response, await service.listBoards());
         return;
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/stats') {
+      if (request.method === 'GET' && routePath === '/api/stats') {
         ok(response, await service.getStats());
         return;
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/posts/latest') {
+      if (request.method === 'GET' && routePath === '/api/health') {
+        ok(response, {
+          ...(await service.getHealth()),
+          security: securityConfigStatus({
+            jwtSecret,
+            adminUsername,
+            adminPassword
+          })
+        });
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/posts/latest') {
         ok(response, await service.listLatestPosts(url.searchParams.get('limit') ?? 10));
         return;
       }
 
-      if (request.method === 'GET' && url.pathname === '/api/boards/hot') {
+      if (request.method === 'GET' && routePath === '/feeds/latest.json') {
+        sendJson(response, 200, jsonFeed(request, await service.listLatestPosts(url.searchParams.get('limit') ?? 20)));
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/feeds/latest.rss') {
+        sendText(
+          response,
+          200,
+          rssFeed(request, await service.listLatestPosts(url.searchParams.get('limit') ?? 20)),
+          'application/rss+xml; charset=utf-8'
+        );
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/boards/hot') {
         ok(response, await service.listHotBoards(url.searchParams.get('limit') ?? 8));
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/pulse') {
+        ok(response, await service.listCampusPulse(url.searchParams.get('limit') ?? 12));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/ai/rewrite') {
+        const body = await readJson(request, 20_000);
+        ok(response, {
+          text: await service.rewriteDraft({
+            body: body.body,
+            ip,
+            posterToken: body.posterToken
+          })
+        });
         return;
       }
 
       let params = match(parts, ['api', 'boards', ':boardSlug', 'threads']);
       if (params && request.method === 'GET') {
-        ok(response, await service.listThreads(params.boardSlug));
+        const paged =
+          url.searchParams.has('page') ||
+          url.searchParams.has('pageSize') ||
+          url.searchParams.has('q') ||
+          url.searchParams.has('search');
+        ok(
+          response,
+          await service.listThreads(params.boardSlug, {
+            paged,
+            page: url.searchParams.get('page'),
+            pageSize: url.searchParams.get('pageSize'),
+            q: url.searchParams.get('q') || url.searchParams.get('search') || ''
+          })
+        );
         return;
       }
       if (params && request.method === 'POST') {
@@ -235,6 +437,9 @@ export function createHttpServer({
             boardSlug: params.boardSlug,
             body: body.body,
             image: body.image,
+            pollOptions: body.pollOptions,
+            options: body.options,
+            deletePassword: body.deletePassword,
             captchaToken: body.captchaToken,
             ip,
             posterToken: body.posterToken
@@ -252,13 +457,27 @@ export function createHttpServer({
 
       params = match(parts, ['api', 'boards', ':boardSlug', 'summary']);
       if (params && request.method === 'POST') {
-        ok(response, { bullets: await service.summarizeBoard(params.boardSlug) });
+        const body = await readJson(request, 20_000);
+        ok(response, { bullets: await service.summarizeBoard(params.boardSlug, { ip, posterToken: body.posterToken }) });
         return;
       }
 
       params = match(parts, ['api', 'threads', ':threadId']);
       if (params && request.method === 'GET') {
-        ok(response, await service.getThread(params.threadId));
+        const paged =
+          url.searchParams.has('commentsPage') ||
+          url.searchParams.has('commentsPageSize') ||
+          url.searchParams.has('page') ||
+          url.searchParams.has('pageSize');
+        ok(
+          response,
+          await service.getThread(params.threadId, {
+            paged,
+            commentsPage: url.searchParams.get('commentsPage') || url.searchParams.get('page'),
+            commentsPageSize: url.searchParams.get('commentsPageSize') || url.searchParams.get('pageSize'),
+            focusGlobalNumber: url.searchParams.get('focusGlobalNumber') || ''
+          })
+        );
         return;
       }
 
@@ -270,6 +489,8 @@ export function createHttpServer({
           await service.createComment({
             threadId: params.threadId,
             body: body.body,
+            options: body.options,
+            deletePassword: body.deletePassword,
             captchaToken: body.captchaToken,
             ip,
             posterToken: body.posterToken
@@ -281,19 +502,56 @@ export function createHttpServer({
 
       params = match(parts, ['api', 'threads', ':threadId', 'summary']);
       if (params && request.method === 'POST') {
-        ok(response, { bullets: await service.summarizeThread(params.threadId) });
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          {
+            bullets: await service.summarizeThread(params.threadId, {
+              ip,
+              posterToken: body.posterToken,
+              sinceGlobalNumber: body.sinceGlobalNumber
+            })
+          }
+        );
         return;
       }
 
       params = match(parts, ['api', 'threads', ':threadId', 'suggestions']);
       if (params && request.method === 'POST') {
-        ok(response, { suggestions: await service.suggestComments(params.threadId) });
+        const body = await readJson(request, 20_000);
+        ok(response, { suggestions: await service.suggestComments(params.threadId, { ip, posterToken: body.posterToken }) });
+        return;
+      }
+
+      params = match(parts, ['api', 'threads', ':threadId', 'poll']);
+      if (params && request.method === 'POST') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.votePoll(params.threadId, {
+            optionId: body.optionId,
+            ip,
+            posterToken: body.posterToken
+          })
+        );
         return;
       }
 
       params = match(parts, ['api', 'posts', ':globalNumber']);
       if (params && request.method === 'GET') {
         ok(response, await service.lookupPost(params.globalNumber));
+        return;
+      }
+      if (params && request.method === 'DELETE') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.deletePost({
+            globalNumber: params.globalNumber,
+            password: body.password,
+            fileOnly: Boolean(body.fileOnly)
+          })
+        );
         return;
       }
       if (params && request.method === 'POST') {
@@ -311,7 +569,7 @@ export function createHttpServer({
         return;
       }
 
-      if (request.method === 'POST' && url.pathname === '/api/admin/login') {
+      if (request.method === 'POST' && routePath === '/api/admin/login') {
         if (!jwtSecret || !adminUsername || !adminPassword) {
           const error = new Error('Chưa cấu hình tài khoản quản trị viên');
           error.statusCode = 503;
@@ -327,27 +585,108 @@ export function createHttpServer({
         return;
       }
 
-      if (url.pathname.startsWith('/api/admin')) {
+      if (routePath.startsWith('/api/admin')) {
         const admin = requireAdmin(request, jwtSecret);
+        const filters = adminFiltersFromSearch(url.searchParams);
 
-        if (request.method === 'GET' && url.pathname === '/api/admin/pending') {
-          ok(response, await service.listPending());
+        if (request.method === 'GET' && routePath === '/api/admin/pending') {
+          ok(response, await service.listPending(filters));
           return;
         }
 
-        if (request.method === 'GET' && url.pathname === '/api/admin/moderation-actions') {
-          ok(response, await service.listModerationActions(url.searchParams.get('limit') ?? 50));
+        if (request.method === 'GET' && routePath === '/api/admin/moderation-actions') {
+          ok(response, await service.listModerationActions(url.searchParams.get('limit') ?? 50, filters));
           return;
         }
 
-        if (request.method === 'GET' && url.pathname === '/api/admin/reports') {
-          ok(response, await service.listReports(url.searchParams.get('limit') ?? 50));
+        if (request.method === 'GET' && routePath === '/api/admin/reports') {
+          ok(response, await service.listReports(url.searchParams.get('limit') ?? 50, filters));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/admin/deleted') {
+          ok(response, await service.listDeleted(url.searchParams.get('limit') ?? 50, filters));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/admin/approved') {
+          ok(response, await service.listApprovedHistory(url.searchParams.get('limit') ?? 50, filters));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/admin/sanctions') {
+          ok(
+            response,
+            await service.listSanctions(url.searchParams.get('limit') ?? 50, {
+              ...filters,
+              kind: url.searchParams.get('kind') || '',
+              status: url.searchParams.get('status') || ''
+            })
+          );
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'posts', ':globalNumber']);
+        if (params && request.method === 'GET') {
+          ok(response, await service.getAdminPostDetail(params.globalNumber));
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'posts', ':globalNumber', 'sanctions']);
+        if (params && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.createSanctionForPost(params.globalNumber, {
+              kind: body.kind,
+              durationMinutes: body.durationMinutes,
+              reason: body.reason,
+              actor: admin.username ?? 'admin'
+            }),
+            201
+          );
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'posts', ':globalNumber', 'notes']);
+        if (params && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.addModeratorNote(params.globalNumber, { note: body.note, actor: admin.username ?? 'admin' }), 201);
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'sanctions', ':id']);
+        if (params && request.method === 'DELETE') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.revokeSanction(params.id, { reason: body.reason, actor: admin.username ?? 'admin' }));
           return;
         }
 
         params = match(parts, ['api', 'admin', 'threads', ':threadId', 'archive']);
         if (params && request.method === 'POST') {
           ok(response, await service.archiveThread(params.threadId, 'manual'));
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'pending', 'bulk']);
+        if (params && request.method === 'POST') {
+          const body = await readJson(request, 40_000);
+          const ids = Array.isArray(body.ids) ? body.ids.slice(0, 50) : [];
+          const action = body.action === 'approve' ? 'approve' : body.action === 'delete' ? 'delete' : '';
+          if (!action || ids.length === 0) {
+            const error = new Error('Yêu cầu bulk moderation không hợp lệ');
+            error.statusCode = 400;
+            throw error;
+          }
+          const results = [];
+          for (const id of ids) {
+            results.push(
+              action === 'approve'
+                ? await service.approvePending(id, { reason: body.reason, actor: admin.username ?? 'admin' })
+                : await service.deletePending(id, { reason: body.reason, actor: admin.username ?? 'admin' })
+            );
+          }
+          ok(response, { action, count: results.length, results });
           return;
         }
 

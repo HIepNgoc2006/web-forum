@@ -1,0 +1,231 @@
+import mongoose from 'mongoose';
+
+import { BOARDS } from './config.js';
+import { EMPTY_STATE, normalizeState } from './forum-store.js';
+
+const MODEL_OPTIONS = {
+  strict: false,
+  versionKey: false,
+  minimize: false
+};
+
+const BOARD_SCHEMA = new mongoose.Schema(
+  {
+    slug: { type: String, required: true, unique: true },
+    name: String,
+    category: String,
+    path: String,
+    description: String
+  },
+  { versionKey: false }
+);
+
+const STATE_META_SCHEMA = new mongoose.Schema(
+  {
+    _id: { type: String, required: true },
+    version: Number,
+    nextGlobalNumber: Number
+  },
+  { versionKey: false }
+);
+
+const KEY_VALUE_SCHEMA = new mongoose.Schema(
+  {
+    _id: { type: String, required: true },
+    value: mongoose.Schema.Types.Mixed
+  },
+  { versionKey: false, minimize: false }
+);
+
+function flexibleSchema(indexes = []) {
+  const schema = new mongoose.Schema({}, MODEL_OPTIONS);
+  for (const index of indexes) {
+    schema.index(index.fields, index.options);
+  }
+  return schema;
+}
+
+function plainDocument(document) {
+  const { _id: _ignored, ...plain } = document;
+  return plain;
+}
+
+function objectToKeyValues(value = {}) {
+  return Object.entries(value).map(([key, entry]) => ({
+    _id: key,
+    value: entry
+  }));
+}
+
+function keyValuesToObject(items = []) {
+  return Object.fromEntries(items.map((item) => [item._id, item.value]));
+}
+
+export function createMongoModels(connection) {
+  const model = (name, schema, collection) =>
+    connection.models[name] ?? connection.model(name, schema, collection);
+
+  return {
+    Board: model('Board', BOARD_SCHEMA, 'boards'),
+    Thread: model(
+      'Thread',
+      flexibleSchema([
+        { fields: { id: 1 }, options: { unique: true } },
+        { fields: { boardSlug: 1, bumpedAt: -1 } },
+        { fields: { globalNumber: 1 } }
+      ]),
+      'threads'
+    ),
+    Comment: model(
+      'Comment',
+      flexibleSchema([
+        { fields: { id: 1 }, options: { unique: true } },
+        { fields: { threadId: 1, globalNumber: 1 } },
+        { fields: { globalNumber: 1 } }
+      ]),
+      'comments'
+    ),
+    ModerationAction: model(
+      'ModerationAction',
+      flexibleSchema([{ fields: { createdAt: -1 } }, { fields: { postId: 1 } }]),
+      'moderationActions'
+    ),
+    Report: model(
+      'Report',
+      flexibleSchema([{ fields: { createdAt: -1 } }, { fields: { status: 1, boardSlug: 1 } }]),
+      'reports'
+    ),
+    Sanction: model(
+      'Sanction',
+      flexibleSchema([{ fields: { fingerprint: 1, expiresAt: 1 } }, { fields: { createdAt: -1 } }]),
+      'sanctions'
+    ),
+    AiUsage: model('AiUsage', KEY_VALUE_SCHEMA, 'aiUsage'),
+    AiSummaryCache: model('AiSummaryCache', KEY_VALUE_SCHEMA, 'aiSummaryCache'),
+    StateMeta: model('StateMeta', STATE_META_SCHEMA, 'stateMeta')
+  };
+}
+
+async function replaceCollection(model, items) {
+  await model.deleteMany({});
+  if (items.length > 0) {
+    await model.insertMany(items, { ordered: true });
+  }
+}
+
+export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {}) {
+  if (!uri) {
+    throw new Error('MONGODB_URI is required when STORE_DRIVER=mongo');
+  }
+
+  let connectionPromise;
+  let queue = Promise.resolve();
+
+  async function getModels() {
+    if (!connectionPromise) {
+      connectionPromise = mongoose.createConnection(uri, dbName ? { dbName } : undefined).asPromise();
+    }
+    return createMongoModels(await connectionPromise);
+  }
+
+  async function ensureBoards(models) {
+    await models.Board.bulkWrite(
+      BOARDS.map((board) => ({
+        updateOne: {
+          filter: { slug: board.slug },
+          update: { $set: board },
+          upsert: true
+        }
+      })),
+      { ordered: true }
+    );
+  }
+
+  return {
+    type: 'mongo',
+
+    async read() {
+      const models = await getModels();
+      await ensureBoards(models);
+      const [meta, threads, comments, moderationActions, reports, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
+        models.StateMeta.findById('global').lean(),
+        models.Thread.find({}).lean(),
+        models.Comment.find({}).lean(),
+        models.ModerationAction.find({}).lean(),
+        models.Report.find({}).lean(),
+        models.Sanction.find({}).lean(),
+        models.AiUsage.find({}).lean(),
+        models.AiSummaryCache.find({}).lean()
+      ]);
+
+      return normalizeState({
+        version: meta?.version ?? EMPTY_STATE.version,
+        nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber,
+        threads: threads.map(plainDocument),
+        comments: comments.map(plainDocument),
+        moderationActions: moderationActions.map(plainDocument),
+        reports: reports.map(plainDocument),
+        sanctions: sanctions.map(plainDocument),
+        aiUsage: keyValuesToObject(aiUsage),
+        aiSummaryCache: keyValuesToObject(aiSummaryCache)
+      });
+    },
+
+    async write(nextState) {
+      queue = queue.then(async () => {
+        const models = await getModels();
+        const normalized = normalizeState(nextState);
+        await ensureBoards(models);
+        await models.StateMeta.updateOne(
+          { _id: 'global' },
+          {
+            $set: {
+              version: normalized.version,
+              nextGlobalNumber: normalized.nextGlobalNumber
+            }
+          },
+          { upsert: true }
+        );
+        await replaceCollection(models.Thread, normalized.threads);
+        await replaceCollection(models.Comment, normalized.comments);
+        await replaceCollection(models.ModerationAction, normalized.moderationActions);
+        await replaceCollection(models.Report, normalized.reports);
+        await replaceCollection(models.Sanction, normalized.sanctions);
+        await replaceCollection(models.AiUsage, objectToKeyValues(normalized.aiUsage));
+        await replaceCollection(models.AiSummaryCache, objectToKeyValues(normalized.aiSummaryCache));
+        return normalizeState(normalized);
+      });
+      return queue;
+    },
+
+    async health() {
+      const models = await getModels();
+      const [threads, comments, reports, sanctions, moderationActions, meta] = await Promise.all([
+        models.Thread.countDocuments(),
+        models.Comment.countDocuments(),
+        models.Report.countDocuments(),
+        models.Sanction.countDocuments(),
+        models.ModerationAction.countDocuments(),
+        models.StateMeta.findById('global').lean()
+      ]);
+      return {
+        type: 'mongo',
+        connected: true,
+        threads,
+        comments,
+        reports,
+        sanctions,
+        moderationActions,
+        nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber
+      };
+    },
+
+    async close() {
+      if (!connectionPromise) {
+        return;
+      }
+      const connection = await connectionPromise;
+      await connection.close();
+    }
+  };
+}

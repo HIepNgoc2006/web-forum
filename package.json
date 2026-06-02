@@ -12,8 +12,11 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "start": "npm --prefix backend start",
     "test": "npm --prefix backend test",
+    "test:e2e": "node scripts/browser-smoke.mjs",
     "build": "npm --prefix frontend run build",
-    "check": "npm --prefix backend run check && npm --prefix frontend run lint"
+    "check": "npm --prefix backend run check && npm --prefix frontend run lint",
+    "release:verify": "npm test && npm run check && npm run build && npm run test:e2e",
+    "migrate:images": "npm --prefix backend run migrate:images --"
   },
   "engines": {
     "node": ">=20"

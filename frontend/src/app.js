@@ -1,24 +1,41 @@
 const state = {
   boards: [],
   boardGroups: [],
+  aiConfigured: false,
   boardSlug: 'confession',
   threadId: '',
+  threadDetail: null,
   threadGlobalNumber: '',
   threadPosterHash: '',
+  threadLastSeenBefore: 0,
+  threadCurrentMaxNumber: 0,
   token: localStorage.getItem('adminToken') || '',
   posterToken: getPosterToken(),
   selectedImage: null,
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,
+  boardPage: 1,
+  boardPageSize: 15,
+  boardSearchTerm: '',
+  boardPageMeta: null,
+  threadCommentPage: 1,
+  threadCommentPageSize: 50,
+  threadCommentPageMeta: null,
   autoUpdate: true,
   autoCountdown: 7,
   autoTimer: null,
+  realtimeSource: null,
+  realtimeContextKey: '',
   boardThreads: [],
   catalogThreads: [],
   catalogSort: 'bump',
   catalogImageSize: 'small',
-  archiveThreads: []
+  catalogFilter: 'all',
+  theme: localStorage.getItem('theme') || 'yotsuba-b',
+  archiveThreads: [],
+  adminTab: 'pending',
+  adminItems: []
 };
 
 function getPosterToken() {
@@ -35,6 +52,150 @@ function getPosterToken() {
   return next;
 }
 
+function threadLastSeenKey(threadId) {
+  return `threadLastSeen:${threadId}`;
+}
+
+function readThreadLastSeen(threadId) {
+  const value = Number(localStorage.getItem(threadLastSeenKey(threadId)) || 0);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+function writeThreadLastSeen(threadId, globalNumber) {
+  const value = Number(globalNumber);
+  if (threadId && Number.isFinite(value) && value > 0) {
+    localStorage.setItem(threadLastSeenKey(threadId), String(Math.floor(value)));
+  }
+}
+
+const watchedThreadsKey = 'watchedThreads';
+const myPostsKey = 'myPosts';
+const hiddenThreadsKey = 'hiddenThreads';
+const hiddenPostsKey = 'hiddenPosts';
+const deletePasswordKey = 'deletePassword';
+const subscribedBoardsKey = 'subscribedBoards';
+const themeKey = 'theme';
+const aiNotConfiguredMessage =
+  'Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.';
+
+function readWatchedThreads() {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(watchedThreadsKey) || '{}');
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+      return {};
+    }
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([threadId, item]) => threadId && item && typeof item === 'object')
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeWatchedThreads(watchedThreads) {
+  localStorage.setItem(watchedThreadsKey, JSON.stringify(watchedThreads));
+}
+
+function isThreadWatched(threadId = state.threadId) {
+  return Boolean(threadId && readWatchedThreads()[threadId]);
+}
+
+function readJsonLocal(key, fallback) {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(key) || '');
+    return parsed && typeof parsed === 'object' ? parsed : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function writeJsonLocal(key, value) {
+  localStorage.setItem(key, JSON.stringify(value));
+}
+
+function readLocalList(key) {
+  return Array.isArray(readJsonLocal(key, [])) ? readJsonLocal(key, []) : [];
+}
+
+function addLocalSetItem(key, value) {
+  const items = new Set(readLocalList(key).map(String));
+  items.add(String(value));
+  writeJsonLocal(key, [...items]);
+}
+
+function defaultDeletePassword() {
+  const current = localStorage.getItem(deletePasswordKey);
+  if (current) {
+    return current;
+  }
+  const next = Math.random().toString(36).slice(2, 10);
+  localStorage.setItem(deletePasswordKey, next);
+  return next;
+}
+
+function draftKey(kind, id) {
+  return `draft:${kind}:${id}`;
+}
+
+function myPosts() {
+  return readLocalList(myPostsKey).filter((item) => item && typeof item === 'object');
+}
+
+function rememberMyPost(post, type) {
+  if (!post?.globalNumber) {
+    return;
+  }
+  const items = myPosts().filter((item) => Number(item.globalNumber) !== Number(post.globalNumber));
+  items.unshift({
+    type,
+    threadId: post.threadId || post.id || state.threadId,
+    boardSlug: post.boardSlug || state.boardSlug,
+    globalNumber: post.globalNumber,
+    preview: plainPreview(post.bodyLines, post.body || 'Không có nội dung').slice(0, 160),
+    createdAt: post.createdAt || new Date().toISOString()
+  });
+  writeJsonLocal(myPostsKey, items.slice(0, 50));
+}
+
+function hiddenThreadIds() {
+  return new Set(readLocalList(hiddenThreadsKey).map(String));
+}
+
+function hiddenPostNumbers() {
+  return new Set(readLocalList(hiddenPostsKey).map(String));
+}
+
+function subscribedBoardSlugs() {
+  return new Set(readLocalList(subscribedBoardsKey).map(String));
+}
+
+function isBoardSubscribed(slug = state.boardSlug) {
+  return subscribedBoardSlugs().has(String(slug));
+}
+
+function toggleBoardSubscription(slug = state.boardSlug) {
+  const items = subscribedBoardSlugs();
+  if (items.has(slug)) {
+    items.delete(slug);
+    showToast('Đã bỏ theo dõi bảng.');
+  } else {
+    items.add(slug);
+    showToast('Đã theo dõi bảng.');
+  }
+  writeJsonLocal(subscribedBoardsKey, [...items]);
+}
+
+function applyTheme(theme = state.theme) {
+  const safeTheme = ['yotsuba-b', 'yotsuba', 'tomorrow'].includes(theme) ? theme : 'yotsuba-b';
+  state.theme = safeTheme;
+  document.body.classList.remove('theme-yotsuba-b', 'theme-yotsuba', 'theme-tomorrow');
+  document.body.classList.add(`theme-${safeTheme}`);
+  localStorage.setItem(themeKey, safeTheme);
+  document.querySelectorAll('[data-theme-select]').forEach((select) => {
+    select.value = safeTheme;
+  });
+}
+
 const els = {
   homeScreen: document.querySelector('#homeScreen'),
   homeBoards: document.querySelector('#homeBoards'),
@@ -42,7 +203,11 @@ const els = {
   homeBoardSearchInput: document.querySelector('#homeBoardSearchInput'),
   popularThreads: document.querySelector('#popularThreads'),
   latestPosts: document.querySelector('#latestPosts'),
+  watchedThreads: document.querySelector('#watchedThreads'),
+  myPosts: document.querySelector('#myPosts'),
+  subscribedBoards: document.querySelector('#subscribedBoards'),
   hotBoards: document.querySelector('#hotBoards'),
+  campusPulse: document.querySelector('#campusPulse'),
   homeStats: document.querySelector('#homeStats'),
   serverStats: document.querySelector('#serverStats'),
   boardNav: document.querySelector('#boardNav'),
@@ -61,6 +226,7 @@ const els = {
   boardCatalogLinkBottom: document.querySelector('#boardCatalogLinkBottom'),
   boardArchiveLinkBottom: document.querySelector('#boardArchiveLinkBottom'),
   threadList: document.querySelector('#threadList'),
+  boardPagination: document.querySelector('#boardPagination'),
   catalogTitle: document.querySelector('#catalogTitle'),
   catalogDescription: document.querySelector('#catalogDescription'),
   catalogSearchInput: document.querySelector('#catalogSearchInput'),
@@ -77,6 +243,9 @@ const els = {
   threadComposer: document.querySelector('#threadComposer'),
   threadForm: document.querySelector('#threadForm'),
   threadBody: document.querySelector('#threadBody'),
+  threadPollOptions: document.querySelector('#threadPollOptions'),
+  threadPrivacyWarning: document.querySelector('#threadPrivacyWarning'),
+  threadRewriteButton: document.querySelector('#threadRewriteButton'),
   threadImage: document.querySelector('#threadImage'),
   threadCaptcha: document.querySelector('#threadCaptcha'),
   imagePreview: document.querySelector('#imagePreview'),
@@ -94,18 +263,33 @@ const els = {
   postReplyToggle: document.querySelector('#postReplyToggle'),
   replyComposer: document.querySelector('#replyComposer'),
   threadDetail: document.querySelector('#threadDetail'),
+  threadPagination: document.querySelector('#threadPagination'),
   commentForm: document.querySelector('#commentForm'),
   commentBody: document.querySelector('#commentBody'),
+  commentPrivacyWarning: document.querySelector('#commentPrivacyWarning'),
   commentCaptcha: document.querySelector('#commentCaptcha'),
   suggestButton: document.querySelector('#suggestButton'),
+  rewriteButton: document.querySelector('#rewriteButton'),
   suggestions: document.querySelector('#suggestions'),
   adminTitle: document.querySelector('#adminTitle'),
   loginForm: document.querySelector('#loginForm'),
   adminUsername: document.querySelector('#adminUsername'),
   adminPassword: document.querySelector('#adminPassword'),
   logoutButton: document.querySelector('#logoutButton'),
+  adminTools: document.querySelector('#adminTools'),
+  adminBoardFilter: document.querySelector('#adminBoardFilter'),
+  adminLabelFilter: document.querySelector('#adminLabelFilter'),
+  adminTimeFilter: document.querySelector('#adminTimeFilter'),
+  adminRefresh: document.querySelector('#adminRefresh'),
+  adminExport: document.querySelector('#adminExport'),
+  adminBulkBar: document.querySelector('#adminBulkBar'),
+  adminSelectAll: document.querySelector('#adminSelectAll'),
+  adminBulkApprove: document.querySelector('#adminBulkApprove'),
+  adminBulkDelete: document.querySelector('#adminBulkDelete'),
   pendingList: document.querySelector('#pendingList'),
+  reportSection: document.querySelector('#reportSection'),
   reportList: document.querySelector('#reportList'),
+  moderationSection: document.querySelector('#moderationSection'),
   moderationActions: document.querySelector('#moderationActions'),
   toast: document.querySelector('#toast'),
   refPreview: document.querySelector('#refPreview'),
@@ -115,9 +299,16 @@ const els = {
   quickReplyClose: document.querySelector('#quickReplyClose'),
   quickReplyForm: document.querySelector('#quickReplyForm'),
   quickReplyBody: document.querySelector('#quickReplyBody'),
+  quickReplyPrivacyWarning: document.querySelector('#quickReplyPrivacyWarning'),
   quickReplyCaptcha: document.querySelector('#quickReplyCaptcha'),
   quickReplyCaptchaButton: document.querySelector('#quickReplyCaptchaButton'),
-  quickReplyFileName: document.querySelector('#quickReplyFileName')
+  quickReplyFileName: document.querySelector('#quickReplyFileName'),
+  threadDeletePassword: document.querySelector('#threadDeletePassword'),
+  commentDeletePassword: document.querySelector('#commentDeletePassword'),
+  quickReplyDeletePassword: document.querySelector('#quickReplyDeletePassword'),
+  deletePasswordInput: document.querySelector('#deletePasswordInput'),
+  deleteFileOnly: document.querySelector('#deleteFileOnly'),
+  deletePostButton: document.querySelector('#deletePostButton')
 };
 
 function showToast(message) {
@@ -243,6 +434,79 @@ function escapeHtml(value = '') {
   });
 }
 
+const privacyRiskRules = [
+  {
+    label: 'email',
+    pattern: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
+  },
+  {
+    label: 'số điện thoại',
+    pattern: /(?:^|[^\d])(?:\+?84|0)(?:[\s.-]?\d){8,10}(?=$|[^\d])/
+  },
+  {
+    label: 'mã sinh viên',
+    pattern: /(?:^|\s)(?:mssv|mã sinh viên|ma sinh vien|student id)\s*[:#-]?\s*[A-Z0-9]{5,}(?=$|\s|[.,;!?])/i
+  },
+  {
+    label: 'lớp học',
+    pattern: /(?:^|\s)(?:lớp|lop|class)\s*[:#-]?\s*[A-Z0-9._-]{3,}(?=$|\s|[.,;!?])/i
+  },
+  {
+    label: 'tên thật',
+    pattern:
+      /(?:^|\s)(?:tên\s+(?:mình|tôi|bạn ấy|nó)\s+là|mình\s+tên\s+là|bạn ấy\s+tên\s+là|người đó\s+tên\s+là)\s+[\p{L}]+(?:\s+[\p{L}]+){1,3}/iu
+  }
+];
+
+const rumorFrictionRules = [
+  {
+    label: 'thông tin chưa kiểm chứng',
+    pattern: /(?:tin đồn|tin don|nghe nói|nghe noi|đồn là|don la|chưa kiểm chứng|chua kiem chung|bóc phốt|boc phot)/i
+  },
+  {
+    label: 'cáo buộc cá nhân',
+    pattern: /(?:lừa đảo|lua dao|ăn cắp|an cap|quấy rối|quay roi|ngoại tình|ngoai tinh|đánh người|danh nguoi|scam|biến thái|bien thai)/i
+  }
+];
+
+function scanDraftRisks(text = '') {
+  const content = String(text).normalize('NFC');
+  const privacyRisks = privacyRiskRules.filter((rule) => rule.pattern.test(content)).map((rule) => rule.label);
+  const rumorRisks = rumorFrictionRules.filter((rule) => rule.pattern.test(content)).map((rule) => rule.label);
+  return { privacyRisks, rumorRisks, risks: [...privacyRisks, ...rumorRisks] };
+}
+
+function updatePrivacyWarning(text, box) {
+  if (!box) {
+    return [];
+  }
+  const { privacyRisks, rumorRisks, risks } = scanDraftRisks(text);
+  if (!risks.length) {
+    box.textContent = '';
+    box.classList.add('hidden');
+    return risks;
+  }
+  const hasRumorRisk = rumorRisks.length > 0;
+  const detail = privacyRisks.length
+    ? 'Hãy sửa trước khi đăng nếu đây là thông tin thật.'
+    : 'Hãy viết lại trung lập hoặc thêm ngữ cảnh nếu đây chỉ là tin đồn/cáo buộc.';
+  box.innerHTML = `<strong>${hasRumorRisk ? 'Chưa kiểm chứng:' : 'Cảnh báo riêng tư:'}</strong> Có thể chứa ${risks
+    .map((risk) => escapeHtml(risk))
+    .join(', ')}. ${detail}`;
+  box.classList.remove('hidden');
+  return risks;
+}
+
+function confirmPrivacyBeforeSubmit(text, box) {
+  const risks = updatePrivacyWarning(text, box);
+  if (!risks.length) {
+    return true;
+  }
+  return window.confirm(
+    `Bài viết có thể chứa ${risks.join(', ')}. Hãy sửa nếu có thông tin cá nhân hoặc cáo buộc chưa kiểm chứng. Bạn vẫn muốn gửi nội dung này?`
+  );
+}
+
 function renderBoards() {
   els.boardNav.innerHTML = state.boards
     .map(
@@ -252,9 +516,22 @@ function renderBoards() {
     .join('');
 }
 
+function syncBoardSubscriptionButtons() {
+  const label = isBoardSubscribed(state.boardSlug) ? 'Bỏ theo dõi bảng' : 'Theo dõi bảng';
+  document.querySelectorAll('[data-toggle-board-subscription]').forEach((button) => {
+    button.textContent = label;
+  });
+}
+
 function openThreadComposer({ focus = true } = {}) {
   els.threadComposer.classList.remove('hidden');
   els.startThreadButton.classList.add('hidden');
+  els.threadDeletePassword.value ||= defaultDeletePassword();
+  const savedDraft = localStorage.getItem(draftKey('thread', state.boardSlug));
+  if (savedDraft && !els.threadBody.value) {
+    els.threadBody.value = savedDraft;
+    updatePrivacyWarning(els.threadBody.value, els.threadPrivacyWarning);
+  }
   if (focus) {
     window.setTimeout(() => els.threadBody.focus(), 0);
   }
@@ -269,6 +546,7 @@ function syncReplyComposer() {
   const canReply = !state.threadIsArchived;
   els.replyComposer.classList.toggle('hidden', !state.replyComposerOpen || !canReply);
   els.postReplyToggle.classList.toggle('hidden', state.replyComposerOpen || !canReply);
+  els.commentDeletePassword.value ||= defaultDeletePassword();
   if (!state.replyComposerOpen || !canReply) {
     els.suggestions.classList.add('hidden');
   }
@@ -281,6 +559,11 @@ function openReplyComposer({ focus = true } = {}) {
   }
   state.replyComposerOpen = true;
   syncReplyComposer();
+  const savedDraft = localStorage.getItem(draftKey('comment', state.threadId));
+  if (savedDraft && !els.commentBody.value) {
+    els.commentBody.value = savedDraft;
+    updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
+  }
   if (focus) {
     window.setTimeout(() => els.commentBody.focus(), 0);
   }
@@ -323,6 +606,123 @@ function boardPostCount(threads = []) {
   return threads.reduce((total, thread) => total + 1 + Number(thread.replyCount || 0), 0);
 }
 
+function watchedThreadEntryFromDetail(detail, existing = {}, { markSeen = false } = {}) {
+  const board = state.boards.find((item) => item.slug === detail.thread.boardSlug);
+  const posts = [detail.thread, ...(detail.comments || [])];
+  const currentMaxNumber = detail.commentPage?.currentMaxGlobalNumber || maxThreadPostNumber(detail);
+  const fileCount = posts.filter((post) => post.image).length;
+  return {
+    threadId: detail.thread.id,
+    boardSlug: detail.thread.boardSlug,
+    boardPath: board?.path || `/${detail.thread.boardSlug}/`,
+    boardName: board?.name || detail.thread.boardSlug,
+    globalNumber: detail.thread.globalNumber,
+    preview: plainPreview(detail.thread.bodyLines, 'Không có nội dung').slice(0, 180),
+    lastSeen: markSeen ? currentMaxNumber : Number(existing.lastSeen || 0),
+    maxNumber: currentMaxNumber,
+    replyCount: detail.thread.replyCount ?? detail.comments.length,
+    fileCount: Math.max(Number(existing.fileCount || 0), fileCount),
+    isArchived: Boolean(detail.thread.isArchived),
+    updatedAt: detail.thread.bumpedAt || detail.thread.createdAt || new Date().toISOString()
+  };
+}
+
+function syncWatchedThreadFromDetail(detail) {
+  if (!isThreadWatched(detail.thread.id)) {
+    return;
+  }
+  const watchedThreads = readWatchedThreads();
+  watchedThreads[detail.thread.id] = watchedThreadEntryFromDetail(detail, watchedThreads[detail.thread.id], {
+    markSeen: true
+  });
+  writeWatchedThreads(watchedThreads);
+}
+
+function removeWatchedThread(threadId) {
+  const watchedThreads = readWatchedThreads();
+  delete watchedThreads[threadId];
+  writeWatchedThreads(watchedThreads);
+}
+
+function toggleCurrentThreadWatch() {
+  if (!state.threadDetail?.thread?.id) {
+    return;
+  }
+
+  const watchedThreads = readWatchedThreads();
+  const threadId = state.threadDetail.thread.id;
+  if (watchedThreads[threadId]) {
+    delete watchedThreads[threadId];
+    writeWatchedThreads(watchedThreads);
+    showToast('Đã bỏ theo dõi chủ đề.');
+  } else {
+    watchedThreads[threadId] = watchedThreadEntryFromDetail(state.threadDetail, {}, { markSeen: true });
+    writeWatchedThreads(watchedThreads);
+    showToast('Đã theo dõi chủ đề.');
+  }
+
+  els.threadToolbarTop.innerHTML = threadToolbarHtml(state.threadDetail, 'top');
+  els.threadToolbarBottom.innerHTML = threadToolbarHtml(state.threadDetail, 'bottom');
+}
+
+function sortWatchedThreads(left, right) {
+  const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0);
+  if (unreadDelta !== 0) {
+    return unreadDelta;
+  }
+  return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''));
+}
+
+async function loadWatchedThreadSummaries() {
+  const watchedEntries = Object.values(readWatchedThreads());
+  if (!watchedEntries.length) {
+    return [];
+  }
+
+  const results = await Promise.all(
+    watchedEntries.map(async (entry) => {
+      try {
+        const detail = await api(`/api/threads/${encodeURIComponent(entry.threadId)}`);
+        const posts = [detail.thread, ...(detail.comments || [])];
+        const unreadCount = posts.filter((post) => Number(post.globalNumber) > Number(entry.lastSeen || 0)).length;
+        return {
+          ...watchedThreadEntryFromDetail(detail, entry),
+          unreadCount,
+          unavailable: false
+        };
+      } catch {
+        return {
+          ...entry,
+          unreadCount: 0,
+          unavailable: true
+        };
+      }
+    })
+  );
+
+  const watchedThreads = readWatchedThreads();
+  results.forEach((item) => {
+    if (!item.unavailable) {
+      watchedThreads[item.threadId] = {
+        threadId: item.threadId,
+        boardSlug: item.boardSlug,
+        boardPath: item.boardPath,
+        boardName: item.boardName,
+        globalNumber: item.globalNumber,
+        preview: item.preview,
+        lastSeen: item.lastSeen,
+        maxNumber: item.maxNumber,
+        replyCount: item.replyCount,
+        fileCount: item.fileCount,
+        isArchived: item.isArchived,
+        updatedAt: item.updatedAt
+      };
+    }
+  });
+  writeWatchedThreads(watchedThreads);
+  return results.sort(sortWatchedThreads);
+}
+
 async function loadHomeThreadsByBoard() {
   const entries = await Promise.all(
     state.boards.map(async (board) => {
@@ -336,10 +736,11 @@ async function loadHomeThreadsByBoard() {
   return Object.fromEntries(entries);
 }
 
-function renderHomeBoards(threadsByBoard = {}) {
+function renderHomeBoards(threadsByBoard = {}, stats = {}) {
   const rows = homeBoardList()
     .map((board) => {
       const postCount = boardPostCount(threadsByBoard[board.slug]);
+      const boardUsers = Number(stats.boardUsers?.[board.slug] || 0);
       return `
         <tr>
           <td class="portal-board-icon-cell"><span class="board-row-icon" aria-hidden="true"></span></td>
@@ -349,7 +750,7 @@ function renderHomeBoards(threadsByBoard = {}) {
             </a>
           </td>
           <td class="portal-board-desc-cell">${escapeHtml(board.description)}</td>
-          <td class="portal-board-number-cell">0</td>
+          <td class="portal-board-number-cell">${boardUsers.toLocaleString()}</td>
           <td class="portal-board-number-cell">${postCount.toLocaleString()}</td>
         </tr>
       `;
@@ -410,7 +811,7 @@ function renderPopularThreads(threads) {
           <strong>${board?.name || thread.boardSlug}</strong>
           ${
             thread.image
-              ? `<img src="${thread.image.dataUrl}" alt="${thread.image.name}">`
+              ? `<img src="${escapeHtml(imageSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}">`
               : `<span class="popular-placeholder">${initials}</span>`
           }
           <span>${title}${title.length >= 120 ? '...' : ''}</span>
@@ -452,6 +853,125 @@ function renderLatestPosts(posts) {
     .join('');
 }
 
+function renderWatchedThreads(watchedThreads) {
+  if (!watchedThreads.length) {
+    els.watchedThreads.innerHTML =
+      '<p class="latest-empty">Chưa theo dõi chủ đề nào. Vào một thread và bấm [Theo dõi].</p>';
+    return;
+  }
+
+  els.watchedThreads.innerHTML = watchedThreads
+    .map((item) => {
+      const boardLabel = item.boardPath || `/${item.boardSlug || '?'}/`;
+      const preview = item.unavailable
+        ? 'Chủ đề không còn truy cập được hoặc đã bị xóa.'
+        : item.preview || 'Không có nội dung';
+      const href = item.unavailable ? '#home' : `#thread/${encodeURIComponent(item.threadId)}`;
+      const unreadBadge = item.unreadCount
+        ? `<span class="watch-unread">+${Number(item.unreadCount).toLocaleString()} mới</span>`
+        : '<span class="watch-seen">đã đọc</span>';
+      const stats = item.unavailable
+        ? '<span class="watch-status">không khả dụng</span>'
+        : `<span>${Number(item.replyCount || 0).toLocaleString()} trả lời</span><span>${Number(
+            item.fileCount || 0
+          ).toLocaleString()} tệp</span>`;
+
+      return `
+        <div class="watch-item ${item.unavailable ? 'watch-item-unavailable' : ''}">
+          <a class="watch-thread-link" href="${href}">
+            <span class="watch-board">${escapeHtml(boardLabel)}</span>
+            <span class="watch-number">No.${escapeHtml(item.globalNumber || '?')}</span>
+            ${unreadBadge}
+            <span class="watch-preview">${escapeHtml(preview)}${preview.length >= 180 ? '...' : ''}</span>
+            <span class="watch-stats">${stats}</span>
+          </a>
+          <button class="link-button watch-remove" data-unwatch-thread="${escapeHtml(item.threadId)}" type="button">[Bỏ]</button>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function renderMyPosts() {
+  const items = myPosts();
+  if (!items.length) {
+    els.myPosts.innerHTML = '<p class="latest-empty">Chưa có bài nào được ghi nhớ trên trình duyệt này.</p>';
+    return;
+  }
+
+  els.myPosts.innerHTML = items
+    .slice(0, 10)
+    .map((item) => {
+      const href = `#thread/${encodeURIComponent(item.threadId)}?p=${encodeURIComponent(item.globalNumber)}`;
+      const type = item.type === 'comment' ? 'Phản hồi' : 'Chủ đề';
+      const preview = item.preview || 'Không có nội dung';
+      return `
+        <div class="watch-item">
+          <a class="watch-thread-link" href="${href}">
+            <span class="watch-board">/${escapeHtml(item.boardSlug || '?')}/</span>
+            <span class="watch-number">No.${escapeHtml(item.globalNumber)}</span>
+            <span class="watch-seen">${type}</span>
+            <span class="watch-preview">${escapeHtml(preview)}${preview.length >= 160 ? '...' : ''}</span>
+            <span class="watch-stats">${formatPostDate(item.createdAt)}</span>
+          </a>
+        </div>
+      `;
+    })
+    .join('');
+}
+
+function renderSubscribedBoards() {
+  const slugs = subscribedBoardSlugs();
+  const boards = state.boards.filter((board) => slugs.has(board.slug));
+  if (!boards.length) {
+    els.subscribedBoards.innerHTML = '<p class="latest-empty">Chưa theo dõi bảng nào. Vào board và bấm [Theo dõi bảng].</p>';
+    return;
+  }
+
+  els.subscribedBoards.innerHTML = `
+    <table class="hot-board-table">
+      <thead>
+        <tr>
+          <th scope="col">Bảng</th>
+          <th scope="col">Mô tả</th>
+          <th scope="col">Mở</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${boards
+          .map(
+            (board) => `
+              <tr>
+                <td><a href="#board/${board.slug}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</a></td>
+                <td>${escapeHtml(board.description)}</td>
+                <td><a href="#catalog/${board.slug}">Danh mục</a></td>
+              </tr>
+            `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function pageControlsHtml(meta, actionName) {
+  if (!meta || Number(meta.totalPages || 1) <= 1) {
+    return '';
+  }
+  const page = Number(meta.page || 1);
+  const totalPages = Number(meta.totalPages || 1);
+  return `
+    <span>Trang ${page}/${totalPages}</span>
+    [<button class="link-button" data-page-action="${actionName}" data-page="${page - 1}" type="button" ${
+      page <= 1 ? 'disabled' : ''
+    }>Trước</button>]
+    [<button class="link-button" data-page-action="${actionName}" data-page="${page + 1}" type="button" ${
+      page >= totalPages ? 'disabled' : ''
+    }>Sau</button>]
+    <span>${Number(meta.total || 0).toLocaleString()} mục</span>
+  `;
+}
+
 function renderHotBoards(boards) {
   if (!boards.length) {
     els.hotBoards.innerHTML = '<p class="latest-empty">Chưa có bảng nào nóng trong 24 giờ qua.</p>';
@@ -490,6 +1010,39 @@ function renderHotBoards(boards) {
   `;
 }
 
+function renderCampusPulse(items) {
+  if (!items.length) {
+    els.campusPulse.innerHTML = '<p class="latest-empty">Chưa đủ dữ liệu công khai trong 24 giờ qua.</p>';
+    return;
+  }
+  els.campusPulse.innerHTML = `
+    <table class="hot-board-table">
+      <thead>
+        <tr>
+          <th scope="col">Từ khóa</th>
+          <th scope="col">Lần nhắc</th>
+          <th scope="col">Bảng</th>
+          <th scope="col">Mới nhất</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${items
+          .map(
+            (item) => `
+              <tr>
+                <td>${escapeHtml(item.keyword)}</td>
+                <td>${item.count}</td>
+                <td>${item.boardCount}</td>
+                <td>${escapeHtml(item.latestActivityAt ? formatPostDate(item.latestActivityAt) : '-')}</td>
+              </tr>
+            `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
 function renderStats(stats) {
   els.homeStats.innerHTML = `
     <span><strong>Tổng bài viết:</strong> ${stats.totalPosts.toLocaleString()}</span>
@@ -516,19 +1069,22 @@ function moderationActionText(action) {
   return (
     {
       'ai:moderate': 'AI kiểm duyệt',
-      'admin:approve': 'Admin duyệt',
-      'admin:delete': 'Admin xóa'
+      'admin:approve': 'Quản trị viên duyệt',
+      'admin:delete': 'Quản trị viên xóa',
+      'admin:note': 'Ghi chú',
+      'admin:cooldown': 'Làm chậm',
+      'admin:ban': 'Tạm khóa',
+      'admin:unsanction': 'Gỡ khóa'
     }[action] || action
   );
 }
 
-function renderModerationActions(actions) {
+function moderationActionsHtml(actions) {
   if (!actions.length) {
-    els.moderationActions.innerHTML = '<p class="muted">Chưa có nhật ký kiểm duyệt.</p>';
-    return;
+    return '<p class="muted">Chưa có nhật ký kiểm duyệt.</p>';
   }
 
-  els.moderationActions.innerHTML = `
+  return `
     <table class="moderation-log-table">
       <thead>
         <tr>
@@ -560,21 +1116,20 @@ function renderModerationActions(actions) {
   `;
 }
 
-function renderReports(reports) {
+function reportsHtml(reports) {
   if (!reports.length) {
-    els.reportList.innerHTML = '<p class="muted">Chưa có báo cáo nào.</p>';
-    return;
+    return '<p class="muted">Chưa có báo cáo nào.</p>';
   }
 
-  els.reportList.innerHTML = `
+  return `
     <table class="moderation-log-table">
       <thead>
         <tr>
           <th>Thời gian</th>
           <th>Bài</th>
-          <th>Loại</th>
           <th>Lý do</th>
           <th>Người báo cáo</th>
+          <th></th>
         </tr>
       </thead>
       <tbody>
@@ -584,9 +1139,9 @@ function renderReports(reports) {
               <tr>
                 <td>${formatPostDate(report.createdAt)}</td>
                 <td>${escapeHtml(report.boardSlug)} / No.${report.globalNumber}</td>
-                <td>${report.postType === 'thread' ? 'Chủ đề' : 'Bình luận'}</td>
                 <td>${escapeHtml(report.reason || '-')}</td>
                 <td>${escapeHtml(posterId({ posterHash: report.reporterHash }))}</td>
+                <td><button class="ghost-button" data-admin-detail="${report.globalNumber}" type="button">[Chi tiết]</button></td>
               </tr>
             `
           )
@@ -596,19 +1151,287 @@ function renderReports(reports) {
   `;
 }
 
+function deletedPostsHtml(posts) {
+  if (!posts.length) {
+    return '<p class="muted">Chưa có bài đã xóa.</p>';
+  }
+
+  return posts
+    .map(
+      (post) => `
+        <article class="pending-item" data-id="${post.id}">
+          <div class="post-meta">
+            <span>${post.type === 'thread' ? 'chủ đề' : 'bình luận'}</span>
+            <span>No.${post.globalNumber}</span>
+            <span>${escapeHtml(post.boardSlug)}</span>
+            <span>Xóa: ${escapeHtml(post.deleteReason || '-')}</span>
+          </div>
+          <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
+          <div class="pending-actions">
+            <button class="ghost-button" data-admin-detail="${post.globalNumber}" type="button">[Chi tiết]</button>
+            <button class="ghost-button" data-admin-note="${post.globalNumber}" type="button">[Ghi chú]</button>
+          </div>
+        </article>
+      `
+    )
+    .join('');
+}
+
+function sanctionsHtml(sanctions) {
+  if (!sanctions.length) {
+    return '<p class="muted">Chưa có lệnh làm chậm/tạm khóa.</p>';
+  }
+
+  return `
+    <table class="moderation-log-table">
+      <thead>
+        <tr>
+          <th>Tạo lúc</th>
+          <th>Hết hạn</th>
+          <th>Loại</th>
+          <th>Nguồn</th>
+          <th>Dấu vết</th>
+          <th>Lý do</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${sanctions
+          .map(
+            (sanction) => `
+              <tr>
+                <td>${formatPostDate(sanction.createdAt)}</td>
+                <td>${formatPostDate(sanction.expiresAt)}</td>
+                <td>${sanction.kind === 'ban' ? 'Tạm khóa' : 'Làm chậm'}</td>
+                <td>${escapeHtml(sanction.boardSlug)} / No.${sanction.sourceGlobalNumber}</td>
+                <td>${escapeHtml(sanction.fingerprintPreview || '-')}</td>
+                <td>${escapeHtml(sanction.reason || '-')}</td>
+                <td>${sanction.revokedAt ? 'Đã gỡ' : `<button class="danger-button" data-admin-revoke-sanction="${sanction.id}" type="button">Gỡ</button>`}</td>
+              </tr>
+            `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
+function pendingPostsHtml(posts) {
+  if (!posts.length) {
+    return '<p class="muted">Hàng đợi trống.</p>';
+  }
+
+  return posts
+    .map(
+      (post) => `
+        <article class="pending-item" data-id="${post.id}" data-global-number="${post.globalNumber}">
+          <label class="admin-select-row">
+            <input data-admin-select="${post.id}" type="checkbox" />
+            <span>Chọn</span>
+          </label>
+          <div class="post-meta">
+            <span>${post.type === 'thread' ? 'chủ đề' : 'bình luận'}</span>
+            <span>No.${post.globalNumber}</span>
+            <span>${escapeHtml(post.boardSlug)}</span>
+            <span>AI:${escapeHtml(post.moderationLabels.map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus))}</span>
+          </div>
+          <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
+          <div class="pending-actions">
+            <button class="ghost-button" data-admin-detail="${post.globalNumber}" type="button">[Chi tiết]</button>
+            <button class="ghost-button" data-admin-note="${post.globalNumber}" type="button">[Ghi chú]</button>
+            <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
+            <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
+            <button class="primary-button" data-action="approve" type="button">Duyệt</button>
+            <button class="danger-button" data-action="delete" type="button">Xóa</button>
+          </div>
+        </article>
+      `
+    )
+    .join('');
+}
+
+function adminPostDetailHtml(detail) {
+  const post = detail.post;
+  const actions = detail.actions || [];
+  const reports = detail.reports || [];
+  const sanctions = detail.sanctions || [];
+  return `
+    <div class="admin-detail">
+      <div class="post-meta">
+        <span>${post.type === 'thread' ? 'chủ đề' : 'bình luận'}</span>
+        <span>No.${post.globalNumber}</span>
+        <span>${escapeHtml(post.boardSlug)}</span>
+        <span>${escapeHtml((post.moderationLabels || []).map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus))}</span>
+      </div>
+      ${detail.thread ? `<p class="muted">Ngữ cảnh thread: No.${detail.thread.globalNumber} · ${escapeHtml(detail.thread.boardSlug)}</p>` : ''}
+      <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
+      <div class="pending-actions">
+        <button class="ghost-button" data-admin-note="${post.globalNumber}" type="button">[Ghi chú]</button>
+        <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
+        <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
+      </div>
+      <h3>Báo cáo</h3>
+      ${reports.length ? reportsHtml(reports) : '<p class="muted">Không có báo cáo.</p>'}
+      <h3>Làm chậm/Tạm khóa</h3>
+      ${sanctions.length ? sanctionsHtml(sanctions) : '<p class="muted">Không có lệnh làm chậm/tạm khóa.</p>'}
+      <h3>Nhật ký</h3>
+      ${actions.length ? moderationActionsHtml(actions) : '<p class="muted">Không có nhật ký.</p>'}
+    </div>
+  `;
+}
+
+function historyActionsHtml(actions) {
+  return moderationActionsHtml(actions);
+}
+
+function adminQueryString() {
+  const params = new URLSearchParams();
+  if (els.adminBoardFilter.value) {
+    params.set('boardSlug', els.adminBoardFilter.value);
+  }
+  if (els.adminLabelFilter.value) {
+    params.set('label', els.adminLabelFilter.value);
+  }
+  if (els.adminTimeFilter.value) {
+    const since = new Date(Date.now() - (els.adminTimeFilter.value === '24h' ? 24 : 24 * 7) * 60 * 60 * 1000);
+    params.set('since', since.toISOString());
+  }
+  return params.toString();
+}
+
+function adminEndpoint() {
+  const query = adminQueryString();
+  const suffix = query ? `?${query}` : '';
+  if (state.adminTab === 'reports') {
+    return `/api/admin/reports${query ? `?limit=100&${query}` : '?limit=100'}`;
+  }
+  if (state.adminTab === 'approved') {
+    return `/api/admin/approved${query ? `?limit=100&${query}` : '?limit=100'}`;
+  }
+  if (state.adminTab === 'deleted') {
+    return `/api/admin/deleted${query ? `?limit=100&${query}` : '?limit=100'}`;
+  }
+  if (state.adminTab === 'sanctions') {
+    return `/api/admin/sanctions${query ? `?limit=100&${query}&status=active` : '?limit=100&status=active'}`;
+  }
+  if (state.adminTab === 'audit') {
+    return `/api/admin/moderation-actions${query ? `?limit=100&${query}` : '?limit=100'}`;
+  }
+  return `/api/admin/pending${suffix}`;
+}
+
+function renderAdminTabs() {
+  document.querySelectorAll('[data-admin-tab]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.adminTab === state.adminTab);
+  });
+  els.adminBulkBar.classList.toggle('hidden', state.adminTab !== 'pending');
+  els.reportSection.classList.toggle('hidden', true);
+  els.moderationSection.classList.toggle('hidden', true);
+}
+
+function renderAdminItems(items) {
+  state.adminItems = items;
+  renderAdminTabs();
+  if (state.adminTab === 'pending') {
+    els.pendingList.innerHTML = pendingPostsHtml(items);
+  } else if (state.adminTab === 'reports') {
+    els.pendingList.innerHTML = `<div class="moderation-log">${reportsHtml(items)}</div>`;
+  } else if (state.adminTab === 'deleted') {
+    els.pendingList.innerHTML = deletedPostsHtml(items);
+  } else if (state.adminTab === 'sanctions') {
+    els.pendingList.innerHTML = `<div class="moderation-log">${sanctionsHtml(items)}</div>`;
+  } else {
+    els.pendingList.innerHTML = `<div class="moderation-log">${historyActionsHtml(items)}</div>`;
+  }
+  if (els.adminSelectAll) {
+    els.adminSelectAll.checked = false;
+  }
+}
+
+function csvEscape(value = '') {
+  const text = String(value ?? '');
+  return `"${text.replaceAll('"', '""')}"`;
+}
+
+function exportAdminCsv() {
+  const rows = [['tab', 'time', 'board', 'globalNumber', 'typeOrAction', 'reason']];
+  for (const item of state.adminItems) {
+    rows.push([
+      state.adminTab,
+      item.createdAt || item.deletedAt || '',
+      item.boardSlug || '',
+      item.globalNumber || item.sourceGlobalNumber || '',
+      item.type || item.action || item.kind || '',
+      item.reason || item.deleteReason || ''
+    ]);
+  }
+  const csv = rows.map((row) => row.map(csvEscape).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `36chan-admin-${state.adminTab}.csv`;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function syncAdminBoardFilter() {
+  els.adminBoardFilter.innerHTML = `
+    <option value="">Tất cả</option>
+    ${state.boards.map((board) => `<option value="${board.slug}">${board.path} ${board.name}</option>`).join('')}
+  `;
+}
+
+async function loadAdminDetail(globalNumber, host) {
+  const detail = await api(`/api/admin/posts/${globalNumber}`);
+  const container = host.querySelector('.admin-detail-host') || document.createElement('div');
+  container.className = 'admin-detail-host';
+  container.innerHTML = adminPostDetailHtml(detail);
+  host.appendChild(container);
+}
+
+function selectedPendingIds() {
+  return [...document.querySelectorAll('[data-admin-select]:checked')].map((input) => input.dataset.adminSelect);
+}
+
+async function bulkModerate(action) {
+  const ids = selectedPendingIds();
+  if (!ids.length) {
+    showToast('Chưa chọn bài nào.');
+    return;
+  }
+  const reason = window.prompt(action === 'approve' ? 'Lý do duyệt hàng loạt:' : 'Lý do xóa hàng loạt:', '') || '';
+  const ok = window.confirm(action === 'approve' ? `Duyệt ${ids.length} bài đã chọn?` : `Xóa ${ids.length} bài đã chọn?`);
+  if (!ok) {
+    return;
+  }
+  await api('/api/admin/pending/bulk', {
+    method: 'POST',
+    body: JSON.stringify({ action, ids, reason })
+  });
+  showToast(action === 'approve' ? 'Đã duyệt hàng loạt.' : 'Đã xóa hàng loạt.');
+  await loadAdmin();
+}
+
 async function loadHome() {
   setScreen('home');
   renderBoards();
-  const [threadsByBoard, latestPosts, hotBoards, stats] = await Promise.all([
+  const [threadsByBoard, latestPosts, watchedThreads, hotBoards, campusPulse, stats] = await Promise.all([
     loadHomeThreadsByBoard(),
     api('/api/posts/latest?limit=10'),
+    loadWatchedThreadSummaries(),
     api('/api/boards/hot?limit=8'),
+    api('/api/pulse?limit=12'),
     api('/api/stats')
   ]);
-  renderHomeBoards(threadsByBoard);
+  renderHomeBoards(threadsByBoard, stats);
   renderPopularThreads(popularThreadsFrom(threadsByBoard));
   renderLatestPosts(latestPosts);
+  renderWatchedThreads(watchedThreads);
+  renderMyPosts();
+  renderSubscribedBoards();
   renderHotBoards(hotBoards);
+  renderCampusPulse(campusPulse);
   renderStats(stats);
 }
 
@@ -672,11 +1495,15 @@ function imageInfoText(image = {}) {
   return size;
 }
 
+function imageSrc(image = {}) {
+  return image.url || image.dataUrl || '';
+}
+
 function fileTextHtml(image) {
   const name = escapeHtml(image?.name || 'tai-len');
-  const dataUrl = escapeHtml(image?.dataUrl || '');
+  const src = escapeHtml(imageSrc(image));
   const info = escapeHtml(imageInfoText(image));
-  return `Tệp: <a href="${dataUrl}" target="_blank" rel="noopener">${name}</a> (${info})`;
+  return `Tệp: <a href="${src}" target="_blank" rel="noopener">${name}</a> (${info})`;
 }
 
 function imageHtml(post) {
@@ -685,12 +1512,12 @@ function imageHtml(post) {
   }
 
   const name = escapeHtml(post.image.name || 'tai-len');
-  const dataUrl = escapeHtml(post.image.dataUrl || '');
+  const src = escapeHtml(imageSrc(post.image));
   return `
     <div class="thread-thumb-wrap">
       <div class="file-text">${fileTextHtml(post.image)}</div>
       <button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${name}">
-        <img class="post-image" src="${dataUrl}" alt="${name}">
+        <img class="post-image" src="${src}" alt="${name}">
       </button>
     </div>
   `;
@@ -721,8 +1548,7 @@ function meta(post, options = {}) {
   const isOpReply =
     opNumber > 0 &&
     Number(post.globalNumber) !== opNumber &&
-    options.opPosterHash &&
-    post.posterHash === options.opPosterHash;
+    (post.isOp || (options.opPosterHash && post.posterHash === options.opPosterHash));
   const opMarker = isOpReply ? '<span class="op-post-marker">(OP)</span>' : '';
   const posterIdentity = canReply
     ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
@@ -742,6 +1568,20 @@ function meta(post, options = {}) {
           : ''
       }
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
+      <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
+    </div>
+  `;
+}
+
+function backlinksHtml(backlinks = []) {
+  if (!backlinks.length) {
+    return '';
+  }
+  return `
+    <div class="backlinks">
+      ${backlinks
+        .map((number) => `<button class="ref-link" data-ref="${number}" type="button">&gt;&gt;${number}</button>`)
+        .join(' ')}
     </div>
   `;
 }
@@ -759,6 +1599,8 @@ function postHtml(post, type = 'post', options = {}) {
       ${imageHtml(post)}
       ${meta(post, options)}
       <div class="post-body">${renderPostLines(post.bodyLines || [], options)}</div>
+      ${backlinksHtml(post.backlinks)}
+      ${classes.includes('op') ? pollHtml(post.poll, options.canReply !== false) : ''}
     </article>
   `;
 }
@@ -766,6 +1608,7 @@ function postHtml(post, type = 'post', options = {}) {
 function threadToolbarHtml(detail, position) {
   const posts = [detail.thread, ...detail.comments];
   const fileCount = posts.filter((post) => post.image).length;
+  const commentMeta = detail.commentPage;
   const canReply = !detail.thread.isArchived;
   const replyLink =
     position === 'bottom' && canReply
@@ -773,19 +1616,26 @@ function threadToolbarHtml(detail, position) {
       : '<span></span>';
   const checked = state.autoUpdate ? 'checked' : '';
   const archivedLabel = detail.thread.isArchived ? '<span class="archived-label">Đã lưu trữ</span>' : '';
+  const watchLabel = isThreadWatched(detail.thread.id) ? 'Bỏ theo dõi' : 'Theo dõi';
+  const slowModeLabel = detail.thread.slowModeUntil
+    ? `<span class="archived-label">Chế độ chậm ${Number(detail.thread.slowModeSeconds || 0)}s</span>`
+    : '';
 
   return `
     <div class="toolbar-links">
       [<a href="#board/${state.boardSlug}">Quay lại</a>]
       [<a href="#catalog/${state.boardSlug}">Danh mục</a>]
+      [<button class="link-button" data-toggle-watch type="button">${watchLabel}</button>]
       [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
       [<button class="link-button" data-thread-refresh type="button">Cập nhật</button>]
       [<label title="Tự lấy phản hồi mới"><input type="checkbox" data-auto-update ${checked}> Tự động</label>]
       <span class="auto-countdown">${state.autoUpdate ? state.autoCountdown : ''}</span>
       ${archivedLabel}
+      ${slowModeLabel}
     </div>
     ${replyLink}
-    <div class="toolbar-counts">${posts.length} / ${detail.comments.length} / ${fileCount}</div>
+    <div class="toolbar-counts">${posts.length} / ${commentMeta?.total ?? detail.comments.length} / ${fileCount}</div>
+    ${commentMeta ? `<div class="toolbar-pages">${pageControlsHtml(commentMeta, 'thread-comments')}</div>` : ''}
   `;
 }
 
@@ -859,6 +1709,13 @@ function currentPermalinkPost() {
   return new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('p') || '';
 }
 
+function maxThreadPostNumber(detail) {
+  return [detail.thread, ...(detail.comments || [])].reduce(
+    (maxNumber, post) => Math.max(maxNumber, Number(post.globalNumber) || 0),
+    0
+  );
+}
+
 function focusPermalinkPost(globalNumber, { scroll = false } = {}) {
   const postNumber = String(globalNumber || '').trim();
   if (!postNumber) {
@@ -898,7 +1755,7 @@ function threadMatchesSearch(thread, term) {
 function catalogThreadHtml(thread) {
   const title = plainPreview(thread.bodyLines, 'Chưa có nội dung').slice(0, 260);
   const image = thread.image
-    ? `<img src="${escapeHtml(thread.image.dataUrl)}" alt="${escapeHtml(thread.image.name)}">`
+    ? `<img src="${escapeHtml(imageSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}">`
     : '<span class="catalog-placeholder">Không có tệp</span>';
 
   return `
@@ -925,12 +1782,30 @@ function sortedCatalogThreads(threads) {
   return copy.sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt));
 }
 
+function catalogThreadMatchesFilter(thread) {
+  if (state.catalogFilter === 'image') {
+    return Boolean(thread.image);
+  }
+  if (state.catalogFilter === 'poll') {
+    return Boolean(thread.poll?.options?.length);
+  }
+  if (state.catalogFilter === 'unread') {
+    return readThreadLastSeen(thread.id) === 0;
+  }
+  return true;
+}
+
 function renderCatalogThreads(threads) {
   const term = els.catalogSearchInput.value.trim();
-  const visibleThreads = sortedCatalogThreads(threads.filter((thread) => threadMatchesSearch(thread, term)));
+  const visibleThreads = sortedCatalogThreads(
+    threads.filter((thread) => catalogThreadMatchesFilter(thread) && threadMatchesSearch(thread, term))
+  );
   els.catalogGrid.classList.toggle('catalog-grid-large', state.catalogImageSize === 'large');
   document.querySelectorAll('[data-catalog-sort]').forEach((button) => {
     button.classList.toggle('active', button.dataset.catalogSort === state.catalogSort);
+  });
+  document.querySelectorAll('[data-catalog-filter]').forEach((button) => {
+    button.classList.toggle('active', button.dataset.catalogFilter === state.catalogFilter);
   });
   document.querySelectorAll('[data-catalog-size]').forEach((button) => {
     button.classList.toggle('active', button.dataset.catalogSize === state.catalogImageSize);
@@ -1011,11 +1886,13 @@ async function loadArchive() {
 
 function renderBoardThreads(threads) {
   const term = els.boardSearchInput.value.trim();
-  const visibleThreads = threads.filter((thread) => threadMatchesSearch(thread, term));
+  const hidden = hiddenThreadIds();
+  const visibleThreads = threads.filter((thread) => !hidden.has(String(thread.id)) && threadMatchesSearch(thread, term));
   if (!visibleThreads.length) {
     els.threadList.innerHTML = term
       ? '<p class="muted">Không có OP khớp tìm kiếm.</p>'
       : '<p class="muted">Chưa có chủ đề công khai.</p>';
+    els.boardPagination.innerHTML = pageControlsHtml(state.boardPageMeta, 'board');
     return;
   }
 
@@ -1026,7 +1903,7 @@ function renderBoardThreads(threads) {
           <div class="thread-op">
           ${
             thread.image
-              ? `<div class="thread-thumb-wrap"><div class="file-text">${fileTextHtml(thread.image)}</div><button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${escapeHtml(thread.image.name)}"><img class="thumb" src="${escapeHtml(thread.image.dataUrl)}" alt="${escapeHtml(thread.image.name)}"></button></div>`
+              ? `<div class="thread-thumb-wrap"><div class="file-text">${fileTextHtml(thread.image)}</div><button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${escapeHtml(thread.image.name)}"><img class="thumb" src="${escapeHtml(imageSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}"></button></div>`
               : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
           }
             ${meta(thread, { replyAction: false })}
@@ -1036,12 +1913,14 @@ function renderBoardThreads(threads) {
               <span>${thread.replyCount} trả lời</span>
               <span>đẩy lúc ${new Date(thread.bumpedAt).toLocaleTimeString()}</span>
               <a href="#thread/${thread.id}">Xem chủ đề</a>
+              <button class="link-button" data-hide-thread="${escapeHtml(thread.id)}" type="button">[Ẩn]</button>
             </div>
           </div>
         </div>
       `;
     })
     .join('');
+  els.boardPagination.innerHTML = pageControlsHtml(state.boardPageMeta, 'board');
 }
 
 async function loadBoard() {
@@ -1051,6 +1930,7 @@ async function loadBoard() {
   }
   setScreen('board');
   renderBoards();
+  syncBoardSubscriptionButtons();
   updateBoardAds(board);
   els.boardTitle.textContent = boardHeading(board);
   els.boardPath.textContent = board.path;
@@ -1059,7 +1939,7 @@ async function loadBoard() {
   els.boardArchiveLink.href = `#archive/${board.slug}`;
   els.boardCatalogLinkBottom.href = `#catalog/${board.slug}`;
   els.boardArchiveLinkBottom.href = `#archive/${board.slug}`;
-  els.boardSearchInput.value = '';
+  els.boardSearchInput.value = state.boardSearchTerm;
   els.boardSummary.classList.add('hidden');
   const shouldOpenComposer = new URLSearchParams(window.location.hash.split('?')[1] || '').get('new') === '1';
   if (shouldOpenComposer) {
@@ -1068,16 +1948,43 @@ async function loadBoard() {
     closeThreadComposer();
   }
 
-  const threads = await api(`/api/boards/${board.slug}/threads`);
+  const query = new URLSearchParams({
+    page: String(state.boardPage),
+    pageSize: String(state.boardPageSize)
+  });
+  if (state.boardSearchTerm.trim()) {
+    query.set('q', state.boardSearchTerm.trim());
+  }
+  const payload = await api(`/api/boards/${board.slug}/threads?${query.toString()}`);
+  const threads = Array.isArray(payload) ? payload : payload.items || [];
   state.boardThreads = threads;
+  state.boardPageMeta = Array.isArray(payload) ? null : payload;
   renderBoardThreads(threads);
 }
 
 async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   setScreen('thread');
   els.threadSummary.classList.add('hidden');
-  const detail = await api(`/api/threads/${state.threadId}`);
+  const query = new URLSearchParams({
+    commentsPage: String(state.threadCommentPage),
+    commentsPageSize: String(state.threadCommentPageSize)
+  });
+  const requestedPost = focusPost || currentPermalinkPost();
+  if (requestedPost) {
+    query.set('focusGlobalNumber', requestedPost);
+  }
+  const detail = await api(`/api/threads/${state.threadId}?${query.toString()}`);
+  state.threadDetail = detail;
+  const previousLastSeen = readThreadLastSeen(state.threadId);
+  const currentMaxNumber = detail.commentPage?.currentMaxGlobalNumber || maxThreadPostNumber(detail);
+  state.threadLastSeenBefore = previousLastSeen;
+  state.threadCurrentMaxNumber = currentMaxNumber;
+  state.threadCommentPageMeta = detail.commentPage || null;
+  state.threadCommentPage = detail.commentPage?.page || state.threadCommentPage;
+  writeThreadLastSeen(state.threadId, currentMaxNumber);
+  syncWatchedThreadFromDetail(detail);
   state.boardSlug = detail.thread.boardSlug;
+  setupRealtime();
   state.threadGlobalNumber = detail.thread.globalNumber;
   state.threadPosterHash = detail.thread.posterHash;
   state.threadIsArchived = Boolean(detail.thread.isArchived);
@@ -1101,6 +2008,8 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
       </div>`
     : '';
   const canReply = !detail.thread.isArchived;
+  const hiddenPosts = hiddenPostNumbers();
+  const visibleComments = detail.comments.filter((comment) => !hiddenPosts.has(String(comment.globalNumber)));
   els.threadDetail.innerHTML = `
     ${archivedNotice}
     ${postHtml(detail.thread, 'post op', {
@@ -1110,8 +2019,8 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
     })}
     <div class="comment-list">
       ${
-        detail.comments.length
-          ? detail.comments
+        visibleComments.length
+          ? visibleComments
               .map((comment) =>
                 postHtml(comment, 'post comment', {
                   opNumber: detail.thread.globalNumber,
@@ -1120,11 +2029,12 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
                 })
               )
               .join('')
-          : '<p class="muted">Chưa có bình luận công khai.</p>'
+          : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>'
       }
     </div>
   `;
-  const focusedPost = focusPost || currentPermalinkPost();
+  els.threadPagination.innerHTML = pageControlsHtml(state.threadCommentPageMeta, 'thread-comments');
+  const focusedPost = requestedPost;
   focusPermalinkPost(focusedPost, { scroll: Boolean(focusPost) });
   resetAutoUpdateTimer();
 }
@@ -1134,44 +2044,19 @@ async function loadAdmin() {
   const loggedIn = Boolean(state.token);
   els.loginForm.classList.toggle('hidden', loggedIn);
   els.logoutButton.classList.toggle('hidden', !loggedIn);
+  els.adminTools.classList.toggle('hidden', !loggedIn);
   if (!loggedIn) {
     els.pendingList.innerHTML = '';
     els.reportList.innerHTML = '';
     els.moderationActions.innerHTML = '';
+    els.reportSection.classList.add('hidden');
+    els.moderationSection.classList.add('hidden');
     return;
   }
 
   try {
-    const [pending, reports, moderationActions] = await Promise.all([
-      api('/api/admin/pending'),
-      api('/api/admin/reports?limit=30'),
-      api('/api/admin/moderation-actions?limit=30')
-    ]);
-    if (!pending.length) {
-      els.pendingList.innerHTML = '<p class="muted">Hàng đợi trống.</p>';
-    } else {
-      els.pendingList.innerHTML = pending
-        .map(
-          (post) => `
-            <article class="pending-item" data-id="${post.id}">
-              <div class="post-meta">
-                <span>${post.type === 'thread' ? 'chủ đề' : 'bình luận'}</span>
-                <span>No.${post.globalNumber}</span>
-                <span>${post.boardSlug}</span>
-                <span>AI:${post.moderationLabels.map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus)}</span>
-              </div>
-              <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
-              <div class="pending-actions">
-                <button class="primary-button" data-action="approve" type="button">Duyệt</button>
-                <button class="danger-button" data-action="delete" type="button">Xóa</button>
-              </div>
-            </article>
-          `
-        )
-        .join('');
-    }
-    renderReports(reports);
-    renderModerationActions(moderationActions);
+    const items = await api(adminEndpoint());
+    renderAdminItems(items);
   } catch (error) {
     state.token = '';
     localStorage.removeItem('adminToken');
@@ -1181,6 +2066,7 @@ async function loadAdmin() {
 }
 
 function route() {
+  hideReferencePreview();
   const hash = window.location.hash || '#home';
   const [hashPath, hashQuery = ''] = hash.split('?');
   const [, name, id] = hashPath.match(/^#([^/]+)\/?(.+)?$/) || [];
@@ -1189,19 +2075,27 @@ function route() {
   } else if (name === 'thread' && id) {
     const params = new URLSearchParams(hashQuery);
     state.threadId = decodeURIComponent(id);
+    state.threadCommentPage = Math.max(1, Number(params.get('cp')) || 1);
     loadThread({ resetReply: true, focusPost: params.get('p') || '' }).catch((error) => showToast(error.message));
   } else if (name === 'catalog') {
     state.boardSlug = id || 'confession';
+    state.boardSearchTerm = '';
+    state.boardPage = 1;
     loadCatalog().catch((error) => showToast(error.message));
   } else if (name === 'archive') {
     state.boardSlug = id || 'confession';
+    state.boardSearchTerm = '';
+    state.boardPage = 1;
     loadArchive().catch((error) => showToast(error.message));
   } else if (name === 'admin') {
     loadAdmin().catch((error) => showToast(error.message));
   } else {
     state.boardSlug = id || 'confession';
+    state.boardSearchTerm = '';
+    state.boardPage = 1;
     loadBoard().catch((error) => showToast(error.message));
   }
+  setupRealtime();
 }
 
 function fileToDataUrl(file) {
@@ -1233,20 +2127,70 @@ function fileToDataUrl(file) {
   });
 }
 
+function pollHtml(poll, canVote = true) {
+  if (!poll?.options?.length) {
+    return '';
+  }
+  const totalVotes = Number(poll.totalVotes || 0);
+  return `
+    <div class="poll-box">
+      <div class="poll-title">Thăm dò ẩn danh · ${totalVotes} vote</div>
+      ${poll.options
+        .map((option) => {
+          const votes = Number(option.votes || 0);
+          const percent = totalVotes ? Math.round((votes / totalVotes) * 100) : 0;
+          return `
+            <div class="poll-option">
+              <button data-poll-option="${escapeHtml(option.id)}" type="button" ${canVote ? '' : 'disabled'}>
+                ${escapeHtml(option.text)}
+              </button>
+              <span class="poll-meter"><span style="width: ${percent}%"></span></span>
+              <span>${votes} (${percent}%)</span>
+            </div>
+          `;
+        })
+        .join('')}
+    </div>
+  `;
+}
+
 function imagePreviewHtml(image) {
   return `
-    <img src="${escapeHtml(image.dataUrl)}" alt="${escapeHtml(image.name)}">
+    <img src="${escapeHtml(imageSrc(image))}" alt="${escapeHtml(image.name)}">
     <div class="file-text">${fileTextHtml(image)}</div>
   `;
 }
 
+function formValue(form, name) {
+  return String(new FormData(form).get(name) || '');
+}
+
+function hasOption(value, option) {
+  return String(value)
+    .toLowerCase()
+    .split(/[\s,]+/)
+    .includes(option);
+}
+
 async function submitThread(event) {
   event.preventDefault();
+  const body = els.threadBody.value;
+  if (!confirmPrivacyBeforeSubmit(body, els.threadPrivacyWarning)) {
+    showToast('Đã dừng gửi để bạn chỉnh sửa nội dung.');
+    return;
+  }
   const button = event.submitter;
   const restoreButton = setButtonLoading(button);
   try {
+    const options = formValue(els.threadForm, 'options');
     const payload = {
-      body: els.threadBody.value,
+      body,
+      pollOptions: els.threadPollOptions.value
+        .split('\n')
+        .map((option) => option.trim())
+        .filter(Boolean),
+      options,
+      deletePassword: els.threadDeletePassword.value,
       captchaToken: els.threadCaptcha.value,
       posterToken: state.posterToken,
       image: state.selectedImage
@@ -1255,13 +2199,21 @@ async function submitThread(event) {
       method: 'POST',
       body: JSON.stringify(payload)
     });
+    rememberMyPost(result.thread, 'thread');
     els.threadBody.value = '';
+    els.threadPollOptions.value = '';
+    localStorage.removeItem(draftKey('thread', state.boardSlug));
+    updatePrivacyWarning('', els.threadPrivacyWarning);
     els.threadImage.value = '';
     state.selectedImage = null;
     els.imagePreview.classList.add('hidden');
     closeThreadComposer();
     showToast(result.status === 'pending' ? 'Đã vào hàng đợi chờ quản trị viên duyệt.' : 'Chủ đề đã công khai.');
-    await loadBoard();
+    if (hasOption(options, 'noko') && result.thread?.id) {
+      window.location.hash = `#thread/${result.thread.id}`;
+    } else {
+      await loadBoard();
+    }
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -1276,10 +2228,18 @@ async function submitComment(event) {
     return;
   }
   const button = event.submitter || els.commentForm.querySelector('[type="submit"]');
+  const body = els.commentBody.value;
+  if (!confirmPrivacyBeforeSubmit(body, els.commentPrivacyWarning)) {
+    showToast('Đã dừng gửi để bạn chỉnh sửa nội dung.');
+    return;
+  }
   const restoreButton = setButtonLoading(button);
   try {
-    const result = await createComment(els.commentBody.value, els.commentCaptcha.value);
+    const result = await createComment(body, els.commentCaptcha.value);
+    rememberMyPost(result.comment, 'comment');
     els.commentBody.value = '';
+    localStorage.removeItem(draftKey('comment', state.threadId));
+    updatePrivacyWarning('', els.commentPrivacyWarning);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeReplyComposer();
     await loadThread();
@@ -1291,9 +2251,16 @@ async function submitComment(event) {
 }
 
 async function createComment(body, captchaToken) {
+  const form = els.quickReply.classList.contains('hidden') ? els.commentForm : els.quickReplyForm;
   return api(`/api/threads/${state.threadId}/comments`, {
     method: 'POST',
-    body: JSON.stringify({ body, captchaToken, posterToken: state.posterToken })
+    body: JSON.stringify({
+      body,
+      captchaToken,
+      posterToken: state.posterToken,
+      options: formValue(form, 'options'),
+      deletePassword: formValue(form, 'deletePassword')
+    })
   });
 }
 
@@ -1320,6 +2287,7 @@ function addQuoteToQuickReply(number) {
     lines.push(quote);
   }
   els.quickReplyBody.value = `${lines.join('\n')}\n`;
+  updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
 }
 
 function openQuickReply(number, event) {
@@ -1331,10 +2299,11 @@ function openQuickReply(number, event) {
   const threadNumber = state.threadGlobalNumber || number;
   els.quickReplyTitle.textContent = `Trả lời chủ đề No.${threadNumber}`;
   if (wasHidden) {
-    els.quickReplyBody.value = '';
+    els.quickReplyBody.value = localStorage.getItem(draftKey('quickReply', state.threadId)) || '';
   }
   addQuoteToQuickReply(number);
   els.quickReplyCaptcha.value = els.commentCaptcha.value || 'dev-pass';
+  els.quickReplyDeletePassword.value ||= defaultDeletePassword();
   els.quickReplyFileName.textContent = 'Chưa chọn tệp';
   if (wasHidden) {
     positionQuickReply(event);
@@ -1346,6 +2315,7 @@ function openQuickReply(number, event) {
 
 function closeQuickReply() {
   els.quickReply.classList.add('hidden');
+  updatePrivacyWarning('', els.quickReplyPrivacyWarning);
   state.quickReplyDrag = null;
 }
 
@@ -1357,9 +2327,16 @@ async function submitQuickReply(event) {
     return;
   }
   const button = event.submitter;
+  const body = els.quickReplyBody.value;
+  if (!confirmPrivacyBeforeSubmit(body, els.quickReplyPrivacyWarning)) {
+    showToast('Đã dừng gửi để bạn chỉnh sửa nội dung.');
+    return;
+  }
   const restoreButton = setButtonLoading(button);
   try {
-    const result = await createComment(els.quickReplyBody.value, els.quickReplyCaptcha.value);
+    const result = await createComment(body, els.quickReplyCaptcha.value);
+    rememberMyPost(result.comment, 'comment');
+    localStorage.removeItem(draftKey('quickReply', state.threadId));
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeQuickReply();
     await loadThread();
@@ -1373,42 +2350,101 @@ async function submitQuickReply(event) {
 async function showSummary(target) {
   const box = target === 'board' ? els.boardSummary : els.threadSummary;
   const button = target === 'board' ? els.boardSummaryButton : els.threadSummaryButton;
+  const defaultHeading = 'Nội dung do AI tổng hợp';
+  if (!state.aiConfigured) {
+    box.classList.remove('hidden');
+    box.innerHTML = `<strong>${defaultHeading}</strong><p>${aiNotConfiguredMessage}</p>`;
+    return;
+  }
+  const requestBody = { posterToken: state.posterToken };
+  const summarizeSinceLastRead =
+    target === 'thread' &&
+    state.threadLastSeenBefore > 0 &&
+    state.threadCurrentMaxNumber > state.threadLastSeenBefore;
+  if (summarizeSinceLastRead) {
+    requestBody.sinceGlobalNumber = state.threadLastSeenBefore;
+  }
+  const heading = summarizeSinceLastRead
+    ? 'Nội dung do AI tổng hợp từ lần đọc trước'
+    : defaultHeading;
   button.disabled = true;
   box.classList.remove('hidden');
-  box.innerHTML = '<strong>Nội dung do AI tổng hợp</strong><p class="muted">Đang tóm tắt...</p>';
+  box.innerHTML = `<strong>${heading}</strong><p class="muted">Đang tóm tắt...</p>`;
   try {
     const path =
       target === 'board'
         ? `/api/boards/${state.boardSlug}/summary`
         : `/api/threads/${state.threadId}/summary`;
-    const result = await api(path, { method: 'POST', body: '{}' });
+    const result = await api(path, { method: 'POST', body: JSON.stringify(requestBody) });
     box.innerHTML = `
-      <strong>Nội dung do AI tổng hợp</strong>
-      <ul>${result.bullets.map((bullet) => `<li>${bullet}</li>`).join('')}</ul>
+      <strong>${heading}</strong>
+      ${
+        summarizeSinceLastRead
+          ? `<p class="muted">Chỉ gồm bài mới sau No.${escapeHtml(state.threadLastSeenBefore)}.</p>`
+          : ''
+      }
+      <ul>${result.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>
     `;
   } catch (error) {
-    box.innerHTML = `<strong>Nội dung do AI tổng hợp</strong><p>${error.message}</p>`;
+    box.innerHTML = `<strong>${heading}</strong><p>${error.message}</p>`;
   } finally {
     button.disabled = false;
   }
 }
 
 async function loadSuggestions() {
+  if (!state.aiConfigured) {
+    els.suggestions.classList.remove('hidden');
+    els.suggestions.textContent = aiNotConfiguredMessage;
+    return;
+  }
   els.suggestButton.disabled = true;
   els.suggestions.classList.remove('hidden');
   els.suggestions.textContent = 'Đang gợi ý...';
   try {
     const result = await api(`/api/threads/${state.threadId}/suggestions`, {
       method: 'POST',
-      body: '{}'
+      body: JSON.stringify({ posterToken: state.posterToken })
     });
     els.suggestions.innerHTML = result.suggestions
-      .map((text) => `<button type="button" data-suggestion="${encodeURIComponent(text)}">${text}</button>`)
+      .map((text) => `<button type="button" data-suggestion="${encodeURIComponent(text)}">${escapeHtml(text)}</button>`)
       .join('');
   } catch (error) {
     els.suggestions.textContent = error.message;
   } finally {
     els.suggestButton.disabled = false;
+  }
+}
+
+async function rewriteDraft(target) {
+  if (!state.aiConfigured) {
+    showToast(aiNotConfiguredMessage);
+    return;
+  }
+  const isThread = target === 'thread';
+  const textarea = isThread ? els.threadBody : els.commentBody;
+  const warningBox = isThread ? els.threadPrivacyWarning : els.commentPrivacyWarning;
+  const button = isThread ? els.threadRewriteButton : els.rewriteButton;
+  const body = textarea.value.trim();
+  if (!body) {
+    showToast('Chưa có nội dung để AI sửa.');
+    return;
+  }
+
+  const restoreButton = setButtonLoading(button, 'Đang sửa...');
+  try {
+    const result = await api('/api/ai/rewrite', {
+      method: 'POST',
+      body: JSON.stringify({ body, posterToken: state.posterToken })
+    });
+    textarea.value = result.text || body;
+    updatePrivacyWarning(textarea.value, warningBox);
+    textarea.focus();
+    showToast('Đã điền bản viết lại vào nháp. Kiểm tra trước khi gửi.');
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    restoreButton();
   }
 }
 
@@ -1432,8 +2468,29 @@ async function showReference(number, event) {
   }
 }
 
+function hideReferencePreview() {
+  els.refPreview.classList.add('hidden');
+  els.refPreview.innerHTML = '';
+}
+
 function setupRealtime() {
-  const source = new EventSource('/events');
+  const context = new URLSearchParams();
+  if ((window.location.hash || '').startsWith('#board/') || (window.location.hash || '').startsWith('#thread/')) {
+    context.set('boardSlug', state.boardSlug);
+  }
+  if ((window.location.hash || '').startsWith('#thread/') && state.threadId) {
+    context.set('threadId', state.threadId);
+  }
+  const contextKey = context.toString();
+  if (state.realtimeSource && state.realtimeContextKey === contextKey) {
+    return;
+  }
+  if (state.realtimeSource) {
+    state.realtimeSource.close();
+  }
+  state.realtimeContextKey = contextKey;
+  const source = new EventSource(`/events${contextKey ? `?${contextKey}` : ''}`);
+  state.realtimeSource = source;
   source.addEventListener('connected', () => {
     els.socketStatus.textContent = 'trực tiếp';
     els.socketStatus.classList.add('live');
@@ -1444,7 +2501,7 @@ function setupRealtime() {
     els.socketStatus.classList.add('offline');
     els.socketStatus.classList.remove('live');
   };
-  for (const eventName of ['thread:created', 'thread:bumped', 'comment:created', 'thread:archived']) {
+  for (const eventName of ['thread:created', 'thread:bumped', 'thread:updated', 'comment:created', 'thread:archived']) {
     source.addEventListener(eventName, () => {
       const hash = window.location.hash || '#home';
       if (hash.startsWith('#home') || hash === '') {
@@ -1464,8 +2521,55 @@ function setupRealtime() {
   }
 }
 
+function eventInTextInput(event) {
+  const target = event.target;
+  return (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement ||
+    target?.isContentEditable
+  );
+}
+
+function refreshCurrentScreen() {
+  const hash = window.location.hash || '#home';
+  if (hash.startsWith('#thread/')) {
+    return loadThread();
+  }
+  if (hash.startsWith('#catalog/')) {
+    return loadCatalog();
+  }
+  if (hash.startsWith('#archive/')) {
+    return loadArchive();
+  }
+  if (hash.startsWith('#board/')) {
+    return loadBoard();
+  }
+  return loadHome();
+}
+
+function handleKeyboardShortcut(event) {
+  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || eventInTextInput(event)) {
+    return;
+  }
+  if (event.key === 't') {
+    event.preventDefault();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } else if (event.key === 'u') {
+    event.preventDefault();
+    refreshCurrentScreen().catch((error) => showToast(error.message));
+  } else if (event.key === 'r' && (window.location.hash || '').startsWith('#thread/')) {
+    event.preventDefault();
+    openReplyComposer();
+  } else if (event.key === 'b' && state.boardSlug) {
+    event.preventDefault();
+    window.location.hash = `#board/${state.boardSlug}`;
+  }
+}
+
 function bindEvents() {
   window.addEventListener('hashchange', route);
+  window.addEventListener('keydown', handleKeyboardShortcut);
   els.homeBoardSearchForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const board = findBoardByQuery(els.homeBoardSearchInput.value);
@@ -1476,7 +2580,12 @@ function bindEvents() {
     window.location.hash = `#board/${board.slug}`;
   });
   els.refreshThreads.addEventListener('click', () => loadBoard().catch((error) => showToast(error.message)));
-  els.boardSearchInput.addEventListener('input', () => renderBoardThreads(state.boardThreads));
+  els.boardSearchInput.addEventListener('input', () => {
+    state.boardSearchTerm = els.boardSearchInput.value;
+    state.boardPage = 1;
+    window.clearTimeout(els.boardSearchInput.searchTimer);
+    els.boardSearchInput.searchTimer = window.setTimeout(() => loadBoard().catch((error) => showToast(error.message)), 250);
+  });
   els.catalogSearchInput.addEventListener('input', () => renderCatalogThreads(state.catalogThreads));
   els.startThreadButton.addEventListener('click', () => openThreadComposer());
   els.postReplyToggle.addEventListener('click', () => openReplyComposer());
@@ -1489,9 +2598,26 @@ function bindEvents() {
   els.threadForm.addEventListener('submit', submitThread);
   els.commentForm.addEventListener('submit', submitComment);
   els.quickReplyForm.addEventListener('submit', submitQuickReply);
+  els.threadBody.addEventListener('input', () => {
+    localStorage.setItem(draftKey('thread', state.boardSlug), els.threadBody.value);
+    updatePrivacyWarning(els.threadBody.value, els.threadPrivacyWarning);
+  });
+  els.commentBody.addEventListener('input', () => {
+    localStorage.setItem(draftKey('comment', state.threadId), els.commentBody.value);
+    updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
+  });
+  els.quickReplyBody.addEventListener('input', () => {
+    localStorage.setItem(draftKey('quickReply', state.threadId), els.quickReplyBody.value);
+    updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
+  });
   els.quickReplyClose.addEventListener('click', closeQuickReply);
   els.quickReplyCaptchaButton.addEventListener('click', () => {
     els.quickReplyCaptcha.value = 'dev-pass';
+  });
+  [els.threadDeletePassword, els.commentDeletePassword, els.quickReplyDeletePassword, els.deletePasswordInput].forEach((input) => {
+    input.addEventListener('input', () => {
+      localStorage.setItem(deletePasswordKey, input.value);
+    });
   });
   els.quickReplyHandle.addEventListener('mousedown', (event) => {
     if (event.target.closest('button')) {
@@ -1520,6 +2646,8 @@ function bindEvents() {
   els.boardSummaryButton.addEventListener('click', () => showSummary('board'));
   els.threadSummaryButton.addEventListener('click', () => showSummary('thread'));
   els.suggestButton.addEventListener('click', loadSuggestions);
+  els.threadRewriteButton.addEventListener('click', () => rewriteDraft('thread'));
+  els.rewriteButton.addEventListener('click', () => rewriteDraft('comment'));
   els.threadImage.addEventListener('change', async () => {
     const file = els.threadImage.files?.[0];
     if (!file) {
@@ -1570,9 +2698,32 @@ function bindEvents() {
       return;
     }
 
+    const watchButton = event.target.closest('[data-toggle-watch]');
+    if (watchButton) {
+      toggleCurrentThreadWatch();
+      return;
+    }
+
+    const unwatchThreadButton = event.target.closest('[data-unwatch-thread]');
+    if (unwatchThreadButton) {
+      removeWatchedThread(unwatchThreadButton.dataset.unwatchThread);
+      showToast('Đã bỏ theo dõi chủ đề.');
+      if ((window.location.hash || '#home').startsWith('#home')) {
+        renderWatchedThreads(await loadWatchedThreadSummaries());
+      }
+      return;
+    }
+
     const boardRefreshButton = event.target.closest('[data-board-refresh]');
     if (boardRefreshButton) {
       await loadBoard().catch((error) => showToast(error.message));
+      return;
+    }
+
+    const boardSubscriptionButton = event.target.closest('[data-toggle-board-subscription]');
+    if (boardSubscriptionButton) {
+      toggleBoardSubscription();
+      syncBoardSubscriptionButtons();
       return;
     }
 
@@ -1585,6 +2736,13 @@ function bindEvents() {
     const catalogSortButton = event.target.closest('[data-catalog-sort]');
     if (catalogSortButton) {
       state.catalogSort = catalogSortButton.dataset.catalogSort;
+      renderCatalogThreads(state.catalogThreads);
+      return;
+    }
+
+    const catalogFilterButton = event.target.closest('[data-catalog-filter]');
+    if (catalogFilterButton) {
+      state.catalogFilter = catalogFilterButton.dataset.catalogFilter;
       renderCatalogThreads(state.catalogThreads);
       return;
     }
@@ -1615,6 +2773,62 @@ function bindEvents() {
       return;
     }
 
+    const pageButton = event.target.closest('[data-page-action]');
+    if (pageButton && !pageButton.disabled) {
+      const nextPage = Math.max(1, Number(pageButton.dataset.page) || 1);
+      if (pageButton.dataset.pageAction === 'board') {
+        state.boardPage = nextPage;
+        await loadBoard().catch((error) => showToast(error.message));
+      } else if (pageButton.dataset.pageAction === 'thread-comments') {
+        state.threadCommentPage = nextPage;
+        await loadThread().catch((error) => showToast(error.message));
+      }
+      return;
+    }
+
+    const hideThreadButton = event.target.closest('[data-hide-thread]');
+    if (hideThreadButton) {
+      addLocalSetItem(hiddenThreadsKey, hideThreadButton.dataset.hideThread);
+      renderBoardThreads(state.boardThreads);
+      showToast('Đã ẩn chủ đề trên trình duyệt này.');
+      return;
+    }
+
+    const hidePostButton = event.target.closest('[data-hide-post]');
+    if (hidePostButton) {
+      addLocalSetItem(hiddenPostsKey, hidePostButton.dataset.hidePost);
+      await loadThread().catch((error) => showToast(error.message));
+      showToast('Đã ẩn bài trên trình duyệt này.');
+      return;
+    }
+
+    if (event.target.closest('#deletePostButton')) {
+      const target = currentPermalinkPost() || state.threadGlobalNumber;
+      if (!target) {
+        showToast('Mở link No. của bài cần xóa trước.');
+        return;
+      }
+      if (!els.deletePasswordInput.value) {
+        showToast('Nhập mật khẩu xóa.');
+        return;
+      }
+      const ok = window.confirm(`Xóa ${els.deleteFileOnly.checked ? 'tệp của ' : ''}No.${target}?`);
+      if (!ok) {
+        return;
+      }
+      try {
+        await api(`/api/posts/${target}`, {
+          method: 'DELETE',
+          body: JSON.stringify({ password: els.deletePasswordInput.value, fileOnly: els.deleteFileOnly.checked })
+        });
+        showToast('Đã xóa.');
+        await loadThread();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
     const scrollButton = event.target.closest('[data-scroll-thread]');
     if (scrollButton) {
       const target = scrollButton.dataset.scrollThread === 'bottom' ? els.threadToolbarBottom : els.threadScreen;
@@ -1628,6 +2842,7 @@ function bindEvents() {
       openReplyComposer({ focus: false });
       const spacer = els.commentBody.value && !els.commentBody.value.endsWith('\n') ? '\n' : '';
       els.commentBody.value = `${els.commentBody.value}${spacer}${quote}\n`;
+      updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
       els.commentBody.focus();
       return;
     }
@@ -1644,7 +2859,23 @@ function bindEvents() {
     const suggestion = event.target.closest('[data-suggestion]');
     if (suggestion) {
       els.commentBody.value = decodeURIComponent(suggestion.dataset.suggestion);
+      updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
       els.commentBody.focus();
+      return;
+    }
+
+    const pollOption = event.target.closest('[data-poll-option]');
+    if (pollOption) {
+      try {
+        await api(`/api/threads/${state.threadId}/poll`, {
+          method: 'POST',
+          body: JSON.stringify({ optionId: pollOption.dataset.pollOption, posterToken: state.posterToken })
+        });
+        showToast('Đã vote thăm dò.');
+        await loadThread();
+      } catch (error) {
+        showToast(error.message);
+      }
       return;
     }
 
@@ -1660,6 +2891,109 @@ function bindEvents() {
           body: JSON.stringify({ reason, posterToken: state.posterToken })
         });
         showToast('Đã gửi báo cáo.');
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminTabButton = event.target.closest('[data-admin-tab]');
+    if (adminTabButton) {
+      state.adminTab = adminTabButton.dataset.adminTab;
+      await loadAdmin();
+      return;
+    }
+
+    if (event.target.closest('#adminRefresh')) {
+      await loadAdmin();
+      return;
+    }
+
+    if (event.target.closest('#adminExport')) {
+      exportAdminCsv();
+      return;
+    }
+
+    if (event.target.closest('#adminBulkApprove')) {
+      await bulkModerate('approve');
+      return;
+    }
+
+    if (event.target.closest('#adminBulkDelete')) {
+      await bulkModerate('delete');
+      return;
+    }
+
+    const adminDetailButton = event.target.closest('[data-admin-detail]');
+    if (adminDetailButton) {
+      const host = adminDetailButton.closest('.pending-item') || adminDetailButton.closest('.moderation-log') || els.pendingList;
+      try {
+        await loadAdminDetail(adminDetailButton.dataset.adminDetail, host);
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminNoteButton = event.target.closest('[data-admin-note]');
+    if (adminNoteButton) {
+      const note = window.prompt(`Ghi chú nội bộ cho No.${adminNoteButton.dataset.adminNote}:`, '') || '';
+      if (!note) {
+        return;
+      }
+      try {
+        await api(`/api/admin/posts/${adminNoteButton.dataset.adminNote}/notes`, {
+          method: 'POST',
+          body: JSON.stringify({ note })
+        });
+        showToast('Đã lưu ghi chú.');
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminSanctionButton = event.target.closest('[data-admin-sanction]');
+    if (adminSanctionButton) {
+      const kind = adminSanctionButton.dataset.adminSanction;
+      const globalNumber = adminSanctionButton.dataset.globalNumber;
+      const defaultMinutes = kind === 'ban' ? '1440' : '60';
+      const durationMinutes = window.prompt(
+        kind === 'ban' ? 'Tạm khóa trong bao nhiêu phút?' : 'Làm chậm trong bao nhiêu phút?',
+        defaultMinutes
+      );
+      if (!durationMinutes) {
+        return;
+      }
+      const reason = window.prompt(kind === 'ban' ? 'Lý do tạm khóa:' : 'Lý do làm chậm:', '') || '';
+      try {
+        await api(`/api/admin/posts/${globalNumber}/sanctions`, {
+          method: 'POST',
+          body: JSON.stringify({ kind, durationMinutes: Number(durationMinutes), reason })
+        });
+        showToast(kind === 'ban' ? 'Đã tạm khóa.' : 'Đã đặt làm chậm.');
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const revokeSanctionButton = event.target.closest('[data-admin-revoke-sanction]');
+    if (revokeSanctionButton) {
+      const reason = window.prompt('Lý do gỡ lệnh làm chậm/tạm khóa:', '') || '';
+      const ok = window.confirm('Gỡ lệnh làm chậm/tạm khóa này?');
+      if (!ok) {
+        return;
+      }
+      try {
+        await api(`/api/admin/sanctions/${revokeSanctionButton.dataset.adminRevokeSanction}`, {
+          method: 'DELETE',
+          body: JSON.stringify({ reason })
+        });
+        showToast('Đã gỡ lệnh làm chậm/tạm khóa.');
+        await loadAdmin();
       } catch (error) {
         showToast(error.message);
       }
@@ -1699,6 +3033,21 @@ function bindEvents() {
     if (autoUpdate) {
       setAutoUpdate(autoUpdate.checked);
     }
+
+    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminTimeFilter')) {
+      loadAdmin().catch((error) => showToast(error.message));
+    }
+
+    if (event.target.closest('#adminSelectAll')) {
+      document.querySelectorAll('[data-admin-select]').forEach((input) => {
+        input.checked = els.adminSelectAll.checked;
+      });
+    }
+
+    const themeSelect = event.target.closest('[data-theme-select]');
+    if (themeSelect) {
+      applyTheme(themeSelect.value);
+    }
   });
 
   els.loginForm.addEventListener('submit', async (event) => {
@@ -1729,10 +3078,17 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
-  setupRealtime();
+  applyTheme();
   const config = await api('/api/config');
   state.boards = config.boards;
   state.boardGroups = config.boardGroups || [];
+  state.aiConfigured = Boolean(config.ai?.configured);
+  const password = defaultDeletePassword();
+  els.threadDeletePassword.value = password;
+  els.commentDeletePassword.value = password;
+  els.quickReplyDeletePassword.value = password;
+  els.deletePasswordInput.value = password;
+  syncAdminBoardFilter();
   route();
 }
 

@@ -20,6 +20,21 @@ export function createPosterHash({ ip, threadId, salt, posterToken = '' }) {
   return `ID:${digest}`;
 }
 
+export function createPosterProofHash({ threadId, posterToken = '' }) {
+  const token = String(posterToken).slice(0, 128);
+  if (!token) {
+    return null;
+  }
+  const secret = process.env.POSTER_PROOF_SECRET || process.env.JWT_SECRET || '36chan-dev-poster-proof-secret';
+  return crypto.createHmac('sha256', secret).update(`${threadId}:${token}`).digest('hex');
+}
+
+export function createModerationFingerprint({ ip, posterToken = '' }) {
+  const secret = process.env.MODERATION_FINGERPRINT_SECRET || process.env.JWT_SECRET || '36chan-dev-fingerprint-secret';
+  const token = String(posterToken).slice(0, 128);
+  return crypto.createHmac('sha256', secret).update(`${ip}:${token}`).digest('hex');
+}
+
 export function signJwt(payload, secret, { expiresInSeconds = 60 * 60 * 8 } = {}) {
   if (!secret) {
     throw new Error('JWT secret is required');
@@ -54,17 +69,71 @@ export function verifyJwt(token, secret) {
     throw new Error('Invalid token');
   }
 
-  const header = JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8'));
+  let header;
+  let payload;
+  try {
+    header = JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8'));
+    payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
+  } catch {
+    throw new Error('Invalid token');
+  }
+
   if (header.alg !== 'HS256') {
     throw new Error('Invalid token');
   }
 
-  const payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
   if (payload.exp && payload.exp < Math.floor(Date.now() / 1000)) {
     throw new Error('Token expired');
   }
 
   return payload;
+}
+
+function isDefaultSecret(value) {
+  return !value || /^change-me/i.test(String(value)) || /^secret$/i.test(String(value));
+}
+
+export function securityConfigStatus({
+  jwtSecret,
+  adminUsername,
+  adminPassword,
+  hcaptchaSecret = process.env.HCAPTCHA_SECRET,
+  moderationFingerprintSecret = process.env.MODERATION_FINGERPRINT_SECRET,
+  posterProofSecret = process.env.POSTER_PROOF_SECRET
+} = {}) {
+  const warnings = [];
+  const adminConfigured = Boolean(jwtSecret && adminUsername && adminPassword);
+  const hcaptchaConfigured = Boolean(hcaptchaSecret);
+
+  if (!adminConfigured) {
+    warnings.push('admin_auth_not_configured');
+  }
+  if (isDefaultSecret(jwtSecret)) {
+    warnings.push('jwt_secret_default_or_missing');
+  } else if (String(jwtSecret).length < 32) {
+    warnings.push('jwt_secret_short');
+  }
+  if (!adminUsername || /^admin$/i.test(String(adminUsername))) {
+    warnings.push('admin_username_default_or_missing');
+  }
+  if (!adminPassword || /^change-me$/i.test(String(adminPassword)) || String(adminPassword).length < 12) {
+    warnings.push('admin_password_weak_or_missing');
+  }
+  if (!moderationFingerprintSecret) {
+    warnings.push('moderation_fingerprint_secret_falls_back_to_jwt');
+  }
+  if (!posterProofSecret) {
+    warnings.push('poster_proof_secret_falls_back_to_jwt');
+  }
+  if (!hcaptchaConfigured) {
+    warnings.push('hcaptcha_not_configured');
+  }
+
+  return {
+    adminConfigured,
+    hcaptchaConfigured,
+    warnings
+  };
 }
 
 export function getClientIp(request) {

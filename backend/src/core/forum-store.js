@@ -1,20 +1,23 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-const EMPTY_STATE = {
+export const EMPTY_STATE = {
   version: 1,
   nextGlobalNumber: 1,
   threads: [],
   comments: [],
   moderationActions: [],
-  reports: []
+  reports: [],
+  sanctions: [],
+  aiUsage: {},
+  aiSummaryCache: {}
 };
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
-function normalizeState(value = {}) {
+export function normalizeState(value = {}) {
   const cloned = clone(value);
   return {
     ...EMPTY_STATE,
@@ -22,7 +25,10 @@ function normalizeState(value = {}) {
     threads: Array.isArray(cloned.threads) ? cloned.threads : [],
     comments: Array.isArray(cloned.comments) ? cloned.comments : [],
     moderationActions: Array.isArray(cloned.moderationActions) ? cloned.moderationActions : [],
-    reports: Array.isArray(cloned.reports) ? cloned.reports : []
+    reports: Array.isArray(cloned.reports) ? cloned.reports : [],
+    sanctions: Array.isArray(cloned.sanctions) ? cloned.sanctions : [],
+    aiUsage: cloned.aiUsage && typeof cloned.aiUsage === 'object' ? cloned.aiUsage : {},
+    aiSummaryCache: cloned.aiSummaryCache && typeof cloned.aiSummaryCache === 'object' ? cloned.aiSummaryCache : {}
   };
 }
 
@@ -65,6 +71,20 @@ export function createJsonStore(filePath = path.resolve('data/forum.json')) {
         return normalizeState(normalized);
       });
       return queue;
+    },
+    async health() {
+      await ensure();
+      const state = await this.read();
+      return {
+        type: 'json',
+        filePath,
+        threads: state.threads.length,
+        comments: state.comments.length,
+        reports: state.reports.length,
+        sanctions: state.sanctions.length,
+        moderationActions: state.moderationActions.length,
+        nextGlobalNumber: state.nextGlobalNumber
+      };
     }
   };
 }

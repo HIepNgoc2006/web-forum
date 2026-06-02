@@ -1,11 +1,59 @@
 import crypto from 'node:crypto';
 
 import { BOARDS, THREAD_LIFECYCLE, getBoard } from './config.js';
-import { createPosterHash, verifyHcaptcha } from './security.js';
+import { createInlineImageStorage } from './image-storage.js';
+import { createModerationFingerprint, createPosterHash, createPosterProofHash, verifyHcaptcha } from './security.js';
 import { normalizeBody, parsePostText } from './text-format.js';
+
+const noopLogger = () => {};
+const PULSE_STOP_WORDS = new Set([
+  'anh',
+  'ban',
+  'bai',
+  'binh',
+  'cac',
+  'cho',
+  'con',
+  'cong',
+  'cua',
+  'dang',
+  'day',
+  'den',
+  'duoc',
+  'hoc',
+  'khai',
+  'khong',
+  'khi',
+  'luan',
+  'minh',
+  'mot',
+  'nay',
+  'neu',
+  'noi',
+  'nua',
+  'qua',
+  'sinh',
+  'tap',
+  'thi',
+  'thread',
+  'trong',
+  'voi'
+]);
+const SLOW_MODE_LABELS = new Set(['Toxic', 'Spam', 'Hate Speech', 'Fake News']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
+}
+
+function stripPrivatePostFields(post) {
+  const {
+    authorFingerprint: _authorFingerprint,
+    opProofHash: _opProofHash,
+    deletePasswordHash: _deletePasswordHash,
+    pollVotes: _pollVotes,
+    ...publicFields
+  } = post;
+  return publicFields;
 }
 
 function activePublicThread(thread) {
@@ -26,6 +74,19 @@ function archiveThreadRecord(thread, reason, archivedAt) {
   thread.archivedReason = reason;
 }
 
+function boardEventEnded(board, at) {
+  return Boolean(board?.temporary && board.eventEndsAt && String(board.eventEndsAt).localeCompare(at) <= 0);
+}
+
+function assertEventBoardOpen(board, at) {
+  if (!boardEventEnded(board, at)) {
+    return;
+  }
+  const error = new Error('Bảng sự kiện đã kết thúc và đã chuyển sang lưu trữ');
+  error.statusCode = 409;
+  throw error;
+}
+
 function daySalt(date) {
   return date.toISOString().slice(0, 10);
 }
@@ -44,6 +105,111 @@ function sanitizePositiveInteger(value, max) {
   return Math.min(Math.round(number), max);
 }
 
+function paginationOptions({ page, pageSize, maxPageSize = 50 } = {}) {
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safePageSize = Math.max(1, Math.min(Math.floor(Number(pageSize) || maxPageSize), maxPageSize));
+  return {
+    page: safePage,
+    pageSize: safePageSize,
+    offset: (safePage - 1) * safePageSize
+  };
+}
+
+function pagedResult(items, options = {}) {
+  const { page, pageSize, offset } = paginationOptions(options);
+  const total = items.length;
+  return {
+    items: items.slice(offset, offset + pageSize),
+    page,
+    pageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / pageSize)),
+    hasMore: offset + pageSize < total
+  };
+}
+
+function normalizeSearchTerm(value = '') {
+  return String(value)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .trim()
+    .slice(0, 120);
+}
+
+function postMatchesSearch(post, term) {
+  if (!term) {
+    return true;
+  }
+  const haystack = [post.body, post.globalNumber, post.posterHash]
+    .join(' ')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return haystack.includes(term);
+}
+
+function threadMatchesSearch(state, thread, term) {
+  if (!term || postMatchesSearch(thread, term)) {
+    return true;
+  }
+  return state.comments.some((comment) => comment.threadId === thread.id && publicPost(comment) && postMatchesSearch(comment, term));
+}
+
+function parsePostingOptions(value = '') {
+  const tokens = new Set(
+    String(value)
+      .toLowerCase()
+      .split(/[\s,]+/)
+      .map((item) => item.trim())
+      .filter(Boolean)
+  );
+  return {
+    raw: [...tokens].join(' '),
+    sage: tokens.has('sage'),
+    noko: tokens.has('noko')
+  };
+}
+
+function deletePasswordHash(password) {
+  const value = String(password || '').slice(0, 120);
+  if (!value) {
+    return '';
+  }
+  return crypto
+    .createHash('sha256')
+    .update(`${process.env.DELETE_PASSWORD_SECRET || process.env.JWT_SECRET || '36chan-delete'}:${value}`)
+    .digest('hex');
+}
+
+function verifyDeletePassword(post, password) {
+  if (!post.deletePasswordHash || post.deletePasswordHash !== deletePasswordHash(password)) {
+    const error = new Error('Mật khẩu xóa không đúng');
+    error.statusCode = 403;
+    throw error;
+  }
+}
+
+function referencedPostNumbers(body = '') {
+  return [...String(body).matchAll(/>>(\d+)/g)].map((match) => Number(match[1])).filter((number) => Number.isFinite(number));
+}
+
+function addBacklinks(posts) {
+  const postByNumber = new Map(posts.map((post) => [Number(post.globalNumber), post]));
+  const backlinks = new Map(posts.map((post) => [Number(post.globalNumber), []]));
+  for (const source of posts) {
+    for (const targetNumber of referencedPostNumbers(source.body)) {
+      if (targetNumber !== Number(source.globalNumber) && postByNumber.has(targetNumber)) {
+        backlinks.get(targetNumber)?.push(Number(source.globalNumber));
+      }
+    }
+  }
+  return posts.map((post) => ({
+    ...post,
+    backlinks: [...new Set(backlinks.get(Number(post.globalNumber)) || [])].sort((left, right) => left - right)
+  }));
+}
+
 function sanitizeFileName(name) {
   return (
     String(name ?? 'tai-len')
@@ -51,6 +217,47 @@ function sanitizeFileName(name) {
       .replace(/[&<>"']/g, '')
       .slice(0, 120) || 'tai-len'
   );
+}
+
+function createPoll(pollOptions) {
+  if (!Array.isArray(pollOptions)) {
+    return null;
+  }
+  const seen = new Set();
+  const options = pollOptions
+    .map((option) => normalizeBody(option).slice(0, 120))
+    .filter(Boolean)
+    .filter((option) => {
+      const key = option.toLowerCase();
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 6)
+    .map((text, index) => ({ id: String(index + 1), text, votes: 0 }));
+
+  if (options.length < 2) {
+    return null;
+  }
+  return { options, totalVotes: 0 };
+}
+
+function serializePoll(poll) {
+  if (!poll?.options?.length) {
+    return null;
+  }
+  const options = poll.options.map((option) => ({
+    id: option.id,
+    text: option.text,
+    votes: Number(option.votes || 0)
+  }));
+  return {
+    options,
+    totalVotes: options.reduce((total, option) => total + option.votes, 0),
+    updatedAt: poll.updatedAt ?? null
+  };
 }
 
 function validateImage(image) {
@@ -101,18 +308,22 @@ function validateImage(image) {
 function serializeThread(thread, comments) {
   const publicComments = comments.filter((comment) => comment.threadId === thread.id && publicPost(comment));
   return {
-    ...thread,
+    ...stripPrivatePostFields(thread),
+    poll: serializePoll(thread.poll),
     isArchived: Boolean(thread.isArchived),
     archivedAt: thread.archivedAt ?? null,
     archivedReason: thread.archivedReason ?? null,
+    slowModeUntil: thread.slowModeUntil ?? null,
+    slowModeSeconds: Number(thread.slowModeSeconds || 0),
     bodyLines: parsePostText(thread.body),
     replyCount: publicComments.length
   };
 }
 
-function serializeComment(comment) {
+function serializeComment(comment, thread = null) {
   return {
-    ...comment,
+    ...stripPrivatePostFields(comment),
+    isOp: Boolean(thread?.opProofHash && comment.opProofHash && thread.opProofHash === comment.opProofHash),
     bodyLines: parsePostText(comment.body)
   };
 }
@@ -142,8 +353,109 @@ function incrementHotBoardMetric(metrics, boardSlug, type, createdAt) {
   }
 }
 
+function pulseKeywords(body = '') {
+  const normalized = String(body)
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+  return [
+    ...new Set(
+      normalized
+        .match(/[\p{L}\p{N}]{3,}/gu)
+        ?.filter((word) => !PULSE_STOP_WORDS.has(word) && !/^\d+$/.test(word)) ?? []
+    )
+  ];
+}
+
 function sanitizeReason(reason) {
   return normalizeBody(reason ?? '').slice(0, 240);
+}
+
+function sanitizeDurationMinutes(value, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return fallback;
+  }
+  return Math.max(1, Math.min(Math.round(number), 60 * 24 * 30));
+}
+
+function sanitizeSinceGlobalNumber(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number) || number <= 0) {
+    return 0;
+  }
+  return Math.floor(number);
+}
+
+function fingerprintPreview(fingerprint = '') {
+  return `${String(fingerprint).slice(0, 12)}...`;
+}
+
+function activeSanctionFor(state, fingerprint, createdAt) {
+  return state.sanctions
+    .filter((sanction) => sanction.fingerprint === fingerprint && !sanction.revokedAt)
+    .filter((sanction) => !sanction.expiresAt || sanction.expiresAt.localeCompare(createdAt) > 0)
+    .sort((left, right) => String(right.expiresAt ?? '').localeCompare(String(left.expiresAt ?? '')))[0];
+}
+
+function slowModeActive(thread, createdAt) {
+  return Boolean(thread.slowModeUntil && thread.slowModeUntil.localeCompare(createdAt) > 0);
+}
+
+function enforceThreadSlowMode(state, thread, { authorFingerprint, createdAt }) {
+  if (!slowModeActive(thread, createdAt)) {
+    return;
+  }
+  const slowModeSeconds = Number(thread.slowModeSeconds || 0);
+  if (!slowModeSeconds) {
+    return;
+  }
+  const lastPost = state.comments
+    .filter((comment) => comment.threadId === thread.id && !comment.isDeleted && comment.authorFingerprint === authorFingerprint)
+    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))[0];
+  if (!lastPost) {
+    return;
+  }
+  const elapsedSeconds = (new Date(createdAt).getTime() - new Date(lastPost.createdAt).getTime()) / 1000;
+  if (elapsedSeconds < slowModeSeconds) {
+    const error = new Error(`Chủ đề đang bật chế độ chậm. Thử lại sau ${Math.ceil(slowModeSeconds - elapsedSeconds)} giây.`);
+    error.statusCode = 429;
+    throw error;
+  }
+}
+
+function raiseThreadSlowMode(thread, labels = [], createdAt) {
+  if (!labels.some((label) => SLOW_MODE_LABELS.has(label))) {
+    return false;
+  }
+  const level = Math.min(Number(thread.slowModeLevel || 0) + 1, 4);
+  const slowModeSeconds = Math.min(level * 30, 120);
+  const until = new Date(new Date(createdAt).getTime() + 15 * 60 * 1000).toISOString();
+  thread.slowModeLevel = level;
+  thread.slowModeSeconds = slowModeSeconds;
+  if (!thread.slowModeUntil || until.localeCompare(thread.slowModeUntil) > 0) {
+    thread.slowModeUntil = until;
+  }
+  return true;
+}
+
+function enforceSanctions(state, { ip, posterToken, createdAt }) {
+  const fingerprint = createModerationFingerprint({ ip, posterToken });
+  const sanction = activeSanctionFor(state, fingerprint, createdAt);
+  if (sanction) {
+    const error = new Error(`Bạn đang bị tạm khóa đăng bài đến ${sanction.expiresAt}`);
+    error.statusCode = 403;
+    throw error;
+  }
+  return fingerprint;
+}
+
+function serializeSanction(sanction) {
+  const { fingerprint: _fingerprint, ...publicFields } = sanction;
+  return {
+    ...publicFields,
+    fingerprintPreview: sanction.fingerprintPreview ?? fingerprintPreview(sanction.fingerprint)
+  };
 }
 
 function recordModerationAction(state, { action, actor = 'system', postType, post, reason = '', createdAt }) {
@@ -178,7 +490,127 @@ function findPublicPostByGlobalNumber(state, globalNumber) {
   return null;
 }
 
-export function createForumService({ store, ai, realtime, now = () => new Date(), lifecycle = THREAD_LIFECYCLE }) {
+function findAnyPostByGlobalNumber(state, globalNumber) {
+  const number = Number(globalNumber);
+  const thread = state.threads.find((item) => item.globalNumber === number);
+  if (thread) {
+    return { postType: 'thread', post: thread };
+  }
+
+  const comment = state.comments.find((item) => item.globalNumber === number);
+  if (comment) {
+    return { postType: 'comment', post: comment };
+  }
+
+  return null;
+}
+
+function matchesAdminFilters(item, filters = {}, dateField = 'createdAt') {
+  if (filters.boardSlug && item.boardSlug !== filters.boardSlug) {
+    return false;
+  }
+
+  if (filters.label) {
+    const labels = item.moderationLabels ?? [];
+    if (!labels.includes(filters.label) && item.moderationStatus !== filters.label) {
+      return false;
+    }
+  }
+
+  if (filters.since && String(item[dateField] ?? item.createdAt ?? '').localeCompare(filters.since) < 0) {
+    return false;
+  }
+
+  return true;
+}
+
+function serializeAdminPost(postType, post, state) {
+  const parent = postType === 'comment' ? state.threads.find((thread) => thread.id === post.threadId) : null;
+  return {
+    type: postType,
+    ...(postType === 'thread' ? serializeThread(post, state.comments) : serializeComment(post, parent))
+  };
+}
+
+function aiBudgetKey({ kind, ip = '', posterToken = '', actor = 'public', createdAt }) {
+  const day = daySalt(new Date(createdAt));
+  const identity = crypto
+    .createHash('sha256')
+    .update(`${actor}:${ip}:${posterToken}`)
+    .digest('hex')
+    .slice(0, 24);
+  return `${day}:${kind}:${identity}`;
+}
+
+function consumeAiBudget(state, { kind, ip, posterToken, actor, createdAt }) {
+  const limits = {
+    summary: 20,
+    suggestion: 30,
+    rewrite: 20
+  };
+  const limit = limits[kind] ?? 10;
+  const key = aiBudgetKey({ kind, ip, posterToken, actor, createdAt });
+  const current = state.aiUsage[key] ?? { count: 0 };
+  if (current.count >= limit) {
+    const error = new Error('Đã đạt giới hạn dùng AI trong ngày. Thử lại sau.');
+    error.statusCode = 429;
+    throw error;
+  }
+  state.aiUsage[key] = {
+    count: current.count + 1,
+    updatedAt: createdAt
+  };
+}
+
+function cacheSummary(state, key, fingerprint, producer, createdAt) {
+  const cached = state.aiSummaryCache[key];
+  if (cached?.fingerprint === fingerprint && Array.isArray(cached.bullets)) {
+    return cached.bullets;
+  }
+
+  return producer().then((bullets) => {
+    state.aiSummaryCache[key] = {
+      fingerprint,
+      bullets,
+      cachedAt: createdAt
+    };
+    return bullets;
+  });
+}
+
+function threadSummaryFingerprint(detail, sinceGlobalNumber = 0) {
+  const comments = sinceGlobalNumber
+    ? detail.comments.filter((comment) => Number(comment.globalNumber) > sinceGlobalNumber)
+    : detail.comments;
+  return [
+    detail.thread.id,
+    detail.thread.bumpedAt,
+    detail.thread.replyCount,
+    sinceGlobalNumber,
+    ...comments.map((comment) => comment.globalNumber)
+  ].join(':');
+}
+
+function boardSummaryFingerprint(threads) {
+  return threads.map((thread) => `${thread.id}:${thread.bumpedAt}:${thread.replyCount}`).join('|');
+}
+
+export function createForumService({
+  store,
+  ai,
+  realtime = { publish() {}, count: () => 0 },
+  now = () => new Date(),
+  lifecycle = THREAD_LIFECYCLE,
+  logger = noopLogger,
+  imageStorage = createInlineImageStorage()
+}) {
+  function logEvent(event, payload = {}) {
+    if (logger === noopLogger) {
+      return;
+    }
+    logger({ event, ...payload });
+  }
+
   async function mutate(callback) {
     const state = await store.read();
     const result = await callback(state);
@@ -213,6 +645,23 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
     }
   }
 
+  function archiveExpiredEventThreads(state, boardSlug, archivedAt) {
+    const board = getBoard(boardSlug);
+    if (!boardEventEnded(board, archivedAt)) {
+      return false;
+    }
+
+    let changed = false;
+    state.threads
+      .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
+      .forEach((thread) => {
+        archiveThreadRecord(thread, 'event-ended', archivedAt);
+        realtime.publish('thread:archived', { thread: serializeThread(thread, state.comments) });
+        changed = true;
+      });
+    return changed;
+  }
+
   return {
     async listBoards() {
       const { BOARDS } = await import('./config.js');
@@ -243,7 +692,46 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
         fileCount: files.length,
         fileMegabytes: Number((fileBytes / 1024 / 1024).toFixed(1)),
         activeContentMb: Number((fileBytes / 1024 / 1024).toFixed(1)),
-        currentUsers: Math.max(1, realtime.count?.() ?? 1)
+        currentUsers: Math.max(1, realtime.count?.() ?? 1),
+        boardUsers: realtime.boardCounts?.() ?? {}
+      };
+    },
+
+    async getHealth() {
+      const state = await store.read();
+      const storeHealth = store.health
+        ? await store.health()
+        : {
+            type: 'json',
+            threads: state.threads.length,
+            comments: state.comments.length,
+            reports: state.reports.length,
+            sanctions: state.sanctions.length,
+            moderationActions: state.moderationActions.length,
+            nextGlobalNumber: state.nextGlobalNumber
+          };
+      return {
+        status: 'ok',
+        checkedAt: now().toISOString(),
+        store: {
+          ...storeHealth,
+          threads: state.threads.length,
+          comments: state.comments.length,
+          reports: state.reports.length,
+          sanctions: state.sanctions.length,
+          moderationActions: state.moderationActions.length,
+          nextGlobalNumber: state.nextGlobalNumber
+        },
+        ai: {
+          provider: 'google-ai-studio',
+          configured: Boolean(process.env.GOOGLE_AI_API_KEY),
+          model: process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash'
+        },
+        imageStorage: imageStorage.health ? await imageStorage.health() : { type: imageStorage.type ?? 'unknown' },
+        realtime: {
+          clients: realtime.count?.() ?? 0,
+          boards: realtime.boardCounts?.() ?? {}
+        }
       };
     },
 
@@ -262,7 +750,7 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
         .filter((comment) => publicPost(comment) && publicThreadIds.has(comment.threadId))
         .map((comment) => ({
           type: 'comment',
-          ...serializeComment(comment)
+          ...serializeComment(comment, state.threads.find((thread) => thread.id === comment.threadId))
         }));
 
       return [...threads, ...comments].sort(compareNewestPosts).slice(0, safeLimit);
@@ -310,21 +798,73 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
         .slice(0, safeLimit);
     },
 
-    async listModerationActions(limit = 50) {
+    async listCampusPulse(limit = 12) {
+      const state = await store.read();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 12, 24));
+      const oneDayAgo = now().getTime() - 24 * 60 * 60 * 1000;
+      const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
+      const activeThreadIds = new Set(state.threads.filter(activePublicThread).map((thread) => thread.id));
+      const metrics = new Map();
+      const publicPosts = [
+        ...state.threads.filter((thread) => activePublicThread(thread) && inLast24h(thread)),
+        ...state.comments.filter((comment) => publicPost(comment) && activeThreadIds.has(comment.threadId) && inLast24h(comment))
+      ];
+
+      for (const post of publicPosts) {
+        for (const keyword of pulseKeywords(post.body)) {
+          const metric = metrics.get(keyword) ?? {
+            keyword,
+            count: 0,
+            boardSlugs: new Set(),
+            latestActivityAt: null
+          };
+          metric.count += 1;
+          metric.boardSlugs.add(post.boardSlug);
+          if (!metric.latestActivityAt || post.createdAt.localeCompare(metric.latestActivityAt) > 0) {
+            metric.latestActivityAt = post.createdAt;
+          }
+          metrics.set(keyword, metric);
+        }
+      }
+
+      return [...metrics.values()]
+        .sort((left, right) => {
+          const countCompare = right.count - left.count;
+          if (countCompare !== 0) {
+            return countCompare;
+          }
+          return (right.latestActivityAt ?? '').localeCompare(left.latestActivityAt ?? '');
+        })
+        .slice(0, safeLimit)
+        .map((metric) => ({
+          keyword: metric.keyword,
+          count: metric.count,
+          boardCount: metric.boardSlugs.size,
+          latestActivityAt: metric.latestActivityAt
+        }));
+    },
+
+    async listModerationActions(limit = 50, filters = {}) {
       const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
       return [...state.moderationActions]
+        .filter((action) => !filters.action || action.action === filters.action)
+        .filter((action) => matchesAdminFilters(action, filters, 'createdAt'))
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .slice(0, safeLimit);
     },
 
-    async listReports(limit = 50) {
+    async listReports(limit = 50, filters = {}) {
       const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
-      return [...state.reports].sort((left, right) => right.createdAt.localeCompare(left.createdAt)).slice(0, safeLimit);
+      return [...state.reports]
+        .filter((report) => !filters.status || report.status === filters.status)
+        .filter((report) => matchesAdminFilters(report, filters, 'createdAt'))
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, safeLimit);
     },
 
-    async listThreads(boardSlug) {
+    async listThreads(boardSlug, options = {}) {
       if (!getBoard(boardSlug)) {
         const error = new Error('Không tìm thấy bảng');
         error.statusCode = 404;
@@ -332,10 +872,20 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
       }
 
       const state = await store.read();
-      return state.threads
+      const checkedAt = now().toISOString();
+      if (archiveExpiredEventThreads(state, boardSlug, checkedAt)) {
+        await store.write(state);
+      }
+      const term = normalizeSearchTerm(options.q);
+      const threads = state.threads
         .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
+        .filter((thread) => threadMatchesSearch(state, thread, term))
         .sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt))
         .map((thread) => serializeThread(thread, state.comments));
+      if (options.paged) {
+        return pagedResult(threads, { page: options.page, pageSize: options.pageSize, maxPageSize: 50 });
+      }
+      return threads;
     },
 
     async listArchivedThreads(boardSlug) {
@@ -346,6 +896,10 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
       }
 
       const state = await store.read();
+      const checkedAt = now().toISOString();
+      if (archiveExpiredEventThreads(state, boardSlug, checkedAt)) {
+        await store.write(state);
+      }
       return state.threads
         .filter((thread) => thread.boardSlug === boardSlug && archivedPublicThread(thread))
         .sort((left, right) => (right.archivedAt ?? '').localeCompare(left.archivedAt ?? ''))
@@ -368,7 +922,7 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
       });
     },
 
-    async createThread({ boardSlug, body, image, captchaToken, ip, posterToken }) {
+    async createThread({ boardSlug, body, image, pollOptions, captchaToken, ip, posterToken, options = '', deletePassword = '' }) {
       const board = getBoard(boardSlug);
       if (!board) {
         const error = new Error('Không tìm thấy bảng');
@@ -384,18 +938,31 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
         throw error;
       }
       const safeImage = validateImage(image);
-      const moderation = await ai.moderate(normalizedBody);
+      const poll = createPoll(pollOptions);
+      const postingOptions = parsePostingOptions(options);
       const createdAt = now().toISOString();
+      assertEventBoardOpen(board, createdAt);
 
       return mutate(async (state) => {
+        const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
+        const moderation = await ai.moderate(normalizedBody);
         const id = crypto.randomUUID();
+        const storedImage = safeImage ? await imageStorage.save(safeImage) : null;
         const thread = {
           id,
           boardSlug,
           body: normalizedBody,
-          image: safeImage,
+          image: storedImage,
+          poll,
+          pollVotes: poll ? {} : undefined,
+          authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId: id, salt: daySalt(new Date(createdAt)), posterToken }),
+          opProofHash: createPosterProofHash({ threadId: id, posterToken }),
+          deletePasswordHash: deletePasswordHash(deletePassword),
+          options: postingOptions.raw,
+          sage: postingOptions.sage,
+          noko: postingOptions.noko,
           isPending: moderation.status === 'Flagged',
           isDeleted: false,
           moderationStatus: moderation.status,
@@ -412,6 +979,14 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
           reason: moderation.labels?.join(', ') || moderation.status,
           createdAt
         });
+        logEvent('post.create', {
+          postType: 'thread',
+          boardSlug,
+          globalNumber: thread.globalNumber,
+          moderationStatus: thread.moderationStatus,
+          moderationLabels: thread.moderationLabels,
+          isPending: thread.isPending
+        });
 
         if (!thread.isPending) {
           enforceBoardThreadCap(state, boardSlug, createdAt);
@@ -422,7 +997,7 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
       });
     },
 
-    async getThread(threadId) {
+    async getThread(threadId, options = {}) {
       const state = await store.read();
       const thread = state.threads.find((item) => item.id === threadId && publicPost(item));
       if (!thread) {
@@ -430,17 +1005,59 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
         error.statusCode = 404;
         throw error;
       }
+      const checkedAt = now().toISOString();
+      if (archiveExpiredEventThreads(state, thread.boardSlug, checkedAt)) {
+        await store.write(state);
+      }
 
+      const serializedThread = serializeThread(thread, state.comments);
+      const serializedComments = state.comments
+        .filter((comment) => comment.threadId === threadId && publicPost(comment))
+        .sort((left, right) => left.globalNumber - right.globalNumber)
+        .map((comment) => serializeComment(comment, thread));
+      const withBacklinks = addBacklinks([serializedThread, ...serializedComments]);
+      const [threadWithBacklinks, ...commentsWithBacklinks] = withBacklinks;
+      const currentMaxGlobalNumber = withBacklinks.reduce(
+        (maxNumber, post) => Math.max(maxNumber, Number(post.globalNumber) || 0),
+        0
+      );
+      if (options.paged) {
+        const firstPageOptions = paginationOptions({
+          page: options.commentsPage || options.page,
+          pageSize: options.commentsPageSize || options.pageSize,
+          maxPageSize: 100
+        });
+        const focusGlobalNumber = Number(options.focusGlobalNumber || 0);
+        const focusIndex = focusGlobalNumber
+          ? commentsWithBacklinks.findIndex((comment) => Number(comment.globalNumber) === focusGlobalNumber)
+          : -1;
+        const focusedPage =
+          focusIndex >= 0 ? Math.floor(focusIndex / firstPageOptions.pageSize) + 1 : firstPageOptions.page;
+        const page = pagedResult(commentsWithBacklinks, {
+          page: focusedPage,
+          pageSize: firstPageOptions.pageSize,
+          maxPageSize: 100
+        });
+        return {
+          thread: threadWithBacklinks,
+          comments: page.items,
+          commentPage: {
+            page: page.page,
+            pageSize: page.pageSize,
+            total: page.total,
+            totalPages: page.totalPages,
+            hasMore: page.hasMore,
+            currentMaxGlobalNumber
+          }
+        };
+      }
       return {
-        thread: serializeThread(thread, state.comments),
-        comments: state.comments
-          .filter((comment) => comment.threadId === threadId && publicPost(comment))
-          .sort((left, right) => left.globalNumber - right.globalNumber)
-          .map(serializeComment)
+        thread: threadWithBacklinks,
+        comments: commentsWithBacklinks
       };
     },
 
-    async createComment({ threadId, body, captchaToken, ip, posterToken }) {
+    async createComment({ threadId, body, captchaToken, ip, posterToken, options = '', deletePassword = '' }) {
       await requireCaptcha(captchaToken, ip);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
@@ -448,16 +1065,19 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
         error.statusCode = 400;
         throw error;
       }
-      const moderation = await ai.moderate(normalizedBody);
       const createdAt = now().toISOString();
+      const postingOptions = parsePostingOptions(options);
 
       return mutate(async (state) => {
+        const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
         const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
         if (!thread) {
           const error = new Error('Không tìm thấy chủ đề');
           error.statusCode = 404;
           throw error;
         }
+        assertEventBoardOpen(getBoard(thread.boardSlug), createdAt);
+        enforceThreadSlowMode(state, thread, { authorFingerprint, createdAt });
 
         const repliesBeforeCreate = publicReplyCount(state, threadId);
         if (repliesBeforeCreate >= lifecycle.replyLimit) {
@@ -465,14 +1085,21 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
           error.statusCode = 409;
           throw error;
         }
+        const moderation = await ai.moderate(normalizedBody);
 
         const comment = {
           id: crypto.randomUUID(),
           threadId,
           boardSlug: thread.boardSlug,
           body: normalizedBody,
+          authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),
+          opProofHash: createPosterProofHash({ threadId, posterToken }),
+          deletePasswordHash: deletePasswordHash(deletePassword),
+          options: postingOptions.raw,
+          sage: postingOptions.sage,
+          noko: postingOptions.noko,
           isPending: moderation.status === 'Flagged',
           isDeleted: false,
           moderationStatus: moderation.status,
@@ -488,19 +1115,65 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
           reason: moderation.labels?.join(', ') || moderation.status,
           createdAt
         });
+        logEvent('post.create', {
+          postType: 'comment',
+          boardSlug: comment.boardSlug,
+          threadId,
+          globalNumber: comment.globalNumber,
+          moderationStatus: comment.moderationStatus,
+          moderationLabels: comment.moderationLabels,
+          isPending: comment.isPending
+        });
+        const slowModeRaised = raiseThreadSlowMode(thread, comment.moderationLabels, createdAt);
 
         if (!comment.isPending) {
-          realtime.publish('comment:created', { threadId, comment: serializeComment(comment) });
-          if (repliesBeforeCreate < lifecycle.bumpLimit) {
+          realtime.publish('comment:created', { threadId, comment: serializeComment(comment, thread) });
+          if (!postingOptions.sage && repliesBeforeCreate < lifecycle.bumpLimit) {
             thread.bumpedAt = createdAt;
             realtime.publish('thread:bumped', { thread: serializeThread(thread, state.comments) });
           }
         }
+        if (slowModeRaised) {
+          realtime.publish('thread:updated', { thread: serializeThread(thread, state.comments) });
+        }
 
         return {
           status: comment.isPending ? 'pending' : 'published',
-          comment: serializeComment(comment)
+          comment: serializeComment(comment, thread)
         };
+      });
+    },
+
+    async votePoll(threadId, { optionId, ip, posterToken } = {}) {
+      const selectedOptionId = String(optionId ?? '');
+      return mutate(async (state) => {
+        const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
+        if (!thread?.poll) {
+          const error = new Error('Không tìm thấy thăm dò');
+          error.statusCode = 404;
+          throw error;
+        }
+        const option = thread.poll.options.find((item) => item.id === selectedOptionId);
+        if (!option) {
+          const error = new Error('Lựa chọn không hợp lệ');
+          error.statusCode = 400;
+          throw error;
+        }
+        const fingerprint = createModerationFingerprint({ ip, posterToken });
+        thread.pollVotes ??= {};
+        if (thread.pollVotes[fingerprint]) {
+          const error = new Error('Bạn đã vote thăm dò này');
+          error.statusCode = 409;
+          throw error;
+        }
+
+        option.votes = Number(option.votes || 0) + 1;
+        thread.poll.totalVotes = Number(thread.poll.totalVotes || 0) + 1;
+        thread.poll.updatedAt = now().toISOString();
+        thread.pollVotes[fingerprint] = option.id;
+        const serialized = serializeThread(thread, state.comments);
+        realtime.publish('thread:updated', { thread: serialized });
+        return serialized.poll;
       });
     },
 
@@ -511,7 +1184,8 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
         return { type: 'thread', post: serializeThread(found.post, state.comments) };
       }
       if (found?.postType === 'comment') {
-        return { type: 'comment', post: serializeComment(found.post) };
+        const thread = state.threads.find((item) => item.id === found.post.threadId);
+        return { type: 'comment', post: serializeComment(found.post, thread) };
       }
       const error = new Error('Không tìm thấy bài viết');
       error.statusCode = 404;
@@ -553,19 +1227,267 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
           createdAt
         };
         state.reports.push(report);
+        logEvent('report.create', {
+          boardSlug: report.boardSlug,
+          globalNumber: report.globalNumber,
+          postType: report.postType
+        });
         return report;
       });
     },
 
-    async listPending() {
+    async deletePost({ globalNumber, password, fileOnly = false } = {}) {
+      return mutate(async (state) => {
+        const found = findPublicPostByGlobalNumber(state, globalNumber);
+        if (!found) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+        verifyDeletePassword(found.post, password);
+
+        const deletedAt = now().toISOString();
+        if (fileOnly) {
+          if (!found.post.image) {
+            const error = new Error('Bài viết không có tệp để xóa');
+            error.statusCode = 400;
+            throw error;
+          }
+          found.post.image = null;
+          found.post.fileDeletedAt = deletedAt;
+        } else {
+          found.post.isDeleted = true;
+          found.post.deletedAt = deletedAt;
+          found.post.deleteReason = 'self-delete';
+        }
+        recordModerationAction(state, {
+          action: fileOnly ? 'user:delete-file' : 'user:delete',
+          actor: 'anonymous',
+          postType: found.postType,
+          post: found.post,
+          reason: fileOnly ? 'file-only' : 'self-delete',
+          createdAt: deletedAt
+        });
+
+        if (found.postType === 'thread') {
+          realtime.publish('thread:updated', { threadId: found.post.id, deleted: !fileOnly, fileOnly: Boolean(fileOnly) });
+        } else {
+          const parent = state.threads.find((thread) => thread.id === found.post.threadId);
+          realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+        }
+        return { ok: true, fileOnly: Boolean(fileOnly), globalNumber: found.post.globalNumber };
+      });
+    },
+
+    async listPending(filters = {}) {
       const state = await store.read();
       const threads = state.threads
         .filter((thread) => thread.isPending && !thread.isDeleted)
-        .map((thread) => ({ type: 'thread', ...serializeThread(thread, state.comments) }));
+        .filter((thread) => matchesAdminFilters(thread, filters, 'createdAt'))
+        .map((thread) => serializeAdminPost('thread', thread, state));
       const comments = state.comments
         .filter((comment) => comment.isPending && !comment.isDeleted)
-        .map((comment) => ({ type: 'comment', ...serializeComment(comment) }));
+        .filter((comment) => matchesAdminFilters(comment, filters, 'createdAt'))
+        .map((comment) => serializeAdminPost('comment', comment, state));
       return [...threads, ...comments].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    },
+
+    async listDeleted(limit = 50, filters = {}) {
+      const state = await store.read();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const threads = state.threads
+        .filter((thread) => thread.isDeleted)
+        .filter((thread) => matchesAdminFilters(thread, filters, 'deletedAt'))
+        .map((thread) => serializeAdminPost('thread', thread, state));
+      const comments = state.comments
+        .filter((comment) => comment.isDeleted)
+        .filter((comment) => matchesAdminFilters(comment, filters, 'deletedAt'))
+        .map((comment) => serializeAdminPost('comment', comment, state));
+      return [...threads, ...comments]
+        .sort((left, right) => String(right.deletedAt ?? '').localeCompare(String(left.deletedAt ?? '')))
+        .slice(0, safeLimit);
+    },
+
+    async listApprovedHistory(limit = 50, filters = {}) {
+      return this.listModerationActions(limit, { ...filters, action: 'admin:approve' });
+    },
+
+    async getAdminPostDetail(globalNumber) {
+      const state = await store.read();
+      const found = findAnyPostByGlobalNumber(state, globalNumber);
+      if (!found) {
+        const error = new Error('Không tìm thấy bài viết');
+        error.statusCode = 404;
+        throw error;
+      }
+
+      const post = serializeAdminPost(found.postType, found.post, state);
+      const thread =
+        found.postType === 'thread'
+          ? serializeThread(found.post, state.comments)
+          : state.threads.find((item) => item.id === found.post.threadId);
+      const reports = state.reports
+        .filter((report) => report.globalNumber === found.post.globalNumber)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      const actions = state.moderationActions
+        .filter((action) => action.globalNumber === found.post.globalNumber)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      const sanctions = state.sanctions
+        .filter((sanction) => sanction.sourceGlobalNumber === found.post.globalNumber)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .map(serializeSanction);
+
+      return {
+        post,
+        thread: thread ? serializeThread(thread, state.comments) : null,
+        reports,
+        actions,
+        sanctions
+      };
+    },
+
+    async addModeratorNote(globalNumber, { note = '', actor = 'admin' } = {}) {
+      const safeNote = sanitizeReason(note);
+      if (!safeNote) {
+        const error = new Error('Ghi chú là bắt buộc');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const createdAt = now().toISOString();
+        recordModerationAction(state, {
+          action: 'admin:note',
+          actor,
+          postType: found.postType,
+          post: found.post,
+          reason: safeNote,
+          createdAt
+        });
+        logEvent('moderation.note', {
+          postType: found.postType,
+          boardSlug: found.post.boardSlug,
+          globalNumber: found.post.globalNumber,
+          actor
+        });
+        return state.moderationActions.at(-1);
+      });
+    },
+
+    async listSanctions(limit = 50, filters = {}) {
+      const state = await store.read();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const checkedAt = now().toISOString();
+      return [...state.sanctions]
+        .filter((sanction) => !filters.kind || sanction.kind === filters.kind)
+        .filter((sanction) => !filters.boardSlug || sanction.boardSlug === filters.boardSlug)
+        .filter((sanction) => {
+          if (filters.status === 'active') {
+            return !sanction.revokedAt && (!sanction.expiresAt || sanction.expiresAt.localeCompare(checkedAt) > 0);
+          }
+          if (filters.status === 'revoked') {
+            return Boolean(sanction.revokedAt);
+          }
+          if (filters.status === 'expired') {
+            return !sanction.revokedAt && sanction.expiresAt && sanction.expiresAt.localeCompare(checkedAt) <= 0;
+          }
+          return true;
+        })
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .slice(0, safeLimit)
+        .map(serializeSanction);
+    },
+
+    async createSanctionForPost(globalNumber, { kind = 'cooldown', durationMinutes, reason = '', actor = 'admin' } = {}) {
+      const safeKind = kind === 'ban' ? 'ban' : 'cooldown';
+      const safeDuration = sanitizeDurationMinutes(durationMinutes, safeKind === 'ban' ? 24 * 60 : 60);
+      const safeReason = sanitizeReason(reason) || (safeKind === 'ban' ? 'Tạm khóa' : 'Cooldown');
+
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (!found.post.authorFingerprint) {
+          const error = new Error('Bài viết này chưa có fingerprint vận hành');
+          error.statusCode = 409;
+          throw error;
+        }
+
+        const createdAt = now().toISOString();
+        const expiresAt = new Date(new Date(createdAt).getTime() + safeDuration * 60 * 1000).toISOString();
+        const sanction = {
+          id: crypto.randomUUID(),
+          kind: safeKind,
+          fingerprint: found.post.authorFingerprint,
+          fingerprintPreview: fingerprintPreview(found.post.authorFingerprint),
+          sourceGlobalNumber: found.post.globalNumber,
+          sourcePostType: found.postType,
+          boardSlug: found.post.boardSlug,
+          reason: safeReason,
+          actor,
+          createdAt,
+          expiresAt
+        };
+        state.sanctions.push(sanction);
+        recordModerationAction(state, {
+          action: safeKind === 'ban' ? 'admin:ban' : 'admin:cooldown',
+          actor,
+          postType: found.postType,
+          post: found.post,
+          reason: `${safeReason} (${safeDuration} phút)`,
+          createdAt
+        });
+        logEvent('moderation.sanction', {
+          kind: safeKind,
+          boardSlug: found.post.boardSlug,
+          globalNumber: found.post.globalNumber,
+          actor
+        });
+        return serializeSanction(sanction);
+      });
+    },
+
+    async revokeSanction(id, { reason = '', actor = 'admin' } = {}) {
+      return mutate(async (state) => {
+        const sanction = state.sanctions.find((item) => item.id === id && !item.revokedAt);
+        if (!sanction) {
+          const error = new Error('Không tìm thấy khóa tạm đang hoạt động');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        sanction.revokedAt = now().toISOString();
+        sanction.revokeReason = sanitizeReason(reason);
+        sanction.revokedBy = actor;
+        const found = findAnyPostByGlobalNumber(state, sanction.sourceGlobalNumber);
+        if (found) {
+          recordModerationAction(state, {
+            action: 'admin:unsanction',
+            actor,
+            postType: found.postType,
+            post: found.post,
+            reason: sanction.revokeReason || 'Gỡ khóa tạm',
+            createdAt: sanction.revokedAt
+          });
+        }
+        logEvent('moderation.unsanction', {
+          kind: sanction.kind,
+          boardSlug: sanction.boardSlug,
+          sourceGlobalNumber: sanction.sourceGlobalNumber,
+          actor
+        });
+        return serializeSanction(sanction);
+      });
     },
 
     async approvePending(id, { reason = '', actor = 'admin' } = {}) {
@@ -584,6 +1506,12 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
             post: thread,
             reason,
             createdAt: actionAt
+          });
+          logEvent('moderation.approve', {
+            postType: 'thread',
+            boardSlug: thread.boardSlug,
+            globalNumber: thread.globalNumber,
+            actor
           });
           realtime.publish('thread:created', { thread: serializeThread(thread, state.comments) });
           return serializeThread(thread, state.comments);
@@ -609,9 +1537,15 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
             reason,
             createdAt: actionAt
           });
-          realtime.publish('comment:created', { threadId: parent.id, comment: serializeComment(comment) });
+          logEvent('moderation.approve', {
+            postType: 'comment',
+            boardSlug: comment.boardSlug,
+            globalNumber: comment.globalNumber,
+            actor
+          });
+          realtime.publish('comment:created', { threadId: parent.id, comment: serializeComment(comment, parent) });
           realtime.publish('thread:bumped', { thread: serializeThread(parent, state.comments) });
-          return serializeComment(comment);
+          return serializeComment(comment, parent);
         }
 
         const error = new Error('Không tìm thấy bài đang chờ duyệt');
@@ -641,25 +1575,88 @@ export function createForumService({ store, ai, realtime, now = () => new Date()
           reason,
           createdAt: post.deletedAt
         });
+        logEvent('moderation.delete', {
+          postType: post.threadId ? 'comment' : 'thread',
+          boardSlug: post.boardSlug,
+          globalNumber: post.globalNumber,
+          actor
+        });
         return { ok: true };
       });
     },
 
-    async summarizeThread(threadId) {
+    async summarizeThread(threadId, { ip, posterToken, actor = 'public', sinceGlobalNumber = 0 } = {}) {
       const detail = await this.getThread(threadId);
-      const items = [detail.thread, ...detail.comments].map((item) => ({ body: item.body }));
-      return ai.summarize(items);
+      const sinceNumber = sanitizeSinceGlobalNumber(sinceGlobalNumber);
+      const comments = sinceNumber
+        ? detail.comments.filter((comment) => Number(comment.globalNumber) > sinceNumber)
+        : detail.comments;
+      const items = (sinceNumber ? comments : [detail.thread, ...comments]).map((item) => ({ body: item.body }));
+      if (sinceNumber && !items.length) {
+        return ['Chưa có bình luận mới từ lần đọc trước.'];
+      }
+      return mutate(async (state) => {
+        const createdAt = now().toISOString();
+        const fingerprint = threadSummaryFingerprint(detail, sinceNumber);
+        const cacheKey = sinceNumber ? `thread:${threadId}:since:${sinceNumber}` : `thread:${threadId}`;
+        if (state.aiSummaryCache[cacheKey]?.fingerprint !== fingerprint) {
+          consumeAiBudget(state, { kind: 'summary', ip, posterToken, actor, createdAt });
+        }
+        logEvent('ai.summary', { target: 'thread', threadId, sinceGlobalNumber: sinceNumber || null });
+        return cacheSummary(state, cacheKey, fingerprint, () => ai.summarize(items), createdAt);
+      });
     },
 
-    async summarizeBoard(boardSlug) {
+    async summarizeBoard(boardSlug, { ip, posterToken, actor = 'public' } = {}) {
       const threads = await this.listThreads(boardSlug);
-      return ai.summarize(threads.map((thread) => ({ body: thread.body })));
+      const items = threads.map((thread) => ({ body: thread.body }));
+      return mutate(async (state) => {
+        const createdAt = now().toISOString();
+        const fingerprint = boardSummaryFingerprint(threads);
+        const cacheKey = `board:${boardSlug}`;
+        if (state.aiSummaryCache[cacheKey]?.fingerprint !== fingerprint) {
+          consumeAiBudget(state, { kind: 'summary', ip, posterToken, actor, createdAt });
+        }
+        logEvent('ai.summary', { target: 'board', boardSlug });
+        return cacheSummary(state, cacheKey, fingerprint, () => ai.summarize(items), createdAt);
+      });
     },
 
-    async suggestComments(threadId) {
+    async suggestComments(threadId, { ip, posterToken, actor = 'public' } = {}) {
       const detail = await this.getThread(threadId);
       const items = [detail.thread, ...detail.comments.slice(-3)].map((item) => ({ body: item.body }));
-      return ai.suggest(items);
+      return mutate(async (state) => {
+        consumeAiBudget(state, {
+          kind: 'suggestion',
+          ip,
+          posterToken,
+          actor,
+          createdAt: now().toISOString()
+        });
+        logEvent('ai.suggestion', { threadId });
+        return ai.suggest(items);
+      });
+    },
+
+    async rewriteDraft({ body, ip, posterToken, actor = 'public' } = {}) {
+      const normalizedBody = normalizeBody(body);
+      if (!normalizedBody) {
+        const error = new Error('Nội dung là bắt buộc');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        consumeAiBudget(state, {
+          kind: 'rewrite',
+          ip,
+          posterToken,
+          actor,
+          createdAt: now().toISOString()
+        });
+        logEvent('ai.rewrite', { actor });
+        return ai.rewrite(normalizedBody);
+      });
     }
   };
 }

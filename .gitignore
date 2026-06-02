@@ -2,6 +2,10 @@ node_modules/
 .env
 data/forum.json
 backend/data/forum.json
+backend/data/*.backup-*
+backend/data/uploads-test-*
+backend/data/image-migration-test-*
+backend/data/uploads/
 *.log
 AGENT_GUIDE.md
 AI_FEATURE_DESIGN.md

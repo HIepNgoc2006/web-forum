@@ -24,12 +24,37 @@ Viết 2-3 câu phản hồi ngắn, lịch sự, đúng ngữ cảnh, không c�
 Không yêu cầu dữ liệu cá nhân, không đoán danh tính, không tạo nội dung thù ghét hoặc quấy rối.
 `.trim();
 
+const REWRITE_SYSTEM_PROMPT = `
+Bạn là trợ lý viết lại bản nháp cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
+Viết lại nội dung sao cho an toàn hơn trước khi đăng: bỏ thông tin cá nhân, giảm cáo buộc chưa kiểm chứng, bỏ công kích/quấy rối.
+Giữ ý chính nếu có thể, viết bằng tiếng Việt tự nhiên, ngắn gọn.
+Chỉ trả về một bản nháp đã viết lại, không giải thích, không tự đăng thay người dùng.
+`.trim();
+
 function heuristicModeration(text) {
   const normalized = text.toLowerCase();
   const rules = [
     { label: 'Spam', terms: ['http://', 'https://', 'telegram', 'free money', 'kiem tien'] },
     { label: 'Hate Speech', terms: ['thu han', 'diet chung', 'phan biet'] },
-    { label: 'Fake News', terms: ['tin mat noi bo', '100% su that chua ai biet'] },
+    {
+      label: 'Fake News',
+      terms: [
+        'tin mat noi bo',
+        '100% su that chua ai biet',
+        'tin đồn',
+        'tin don',
+        'chưa kiểm chứng',
+        'chua kiem chung',
+        'bóc phốt',
+        'boc phot',
+        'lừa đảo',
+        'lua dao',
+        'ăn cắp',
+        'an cap',
+        'ngoại tình',
+        'ngoai tinh'
+      ]
+    },
     { label: 'Toxic', terms: ['do ngu', 'chet di', 'oc cho', 'con me may'] }
   ];
   const labels = rules
@@ -141,6 +166,15 @@ Ngữ cảnh:
 ${text}
 `, SUGGEST_SYSTEM_PROMPT);
       return bulletize(result, 3);
+    },
+
+    async rewrite(text) {
+      return (
+        await generateWithGoogle(`
+Bản nháp:
+${redactSensitiveText(text)}
+`, REWRITE_SYSTEM_PROMPT)
+      ).trim();
     }
   };
 }

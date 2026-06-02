@@ -49,6 +49,33 @@ export const BOARDS = [
     description: 'Tìm nhóm, rao tuyển thành viên, đánh giá câu lạc bộ và hoạt động ngoại khóa.'
   },
   {
+    slug: 'deadline-week',
+    path: '/deadline/',
+    name: 'Tuần deadline',
+    category: 'Sự kiện tạm thời',
+    description: 'Board tạm thời cho mùa nộp bài, chạy deadline và cứu nhau qua tuần căng nhất.',
+    temporary: true,
+    eventEndsAt: '2026-06-15T23:59:59.000Z'
+  },
+  {
+    slug: 'thi-cuoi-ky',
+    path: '/thi/',
+    name: 'Thi cuối kỳ',
+    category: 'Sự kiện tạm thời',
+    description: 'Board tạm thời cho lịch thi, đề cương, phòng thi và kinh nghiệm sống sót mùa cuối kỳ.',
+    temporary: true,
+    eventEndsAt: '2026-07-31T23:59:59.000Z'
+  },
+  {
+    slug: 'tuyen-clb',
+    path: '/tuyen-clb/',
+    name: 'Tuyển CLB',
+    category: 'Sự kiện tạm thời',
+    description: 'Board tạm thời cho mùa tuyển câu lạc bộ, hỏi đáp vòng đơn, phỏng vấn và review hoạt động.',
+    temporary: true,
+    eventEndsAt: '2026-09-30T23:59:59.000Z'
+  },
+  {
     slug: 'viec-lam',
     path: '/viec-lam/',
     name: 'Việc làm',
@@ -88,12 +115,13 @@ export const BOARDS = [
 export const BOARD_GROUPS = [
   { name: 'Trường học', slugs: ['confession', 'hoc-tap', 'tam-su', 'hoi-dap'] },
   { name: 'Đời sống', slugs: ['su-kien', 'clb', 'an-uong', 'ktx'] },
+  { name: 'Sự kiện tạm thời', slugs: ['deadline-week', 'thi-cuoi-ky', 'tuyen-clb'] },
   { name: 'Sáng tạo', slugs: ['meme'] },
   { name: 'Tiện ích', slugs: ['viec-lam', 'mua-ban'] },
   { name: 'Khác', slugs: ['random'] }
 ];
 
-export const MODERATION_LABELS = ['Toxic', 'Spam', 'Hate Speech', 'Fake News'];
+export const MODERATION_LABELS = ['Toxic', 'Spam', 'Hate Speech', 'Fake News', 'PII Risk'];
 
 function readPositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -121,6 +149,11 @@ export function publicConfig() {
     })),
     lifecycle: THREAD_LIFECYCLE,
     hcaptchaSiteKey: process.env.HCAPTCHA_SITE_KEY ?? '',
-    maxImageBytes: Number(process.env.MAX_IMAGE_BYTES ?? 1_500_000)
+    maxImageBytes: Number(process.env.MAX_IMAGE_BYTES ?? 1_500_000),
+    ai: {
+      provider: 'google-ai-studio',
+      configured: Boolean(process.env.GOOGLE_AI_API_KEY),
+      model: process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash'
+    }
   };
 }
