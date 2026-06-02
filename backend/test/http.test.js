@@ -325,6 +325,41 @@ test('http api stores image metadata from thread creation payloads', async () =>
   });
 });
 
+test('http api thread upload limit uses defaults when env values are invalid', async () => {
+  const originalMaxImageBytes = process.env.MAX_IMAGE_BYTES;
+  const originalMaxThumbnailBytes = process.env.MAX_THUMBNAIL_BYTES;
+  process.env.MAX_IMAGE_BYTES = 'not-a-number';
+  process.env.MAX_THUMBNAIL_BYTES = 'not-a-number';
+
+  try {
+    await withServer(async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'A'.repeat(1_700_001),
+          captchaToken: 'dev-pass'
+        })
+      });
+      const createdBody = await created.json();
+
+      assert.equal(created.status, 413);
+      assert.equal(createdBody.error.message, 'Dữ liệu gửi lên quá lớn');
+    });
+  } finally {
+    if (originalMaxImageBytes === undefined) {
+      delete process.env.MAX_IMAGE_BYTES;
+    } else {
+      process.env.MAX_IMAGE_BYTES = originalMaxImageBytes;
+    }
+    if (originalMaxThumbnailBytes === undefined) {
+      delete process.env.MAX_THUMBNAIL_BYTES;
+    } else {
+      process.env.MAX_THUMBNAIL_BYTES = originalMaxThumbnailBytes;
+    }
+  }
+});
+
 test('http api stores uploaded images on local disk and serves them from /uploads', async () => {
   const uploadRoot = await fs.mkdtemp(path.resolve('data/uploads-test-'));
   try {

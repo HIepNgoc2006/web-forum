@@ -2,7 +2,12 @@ import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
 
-import { publicConfig } from '../core/config.js';
+import {
+  DEFAULT_MAX_IMAGE_BYTES,
+  DEFAULT_MAX_THUMBNAIL_BYTES,
+  publicConfig,
+  readPositiveInteger
+} from '../core/config.js';
 import { createRateLimiter, getClientIp, securityConfigStatus, signJwt, verifyJwt } from '../core/security.js';
 
 const MIME_TYPES = new Map([
@@ -66,8 +71,8 @@ async function readJson(request, maxBytes = 1_600_000) {
 
 function imageUploadJsonLimit() {
   return (
-    Number(process.env.MAX_IMAGE_BYTES ?? 1_500_000) +
-    Number(process.env.MAX_THUMBNAIL_BYTES ?? 120_000) +
+    readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES) +
+    readPositiveInteger(process.env.MAX_THUMBNAIL_BYTES, DEFAULT_MAX_THUMBNAIL_BYTES) +
     80_000
   );
 }

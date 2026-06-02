@@ -125,7 +125,12 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
     if (image.thumbnail) {
       const thumbnailExtension = imageExtension(image.thumbnail);
       const thumbnailFileName = `${id}.thumb.${thumbnailExtension}`;
-      await fs.writeFile(path.join(root, thumbnailFileName), imageBytes(image.thumbnail));
+      try {
+        await fs.writeFile(path.join(root, thumbnailFileName), imageBytes(image.thumbnail));
+      } catch (error) {
+        await fs.rm(path.join(root, fileName), { force: true }).catch(() => undefined);
+        throw error;
+      }
       saved.thumbnail = {
         ...stripThumbnailData(image.thumbnail),
         storage: 'local',
@@ -243,6 +248,20 @@ export function createS3ImageStorage({
     }
 
     const key = keyFor(image);
+    let thumbnail = null;
+
+    if (image.thumbnail) {
+      const thumbnailExtension = imageExtension(image.thumbnail);
+      const thumbnailKey = key.replace(/\.([^.]+)$/, `.thumb.${thumbnailExtension}`);
+      await putObject(image.thumbnail, thumbnailKey);
+      thumbnail = {
+        ...stripThumbnailData(image.thumbnail),
+        storage: 's3',
+        storageKey: thumbnailKey,
+        url: publicUrlFor(thumbnailKey)
+      };
+    }
+
     await putObject(image, key);
 
     const saved = {
@@ -252,16 +271,8 @@ export function createS3ImageStorage({
       url: publicUrlFor(key)
     };
 
-    if (image.thumbnail) {
-      const thumbnailExtension = imageExtension(image.thumbnail);
-      const thumbnailKey = key.replace(/\.([^.]+)$/, `.thumb.${thumbnailExtension}`);
-      await putObject(image.thumbnail, thumbnailKey);
-      saved.thumbnail = {
-        ...stripThumbnailData(image.thumbnail),
-        storage: 's3',
-        storageKey: thumbnailKey,
-        url: publicUrlFor(thumbnailKey)
-      };
+    if (thumbnail) {
+      saved.thumbnail = thumbnail;
     }
 
     return saved;
