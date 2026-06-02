@@ -38,6 +38,16 @@ function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
 }
 
+function stripImageData(image) {
+  const { dataUrl: _dataUrl, thumbnail: _thumbnail, ...metadata } = image;
+  return metadata;
+}
+
+function stripThumbnailData(thumbnail) {
+  const { dataUrl: _dataUrl, ...metadata } = thumbnail;
+  return metadata;
+}
+
 function hmac(key, value, encoding) {
   return crypto.createHmac('sha256', key).update(value).digest(encoding);
 }
@@ -98,19 +108,33 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
       return null;
     }
 
-    const extension = IMAGE_EXTENSIONS.get(image.type) ?? 'img';
+    const id = crypto.randomUUID();
+    const extension = imageExtension(image);
     const bytes = imageBytes(image);
-    const fileName = `${crypto.randomUUID()}.${extension}`;
+    const fileName = `${id}.${extension}`;
     await fs.mkdir(root, { recursive: true });
     await fs.writeFile(path.join(root, fileName), bytes);
 
-    const { dataUrl: _dataUrl, ...metadata } = image;
-    return {
-      ...metadata,
+    const saved = {
+      ...stripImageData(image),
       storage: 'local',
       storageKey: fileName,
       url: `${publicPath}/${fileName}`
     };
+
+    if (image.thumbnail) {
+      const thumbnailExtension = imageExtension(image.thumbnail);
+      const thumbnailFileName = `${id}.thumb.${thumbnailExtension}`;
+      await fs.writeFile(path.join(root, thumbnailFileName), imageBytes(image.thumbnail));
+      saved.thumbnail = {
+        ...stripThumbnailData(image.thumbnail),
+        storage: 'local',
+        storageKey: thumbnailFileName,
+        url: `${publicPath}/${thumbnailFileName}`
+      };
+    }
+
+    return saved;
   }
 
   async function health() {
@@ -173,13 +197,8 @@ export function createS3ImageStorage({
     return requestUrlFor(key).toString();
   }
 
-  async function save(image) {
-    if (!image) {
-      return null;
-    }
-
+  async function putObject(image, key) {
     const bytes = imageBytes(image);
-    const key = keyFor(image);
     const requestUrl = requestUrlFor(key);
     const payloadHash = sha256Hex(bytes);
     const signingDate = now();
@@ -216,14 +235,36 @@ export function createS3ImageStorage({
       error.statusCode = 502;
       throw error;
     }
+  }
 
-    const { dataUrl: _dataUrl, ...metadata } = image;
-    return {
-      ...metadata,
+  async function save(image) {
+    if (!image) {
+      return null;
+    }
+
+    const key = keyFor(image);
+    await putObject(image, key);
+
+    const saved = {
+      ...stripImageData(image),
       storage: 's3',
       storageKey: key,
       url: publicUrlFor(key)
     };
+
+    if (image.thumbnail) {
+      const thumbnailExtension = imageExtension(image.thumbnail);
+      const thumbnailKey = key.replace(/\.([^.]+)$/, `.thumb.${thumbnailExtension}`);
+      await putObject(image.thumbnail, thumbnailKey);
+      saved.thumbnail = {
+        ...stripThumbnailData(image.thumbnail),
+        storage: 's3',
+        storageKey: thumbnailKey,
+        url: publicUrlFor(thumbnailKey)
+      };
+    }
+
+    return saved;
   }
 
   async function health() {
