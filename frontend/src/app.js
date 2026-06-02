@@ -198,6 +198,7 @@ function applyTheme(theme = state.theme) {
 
 const els = {
   homeScreen: document.querySelector('#homeScreen'),
+  policyScreen: document.querySelector('#policyScreen'),
   homeBoards: document.querySelector('#homeBoards'),
   homeBoardSearchForm: document.querySelector('#homeBoardSearchForm'),
   homeBoardSearchInput: document.querySelector('#homeBoardSearchInput'),
@@ -354,6 +355,7 @@ function setScreen(name) {
   }
   for (const screen of [
     els.homeScreen,
+    els.policyScreen,
     els.boardScreen,
     els.catalogScreen,
     els.archiveScreen,
@@ -363,12 +365,15 @@ function setScreen(name) {
     screen.classList.remove('active');
   }
   document.body.classList.toggle('home-page', name === 'home');
+  document.body.classList.toggle('policy-page', name === 'policy');
   document.body.classList.toggle(
     'board-page',
     name === 'board' || name === 'catalog' || name === 'archive' || name === 'thread'
   );
   if (name === 'home') {
     els.homeScreen.classList.add('active');
+  } else if (name === 'policy') {
+    els.policyScreen.classList.add('active');
   } else if (name === 'catalog') {
     els.catalogScreen.classList.add('active');
   } else if (name === 'archive') {
@@ -2065,6 +2070,11 @@ async function loadAdmin() {
   }
 }
 
+function loadPolicy() {
+  setScreen('policy');
+  window.scrollTo({ top: 0 });
+}
+
 function route() {
   hideReferencePreview();
   const hash = window.location.hash || '#home';
@@ -2072,6 +2082,8 @@ function route() {
   const [, name, id] = hashPath.match(/^#([^/]+)\/?(.+)?$/) || [];
   if (name === 'home' || !name) {
     loadHome().catch((error) => showToast(error.message));
+  } else if (name === 'policy') {
+    loadPolicy();
   } else if (name === 'thread' && id) {
     const params = new URLSearchParams(hashQuery);
     state.threadId = decodeURIComponent(id);

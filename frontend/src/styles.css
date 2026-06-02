@@ -804,6 +804,70 @@ button {
   color: var(--text);
 }
 
+.policy-page .layout {
+  width: min(920px, calc(100vw - 16px));
+  margin: 0 auto;
+  padding-top: 12px;
+}
+
+.policy-page-head {
+  margin: 18px auto 12px;
+  text-align: center;
+}
+
+.policy-page-head h1 {
+  margin: 4px 0;
+  color: var(--header);
+  font-size: 28px;
+  line-height: 1.15;
+}
+
+.policy-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.policy-box {
+  border: 1px solid #800;
+  background: #fff;
+  color: #111;
+}
+
+.policy-box h2 {
+  margin: 0;
+  padding: 4px 8px;
+  background: #fca;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1.15;
+}
+
+.policy-box ul {
+  margin: 0;
+  padding: 8px 12px 10px 24px;
+  line-height: 1.45;
+}
+
+.policy-box li + li {
+  margin-top: 6px;
+}
+
+.policy-box p {
+  margin: 0;
+  padding: 8px 12px 10px;
+  line-height: 1.5;
+}
+
+.policy-pii {
+  margin-top: 8px;
+}
+
+.policy-actions {
+  margin: 12px 0 4px;
+  text-align: center;
+}
+
 .screen {
   display: none;
 }
@@ -1704,6 +1768,29 @@ select {
   .latest-post-item {
     grid-template-columns: 82px 56px minmax(0, 1fr);
     row-gap: 2px;
+  }
+
+  .policy-page .layout {
+    width: calc(100% - 12px);
+    padding-right: 0;
+    padding-left: 0;
+  }
+
+  .policy-page-head h1 {
+    font-size: 22px;
+    line-height: 1.2;
+  }
+
+  .policy-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .policy-box h2 {
+    font-size: 16px;
+  }
+
+  .policy-box ul {
+    padding-left: 22px;
   }
 
   .latest-post-kind {

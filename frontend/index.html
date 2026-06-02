@@ -20,6 +20,7 @@
         <span id="socketStatus" class="socket-pill">đang kết nối</span>
         <a href="/feeds/latest.rss">RSS</a>
         <a href="/feeds/latest.json">JSON</a>
+        <a href="#policy">Nội quy</a>
         <a href="#home">Trang chủ</a>
         <a href="#admin">Quản trị</a>
       </div>
@@ -135,19 +136,80 @@
             <a href="#home">Trang chủ</a>
             <a href="#board/confession">Thú nhận</a>
             <a href="#board/hoc-tap">Học tập</a>
+            <a href="#policy">Nội quy</a>
             <a href="#admin">Quản trị</a>
             <a href="#board/random">Ngẫu nhiên</a>
           </nav>
           <p class="portal-small-links">
-            <a href="#board/confession">Giới thiệu</a> •
+            <a href="#policy">Nội quy & riêng tư</a> •
             <a href="#board/hoi-dap">Góp ý</a> •
-            <a href="#board/tam-su">Nội quy</a> •
+            <a href="#policy">Cách báo cáo</a> •
             <a href="#board/su-kien">Liên hệ</a>
           </p>
           <p class="portal-copyright">
             Bản quyền © 2026 dự án sinh viên 36chan. Không liên kết với 4chan.
           </p>
         </div>
+      </section>
+
+      <section id="policyScreen" class="screen" aria-labelledby="policyTitle">
+        <div class="policy-page-head">
+          <p class="path-chip">/policy/</p>
+          <h1 id="policyTitle">Nội quy, riêng tư và báo cáo</h1>
+          <p class="muted">Bản ngắn cho người dùng public trước khi đăng hoặc báo cáo bài viết.</p>
+        </div>
+
+        <div class="policy-grid">
+          <section class="policy-box" aria-labelledby="policyRulesTitle">
+            <h2 id="policyRulesTitle">Nội quy</h2>
+            <ul>
+              <li>Không đăng đe dọa, quấy rối, kích động thù ghét, spam hoặc nội dung bất hợp pháp.</li>
+              <li>Không doxxing, không tố cáo cá nhân chưa kiểm chứng, không đăng ảnh riêng tư của người khác.</li>
+              <li>Giữ bài đúng bảng; bài sai bảng, lặp lại hoặc cố tình né kiểm duyệt có thể bị xóa.</li>
+            </ul>
+          </section>
+
+          <section class="policy-box" aria-labelledby="policyPrivacyTitle">
+            <h2 id="policyPrivacyTitle">Ẩn danh & riêng tư</h2>
+            <ul>
+              <li>Không cần tài khoản. Public chỉ thấy tên mặc định, số bài và mã poster ẩn danh trong ngữ cảnh thread.</li>
+              <li>Trình duyệt giữ poster token cục bộ để nhận diện OP/xóa bài; server chỉ dùng hash cho chống lạm dụng.</li>
+              <li>Raw IP, captcha token, poster token và admin token không được trả về public và không gửi lên AI.</li>
+            </ul>
+          </section>
+
+          <section class="policy-box" aria-labelledby="policyAiTitle">
+            <h2 id="policyAiTitle">AI kiểm duyệt</h2>
+            <ul>
+              <li>AI quét bài trước khi public để phát hiện độc hại, spam, thù ghét, tin giả và rủi ro PII.</li>
+              <li>Bài bị gắn cờ sẽ bị giữ khỏi public cho đến khi quản trị viên xem xét.</li>
+              <li>AI hỗ trợ kiểm duyệt, không phải quyết định cuối cùng; admin có quyền duyệt hoặc xóa.</li>
+            </ul>
+          </section>
+
+          <section class="policy-box" aria-labelledby="policyReportTitle">
+            <h2 id="policyReportTitle">Báo cáo bài viết</h2>
+            <ul>
+              <li>Bấm <strong>[Báo cáo]</strong> dưới bài viết và nhập lý do ngắn, ví dụ: lộ số điện thoại, quấy rối, spam.</li>
+              <li>Báo cáo đi vào hàng đợi admin; người báo cáo chỉ được lưu dưới dạng hash, không lộ poster token.</li>
+              <li>Nếu có nguy cơ khẩn cấp ngoài đời thật, hãy liên hệ nhà trường hoặc cơ quan chức năng trước.</li>
+            </ul>
+          </section>
+        </div>
+
+        <section class="policy-box policy-pii" aria-labelledby="policyPiiTitle">
+          <h2 id="policyPiiTitle">PII cần tránh</h2>
+          <p>
+            PII là thông tin cá nhân có thể nhận diện. Không đăng tên thật kèm ngữ cảnh nhận diện, số điện thoại,
+            email cá nhân, mã sinh viên, lớp học cụ thể, phòng ký túc xá, lịch trình riêng, giấy tờ hoặc ảnh có thể
+            nhận ra người khác. Nếu thấy thông tin này, hãy báo cáo để admin xử lý.
+          </p>
+        </section>
+
+        <nav class="policy-actions" aria-label="Điều hướng chính sách">
+          [<a href="#home">Về trang chủ</a>]
+          [<a href="#board/confession">Vào bảng thú nhận</a>]
+        </nav>
       </section>
 
       <section id="boardScreen" class="screen" aria-labelledby="boardTitle">
@@ -357,7 +419,7 @@
               <input id="commentDeletePassword" name="deletePassword" type="password" autocomplete="off" />
             </label>
             <p class="reply-notes">
-              Vui lòng đọc <a href="#board/tam-su">Nội quy</a> và <a href="#board/hoi-dap">Hỏi đáp</a> trước khi đăng.<br />
+              Vui lòng đọc <a href="#policy">Nội quy & riêng tư</a> trước khi đăng.<br />
               Có thể giữ định dạng code bằng thẻ [code].
             </p>
             <div class="form-actions reply-submit-row">
