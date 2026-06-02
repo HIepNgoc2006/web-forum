@@ -810,13 +810,14 @@ function renderPopularThreads(threads) {
       const href = `#thread/${thread.id}`;
       const title = plainPreview(thread.bodyLines, board?.description).slice(0, 120);
       const initials = (board?.name || thread.boardSlug).slice(0, 2).toUpperCase();
+      const thumbnailSrc = imageThumbnailSrc(thread.image);
 
       return `
         <a class="popular-item" href="${href}">
           <strong>${board?.name || thread.boardSlug}</strong>
           ${
-            thread.image && imageThumbnailSrc(thread.image)
-              ? `<img src="${escapeHtml(imageThumbnailSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}">`
+            thread.image && thumbnailSrc
+              ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
               : `<span class="popular-placeholder">${initials}</span>`
           }
           <span>${title}${title.length >= 120 ? '...' : ''}</span>

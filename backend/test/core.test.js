@@ -582,6 +582,78 @@ test('invalid image metadata falls back to safe values', async () => {
   assert.equal(Object.hasOwn(created.thread.image, 'height'), false);
 });
 
+test('image size limits use defaults when env values are invalid', async () => {
+  const originalMaxImageBytes = process.env.MAX_IMAGE_BYTES;
+  const originalMaxThumbnailBytes = process.env.MAX_THUMBNAIL_BYTES;
+  process.env.MAX_IMAGE_BYTES = 'not-a-number';
+  process.env.MAX_THUMBNAIL_BYTES = 'not-a-number';
+
+  try {
+    const service = createForumService({
+      store: createMemoryStore(),
+      ai: safeAi,
+      realtime: createEvents(),
+      now: () => new Date('2026-05-22T08:00:00.000Z')
+    });
+
+    await assert.rejects(
+      () =>
+        service.createThread({
+          boardSlug: 'hoc-tap',
+          body: 'Anh qua lon',
+          captchaToken: 'dev-pass',
+          ip: '203.0.113.7',
+          image: {
+            name: 'large.jpg',
+            type: 'image/jpeg',
+            dataUrl: `data:image/jpeg;base64,${'A'.repeat(1_500_001)}`
+          }
+        }),
+      (error) => {
+        assert.equal(error.statusCode, 413);
+        assert.equal(error.message, 'Ảnh quá lớn');
+        return true;
+      }
+    );
+
+    await assert.rejects(
+      () =>
+        service.createThread({
+          boardSlug: 'hoc-tap',
+          body: 'Thumbnail qua lon',
+          captchaToken: 'dev-pass',
+          ip: '203.0.113.7',
+          image: {
+            name: 'image.jpg',
+            type: 'image/jpeg',
+            dataUrl: 'data:image/jpeg;base64,AAAA',
+            thumbnail: {
+              name: 'thumb.jpg',
+              type: 'image/jpeg',
+              dataUrl: `data:image/jpeg;base64,${'A'.repeat(120_001)}`
+            }
+          }
+        }),
+      (error) => {
+        assert.equal(error.statusCode, 413);
+        assert.equal(error.message, 'Thumbnail ảnh quá lớn');
+        return true;
+      }
+    );
+  } finally {
+    if (originalMaxImageBytes === undefined) {
+      delete process.env.MAX_IMAGE_BYTES;
+    } else {
+      process.env.MAX_IMAGE_BYTES = originalMaxImageBytes;
+    }
+    if (originalMaxThumbnailBytes === undefined) {
+      delete process.env.MAX_THUMBNAIL_BYTES;
+    } else {
+      process.env.MAX_THUMBNAIL_BYTES = originalMaxThumbnailBytes;
+    }
+  }
+});
+
 test('image filenames strip HTML-sensitive characters before storage', async () => {
   const service = createForumService({
     store: createMemoryStore(),
@@ -640,8 +712,8 @@ test('s3 image storage uploads image bytes with signed S3-compatible PUT request
     }
   });
   const health = await storage.health();
-  const request = requests[0];
-  const thumbnailRequest = requests[1];
+  const thumbnailRequest = requests[0];
+  const request = requests[1];
 
   assert.equal(requests.length, 2);
   assert.equal(request.url.toString(), 'https://storage.example.test/36chan/posts/2026/05/00000000-0000-4000-8000-000000000000.png');

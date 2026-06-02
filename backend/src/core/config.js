@@ -122,18 +122,20 @@ export const BOARD_GROUPS = [
 ];
 
 export const MODERATION_LABELS = ['Toxic', 'Spam', 'Hate Speech', 'Fake News', 'PII Risk'];
+export const DEFAULT_MAX_IMAGE_BYTES = 1_500_000;
+export const DEFAULT_MAX_THUMBNAIL_BYTES = 120_000;
 
-function readPositiveInteger(value, fallback) {
+export function readPositiveInteger(value, fallback) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : fallback;
 }
 
-const bumpLimit = readPositiveInteger(process.env.THREAD_BUMP_LIMIT ?? 300, 300);
+const bumpLimit = readPositiveInteger(process.env.THREAD_BUMP_LIMIT, 300);
 
 export const THREAD_LIFECYCLE = {
-  maxActiveThreadsPerBoard: readPositiveInteger(process.env.MAX_ACTIVE_THREADS_PER_BOARD ?? 150, 150),
+  maxActiveThreadsPerBoard: readPositiveInteger(process.env.MAX_ACTIVE_THREADS_PER_BOARD, 150),
   bumpLimit,
-  replyLimit: Math.max(readPositiveInteger(process.env.THREAD_REPLY_LIMIT ?? 500, 500), bumpLimit)
+  replyLimit: Math.max(readPositiveInteger(process.env.THREAD_REPLY_LIMIT, 500), bumpLimit)
 };
 
 export function getBoard(slug) {
@@ -149,7 +151,7 @@ export function publicConfig() {
     })),
     lifecycle: THREAD_LIFECYCLE,
     hcaptchaSiteKey: process.env.HCAPTCHA_SITE_KEY ?? '',
-    maxImageBytes: Number(process.env.MAX_IMAGE_BYTES ?? 1_500_000),
+    maxImageBytes: readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES),
     ai: {
       provider: 'google-ai-studio',
       configured: Boolean(process.env.GOOGLE_AI_API_KEY),

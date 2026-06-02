@@ -1,6 +1,13 @@
 import crypto from 'node:crypto';
 
-import { BOARDS, THREAD_LIFECYCLE, getBoard } from './config.js';
+import {
+  BOARDS,
+  DEFAULT_MAX_IMAGE_BYTES,
+  DEFAULT_MAX_THUMBNAIL_BYTES,
+  THREAD_LIFECYCLE,
+  getBoard,
+  readPositiveInteger
+} from './config.js';
 import { createInlineImageStorage } from './image-storage.js';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, verifyHcaptcha } from './security.js';
 import { normalizeBody, parsePostText } from './text-format.js';
@@ -279,7 +286,7 @@ function validateImage(image) {
     throw error;
   }
 
-  const maxBytes = Number(process.env.MAX_IMAGE_BYTES ?? 1_500_000);
+  const maxBytes = readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES);
   if (Buffer.byteLength(dataUrl) > maxBytes) {
     const error = new Error('Ảnh quá lớn');
     error.statusCode = 413;
@@ -329,7 +336,7 @@ function validateImageThumbnail(thumbnail) {
     throw error;
   }
 
-  const maxBytes = Number(process.env.MAX_THUMBNAIL_BYTES ?? 120_000);
+  const maxBytes = readPositiveInteger(process.env.MAX_THUMBNAIL_BYTES, DEFAULT_MAX_THUMBNAIL_BYTES);
   if (Buffer.byteLength(dataUrl) > maxBytes) {
     const error = new Error('Thumbnail ảnh quá lớn');
     error.statusCode = 413;

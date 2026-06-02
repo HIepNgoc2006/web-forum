@@ -1154,12 +1154,13 @@ select {
   text-align: center;
 }
 
-.image-lazy-placeholder {
+.placeholder.image-lazy-placeholder {
   display: grid;
   width: 125px;
   height: 92px;
   max-width: 250px;
   max-height: 250px;
+  padding: 0;
   place-items: center;
   border: 1px solid var(--reply-border);
   background: var(--reply);
