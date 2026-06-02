@@ -1154,6 +1154,19 @@ select {
   text-align: center;
 }
 
+.image-lazy-placeholder {
+  display: grid;
+  width: 125px;
+  height: 92px;
+  max-width: 250px;
+  max-height: 250px;
+  place-items: center;
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  color: var(--dead);
+  text-align: center;
+}
+
 .post {
   display: table;
   margin: 4px 0;

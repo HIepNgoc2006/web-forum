@@ -302,7 +302,57 @@ function validateImage(image) {
     safeImage.height = height;
   }
 
+  const thumbnail = validateImageThumbnail(image.thumbnail);
+  if (thumbnail) {
+    safeImage.thumbnail = thumbnail;
+  }
+
   return safeImage;
+}
+
+function validateImageThumbnail(thumbnail) {
+  if (!thumbnail) {
+    return null;
+  }
+
+  const type = String(thumbnail.type ?? '').toLowerCase();
+  if (!type.startsWith('image/')) {
+    const error = new Error('Thumbnail ảnh không hợp lệ');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const dataUrl = thumbnail.dataUrl ?? '';
+  if (!dataUrl.startsWith('data:image/')) {
+    const error = new Error('Dữ liệu thumbnail không hợp lệ');
+    error.statusCode = 400;
+    throw error;
+  }
+
+  const maxBytes = Number(process.env.MAX_THUMBNAIL_BYTES ?? 120_000);
+  if (Buffer.byteLength(dataUrl) > maxBytes) {
+    const error = new Error('Thumbnail ảnh quá lớn');
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const safeThumbnail = {
+    name: sanitizeFileName(thumbnail.name || 'thumbnail.jpg'),
+    type,
+    dataUrl,
+    sizeBytes: sanitizePositiveInteger(thumbnail.sizeBytes, maxBytes) ?? dataUrlBytes(dataUrl)
+  };
+
+  const width = sanitizePositiveInteger(thumbnail.width, 2_000);
+  const height = sanitizePositiveInteger(thumbnail.height, 2_000);
+  if (width) {
+    safeThumbnail.width = width;
+  }
+  if (height) {
+    safeThumbnail.height = height;
+  }
+
+  return safeThumbnail;
 }
 
 function serializeThread(thread, comments) {

@@ -13,6 +13,7 @@ const MIME_TYPES = new Map([
   ['.png', 'image/png'],
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
+  ['.webp', 'image/webp'],
   ['.svg', 'image/svg+xml']
 ]);
 
@@ -61,6 +62,14 @@ async function readJson(request, maxBytes = 1_600_000) {
     error.statusCode = 400;
     throw error;
   }
+}
+
+function imageUploadJsonLimit() {
+  return (
+    Number(process.env.MAX_IMAGE_BYTES ?? 1_500_000) +
+    Number(process.env.MAX_THUMBNAIL_BYTES ?? 120_000) +
+    80_000
+  );
 }
 
 function match(parts, pattern) {
@@ -430,7 +439,7 @@ export function createHttpServer({
         return;
       }
       if (params && request.method === 'POST') {
-        const body = await readJson(request);
+        const body = await readJson(request, imageUploadJsonLimit());
         ok(
           response,
           await service.createThread({

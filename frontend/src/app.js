@@ -815,8 +815,8 @@ function renderPopularThreads(threads) {
         <a class="popular-item" href="${href}">
           <strong>${board?.name || thread.boardSlug}</strong>
           ${
-            thread.image
-              ? `<img src="${escapeHtml(imageSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}">`
+            thread.image && imageThumbnailSrc(thread.image)
+              ? `<img src="${escapeHtml(imageThumbnailSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}">`
               : `<span class="popular-placeholder">${initials}</span>`
           }
           <span>${title}${title.length >= 120 ? '...' : ''}</span>
@@ -1500,32 +1500,41 @@ function imageInfoText(image = {}) {
   return size;
 }
 
-function imageSrc(image = {}) {
+function imageOriginalSrc(image = {}) {
   return image.url || image.dataUrl || '';
+}
+
+function imageThumbnailSrc(image = {}, options = {}) {
+  const src = image.thumbnail?.url || image.thumbnail?.dataUrl || '';
+  return src || (options.fallbackOriginal ? imageOriginalSrc(image) : '');
 }
 
 function fileTextHtml(image) {
   const name = escapeHtml(image?.name || 'tai-len');
-  const src = escapeHtml(imageSrc(image));
+  const src = escapeHtml(imageOriginalSrc(image));
   const info = escapeHtml(imageInfoText(image));
   return `Tệp: <a href="${src}" target="_blank" rel="noopener">${name}</a> (${info})`;
 }
 
-function imageHtml(post) {
-  if (!post.image) {
-    return '';
-  }
-
-  const name = escapeHtml(post.image.name || 'tai-len');
-  const src = escapeHtml(imageSrc(post.image));
+function imageToggleHtml(image, className = 'post-image') {
+  const name = escapeHtml(image?.name || 'tai-len');
+  const thumbnailSrc = imageThumbnailSrc(image);
+  const originalSrc = escapeHtml(imageOriginalSrc(image));
+  const preview = thumbnailSrc
+    ? `<img class="${className}" src="${escapeHtml(thumbnailSrc)}" alt="${name}" data-full-src="${originalSrc}">`
+    : `<span class="${className} placeholder image-lazy-placeholder" data-full-src="${originalSrc}">Có tệp</span>`;
   return `
     <div class="thread-thumb-wrap">
-      <div class="file-text">${fileTextHtml(post.image)}</div>
-      <button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${name}">
-        <img class="post-image" src="${src}" alt="${name}">
+      <div class="file-text">${fileTextHtml(image)}</div>
+      <button class="image-toggle" data-image-toggle data-full-src="${originalSrc}" data-image-name="${name}" data-image-class="${className}" type="button" aria-expanded="false" aria-label="Phóng to ảnh ${name}">
+        ${preview}
       </button>
     </div>
   `;
+}
+
+function imageHtml(post) {
+  return post.image ? imageToggleHtml(post.image) : '';
 }
 
 function posterId(post) {
@@ -1759,8 +1768,11 @@ function threadMatchesSearch(thread, term) {
 
 function catalogThreadHtml(thread) {
   const title = plainPreview(thread.bodyLines, 'Chưa có nội dung').slice(0, 260);
-  const image = thread.image
-    ? `<img src="${escapeHtml(imageSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}">`
+  const thumbnailSrc = imageThumbnailSrc(thread.image);
+  const image = thread.image && thumbnailSrc
+    ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
+    : thread.image
+      ? '<span class="catalog-placeholder">Có tệp</span>'
     : '<span class="catalog-placeholder">Không có tệp</span>';
 
   return `
@@ -1908,7 +1920,7 @@ function renderBoardThreads(threads) {
           <div class="thread-op">
           ${
             thread.image
-              ? `<div class="thread-thumb-wrap"><div class="file-text">${fileTextHtml(thread.image)}</div><button class="image-toggle" data-image-toggle type="button" aria-expanded="false" aria-label="Phóng to ảnh ${escapeHtml(thread.image.name)}"><img class="thumb" src="${escapeHtml(imageSrc(thread.image))}" alt="${escapeHtml(thread.image.name)}"></button></div>`
+              ? imageToggleHtml(thread.image, 'thumb')
               : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
           }
             ${meta(thread, { replyAction: false })}
@@ -2117,15 +2129,21 @@ function fileToDataUrl(file) {
     reader.onload = () => {
       const dataUrl = String(reader.result || '');
       const image = new Image();
-      image.onload = () =>
-        resolve({
+      image.onload = () => {
+        const selectedImage = {
           name: file.name,
           type: file.type,
           sizeBytes: file.size,
           width: image.naturalWidth,
           height: image.naturalHeight,
           dataUrl
-        });
+        };
+        const thumbnail = createImageThumbnail(image, file);
+        if (thumbnail) {
+          selectedImage.thumbnail = thumbnail;
+        }
+        resolve(selectedImage);
+      };
       image.onerror = () =>
         resolve({
           name: file.name,
@@ -2137,6 +2155,43 @@ function fileToDataUrl(file) {
     };
     reader.readAsDataURL(file);
   });
+}
+
+function createImageThumbnail(image, file) {
+  const width = Number(image.naturalWidth || image.width || 0);
+  const height = Number(image.naturalHeight || image.height || 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const maxEdge = 240;
+  const scale = Math.min(1, maxEdge / Math.max(width, height));
+  const thumbnailWidth = Math.max(1, Math.round(width * scale));
+  const thumbnailHeight = Math.max(1, Math.round(height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = thumbnailWidth;
+  canvas.height = thumbnailHeight;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return null;
+  }
+
+  context.drawImage(image, 0, 0, thumbnailWidth, thumbnailHeight);
+  const type = 'image/jpeg';
+  const dataUrl = canvas.toDataURL(type, 0.7);
+  if (!dataUrl.startsWith('data:image/')) {
+    return null;
+  }
+
+  const baseName = String(file.name || 'thumbnail').replace(/\.[^.]+$/, '');
+  return {
+    name: `${baseName}-thumb.jpg`,
+    type,
+    dataUrl,
+    sizeBytes: dataUrlBytes(dataUrl),
+    width: thumbnailWidth,
+    height: thumbnailHeight
+  };
 }
 
 function pollHtml(poll, canVote = true) {
@@ -2168,7 +2223,7 @@ function pollHtml(poll, canVote = true) {
 
 function imagePreviewHtml(image) {
   return `
-    <img src="${escapeHtml(imageSrc(image))}" alt="${escapeHtml(image.name)}">
+    <img src="${escapeHtml(imageOriginalSrc(image))}" alt="${escapeHtml(image.name)}">
     <div class="file-text">${fileTextHtml(image)}</div>
   `;
 }
@@ -2579,6 +2634,26 @@ function handleKeyboardShortcut(event) {
   }
 }
 
+function loadFullImageForToggle(imageToggle) {
+  const fullSrc = imageToggle.dataset.fullSrc;
+  if (!fullSrc) {
+    return;
+  }
+
+  let image = imageToggle.querySelector('img');
+  if (!image) {
+    image = document.createElement('img');
+    image.className = imageToggle.dataset.imageClass || 'post-image';
+    image.alt = imageToggle.dataset.imageName || 'tai-len';
+    imageToggle.replaceChildren(image);
+  }
+
+  if (image.dataset.fullLoaded !== 'true') {
+    image.src = fullSrc;
+    image.dataset.fullLoaded = 'true';
+  }
+}
+
 function bindEvents() {
   window.addEventListener('hashchange', route);
   window.addEventListener('keydown', handleKeyboardShortcut);
@@ -2693,6 +2768,9 @@ function bindEvents() {
     const imageToggle = event.target.closest('[data-image-toggle]');
     if (imageToggle) {
       const expanded = imageToggle.classList.toggle('expanded');
+      if (expanded) {
+        loadFullImageForToggle(imageToggle);
+      }
       imageToggle.closest('.thread-thumb-wrap')?.classList.toggle('image-expanded', expanded);
       imageToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
       return;

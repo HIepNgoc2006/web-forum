@@ -522,7 +522,15 @@ test('thread image metadata is sanitized and returned with public thread data', 
       dataUrl: 'data:image/png;base64,AAAA',
       sizeBytes: '2048',
       width: '640.4',
-      height: 999999
+      height: 999999,
+      thumbnail: {
+        name: 'thumb\u0000.jpg',
+        type: 'IMAGE/JPEG',
+        dataUrl: 'data:image/jpeg;base64,AAA=',
+        sizeBytes: '2',
+        width: '160.8',
+        height: '90.2'
+      }
     }
   });
   const listed = await service.listThreads('hoc-tap');
@@ -533,7 +541,15 @@ test('thread image metadata is sanitized and returned with public thread data', 
     dataUrl: 'data:image/png;base64,AAAA',
     sizeBytes: 2048,
     width: 640,
-    height: 20000
+    height: 20000,
+    thumbnail: {
+      name: 'thumb.jpg',
+      type: 'image/jpeg',
+      dataUrl: 'data:image/jpeg;base64,AAA=',
+      sizeBytes: 2,
+      width: 161,
+      height: 90
+    }
   });
   assert.deepEqual(listed[0].image, created.thread.image);
 });
@@ -613,12 +629,21 @@ test('s3 image storage uploads image bytes with signed S3-compatible PUT request
     dataUrl: 'data:image/png;base64,AAAA',
     sizeBytes: 3,
     width: 1,
-    height: 1
+    height: 1,
+    thumbnail: {
+      name: 'anh-thumb.jpg',
+      type: 'image/jpeg',
+      dataUrl: 'data:image/jpeg;base64,AAA=',
+      sizeBytes: 2,
+      width: 1,
+      height: 1
+    }
   });
   const health = await storage.health();
   const request = requests[0];
+  const thumbnailRequest = requests[1];
 
-  assert.equal(requests.length, 1);
+  assert.equal(requests.length, 2);
   assert.equal(request.url.toString(), 'https://storage.example.test/36chan/posts/2026/05/00000000-0000-4000-8000-000000000000.png');
   assert.equal(request.options.method, 'PUT');
   assert.equal(request.options.headers['content-type'], 'image/png');
@@ -633,6 +658,20 @@ test('s3 image storage uploads image bytes with signed S3-compatible PUT request
   assert.equal(saved.storageKey, 'posts/2026/05/00000000-0000-4000-8000-000000000000.png');
   assert.equal(saved.url, 'https://cdn.example.test/36chan/posts/2026/05/00000000-0000-4000-8000-000000000000.png');
   assert.equal(Object.hasOwn(saved, 'dataUrl'), false);
+  assert.equal(
+    thumbnailRequest.url.toString(),
+    'https://storage.example.test/36chan/posts/2026/05/00000000-0000-4000-8000-000000000000.thumb.jpg'
+  );
+  assert.equal(thumbnailRequest.options.method, 'PUT');
+  assert.equal(thumbnailRequest.options.headers['content-type'], 'image/jpeg');
+  assert.equal(thumbnailRequest.options.body.length, 2);
+  assert.equal(saved.thumbnail.storage, 's3');
+  assert.equal(saved.thumbnail.storageKey, 'posts/2026/05/00000000-0000-4000-8000-000000000000.thumb.jpg');
+  assert.equal(
+    saved.thumbnail.url,
+    'https://cdn.example.test/36chan/posts/2026/05/00000000-0000-4000-8000-000000000000.thumb.jpg'
+  );
+  assert.equal(Object.hasOwn(saved.thumbnail, 'dataUrl'), false);
   assert.equal(health.type, 's3-compatible');
   assert.equal(health.configured, true);
 });
