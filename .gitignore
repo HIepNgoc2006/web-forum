@@ -11,8 +11,10 @@ AGENT_GUIDE.md
 AI_FEATURE_DESIGN.md
 AI_USAGE_POLICY.md
 PRODUCT_ANALYSIS.md
-PRODUCT_DIRECTION.md
+PRODUCT_DIRECTION.mdw
 AGENTS.md
 ai-logs/
 docs/
 phase-tracking/
+.agents/
+skills-lock.json
