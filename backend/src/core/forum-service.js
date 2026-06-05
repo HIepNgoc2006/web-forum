@@ -47,6 +47,8 @@ const PULSE_STOP_WORDS = new Set([
   'voi'
 ]);
 const SLOW_MODE_LABELS = new Set(['Toxic', 'Spam', 'Hate Speech', 'Fake News']);
+const ANONYMOUS_DISPLAY_NAME = 'Anonymous';
+const MAX_DISPLAY_NAME_LENGTH = 40;
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -176,6 +178,19 @@ function parsePostingOptions(value = '') {
     sage: tokens.has('sage'),
     noko: tokens.has('noko')
   };
+}
+
+function normalizeDisplayName(value = '') {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/[&<>"']/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, MAX_DISPLAY_NAME_LENGTH);
+}
+
+function publicDisplayName(value = '') {
+  return normalizeDisplayName(value) || ANONYMOUS_DISPLAY_NAME;
 }
 
 function deletePasswordHash(password) {
@@ -366,6 +381,7 @@ function serializeThread(thread, comments) {
   const publicComments = comments.filter((comment) => comment.threadId === thread.id && publicPost(comment));
   return {
     ...stripPrivatePostFields(thread),
+    displayName: publicDisplayName(thread.displayName),
     poll: serializePoll(thread.poll),
     isArchived: Boolean(thread.isArchived),
     archivedAt: thread.archivedAt ?? null,
@@ -380,6 +396,7 @@ function serializeThread(thread, comments) {
 function serializeComment(comment, thread = null) {
   return {
     ...stripPrivatePostFields(comment),
+    displayName: publicDisplayName(comment.displayName),
     isOp: Boolean(thread?.opProofHash && comment.opProofHash && thread.opProofHash === comment.opProofHash),
     bodyLines: parsePostText(comment.body)
   };
@@ -1039,7 +1056,18 @@ export function createForumService({
       });
     },
 
-    async createThread({ boardSlug, body, image, pollOptions, captchaToken, ip, posterToken, options = '', deletePassword = '' }) {
+    async createThread({
+      boardSlug,
+      body,
+      image,
+      pollOptions,
+      captchaToken,
+      ip,
+      posterToken,
+      displayName = '',
+      options = '',
+      deletePassword = ''
+    }) {
       const board = getBoard(boardSlug);
       if (!board) {
         const error = new Error('Không tìm thấy bảng');
@@ -1057,6 +1085,7 @@ export function createForumService({
       const safeImage = validateImage(image);
       const poll = createPoll(pollOptions);
       const postingOptions = parsePostingOptions(options);
+      const normalizedDisplayName = normalizeDisplayName(displayName);
       const createdAt = now().toISOString();
       assertEventBoardOpen(board, createdAt);
 
@@ -1069,6 +1098,7 @@ export function createForumService({
           id,
           boardSlug,
           body: normalizedBody,
+          displayName: normalizedDisplayName,
           image: storedImage,
           poll,
           pollVotes: poll ? {} : undefined,
@@ -1174,7 +1204,7 @@ export function createForumService({
       };
     },
 
-    async createComment({ threadId, body, captchaToken, ip, posterToken, options = '', deletePassword = '' }) {
+    async createComment({ threadId, body, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '' }) {
       await requireCaptcha(captchaToken, ip);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
@@ -1184,6 +1214,7 @@ export function createForumService({
       }
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
+      const normalizedDisplayName = normalizeDisplayName(displayName);
 
       return mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
@@ -1209,6 +1240,7 @@ export function createForumService({
           threadId,
           boardSlug: thread.boardSlug,
           body: normalizedBody,
+          displayName: normalizedDisplayName,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),

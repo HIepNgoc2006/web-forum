@@ -508,6 +508,42 @@ test('safe thread is public, gets global number, and emits realtime event', asyn
   assert.equal(logs[0].moderationStatus, 'Safe');
 });
 
+test('display name is optional per post and separated from anonymous identity', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread co ten hien thi',
+    displayName: '  Sinh vien <script>  ',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    posterToken: 'browser-a'
+  });
+  const anonymousReply = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Binh luan an danh mac dinh',
+    displayName: '',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8',
+    posterToken: 'browser-b'
+  });
+  const detail = await service.getThread(created.thread.id);
+
+  assert.equal(created.thread.displayName, 'Sinh vien script');
+  assert.equal(anonymousReply.comment.displayName, 'Anonymous');
+  assert.equal(detail.thread.displayName, 'Sinh vien script');
+  assert.equal(detail.comments[0].displayName, 'Anonymous');
+  assert.equal('accountId' in detail.thread, false);
+  assert.equal('username' in detail.thread, false);
+  assert.equal(Boolean(detail.thread.posterHash), true);
+  assert.equal(Boolean(detail.comments[0].posterHash), true);
+});
+
 test('anonymous poll allows one vote per hashed fingerprint without exposing voters', async () => {
   const realtime = createEvents();
   const service = createForumService({

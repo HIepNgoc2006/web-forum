@@ -1502,12 +1502,14 @@ function imageInfoText(image = {}) {
 }
 
 function imageOriginalSrc(image = {}) {
-  return image.url || image.dataUrl || '';
+  const value = image || {};
+  return value.url || value.dataUrl || '';
 }
 
 function imageThumbnailSrc(image = {}, options = {}) {
-  const src = image.thumbnail?.url || image.thumbnail?.dataUrl || '';
-  return src || (options.fallbackOriginal ? imageOriginalSrc(image) : '');
+  const value = image || {};
+  const src = value.thumbnail?.url || value.thumbnail?.dataUrl || '';
+  return src || (options.fallbackOriginal ? imageOriginalSrc(value) : '');
 }
 
 function fileTextHtml(image) {
@@ -1543,6 +1545,10 @@ function posterId(post) {
   return value.startsWith('ID:') ? value : `ID:${value}`;
 }
 
+function postDisplayName(post) {
+  return String(post.displayName || 'Anonymous').trim() || 'Anonymous';
+}
+
 function postPermalink(post, options = {}) {
   const threadId = options.threadId || post.threadId || post.id || state.threadId;
   if (!threadId || !post.globalNumber) {
@@ -1571,7 +1577,7 @@ function meta(post, options = {}) {
   return `
     <div class="post-meta">
       ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
-      <span class="name">Anonymous</span>
+      <span class="name">${escapeHtml(postDisplayName(post))}</span>
       <span class="date">${formatPostDate(post.createdAt)}</span>
       <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" title="Liên kết tới bài này">${post.globalNumber}</a></span>
       ${posterIdentity}
@@ -2233,6 +2239,12 @@ function formValue(form, name) {
   return String(new FormData(form).get(name) || '');
 }
 
+function clearDisplayName(form) {
+  if (form?.elements?.displayName) {
+    form.elements.displayName.value = '';
+  }
+}
+
 function hasOption(value, option) {
   return String(value)
     .toLowerCase()
@@ -2258,6 +2270,7 @@ async function submitThread(event) {
         .map((option) => option.trim())
         .filter(Boolean),
       options,
+      displayName: formValue(els.threadForm, 'displayName'),
       deletePassword: els.threadDeletePassword.value,
       captchaToken: els.threadCaptcha.value,
       posterToken: state.posterToken,
@@ -2270,6 +2283,7 @@ async function submitThread(event) {
     rememberMyPost(result.thread, 'thread');
     els.threadBody.value = '';
     els.threadPollOptions.value = '';
+    clearDisplayName(els.threadForm);
     localStorage.removeItem(draftKey('thread', state.boardSlug));
     updatePrivacyWarning('', els.threadPrivacyWarning);
     els.threadImage.value = '';
@@ -2306,6 +2320,7 @@ async function submitComment(event) {
     const result = await createComment(body, els.commentCaptcha.value);
     rememberMyPost(result.comment, 'comment');
     els.commentBody.value = '';
+    clearDisplayName(els.commentForm);
     localStorage.removeItem(draftKey('comment', state.threadId));
     updatePrivacyWarning('', els.commentPrivacyWarning);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
@@ -2326,6 +2341,7 @@ async function createComment(body, captchaToken) {
       body,
       captchaToken,
       posterToken: state.posterToken,
+      displayName: formValue(form, 'displayName'),
       options: formValue(form, 'options'),
       deletePassword: formValue(form, 'deletePassword')
     })
@@ -2404,6 +2420,7 @@ async function submitQuickReply(event) {
   try {
     const result = await createComment(body, els.quickReplyCaptcha.value);
     rememberMyPost(result.comment, 'comment');
+    clearDisplayName(els.quickReplyForm);
     localStorage.removeItem(draftKey('quickReply', state.threadId));
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeQuickReply();
