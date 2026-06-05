@@ -88,6 +88,7 @@ test('http api creates public thread and protects admin pending queue', async ()
     const listed = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
     const listedBody = await listed.json();
     assert.equal(listedBody.data.length, 1);
+    assert.equal(listedBody.data[0].displayName, 'Anonymous');
 
     const unauthorized = await fetch(`${baseUrl}/api/admin/pending`);
     assert.equal(unauthorized.status, 401);
@@ -110,6 +111,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         body: 'Alpha can tim kiem',
+        displayName: '  OP <Hai>  ',
         captchaToken: 'dev-pass',
         deletePassword: 'owner-pass',
         options: 'noko'
@@ -117,6 +119,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
     });
     const firstBody = await first.json();
     assert.equal(first.status, 201);
+    assert.equal(firstBody.data.thread.displayName, 'OP Hai');
 
     await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
       method: 'POST',
@@ -141,6 +144,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         body: `>>${firstBody.data.thread.globalNumber}\nBacklink test`,
+        displayName: 'Ban reply',
         captchaToken: 'dev-pass',
         deletePassword: 'comment-pass',
         options: 'sage'
@@ -148,6 +152,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
     });
     const commentBody = await comment.json();
     assert.equal(comment.status, 201);
+    assert.equal(commentBody.data.comment.displayName, 'Ban reply');
 
     const detail = await fetch(`${baseUrl}/api/threads/${firstBody.data.thread.id}?commentsPage=1&commentsPageSize=1`);
     const detailBody = await detail.json();

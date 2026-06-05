@@ -456,7 +456,8 @@ export function createHttpServer({
             deletePassword: body.deletePassword,
             captchaToken: body.captchaToken,
             ip,
-            posterToken: body.posterToken
+            posterToken: body.posterToken,
+            displayName: body.displayName
           }),
           201
         );
@@ -507,7 +508,8 @@ export function createHttpServer({
             deletePassword: body.deletePassword,
             captchaToken: body.captchaToken,
             ip,
-            posterToken: body.posterToken
+            posterToken: body.posterToken,
+            displayName: body.displayName
           }),
           201
         );
