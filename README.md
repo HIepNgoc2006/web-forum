@@ -49,7 +49,7 @@ Copy `backend/.env.example` to `backend/.env` for local backend settings.
 
 Important runtime values:
 
-- `STORE_DRIVER`: `mongo` for production.
+- `STORE_DRIVER`: `mongo` is required for production.
 - `MONGODB_URI`: required when `STORE_DRIVER=mongo`.
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `JWT_SECRET`: enable admin login.
 - `MODERATION_FINGERPRINT_SECRET`: secret used to hash poster/IP fingerprints for temporary cooldown/ban enforcement.
@@ -62,12 +62,14 @@ Important runtime values:
 - `S3_PUBLIC_BASE_URL`, `S3_KEY_PREFIX`: optional public CDN/base URL and object key prefix for S3-compatible storage.
 - `STATIC_ROOT`: optional override for backend static file serving.
 
-MongoDB is the production persistence store. Mongo storage uses Mongoose models for boards, threads, comments, moderation actions, reports, AI usage, and summary cache.
+MongoDB is the production persistence store. Mongo storage uses Mongoose models for boards, threads, comments, users, reports, moderation logs, sanctions, AI usage, summary cache, and global state metadata.
 
 ```bash
 STORE_DRIVER=mongo
 MONGODB_URI=mongodb://127.0.0.1:27017/36chan
 ```
+
+For production readiness, `GET /api/health` reports `store.type`, `store.configured`, `store.ready`, safe counts, and model readiness without returning `MONGODB_URI`, admin credentials, API keys, or other secret values.
 
 For S3-compatible image storage:
 

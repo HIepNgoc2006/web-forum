@@ -652,6 +652,81 @@ function boardSummaryFingerprint(threads) {
   return threads.map((thread) => `${thread.id}:${thread.bumpedAt}:${thread.replyCount}`).join('|');
 }
 
+function stateCounts(state) {
+  return {
+    threads: state.threads.length,
+    comments: state.comments.length,
+    users: Array.isArray(state.users) ? state.users.length : 0,
+    reports: state.reports.length,
+    sanctions: state.sanctions.length,
+    moderationActions: state.moderationActions.length,
+    nextGlobalNumber: state.nextGlobalNumber
+  };
+}
+
+async function readStoreHealth(store) {
+  const type = store.type ?? 'json';
+  if (store.health) {
+    try {
+      const health = await store.health();
+      return {
+        type,
+        ...health,
+        configured: health.configured ?? true,
+        ready: health.ready ?? true
+      };
+    } catch {
+      return {
+        type,
+        configured: true,
+        ready: false,
+        error: 'unavailable'
+      };
+    }
+  }
+
+  try {
+    const state = await store.read();
+    return {
+      type,
+      configured: true,
+      ready: true,
+      ...stateCounts(state)
+    };
+  } catch {
+    return {
+      type,
+      configured: true,
+      ready: false,
+      error: 'unavailable'
+    };
+  }
+}
+
+async function readImageStorageHealth(imageStorage) {
+  const type = imageStorage.type ?? 'unknown';
+  if (!imageStorage.health) {
+    return { type, configured: true, ready: true };
+  }
+
+  try {
+    const health = await imageStorage.health();
+    return {
+      type,
+      ...health,
+      configured: health.configured ?? true,
+      ready: health.ready ?? health.configured !== false
+    };
+  } catch {
+    return {
+      type,
+      configured: false,
+      ready: false,
+      error: 'unavailable'
+    };
+  }
+}
+
 export function createForumService({
   store,
   ai,
@@ -755,36 +830,21 @@ export function createForumService({
     },
 
     async getHealth() {
-      const state = await store.read();
-      const storeHealth = store.health
-        ? await store.health()
-        : {
-            type: 'json',
-            threads: state.threads.length,
-            comments: state.comments.length,
-            reports: state.reports.length,
-            sanctions: state.sanctions.length,
-            moderationActions: state.moderationActions.length,
-            nextGlobalNumber: state.nextGlobalNumber
-          };
+      const [storeHealth, imageStorageHealth] = await Promise.all([
+        readStoreHealth(store),
+        readImageStorageHealth(imageStorage)
+      ]);
+      const ready = storeHealth.ready !== false && imageStorageHealth.ready !== false;
       return {
-        status: 'ok',
+        status: ready ? 'ok' : 'degraded',
         checkedAt: now().toISOString(),
-        store: {
-          ...storeHealth,
-          threads: state.threads.length,
-          comments: state.comments.length,
-          reports: state.reports.length,
-          sanctions: state.sanctions.length,
-          moderationActions: state.moderationActions.length,
-          nextGlobalNumber: state.nextGlobalNumber
-        },
+        store: storeHealth,
         ai: {
           provider: 'google-ai-studio',
           configured: Boolean(process.env.GOOGLE_AI_API_KEY),
           model: process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash'
         },
-        imageStorage: imageStorage.health ? await imageStorage.health() : { type: imageStorage.type ?? 'unknown' },
+        imageStorage: imageStorageHealth,
         realtime: {
           clients: realtime.count?.() ?? 0,
           boards: realtime.boardCounts?.() ?? {}

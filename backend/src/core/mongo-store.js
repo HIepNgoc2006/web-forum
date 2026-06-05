@@ -37,6 +37,27 @@ const KEY_VALUE_SCHEMA = new mongoose.Schema(
   { versionKey: false, minimize: false }
 );
 
+const USER_SCHEMA = new mongoose.Schema(
+  {
+    username: String,
+    role: String,
+    createdAt: Date,
+    updatedAt: Date
+  },
+  MODEL_OPTIONS
+);
+USER_SCHEMA.index({ username: 1 }, { unique: true, sparse: true });
+USER_SCHEMA.index({ role: 1, createdAt: -1 });
+
+const PRODUCTION_MODEL_READINESS = {
+  boards: true,
+  threads: true,
+  comments: true,
+  users: true,
+  reports: true,
+  moderationLogs: true
+};
+
 function flexibleSchema(indexes = []) {
   const schema = new mongoose.Schema({}, MODEL_OPTIONS);
   for (const index of indexes) {
@@ -85,6 +106,7 @@ export function createMongoModels(connection) {
       ]),
       'comments'
     ),
+    User: model('User', USER_SCHEMA, 'users'),
     ModerationAction: model(
       'ModerationAction',
       flexibleSchema([{ fields: { createdAt: -1 } }, { fields: { postId: 1 } }]),
@@ -123,7 +145,12 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
 
   async function getModels() {
     if (!connectionPromise) {
-      connectionPromise = mongoose.createConnection(uri, dbName ? { dbName } : undefined).asPromise();
+      const connection = mongoose.createConnection(uri, dbName ? { dbName } : undefined);
+      connectionPromise = connection.asPromise().catch(async (error) => {
+        connectionPromise = undefined;
+        await connection.close().catch(() => undefined);
+        throw error;
+      });
     }
     return createMongoModels(await connectionPromise);
   }
@@ -199,25 +226,44 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
     },
 
     async health() {
-      const models = await getModels();
-      const [threads, comments, reports, sanctions, moderationActions, meta] = await Promise.all([
-        models.Thread.countDocuments(),
-        models.Comment.countDocuments(),
-        models.Report.countDocuments(),
-        models.Sanction.countDocuments(),
-        models.ModerationAction.countDocuments(),
-        models.StateMeta.findById('global').lean()
-      ]);
-      return {
-        type: 'mongo',
-        connected: true,
-        threads,
-        comments,
-        reports,
-        sanctions,
-        moderationActions,
-        nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber
-      };
+      try {
+        const models = await getModels();
+        await ensureBoards(models);
+        const [boards, threads, comments, users, reports, sanctions, moderationActions, meta] = await Promise.all([
+          models.Board.countDocuments(),
+          models.Thread.countDocuments(),
+          models.Comment.countDocuments(),
+          models.User.countDocuments(),
+          models.Report.countDocuments(),
+          models.Sanction.countDocuments(),
+          models.ModerationAction.countDocuments(),
+          models.StateMeta.findById('global').lean()
+        ]);
+        return {
+          type: 'mongo',
+          configured: true,
+          ready: true,
+          connected: true,
+          models: PRODUCTION_MODEL_READINESS,
+          boards,
+          threads,
+          comments,
+          users,
+          reports,
+          sanctions,
+          moderationActions,
+          nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber
+        };
+      } catch {
+        return {
+          type: 'mongo',
+          configured: true,
+          ready: false,
+          connected: false,
+          error: 'unavailable',
+          models: PRODUCTION_MODEL_READINESS
+        };
+      }
     },
 
     async close() {
