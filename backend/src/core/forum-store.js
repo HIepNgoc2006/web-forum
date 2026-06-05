@@ -77,9 +77,11 @@ export function createJsonStore(filePath = path.resolve('data/forum.json')) {
       const state = await this.read();
       return {
         type: 'json',
-        filePath,
+        configured: true,
+        ready: true,
         threads: state.threads.length,
         comments: state.comments.length,
+        users: Array.isArray(state.users) ? state.users.length : 0,
         reports: state.reports.length,
         sanctions: state.sanctions.length,
         moderationActions: state.moderationActions.length,

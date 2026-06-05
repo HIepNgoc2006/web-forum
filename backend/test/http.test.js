@@ -283,12 +283,16 @@ test('http api exposes health without leaking secrets', async () => {
     assert.equal(health.status, 200);
     assert.equal(healthBody.data.status, 'ok');
     assert.equal(healthBody.data.store.type, 'json');
+    assert.equal(healthBody.data.store.configured, true);
+    assert.equal(healthBody.data.store.ready, true);
     assert.equal(typeof healthBody.data.ai.configured, 'boolean');
     assert.equal(healthBody.data.security.adminConfigured, true);
     assert.equal(healthBody.data.security.hcaptchaConfigured, false);
     assert.ok(healthBody.data.security.warnings.includes('jwt_secret_default_or_missing'));
     assert.ok(healthBody.data.security.warnings.includes('hcaptcha_not_configured'));
     assert.equal(serialized.includes('GOOGLE_AI_API_KEY'), false);
+    assert.equal(serialized.includes('MONGODB_URI'), false);
+    assert.equal(serialized.includes('data/uploads-test'), false);
     assert.equal(serialized.includes('test-key'), false);
     assert.equal(serialized.includes('"pass"'), false);
   });

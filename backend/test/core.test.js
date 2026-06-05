@@ -110,16 +110,59 @@ test('mongo store declares production persistence models without opening a conne
 
     assert.deepEqual(
       Object.keys(models).sort(),
-      ['AiSummaryCache', 'AiUsage', 'Board', 'Comment', 'ModerationAction', 'Report', 'Sanction', 'StateMeta', 'Thread'].sort()
+      [
+        'AiSummaryCache',
+        'AiUsage',
+        'Board',
+        'Comment',
+        'ModerationAction',
+        'Report',
+        'Sanction',
+        'StateMeta',
+        'Thread',
+        'User'
+      ].sort()
     );
     assert.equal(models.Board.schema.path('slug').options.required, true);
     assert.equal(models.Thread.collection.name, 'threads');
     assert.equal(models.Comment.collection.name, 'comments');
+    assert.equal(models.User.collection.name, 'users');
     assert.equal(models.ModerationAction.collection.name, 'moderationActions');
     assert.equal(models.Report.collection.name, 'reports');
+    assert.equal(models.User.schema.indexes().some(([fields]) => fields.username === 1), true);
   } finally {
     await connection.destroy();
   }
+});
+
+test('forum service health reports unavailable store without leaking connection details', async () => {
+  const store = {
+    type: 'mongo',
+    async read() {
+      throw new Error('mongodb://user:secret@example.test/36chan');
+    },
+    async health() {
+      throw new Error('MONGODB_URI=mongodb://user:secret@example.test/36chan');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    now: () => new Date('2026-06-04T00:00:00.000Z')
+  });
+
+  const health = await service.getHealth();
+  const serialized = JSON.stringify(health);
+
+  assert.equal(health.status, 'degraded');
+  assert.equal(health.store.type, 'mongo');
+  assert.equal(health.store.configured, true);
+  assert.equal(health.store.ready, false);
+  assert.equal(health.store.error, 'unavailable');
+  assert.equal(health.imageStorage.ready, true);
+  assert.equal(serialized.includes('mongodb://'), false);
+  assert.equal(serialized.includes('MONGODB_URI'), false);
+  assert.equal(serialized.includes('secret'), false);
 });
 
 test('thread lifecycle config falls back to defaults for invalid env values', async () => {
