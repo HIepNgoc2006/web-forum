@@ -1,5 +1,6 @@
 node_modules/
 .env
+.appdeploy
 data/forum.json
 backend/data/forum.json
 backend/data/*.backup-*
