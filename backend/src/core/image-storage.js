@@ -147,8 +147,7 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
     await fs.access(root);
     return {
       type: 'local-disk',
-      configured: true,
-      root
+      configured: true
     };
   }
 

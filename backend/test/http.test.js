@@ -420,6 +420,14 @@ test('http api stores uploaded images on local disk and serves them from /upload
         assert.equal(thumbnailResponse.status, 200);
         assert.equal(thumbnailResponse.headers.get('content-type'), 'image/jpeg');
         assert.equal((await thumbnailResponse.arrayBuffer()).byteLength, 2);
+
+        const health = await fetch(`${baseUrl}/api/health`);
+        const healthBody = await health.json();
+        const serializedHealth = JSON.stringify(healthBody.data);
+        assert.equal(health.status, 200);
+        assert.equal(healthBody.data.imageStorage.type, 'local-disk');
+        assert.equal(serializedHealth.includes(uploadRoot), false);
+        assert.equal(serializedHealth.includes('uploads-test'), false);
       },
       {
         uploadRoot,
