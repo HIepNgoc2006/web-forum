@@ -533,15 +533,36 @@ test('display name is optional per post and separated from anonymous identity', 
     posterToken: 'browser-b'
   });
   const detail = await service.getThread(created.thread.id);
+  const longNameReply = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Binh luan co ten dai',
+    displayName: 'A'.repeat(45),
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9',
+    posterToken: 'browser-c'
+  });
 
   assert.equal(created.thread.displayName, 'Sinh vien script');
   assert.equal(anonymousReply.comment.displayName, 'Anonymous');
+  assert.equal(longNameReply.comment.displayName, 'A'.repeat(40));
   assert.equal(detail.thread.displayName, 'Sinh vien script');
   assert.equal(detail.comments[0].displayName, 'Anonymous');
   assert.equal('accountId' in detail.thread, false);
   assert.equal('username' in detail.thread, false);
   assert.equal(Boolean(detail.thread.posterHash), true);
   assert.equal(Boolean(detail.comments[0].posterHash), true);
+  await assert.rejects(
+    () =>
+      service.createThread({
+        boardSlug: 'hoc-tap',
+        body: 'Thu dung ten reserved',
+        displayName: 'Moderator',
+        captchaToken: 'dev-pass',
+        ip: '203.0.113.10',
+        posterToken: 'browser-d'
+      }),
+    /Tên hiển thị này không dùng được/
+  );
 });
 
 test('anonymous poll allows one vote per hashed fingerprint without exposing voters', async () => {

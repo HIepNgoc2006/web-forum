@@ -318,6 +318,8 @@ const els = {
   accountEmailNotifications: document.querySelector('#accountEmailNotifications'),
   accountSettingsLogout: document.querySelector('#accountSettingsLogout'),
   accountLoggedOut: document.querySelector('#accountLoggedOut'),
+  accountDisplayOptions: document.querySelectorAll('[data-account-display-option]'),
+  useAccountNameInputs: document.querySelectorAll('[data-use-account-name]'),
   toast: document.querySelector('#toast'),
   refPreview: document.querySelector('#refPreview'),
   quickReply: document.querySelector('#quickReply'),
@@ -377,6 +379,16 @@ function setAccountSession({ token = '', account = null } = {}) {
   updateAccountNav();
 }
 
+function updateAccountDisplayOptions() {
+  const loggedIn = Boolean(state.accountToken && state.account?.username);
+  els.accountDisplayOptions.forEach((element) => element.classList.toggle('hidden', !loggedIn));
+  if (!loggedIn) {
+    els.useAccountNameInputs.forEach((input) => {
+      input.checked = false;
+    });
+  }
+}
+
 function updateAccountNav() {
   const loggedIn = Boolean(state.accountToken && state.account);
   els.accountLoginLink.classList.toggle('hidden', loggedIn);
@@ -384,6 +396,7 @@ function updateAccountNav() {
   els.accountSettingsLink.classList.toggle('hidden', !loggedIn);
   els.accountLogoutButton.classList.toggle('hidden', !loggedIn);
   els.accountSettingsLink.textContent = loggedIn ? `@${state.account.username}` : 'Tài khoản';
+  updateAccountDisplayOptions();
 }
 
 function logoutAccount({ message = 'Đã đăng xuất tài khoản.' } = {}) {
@@ -2378,9 +2391,19 @@ function formValue(form, name) {
   return String(new FormData(form).get(name) || '');
 }
 
+function displayNameValue(form) {
+  if (form?.elements?.useAccountName?.checked && state.account?.username) {
+    return state.account.username;
+  }
+  return formValue(form, 'displayName');
+}
+
 function clearDisplayName(form) {
   if (form?.elements?.displayName) {
     form.elements.displayName.value = '';
+  }
+  if (form?.elements?.useAccountName) {
+    form.elements.useAccountName.checked = false;
   }
 }
 
@@ -2409,7 +2432,7 @@ async function submitThread(event) {
         .map((option) => option.trim())
         .filter(Boolean),
       options,
-      displayName: formValue(els.threadForm, 'displayName'),
+      displayName: displayNameValue(els.threadForm),
       deletePassword: els.threadDeletePassword.value,
       captchaToken: els.threadCaptcha.value,
       posterToken: state.posterToken,
@@ -2480,7 +2503,7 @@ async function createComment(body, captchaToken) {
       body,
       captchaToken,
       posterToken: state.posterToken,
-      displayName: formValue(form, 'displayName'),
+      displayName: displayNameValue(form),
       options: formValue(form, 'options'),
       deletePassword: formValue(form, 'deletePassword')
     })

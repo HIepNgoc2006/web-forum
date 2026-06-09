@@ -251,7 +251,11 @@
           <form id="threadForm" class="stack">
             <label class="field-row">
               <span>Tên hiển thị</span>
-              <input name="displayName" placeholder="Anonymous" autocomplete="off" />
+              <input name="displayName" placeholder="Anonymous" maxlength="40" autocomplete="off" />
+            </label>
+            <label class="field-row checkbox-row account-display-option hidden" data-account-display-option>
+              <span>Tài khoản</span>
+              <label><input name="useAccountName" type="checkbox" data-use-account-name /> Dùng username tài khoản</label>
             </label>
             <label class="field-row">
               <span>Tùy chọn</span>
@@ -392,7 +396,11 @@
           <form id="commentForm" class="stack">
             <label class="field-row">
               <span>Tên hiển thị</span>
-              <input name="displayName" placeholder="Anonymous" autocomplete="off" />
+              <input name="displayName" placeholder="Anonymous" maxlength="40" autocomplete="off" />
+            </label>
+            <label class="field-row checkbox-row account-display-option hidden" data-account-display-option>
+              <span>Tài khoản</span>
+              <label><input name="useAccountName" type="checkbox" data-use-account-name /> Dùng username tài khoản</label>
             </label>
             <div class="field-row">
               <span>Tùy chọn</span>
@@ -631,7 +639,10 @@
         <button id="quickReplyClose" type="button" aria-label="Đóng trả lời nhanh">X</button>
       </div>
       <form id="quickReplyForm" class="quick-reply-form">
-        <input id="quickReplyName" name="displayName" placeholder="Anonymous" aria-label="Tên hiển thị" autocomplete="off" />
+        <input id="quickReplyName" name="displayName" placeholder="Anonymous" maxlength="40" aria-label="Tên hiển thị" autocomplete="off" />
+        <label class="quick-account-display-option hidden" data-account-display-option>
+          <input name="useAccountName" type="checkbox" data-use-account-name /> @username
+        </label>
         <input id="quickReplyOptions" name="options" aria-label="Tùy chọn" placeholder="Tùy chọn" autocomplete="off" />
         <input id="quickReplyDeletePassword" name="deletePassword" type="password" aria-label="Mật khẩu xóa" autocomplete="off" />
         <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>

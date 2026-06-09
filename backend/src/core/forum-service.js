@@ -49,6 +49,7 @@ const PULSE_STOP_WORDS = new Set([
 const SLOW_MODE_LABELS = new Set(['Toxic', 'Spam', 'Hate Speech', 'Fake News']);
 const ANONYMOUS_DISPLAY_NAME = 'Anonymous';
 const MAX_DISPLAY_NAME_LENGTH = 40;
+const RESERVED_DISPLAY_NAMES = new Set(['admin', 'administrator', 'moderator', 'mod', 'system']);
 const ACCOUNT_USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const ACCOUNT_THEMES = new Set(['yotsuba-b', 'yotsuba', 'tomorrow']);
 
@@ -183,12 +184,23 @@ function parsePostingOptions(value = '') {
 }
 
 function normalizeDisplayName(value = '') {
-  return String(value ?? '')
+  const displayName = String(value ?? '')
     .replace(/[\u0000-\u001f\u007f]/g, ' ')
     .replace(/[&<>"']/g, '')
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, MAX_DISPLAY_NAME_LENGTH);
+  return displayName;
+}
+
+function assertDisplayName(value = '') {
+  const displayName = normalizeDisplayName(value);
+  if (RESERVED_DISPLAY_NAMES.has(displayName.toLowerCase())) {
+    const error = new Error('Tên hiển thị này không dùng được');
+    error.statusCode = 400;
+    throw error;
+  }
+  return displayName;
 }
 
 function publicDisplayName(value = '') {
@@ -1241,7 +1253,7 @@ export function createForumService({
       const safeImage = validateImage(image);
       const poll = createPoll(pollOptions);
       const postingOptions = parsePostingOptions(options);
-      const normalizedDisplayName = normalizeDisplayName(displayName);
+      const normalizedDisplayName = assertDisplayName(displayName);
       const createdAt = now().toISOString();
       assertEventBoardOpen(board, createdAt);
 
@@ -1370,7 +1382,7 @@ export function createForumService({
       }
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
-      const normalizedDisplayName = normalizeDisplayName(displayName);
+      const normalizedDisplayName = assertDisplayName(displayName);
 
       return mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });

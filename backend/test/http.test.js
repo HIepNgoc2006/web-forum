@@ -194,6 +194,24 @@ test('http account identity is not exposed on public posts', async () => {
   });
 });
 
+test('http posting rejects reserved display names', async () => {
+  await withServer(async (baseUrl) => {
+    const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Thu dung ten hien thi reserved',
+        displayName: 'Admin',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const createdBody = await created.json();
+
+    assert.equal(created.status, 400);
+    assert.match(createdBody.error.message, /Tên hiển thị này không dùng được/);
+  });
+});
+
 test('http account registration requires JWT configuration before mutating users', async () => {
   await withServer(
     async (baseUrl) => {
