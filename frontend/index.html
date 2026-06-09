@@ -21,6 +21,10 @@
         <a href="/feeds/latest.rss">RSS</a>
         <a href="/feeds/latest.json">JSON</a>
         <a href="#policy">Nội quy</a>
+        <a id="accountLoginLink" href="#login">Đăng nhập</a>
+        <a id="accountRegisterLink" href="#register">Đăng ký</a>
+        <a id="accountSettingsLink" class="hidden" href="#account">Tài khoản</a>
+        <button id="accountLogoutButton" class="top-link-button hidden" type="button">Đăng xuất</button>
         <a href="#home">Trang chủ</a>
         <a href="#admin">Quản trị</a>
       </div>
@@ -445,6 +449,99 @@
           </select>
         </form>
         <div class="board-ad bottom-ad">Bảng thú nhận sinh viên chính thức · QUẢNG CÁO Ở ĐÂY</div>
+      </section>
+
+      <section id="registerScreen" class="screen account-screen" aria-labelledby="registerTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/register/</p>
+            <h1 id="registerTitle">Đăng ký tài khoản</h1>
+            <p class="muted">Tài khoản là tùy chọn để đồng bộ settings và tiện ích riêng. Đăng bài ẩn danh vẫn dùng được khi chưa đăng nhập.</p>
+          </div>
+        </div>
+        <form id="registerForm" class="login-panel stack">
+          <div id="registerError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản</span>
+            <input id="registerUsername" autocomplete="username" maxlength="32" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu</span>
+            <input id="registerPassword" type="password" autocomplete="new-password" />
+          </label>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đăng ký</button>
+            [<a href="#login">Đã có tài khoản</a>]
+          </div>
+          <p class="account-note">Username tài khoản không tự động hiện trên bài public. Tên hiển thị khi đăng bài vẫn là trường riêng và mặc định là Anonymous.</p>
+        </form>
+      </section>
+
+      <section id="loginScreen" class="screen account-screen" aria-labelledby="accountLoginTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/login/</p>
+            <h1 id="accountLoginTitle">Đăng nhập tài khoản</h1>
+            <p class="muted">Bỏ qua bước này nếu chỉ muốn đọc hoặc đăng bài ẩn danh trên các bảng public.</p>
+          </div>
+        </div>
+        <form id="accountLoginForm" class="login-panel stack">
+          <div id="accountLoginError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản</span>
+            <input id="accountUsername" autocomplete="username" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu</span>
+            <input id="accountPassword" type="password" autocomplete="current-password" />
+          </label>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đăng nhập</button>
+            [<a href="#register">Tạo tài khoản</a>]
+          </div>
+        </form>
+      </section>
+
+      <section id="accountScreen" class="screen account-screen" aria-labelledby="accountTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/settings/</p>
+            <h1 id="accountTitle">Settings tài khoản</h1>
+            <p id="accountStatus" class="muted">Tài khoản tùy chọn cho dữ liệu riêng.</p>
+          </div>
+        </div>
+        <form id="accountSettingsForm" class="login-panel stack hidden">
+          <div id="accountSettingsError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Giao diện</span>
+            <select id="accountTheme">
+              <option value="yotsuba-b">Yotsuba B</option>
+              <option value="yotsuba">Yotsuba</option>
+              <option value="tomorrow">Tomorrow</option>
+            </select>
+          </label>
+          <label class="field-row">
+            <span>Bảng nhà</span>
+            <select id="accountHomeBoard"></select>
+          </label>
+          <label class="field-row checkbox-row">
+            <span>Đồng bộ</span>
+            <label><input id="accountSyncDrafts" type="checkbox" /> Drafts riêng tư</label>
+          </label>
+          <label class="field-row checkbox-row">
+            <span>Thông báo</span>
+            <label><input id="accountEmailNotifications" type="checkbox" /> Email notifications</label>
+          </label>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Lưu settings</button>
+            <button id="accountSettingsLogout" class="ghost-button" type="button">[Đăng xuất]</button>
+          </div>
+          <p class="account-note">Settings này không đổi tên hiển thị khi đăng bài và không được đưa vào post public.</p>
+        </form>
+        <div id="accountLoggedOut" class="login-panel stack">
+          <p class="account-note">Bạn chưa đăng nhập tài khoản. Vẫn có thể đọc và đăng bài ẩn danh bình thường.</p>
+          <p class="account-actions">[<a href="#login">Đăng nhập</a>] [<a href="#register">Đăng ký</a>]</p>
+        </div>
       </section>
 
       <section id="adminScreen" class="screen" aria-labelledby="adminTitle">

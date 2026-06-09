@@ -49,6 +49,8 @@ const PULSE_STOP_WORDS = new Set([
 const SLOW_MODE_LABELS = new Set(['Toxic', 'Spam', 'Hate Speech', 'Fake News']);
 const ANONYMOUS_DISPLAY_NAME = 'Anonymous';
 const MAX_DISPLAY_NAME_LENGTH = 40;
+const ACCOUNT_USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const ACCOUNT_THEMES = new Set(['yotsuba-b', 'yotsuba', 'tomorrow']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -191,6 +193,97 @@ function normalizeDisplayName(value = '') {
 
 function publicDisplayName(value = '') {
   return normalizeDisplayName(value) || ANONYMOUS_DISPLAY_NAME;
+}
+
+function normalizeAccountUsername(value = '') {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .toLowerCase()
+    .trim()
+    .slice(0, 32);
+}
+
+function assertAccountUsername(value = '') {
+  const username = normalizeAccountUsername(value);
+  if (!ACCOUNT_USERNAME_PATTERN.test(username)) {
+    const error = new Error('Tên tài khoản cần 3-32 ký tự: chữ thường, số, dấu chấm, gạch dưới hoặc gạch nối');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (['admin', 'administrator', 'moderator', 'mod', 'system', 'anonymous'].includes(username)) {
+    const error = new Error('Tên tài khoản này không dùng được');
+    error.statusCode = 400;
+    throw error;
+  }
+  return username;
+}
+
+function assertAccountPassword(value = '') {
+  const password = String(value ?? '');
+  if (password.length < 8 || password.length > 160) {
+    const error = new Error('Mật khẩu cần từ 8 đến 160 ký tự');
+    error.statusCode = 400;
+    throw error;
+  }
+  return password;
+}
+
+function accountPasswordHash(password) {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const iterations = 120_000;
+  const hash = crypto.pbkdf2Sync(password, salt, iterations, 32, 'sha256').toString('hex');
+  return `pbkdf2-sha256:${iterations}:${salt}:${hash}`;
+}
+
+function verifyAccountPassword(password, stored = '') {
+  const [algorithm, iterationsText, salt, expectedHash] = String(stored).split(':');
+  const iterations = Number(iterationsText);
+  if (algorithm !== 'pbkdf2-sha256' || !Number.isFinite(iterations) || !salt || !expectedHash) {
+    return false;
+  }
+  const actualHash = crypto.pbkdf2Sync(String(password ?? ''), salt, iterations, 32, 'sha256').toString('hex');
+  const actual = Buffer.from(actualHash, 'hex');
+  const expected = Buffer.from(expectedHash, 'hex');
+  return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
+}
+
+function defaultAccountSettings() {
+  return {
+    theme: 'yotsuba-b',
+    homeBoard: 'confession',
+    syncDrafts: true,
+    emailNotifications: false
+  };
+}
+
+function normalizeAccountSettings(settings = {}, current = defaultAccountSettings()) {
+  const safe = { ...defaultAccountSettings(), ...current };
+  const theme = String(settings.theme ?? safe.theme);
+  if (ACCOUNT_THEMES.has(theme)) {
+    safe.theme = theme;
+  }
+  const boardSlug = String(settings.homeBoard ?? safe.homeBoard);
+  if (getBoard(boardSlug)) {
+    safe.homeBoard = boardSlug;
+  }
+  if (typeof settings.syncDrafts === 'boolean') {
+    safe.syncDrafts = settings.syncDrafts;
+  }
+  if (typeof settings.emailNotifications === 'boolean') {
+    safe.emailNotifications = settings.emailNotifications;
+  }
+  return safe;
+}
+
+function serializeAccount(user = {}) {
+  return {
+    id: user.id,
+    username: user.username,
+    role: user.role || 'user',
+    settings: normalizeAccountSettings({}, user.settings),
+    createdAt: user.createdAt,
+    updatedAt: user.updatedAt
+  };
 }
 
 function deletePasswordHash(password) {
@@ -867,6 +960,69 @@ export function createForumService({
           boards: realtime.boardCounts?.() ?? {}
         }
       };
+    },
+
+    async registerAccount({ username, password } = {}) {
+      const safeUsername = assertAccountUsername(username);
+      const safePassword = assertAccountPassword(password);
+      return mutate(async (state) => {
+        const existing = state.users.find((user) => normalizeAccountUsername(user.username) === safeUsername);
+        if (existing) {
+          const error = new Error('Tên tài khoản đã tồn tại');
+          error.statusCode = 409;
+          throw error;
+        }
+
+        const createdAt = now().toISOString();
+        const user = {
+          id: crypto.randomUUID(),
+          username: safeUsername,
+          passwordHash: accountPasswordHash(safePassword),
+          role: 'user',
+          settings: defaultAccountSettings(),
+          createdAt,
+          updatedAt: createdAt
+        };
+        state.users.push(user);
+        logEvent('account.register', { username: safeUsername });
+        return serializeAccount(user);
+      });
+    },
+
+    async loginAccount({ username, password } = {}) {
+      const safeUsername = normalizeAccountUsername(username);
+      const user = (await store.read()).users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+      if (!user || !verifyAccountPassword(password, user.passwordHash)) {
+        const error = new Error('Tên tài khoản hoặc mật khẩu không đúng');
+        error.statusCode = 401;
+        throw error;
+      }
+      return serializeAccount(user);
+    },
+
+    async getAccount(userId) {
+      const user = (await store.read()).users.find((item) => item.id === userId);
+      if (!user) {
+        const error = new Error('Phiên đăng nhập không còn hợp lệ');
+        error.statusCode = 401;
+        throw error;
+      }
+      return serializeAccount(user);
+    },
+
+    async updateAccountSettings(userId, settings = {}) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        user.settings = normalizeAccountSettings(settings, user.settings);
+        user.updatedAt = now().toISOString();
+        logEvent('account.settings.update', { username: user.username });
+        return serializeAccount(user);
+      });
     },
 
     async listLatestPosts(limit = 10) {

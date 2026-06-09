@@ -43,7 +43,8 @@ async function withServer(
     ai = safeAi,
     now = () => new Date('2026-05-22T08:00:00.000Z'),
     imageStorage,
-    uploadRoot = path.resolve('data/uploads-test')
+    uploadRoot = path.resolve('data/uploads-test'),
+    jwtSecret = 'secret'
   } = {}
 ) {
   const realtime = { publish() {} };
@@ -57,7 +58,7 @@ async function withServer(
   const server = createHttpServer({
     service,
     realtime,
-    jwtSecret: 'secret',
+    jwtSecret,
     adminUsername: 'admin',
     adminPassword: 'pass',
     uploadRoot
@@ -102,6 +103,115 @@ test('http api creates public thread and protects admin pending queue', async ()
     assert.equal(login.status, 200);
     assert.equal(typeof loginBody.data.token, 'string');
   });
+});
+
+test('http account api registers, logs in and saves private settings', async () => {
+  await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'SinhVien_36', password: 'long-enough-pass' })
+    });
+    const registeredBody = await registered.json();
+    assert.equal(registered.status, 201);
+    assert.equal(registeredBody.data.account.username, 'sinhvien_36');
+    assert.equal(typeof registeredBody.data.token, 'string');
+    assert.equal(registeredBody.data.account.passwordHash, undefined);
+
+    const duplicate = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sinhvien_36', password: 'long-enough-pass' })
+    });
+    assert.equal(duplicate.status, 409);
+
+    const login = await fetch(`${baseUrl}/api/account/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sinhvien_36', password: 'long-enough-pass' })
+    });
+    const loginBody = await login.json();
+    assert.equal(login.status, 200);
+    assert.equal(loginBody.data.account.username, 'sinhvien_36');
+
+    const settings = await fetch(`${baseUrl}/api/account/settings`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${loginBody.data.token}`
+      },
+      body: JSON.stringify({
+        settings: {
+          theme: 'tomorrow',
+          homeBoard: 'hoc-tap',
+          syncDrafts: false,
+          emailNotifications: true
+        }
+      })
+    });
+    const settingsBody = await settings.json();
+    assert.equal(settings.status, 200);
+    assert.equal(settingsBody.data.settings.theme, 'tomorrow');
+    assert.equal(settingsBody.data.settings.homeBoard, 'hoc-tap');
+    assert.equal(settingsBody.data.settings.syncDrafts, false);
+    assert.equal(settingsBody.data.settings.emailNotifications, true);
+
+    const me = await fetch(`${baseUrl}/api/account/me`, {
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    const meBody = await me.json();
+    assert.equal(me.status, 200);
+    assert.equal(meBody.data.settings.theme, 'tomorrow');
+  });
+});
+
+test('http account identity is not exposed on public posts', async () => {
+  await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass' })
+    });
+    const registeredBody = await registered.json();
+
+    const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${registeredBody.data.token}`
+      },
+      body: JSON.stringify({
+        body: 'Dang bai khi da dang nhap account',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const createdBody = await created.json();
+    assert.equal(created.status, 201);
+    assert.equal(createdBody.data.thread.displayName, 'Anonymous');
+    assert.equal(createdBody.data.thread.username, undefined);
+    assert.equal(createdBody.data.thread.accountId, undefined);
+    assert.equal(JSON.stringify(createdBody.data.thread).includes('private_user'), false);
+  });
+});
+
+test('http account registration requires JWT configuration before mutating users', async () => {
+  await withServer(
+    async (baseUrl) => {
+      const registered = await fetch(`${baseUrl}/api/account/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'no_jwt_user', password: 'long-enough-pass' })
+      });
+      const registeredBody = await registered.json();
+      assert.equal(registered.status, 503);
+      assert.match(registeredBody.error.message, /JWT_SECRET/);
+
+      const health = await fetch(`${baseUrl}/api/health`);
+      const healthBody = await health.json();
+      assert.equal(healthBody.data.store.users, 0);
+    },
+    { jwtSecret: '' }
+  );
 });
 
 test('http api supports v1 alias, paged search, backlinks and self delete password', async () => {
