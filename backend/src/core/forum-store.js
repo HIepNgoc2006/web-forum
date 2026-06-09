@@ -4,6 +4,7 @@ import path from 'node:path';
 export const EMPTY_STATE = {
   version: 1,
   nextGlobalNumber: 1,
+  users: [],
   threads: [],
   comments: [],
   moderationActions: [],
@@ -22,6 +23,7 @@ export function normalizeState(value = {}) {
   return {
     ...EMPTY_STATE,
     ...cloned,
+    users: Array.isArray(cloned.users) ? cloned.users : [],
     threads: Array.isArray(cloned.threads) ? cloned.threads : [],
     comments: Array.isArray(cloned.comments) ? cloned.comments : [],
     moderationActions: Array.isArray(cloned.moderationActions) ? cloned.moderationActions : [],

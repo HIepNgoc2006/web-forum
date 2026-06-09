@@ -111,6 +111,41 @@ function requireAdmin(request, jwtSecret) {
   }
 }
 
+function requireAccount(request, jwtSecret) {
+  const header = request.headers.authorization ?? '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  try {
+    const payload = verifyJwt(token, jwtSecret);
+    if (payload.role !== 'user' || !payload.sub) {
+      throw new Error('Không có quyền truy cập');
+    }
+    return payload;
+  } catch {
+    const error = new Error('Vui lòng đăng nhập tài khoản');
+    error.statusCode = 401;
+    throw error;
+  }
+}
+
+function accountToken(account, jwtSecret) {
+  if (!jwtSecret) {
+    const error = new Error('Chưa cấu hình JWT_SECRET cho tài khoản');
+    error.statusCode = 503;
+    throw error;
+  }
+  return signJwt({ role: 'user', sub: account.id, username: account.username }, jwtSecret, {
+    expiresInSeconds: 60 * 60 * 24 * 14
+  });
+}
+
+function requireAccountJwt(jwtSecret) {
+  if (!jwtSecret) {
+    const error = new Error('Chưa cấu hình JWT_SECRET cho tài khoản');
+    error.statusCode = 503;
+    throw error;
+  }
+}
+
 function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
   if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || parts[0] !== 'api') {
     return null;
@@ -130,6 +165,9 @@ function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
   }
   if (method === 'POST' && parts[1] === 'ai' && parts[2] === 'rewrite') {
     return { limiter: limiters.ai, key: `${ip}:ai:rewrite` };
+  }
+  if (parts[1] === 'account') {
+    return { limiter: limiters.account, key: `${ip}:account:${method}:${pathname}` };
   }
   if (parts[1] === 'admin') {
     return { limiter: limiters.admin, key: `${ip}:admin:${method}:${pathname}` };
@@ -334,6 +372,7 @@ export function createHttpServer({
     thread: createRateLimiter({ limit: 5, windowMs: 60_000 }),
     comment: createRateLimiter({ limit: 20, windowMs: 60_000 }),
     ai: createRateLimiter({ limit: 8, windowMs: 60_000 }),
+    account: createRateLimiter({ limit: 20, windowMs: 60_000 }),
     admin: createRateLimiter({ limit: 30, windowMs: 60_000 }),
     generic: createRateLimiter({ limit: 60, windowMs: 60_000 })
   };
@@ -423,6 +462,43 @@ export function createHttpServer({
           })
         });
         return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/account/register') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        const account = await service.registerAccount({
+          username: body.username,
+          password: body.password
+        });
+        ok(response, { account, token: accountToken(account, jwtSecret) }, 201);
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/account/login') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        const account = await service.loginAccount({
+          username: body.username,
+          password: body.password
+        });
+        ok(response, { account, token: accountToken(account, jwtSecret) });
+        return;
+      }
+
+      if (routePath.startsWith('/api/account')) {
+        const accountSession = requireAccount(request, jwtSecret);
+
+        if (request.method === 'GET' && routePath === '/api/account/me') {
+          ok(response, await service.getAccount(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'PUT' && routePath === '/api/account/settings') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.updateAccountSettings(accountSession.sub, body.settings ?? body));
+          return;
+        }
       }
 
       let params = match(parts, ['api', 'boards', ':boardSlug', 'threads']);

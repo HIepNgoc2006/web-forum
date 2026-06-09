@@ -10,6 +10,8 @@ const state = {
   threadLastSeenBefore: 0,
   threadCurrentMaxNumber: 0,
   token: localStorage.getItem('adminToken') || '',
+  accountToken: localStorage.getItem('accountToken') || '',
+  account: null,
   posterToken: getPosterToken(),
   selectedImage: null,
   quickReplyDrag: null,
@@ -212,11 +214,18 @@ const els = {
   homeStats: document.querySelector('#homeStats'),
   serverStats: document.querySelector('#serverStats'),
   boardNav: document.querySelector('#boardNav'),
+  accountLoginLink: document.querySelector('#accountLoginLink'),
+  accountRegisterLink: document.querySelector('#accountRegisterLink'),
+  accountSettingsLink: document.querySelector('#accountSettingsLink'),
+  accountLogoutButton: document.querySelector('#accountLogoutButton'),
   socketStatus: document.querySelector('#socketStatus'),
   boardScreen: document.querySelector('#boardScreen'),
   catalogScreen: document.querySelector('#catalogScreen'),
   archiveScreen: document.querySelector('#archiveScreen'),
   threadScreen: document.querySelector('#threadScreen'),
+  registerScreen: document.querySelector('#registerScreen'),
+  loginScreen: document.querySelector('#loginScreen'),
+  accountScreen: document.querySelector('#accountScreen'),
   adminScreen: document.querySelector('#adminScreen'),
   boardTitle: document.querySelector('#boardTitle'),
   boardPath: document.querySelector('#boardPath'),
@@ -292,6 +301,23 @@ const els = {
   reportList: document.querySelector('#reportList'),
   moderationSection: document.querySelector('#moderationSection'),
   moderationActions: document.querySelector('#moderationActions'),
+  registerForm: document.querySelector('#registerForm'),
+  registerUsername: document.querySelector('#registerUsername'),
+  registerPassword: document.querySelector('#registerPassword'),
+  registerError: document.querySelector('#registerError'),
+  accountLoginForm: document.querySelector('#accountLoginForm'),
+  accountUsername: document.querySelector('#accountUsername'),
+  accountPassword: document.querySelector('#accountPassword'),
+  accountLoginError: document.querySelector('#accountLoginError'),
+  accountStatus: document.querySelector('#accountStatus'),
+  accountSettingsForm: document.querySelector('#accountSettingsForm'),
+  accountSettingsError: document.querySelector('#accountSettingsError'),
+  accountTheme: document.querySelector('#accountTheme'),
+  accountHomeBoard: document.querySelector('#accountHomeBoard'),
+  accountSyncDrafts: document.querySelector('#accountSyncDrafts'),
+  accountEmailNotifications: document.querySelector('#accountEmailNotifications'),
+  accountSettingsLogout: document.querySelector('#accountSettingsLogout'),
+  accountLoggedOut: document.querySelector('#accountLoggedOut'),
   toast: document.querySelector('#toast'),
   refPreview: document.querySelector('#refPreview'),
   quickReply: document.querySelector('#quickReply'),
@@ -332,16 +358,109 @@ function setButtonLoading(button, label = 'Đang gửi...') {
   };
 }
 
+function setFormError(element, message = '') {
+  if (!element) {
+    return;
+  }
+  element.textContent = message;
+  element.classList.toggle('hidden', !message);
+}
+
+function setAccountSession({ token = '', account = null } = {}) {
+  state.accountToken = token;
+  state.account = account;
+  if (token) {
+    localStorage.setItem('accountToken', token);
+  } else {
+    localStorage.removeItem('accountToken');
+  }
+  updateAccountNav();
+}
+
+function updateAccountNav() {
+  const loggedIn = Boolean(state.accountToken && state.account);
+  els.accountLoginLink.classList.toggle('hidden', loggedIn);
+  els.accountRegisterLink.classList.toggle('hidden', loggedIn);
+  els.accountSettingsLink.classList.toggle('hidden', !loggedIn);
+  els.accountLogoutButton.classList.toggle('hidden', !loggedIn);
+  els.accountSettingsLink.textContent = loggedIn ? `@${state.account.username}` : 'Tài khoản';
+}
+
+function logoutAccount({ message = 'Đã đăng xuất tài khoản.' } = {}) {
+  setAccountSession();
+  if (message) {
+    showToast(message);
+  }
+  if (['#account', '#login', '#register'].some((prefix) => (window.location.hash || '').startsWith(prefix))) {
+    window.location.hash = '#home';
+  }
+}
+
+function syncAccountHomeBoardOptions() {
+  if (!els.accountHomeBoard) {
+    return;
+  }
+  els.accountHomeBoard.innerHTML = state.boards
+    .map((board) => `<option value="${escapeHtml(board.slug)}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</option>`)
+    .join('');
+}
+
+function fillAccountSettings(account = state.account) {
+  const settings = account?.settings || {};
+  els.accountStatus.textContent = account
+    ? `Đang đăng nhập @${account.username}. Account không thay thế Anonymous trên bài public.`
+    : 'Tài khoản tùy chọn cho dữ liệu riêng.';
+  els.accountSettingsForm.classList.toggle('hidden', !account);
+  els.accountLoggedOut.classList.toggle('hidden', Boolean(account));
+  if (!account) {
+    return;
+  }
+  els.accountTheme.value = settings.theme || state.theme || 'yotsuba-b';
+  els.accountHomeBoard.value = settings.homeBoard || state.boardSlug || 'confession';
+  els.accountSyncDrafts.checked = settings.syncDrafts !== false;
+  els.accountEmailNotifications.checked = Boolean(settings.emailNotifications);
+}
+
+async function loadAccountSession() {
+  updateAccountNav();
+  if (!state.accountToken) {
+    return null;
+  }
+  try {
+    const account = await api('/api/account/me', { auth: 'account' });
+    state.account = account;
+    updateAccountNav();
+    return account;
+  } catch {
+    setAccountSession();
+    return null;
+  }
+}
+
+async function loadAccountSettings() {
+  setScreen('account');
+  setFormError(els.accountSettingsError);
+  syncAccountHomeBoardOptions();
+  if (!state.account && state.accountToken) {
+    await loadAccountSession();
+  }
+  fillAccountSettings();
+  window.scrollTo({ top: 0 });
+}
+
 async function api(path, options = {}) {
+  const { auth = 'admin', ...fetchOptions } = options;
   const headers = { ...(options.headers || {}) };
   if (options.body && !headers['content-type']) {
     headers['content-type'] = 'application/json';
   }
-  if (state.token) {
+  if (auth === 'account' && state.accountToken) {
+    headers.authorization = `Bearer ${state.accountToken}`;
+  } else if (auth === 'admin' && state.token) {
     headers.authorization = `Bearer ${state.token}`;
   }
 
-  const response = await fetch(path, { ...options, headers });
+  const response = await fetch(path, { ...fetchOptions, headers });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     throw new Error(payload.error?.message || 'Yêu cầu thất bại');
@@ -360,12 +479,16 @@ function setScreen(name) {
     els.catalogScreen,
     els.archiveScreen,
     els.threadScreen,
+    els.registerScreen,
+    els.loginScreen,
+    els.accountScreen,
     els.adminScreen
   ]) {
     screen.classList.remove('active');
   }
   document.body.classList.toggle('home-page', name === 'home');
   document.body.classList.toggle('policy-page', name === 'policy');
+  document.body.classList.toggle('account-page', ['register', 'login', 'account'].includes(name));
   document.body.classList.toggle(
     'board-page',
     name === 'board' || name === 'catalog' || name === 'archive' || name === 'thread'
@@ -380,6 +503,12 @@ function setScreen(name) {
     els.archiveScreen.classList.add('active');
   } else if (name === 'thread') {
     els.threadScreen.classList.add('active');
+  } else if (name === 'register') {
+    els.registerScreen.classList.add('active');
+  } else if (name === 'login') {
+    els.loginScreen.classList.add('active');
+  } else if (name === 'account') {
+    els.accountScreen.classList.add('active');
   } else if (name === 'admin') {
     els.adminScreen.classList.add('active');
   } else {
@@ -2103,6 +2232,16 @@ function route() {
     loadHome().catch((error) => showToast(error.message));
   } else if (name === 'policy') {
     loadPolicy();
+  } else if (name === 'register') {
+    setScreen('register');
+    setFormError(els.registerError);
+    window.scrollTo({ top: 0 });
+  } else if (name === 'login') {
+    setScreen('login');
+    setFormError(els.accountLoginError);
+    window.scrollTo({ top: 0 });
+  } else if (name === 'account') {
+    loadAccountSettings().catch((error) => showToast(error.message));
   } else if (name === 'thread' && id) {
     const params = new URLSearchParams(hashQuery);
     state.threadId = decodeURIComponent(id);
@@ -2556,6 +2695,90 @@ async function showReference(number, event) {
 function hideReferencePreview() {
   els.refPreview.classList.add('hidden');
   els.refPreview.innerHTML = '';
+}
+
+async function submitAccountRegister(event) {
+  event.preventDefault();
+  setFormError(els.registerError);
+  const button = event.submitter;
+  const restoreButton = setButtonLoading(button, 'Đang đăng ký...');
+  try {
+    const result = await api('/api/account/register', {
+      auth: 'none',
+      method: 'POST',
+      body: JSON.stringify({
+        username: els.registerUsername.value,
+        password: els.registerPassword.value
+      })
+    });
+    els.registerPassword.value = '';
+    setAccountSession({ token: result.token, account: result.account });
+    showToast('Đã đăng ký và đăng nhập tài khoản.');
+    window.location.hash = '#account';
+  } catch (error) {
+    setFormError(els.registerError, error.message);
+  } finally {
+    restoreButton();
+  }
+}
+
+async function submitAccountLogin(event) {
+  event.preventDefault();
+  setFormError(els.accountLoginError);
+  const button = event.submitter;
+  const restoreButton = setButtonLoading(button, 'Đang đăng nhập...');
+  try {
+    const result = await api('/api/account/login', {
+      auth: 'none',
+      method: 'POST',
+      body: JSON.stringify({
+        username: els.accountUsername.value,
+        password: els.accountPassword.value
+      })
+    });
+    els.accountPassword.value = '';
+    setAccountSession({ token: result.token, account: result.account });
+    showToast('Đã đăng nhập tài khoản.');
+    window.location.hash = '#account';
+  } catch (error) {
+    setFormError(els.accountLoginError, error.message);
+  } finally {
+    restoreButton();
+  }
+}
+
+async function submitAccountSettings(event) {
+  event.preventDefault();
+  setFormError(els.accountSettingsError);
+  const button = event.submitter;
+  const restoreButton = setButtonLoading(button, 'Đang lưu...');
+  try {
+    const account = await api('/api/account/settings', {
+      auth: 'account',
+      method: 'PUT',
+      body: JSON.stringify({
+        settings: {
+          theme: els.accountTheme.value,
+          homeBoard: els.accountHomeBoard.value,
+          syncDrafts: els.accountSyncDrafts.checked,
+          emailNotifications: els.accountEmailNotifications.checked
+        }
+      })
+    });
+    state.account = account;
+    applyTheme(account.settings.theme);
+    fillAccountSettings(account);
+    updateAccountNav();
+    showToast('Đã lưu settings tài khoản.');
+  } catch (error) {
+    setFormError(els.accountSettingsError, error.message);
+    if (/đăng nhập|Phiên/.test(error.message)) {
+      setAccountSession();
+      fillAccountSettings();
+    }
+  } finally {
+    restoreButton();
+  }
 }
 
 function setupRealtime() {
@@ -3158,6 +3381,12 @@ function bindEvents() {
     }
   });
 
+  els.registerForm.addEventListener('submit', submitAccountRegister);
+  els.accountLoginForm.addEventListener('submit', submitAccountLogin);
+  els.accountSettingsForm.addEventListener('submit', submitAccountSettings);
+  els.accountLogoutButton.addEventListener('click', () => logoutAccount());
+  els.accountSettingsLogout.addEventListener('click', () => logoutAccount());
+
   els.loginForm.addEventListener('submit', async (event) => {
     event.preventDefault();
     try {
@@ -3191,6 +3420,9 @@ async function init() {
   state.boards = config.boards;
   state.boardGroups = config.boardGroups || [];
   state.aiConfigured = Boolean(config.ai?.configured);
+  renderBoards();
+  syncAccountHomeBoardOptions();
+  await loadAccountSession();
   const password = defaultDeletePassword();
   els.threadDeletePassword.value = password;
   els.commentDeletePassword.value = password;

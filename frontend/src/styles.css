@@ -128,6 +128,15 @@ button {
   align-items: center;
 }
 
+.top-link-button {
+  min-height: 0;
+  border: 0;
+  background: transparent;
+  color: var(--link);
+  padding: 0;
+  text-decoration: underline;
+}
+
 .socket-pill {
   color: var(--dead);
 }
@@ -1373,6 +1382,43 @@ select {
 
 .login-panel .form-actions {
   margin-left: 92px;
+}
+
+.account-screen .login-panel {
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  padding: 6px;
+}
+
+.account-note {
+  margin: 7px 0 0 92px;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.account-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.checkbox-row > label {
+  min-height: 24px;
+  border: 1px solid #aaa;
+  background: white;
+  color: black;
+  padding: 3px 4px;
+}
+
+.form-error {
+  margin: 0 0 5px 92px;
+  border: 1px solid var(--header);
+  background: #fff;
+  color: var(--header);
+  padding: 4px 6px;
+  font-weight: bold;
 }
 
 .pending-list {

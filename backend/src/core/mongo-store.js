@@ -40,7 +40,9 @@ const KEY_VALUE_SCHEMA = new mongoose.Schema(
 const USER_SCHEMA = new mongoose.Schema(
   {
     username: String,
+    passwordHash: String,
     role: String,
+    settings: mongoose.Schema.Types.Mixed,
     createdAt: Date,
     updatedAt: Date
   },
@@ -174,8 +176,9 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
     async read() {
       const models = await getModels();
       await ensureBoards(models);
-      const [meta, threads, comments, moderationActions, reports, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
+      const [meta, users, threads, comments, moderationActions, reports, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
         models.StateMeta.findById('global').lean(),
+        models.User.find({}).lean(),
         models.Thread.find({}).lean(),
         models.Comment.find({}).lean(),
         models.ModerationAction.find({}).lean(),
@@ -188,6 +191,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       return normalizeState({
         version: meta?.version ?? EMPTY_STATE.version,
         nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber,
+        users: users.map(plainDocument),
         threads: threads.map(plainDocument),
         comments: comments.map(plainDocument),
         moderationActions: moderationActions.map(plainDocument),
@@ -213,6 +217,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           },
           { upsert: true }
         );
+        await replaceCollection(models.User, normalized.users);
         await replaceCollection(models.Thread, normalized.threads);
         await replaceCollection(models.Comment, normalized.comments);
         await replaceCollection(models.ModerationAction, normalized.moderationActions);
