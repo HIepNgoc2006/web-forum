@@ -136,8 +136,31 @@ describe('Account settings', () => {
   it('updates settings for existing user', async () => {
     const service = createTestService();
     const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
-    const updated = await service.updateAccountSettings(account.id, { theme: 'tomorrow' });
+    const updated = await service.updateAccountSettings(account.id, {
+      theme: 'tomorrow',
+      displayPreferences: {
+        compactThreads: true,
+        hideThumbnails: true
+      },
+      notificationPreferences: {
+        email: true,
+        watchedThreads: false,
+        boardSubscriptions: true
+      },
+      boardSubscriptions: ['confession', 'hoc-tap', 'unknown-board', 'confession']
+    });
     assert.strictEqual(updated.settings.theme, 'tomorrow');
+    assert.deepStrictEqual(updated.settings.displayPreferences, {
+      compactThreads: true,
+      hideThumbnails: true
+    });
+    assert.deepStrictEqual(updated.settings.notificationPreferences, {
+      email: true,
+      watchedThreads: false,
+      boardSubscriptions: true
+    });
+    assert.deepStrictEqual(updated.settings.boardSubscriptions, ['confession', 'hoc-tap']);
+    assert.strictEqual(updated.settings.emailNotifications, true);
   });
 
   it('rejects invalid theme', async () => {
