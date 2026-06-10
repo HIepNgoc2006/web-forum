@@ -1222,7 +1222,9 @@ function moderationActionText(action) {
       'admin:note': 'Ghi chú',
       'admin:cooldown': 'Làm chậm',
       'admin:ban': 'Tạm khóa',
-      'admin:unsanction': 'Gỡ khóa'
+      'admin:unsanction': 'Gỡ khóa',
+      'admin:sticky': 'Ghim chủ đề',
+      'admin:unsticky': 'Gỡ ghim chủ đề'
     }[action] || action
   );
 }
@@ -1415,6 +1417,7 @@ function adminPostDetailHtml(detail) {
       <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
       <div class="pending-actions">
         <button class="ghost-button" data-admin-note="${post.globalNumber}" type="button">[Ghi chú]</button>
+        ${post.type === 'thread' ? adminStickyButtonHtml(post) : ''}
         <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
         <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
       </div>
@@ -1724,6 +1727,7 @@ function meta(post, options = {}) {
       <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" title="Liên kết tới bài này">${post.globalNumber}</a></span>
       ${posterIdentity}
       ${opMarker}
+      ${stickyLabelHtml(post)}
       <span class="status">${labels}</span>
       ${
         showReplyAction && canReply
@@ -1879,6 +1883,19 @@ function maxThreadPostNumber(detail) {
   );
 }
 
+function stickyLabelHtml(thread) {
+  return thread?.isSticky ? '<span class="sticky-label">Đã ghim</span>' : '';
+}
+
+function adminStickyButtonHtml(thread) {
+  if (!thread?.id || thread.isArchived) {
+    return '';
+  }
+  const nextSticky = !thread.isSticky;
+  const label = nextSticky ? 'Ghim' : 'Gỡ ghim';
+  return `<button class="ghost-button" data-admin-sticky-thread="${escapeHtml(thread.id)}" data-sticky-next="${nextSticky}" type="button">[${label}]</button>`;
+}
+
 function focusPermalinkPost(globalNumber, { scroll = false } = {}) {
   const postNumber = String(globalNumber || '').trim();
   if (!postNumber) {
@@ -1917,6 +1934,7 @@ function threadMatchesSearch(thread, term) {
 
 function catalogThreadHtml(thread) {
   const title = plainPreview(thread.bodyLines, 'Chưa có nội dung').slice(0, 260);
+  const stickyPrefix = thread.isSticky ? '[Ghim] ' : '';
   const thumbnailSrc = imageThumbnailSrc(thread.image);
   const image = thread.image && thumbnailSrc
     ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
@@ -1927,7 +1945,7 @@ function catalogThreadHtml(thread) {
   return `
     <a class="catalog-thread" href="#thread/${thread.id}">
       <span class="catalog-thumb">${image}</span>
-      <strong>${escapeHtml(title.slice(0, 70))}${title.length >= 70 ? '...' : ''}</strong>
+      <strong>${escapeHtml(`${stickyPrefix}${title.slice(0, 70)}`)}${title.length >= 70 ? '...' : ''}</strong>
       <span class="catalog-thread-stats">R: ${thread.replyCount} / I: ${thread.image ? 1 : 0} / No.${thread.globalNumber}</span>
       <p>${escapeHtml(title)}${title.length >= 260 ? '...' : ''}</p>
     </a>
@@ -1937,15 +1955,27 @@ function catalogThreadHtml(thread) {
 function sortedCatalogThreads(threads) {
   const copy = [...threads];
   if (state.catalogSort === 'created') {
-    return copy.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+    return copy.sort((left, right) => {
+      const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+      return stickyCompare || right.createdAt.localeCompare(left.createdAt);
+    });
   }
   if (state.catalogSort === 'replies') {
-    return copy.sort((left, right) => Number(right.replyCount || 0) - Number(left.replyCount || 0));
+    return copy.sort((left, right) => {
+      const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+      return stickyCompare || Number(right.replyCount || 0) - Number(left.replyCount || 0);
+    });
   }
   if (state.catalogSort === 'latest-reply') {
-    return copy.sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt));
+    return copy.sort((left, right) => {
+      const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+      return stickyCompare || right.bumpedAt.localeCompare(left.bumpedAt);
+    });
   }
-  return copy.sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt));
+  return copy.sort((left, right) => {
+    const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+    return stickyCompare || right.bumpedAt.localeCompare(left.bumpedAt);
+  });
 }
 
 function catalogThreadMatchesFilter(thread) {
@@ -2065,7 +2095,7 @@ function renderBoardThreads(threads) {
   els.threadList.innerHTML = visibleThreads
     .map((thread) => {
       return `
-        <div class="thread" id="p${thread.globalNumber}">
+        <div class="thread ${thread.isSticky ? 'thread-sticky' : ''}" id="p${thread.globalNumber}">
           <div class="thread-op">
           ${
             thread.image
@@ -3302,6 +3332,33 @@ function bindEvents() {
         });
         showToast('Đã lưu ghi chú.');
         await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminStickyButton = event.target.closest('[data-admin-sticky-thread]');
+    if (adminStickyButton) {
+      const threadId = adminStickyButton.dataset.adminStickyThread;
+      const nextSticky = adminStickyButton.dataset.stickyNext === 'true';
+      const ok = window.confirm(nextSticky ? 'Ghim chủ đề này lên đầu board?' : 'Gỡ ghim chủ đề này?');
+      if (!ok) {
+        return;
+      }
+      try {
+        await api(`/api/admin/threads/${encodeURIComponent(threadId)}/sticky`, {
+          method: nextSticky ? 'POST' : 'DELETE'
+        });
+        showToast(nextSticky ? 'Đã ghim chủ đề.' : 'Đã gỡ ghim chủ đề.');
+        const hash = window.location.hash || '';
+        if (hash.startsWith('#board/')) {
+          await loadBoard();
+        } else if (hash.startsWith('#thread/')) {
+          await loadThread();
+        } else {
+          await loadAdmin();
+        }
       } catch (error) {
         showToast(error.message);
       }

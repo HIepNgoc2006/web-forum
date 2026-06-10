@@ -63,6 +63,7 @@ function stripPrivatePostFields(post) {
     opProofHash: _opProofHash,
     deletePasswordHash: _deletePasswordHash,
     pollVotes: _pollVotes,
+    stickiedBy: _stickiedBy,
     ...publicFields
   } = post;
   return publicFields;
@@ -84,6 +85,9 @@ function archiveThreadRecord(thread, reason, archivedAt) {
   thread.isArchived = true;
   thread.archivedAt = archivedAt;
   thread.archivedReason = reason;
+  thread.isSticky = false;
+  thread.stickiedAt = null;
+  thread.stickiedBy = null;
 }
 
 function boardEventEnded(board, at) {
@@ -491,6 +495,8 @@ function serializeThread(thread, comments) {
     isArchived: Boolean(thread.isArchived),
     archivedAt: thread.archivedAt ?? null,
     archivedReason: thread.archivedReason ?? null,
+    isSticky: Boolean(thread.isSticky && activePublicThread(thread)),
+    stickiedAt: thread.isSticky && activePublicThread(thread) ? (thread.stickiedAt ?? null) : null,
     slowModeUntil: thread.slowModeUntil ?? null,
     slowModeSeconds: Number(thread.slowModeSeconds || 0),
     bodyLines: parsePostText(thread.body),
@@ -511,6 +517,24 @@ function compareNewestPosts(left, right) {
   const dateCompare = right.createdAt.localeCompare(left.createdAt);
   if (dateCompare !== 0) {
     return dateCompare;
+  }
+  return Number(right.globalNumber) - Number(left.globalNumber);
+}
+
+function compareBoardThreads(left, right) {
+  const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+  if (stickyCompare !== 0) {
+    return stickyCompare;
+  }
+  if (left.isSticky && right.isSticky) {
+    const stickiedCompare = String(right.stickiedAt ?? '').localeCompare(String(left.stickiedAt ?? ''));
+    if (stickiedCompare !== 0) {
+      return stickiedCompare;
+    }
+  }
+  const bumpedCompare = String(right.bumpedAt ?? '').localeCompare(String(left.bumpedAt ?? ''));
+  if (bumpedCompare !== 0) {
+    return bumpedCompare;
   }
   return Number(right.globalNumber) - Number(left.globalNumber);
 }
@@ -1213,7 +1237,7 @@ export function createForumService({
       const threads = state.threads
         .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
         .filter((thread) => threadMatchesSearch(state, thread, term))
-        .sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt))
+        .sort(compareBoardThreads)
         .map((thread) => serializeThread(thread, state.comments));
       if (options.paged) {
         return pagedResult(threads, { page: options.page, pageSize: options.pageSize, maxPageSize: 50 });
@@ -1251,6 +1275,39 @@ export function createForumService({
         archiveThreadRecord(thread, reason, now().toISOString());
         const serialized = serializeThread(thread, state.comments);
         realtime.publish('thread:archived', { thread: serialized });
+        return serialized;
+      });
+    },
+
+    async setThreadSticky(threadId, sticky, { actor = 'admin' } = {}) {
+      return mutate(async (state) => {
+        const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
+        if (!thread) {
+          const error = new Error('Không tìm thấy chủ đề công khai');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const actionAt = now().toISOString();
+        const nextSticky = Boolean(sticky);
+        thread.isSticky = nextSticky;
+        thread.stickiedAt = nextSticky ? actionAt : null;
+        thread.stickiedBy = nextSticky ? actor : null;
+        recordModerationAction(state, {
+          action: nextSticky ? 'admin:sticky' : 'admin:unsticky',
+          actor,
+          postType: 'thread',
+          post: thread,
+          reason: nextSticky ? 'sticky' : 'unsticky',
+          createdAt: actionAt
+        });
+        logEvent(nextSticky ? 'thread.sticky' : 'thread.unsticky', {
+          boardSlug: thread.boardSlug,
+          globalNumber: thread.globalNumber,
+          actor
+        });
+        const serialized = serializeThread(thread, state.comments);
+        realtime.publish('thread:updated', { thread: serialized });
         return serialized;
       });
     },
