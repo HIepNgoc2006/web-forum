@@ -52,6 +52,10 @@ const MAX_DISPLAY_NAME_LENGTH = 40;
 const RESERVED_DISPLAY_NAMES = new Set(['admin', 'administrator', 'moderator', 'mod', 'system']);
 const ACCOUNT_USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const ACCOUNT_THEMES = new Set(['yotsuba-b', 'yotsuba', 'tomorrow']);
+const MAX_ACCOUNT_WATCHLIST_ITEMS = 100;
+const MAX_ACCOUNT_DRAFTS = 40;
+const MAX_ACCOUNT_SAVED_SEARCHES = 50;
+const MAX_ACCOUNT_DRAFT_LENGTH = 12_000;
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -285,6 +289,136 @@ function normalizeAccountSettings(settings = {}, current = defaultAccountSetting
     safe.emailNotifications = settings.emailNotifications;
   }
   return safe;
+}
+
+function safePrivateString(value = '', maxLength = 240) {
+  return String(value ?? '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function safeDraftBody(value = '') {
+  return String(value ?? '')
+    .replace(/\u0000/g, '')
+    .slice(0, MAX_ACCOUNT_DRAFT_LENGTH);
+}
+
+function normalizePrivateItems(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value).map(([key, item]) => ({ key, ...(item && typeof item === 'object' ? item : {}) }));
+  }
+  return [];
+}
+
+function normalizeAccountWatchlist(value = []) {
+  const seen = new Set();
+  return normalizePrivateItems(value)
+    .map((item) => ({
+      threadId: safePrivateString(item.threadId || item.id || item.key, 120),
+      boardSlug: safePrivateString(item.boardSlug, 80),
+      boardPath: safePrivateString(item.boardPath, 80),
+      boardName: safePrivateString(item.boardName, 120),
+      globalNumber: safePrivateString(item.globalNumber, 40),
+      preview: safePrivateString(item.preview, 240),
+      lastSeen: sanitizePositiveInteger(item.lastSeen, Number.MAX_SAFE_INTEGER) || 0,
+      maxNumber: sanitizePositiveInteger(item.maxNumber, Number.MAX_SAFE_INTEGER) || 0,
+      replyCount: sanitizePositiveInteger(item.replyCount, 1_000_000) || 0,
+      fileCount: sanitizePositiveInteger(item.fileCount, 1_000_000) || 0,
+      isArchived: Boolean(item.isArchived),
+      updatedAt: safePrivateString(item.updatedAt || item.createdAt, 80)
+    }))
+    .filter((item) => item.threadId)
+    .filter((item) => {
+      if (seen.has(item.threadId)) {
+        return false;
+      }
+      seen.add(item.threadId);
+      return true;
+    })
+    .slice(0, MAX_ACCOUNT_WATCHLIST_ITEMS);
+}
+
+function normalizeAccountDrafts(value = []) {
+  const seen = new Set();
+  return normalizePrivateItems(value)
+    .map((item) => ({
+      key: safePrivateString(item.key, 160),
+      kind: safePrivateString(item.kind, 40),
+      id: safePrivateString(item.id, 120),
+      boardSlug: safePrivateString(item.boardSlug, 80),
+      threadId: safePrivateString(item.threadId, 120),
+      body: safeDraftBody(item.body),
+      updatedAt: safePrivateString(item.updatedAt, 80)
+    }))
+    .filter((item) => item.key && item.body)
+    .filter((item) => {
+      if (seen.has(item.key)) {
+        return false;
+      }
+      seen.add(item.key);
+      return true;
+    })
+    .slice(0, MAX_ACCOUNT_DRAFTS);
+}
+
+function normalizeAccountSavedSearches(value = []) {
+  const seen = new Set();
+  return normalizePrivateItems(value)
+    .map((item) => ({
+      id: safePrivateString(item.id || item.key || crypto.randomUUID(), 120),
+      boardSlug: safePrivateString(item.boardSlug, 80),
+      query: safePrivateString(item.query || item.term, 160),
+      label: safePrivateString(item.label, 180),
+      createdAt: safePrivateString(item.createdAt, 80),
+      updatedAt: safePrivateString(item.updatedAt, 80)
+    }))
+    .filter((item) => item.boardSlug && item.query)
+    .filter((item) => {
+      const key = `${item.boardSlug}:${item.query}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_ACCOUNT_SAVED_SEARCHES);
+}
+
+function defaultAccountPrivateData() {
+  return {
+    watchlist: [],
+    drafts: [],
+    savedSearches: []
+  };
+}
+
+function normalizeAccountPrivateData(value = {}, current = defaultAccountPrivateData()) {
+  const input = value && typeof value === 'object' ? value : {};
+  const previous = current && typeof current === 'object' ? current : defaultAccountPrivateData();
+  const safe = {
+    watchlist: normalizeAccountWatchlist(previous.watchlist),
+    drafts: normalizeAccountDrafts(previous.drafts),
+    savedSearches: normalizeAccountSavedSearches(previous.savedSearches)
+  };
+  if (Object.hasOwn(input, 'watchlist')) {
+    safe.watchlist = normalizeAccountWatchlist(input.watchlist);
+  }
+  if (Object.hasOwn(input, 'drafts')) {
+    safe.drafts = normalizeAccountDrafts(input.drafts);
+  }
+  if (Object.hasOwn(input, 'savedSearches')) {
+    safe.savedSearches = normalizeAccountSavedSearches(input.savedSearches);
+  }
+  return safe;
+}
+
+function serializeAccountPrivateData(value = {}) {
+  return normalizeAccountPrivateData(value, value);
 }
 
 function serializeAccount(user = {}) {
@@ -1007,6 +1141,7 @@ export function createForumService({
           passwordHash: accountPasswordHash(safePassword),
           role: 'user',
           settings: defaultAccountSettings(),
+          privateData: defaultAccountPrivateData(),
           createdAt,
           updatedAt: createdAt
         };
@@ -1049,6 +1184,58 @@ export function createForumService({
         user.updatedAt = now().toISOString();
         logEvent('account.settings.update', { username: user.username });
         return serializeAccount(user);
+      });
+    },
+
+    async getAccountPrivateData(userId) {
+      const user = (await store.read()).users.find((item) => item.id === userId);
+      if (!user) {
+        const error = new Error('Phiên đăng nhập không còn hợp lệ');
+        error.statusCode = 401;
+        throw error;
+      }
+      return serializeAccountPrivateData(user.privateData);
+    },
+
+    async updateAccountPrivateData(userId, privateData = {}) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        user.privateData = normalizeAccountPrivateData(privateData, user.privateData);
+        user.updatedAt = now().toISOString();
+        logEvent('account.privateData.update', { username: user.username });
+        return serializeAccountPrivateData(user.privateData);
+      });
+    },
+
+    async clearAccountPrivateData(userId, section = '') {
+      const allowedSections = new Set(['watchlist', 'drafts', 'savedSearches']);
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        const current = serializeAccountPrivateData(user.privateData);
+        if (section) {
+          if (!allowedSections.has(section)) {
+            const error = new Error('Mục dữ liệu riêng không hợp lệ');
+            error.statusCode = 400;
+            throw error;
+          }
+          current[section] = [];
+          user.privateData = current;
+        } else {
+          user.privateData = defaultAccountPrivateData();
+        }
+        user.updatedAt = now().toISOString();
+        logEvent('account.privateData.clear', { username: user.username, section: section || 'all' });
+        return serializeAccountPrivateData(user.privateData);
       });
     },
 

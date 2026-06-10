@@ -43,6 +43,7 @@ const USER_SCHEMA = new mongoose.Schema(
     passwordHash: String,
     role: String,
     settings: mongoose.Schema.Types.Mixed,
+    privateData: mongoose.Schema.Types.Mixed,
     createdAt: Date,
     updatedAt: Date
   },

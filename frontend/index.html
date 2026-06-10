@@ -238,6 +238,7 @@
           <input id="boardSearchInput" type="search" placeholder="Tìm OP..." autocomplete="off" aria-label="Tìm OP" />
           [<a id="boardCatalogLink" href="#catalog/confession">Danh mục</a>]
           [<a id="boardArchiveLink" href="#archive/confession">Kho lưu trữ</a>]
+          [<button id="saveBoardSearchButton" class="link-button" type="button">Lưu tìm kiếm</button>]
           [<button class="link-button" data-toggle-board-subscription type="button">Theo dõi bảng</button>]
           [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
           [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
@@ -546,6 +547,16 @@
           </div>
           <p class="account-note">Settings này không đổi tên hiển thị khi đăng bài và không được đưa vào post public.</p>
         </form>
+        <section id="accountPrivateDataPanel" class="login-panel stack hidden" aria-labelledby="accountPrivateDataTitle">
+          <h2 id="accountPrivateDataTitle">Dữ liệu đồng bộ</h2>
+          <div id="accountPrivateDataSummary" class="account-private-grid"></div>
+          <div class="form-actions account-actions">
+            <button class="ghost-button" data-clear-account-private="watchlist" type="button">[Xóa watchlist]</button>
+            <button class="ghost-button" data-clear-account-private="savedSearches" type="button">[Xóa tìm kiếm]</button>
+            <button class="ghost-button" data-clear-account-private="drafts" type="button">[Xóa drafts]</button>
+            <button class="ghost-button" data-clear-account-private="" type="button">[Xóa tất cả]</button>
+          </div>
+        </section>
         <div id="accountLoggedOut" class="login-panel stack">
           <p class="account-note">Bạn chưa đăng nhập tài khoản. Vẫn có thể đọc và đăng bài ẩn danh bình thường.</p>
           <p class="account-actions">[<a href="#login">Đăng nhập</a>] [<a href="#register">Đăng ký</a>]</p>

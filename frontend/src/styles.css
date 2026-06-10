@@ -1404,6 +1404,20 @@ select {
   align-items: center;
 }
 
+.account-private-grid {
+  display: grid;
+  gap: 10px;
+}
+
+.account-private-grid h3 {
+  margin: 0 0 4px;
+  font-size: 1rem;
+}
+
+.account-private-grid p {
+  margin: 0;
+}
+
 .checkbox-row > label {
   min-height: 24px;
   border: 1px solid #aaa;

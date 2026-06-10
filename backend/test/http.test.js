@@ -178,6 +178,142 @@ test('http account api registers, logs in and saves private settings', async () 
   });
 });
 
+test('http account api syncs and clears private watchlist drafts and saved searches', async () => {
+  await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sync_user', password: 'long-enough-pass' })
+    });
+    const registeredBody = await registered.json();
+    const token = registeredBody.data.token;
+
+    const saved = await fetch(`${baseUrl}/api/account/private-data`, {
+      method: 'PUT',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`
+      },
+      body: JSON.stringify({
+        watchlist: {
+          'thread-1': {
+            threadId: 'thread-1',
+            boardSlug: 'hoc-tap',
+            boardPath: '/hoc-tap/',
+            globalNumber: 7,
+            preview: 'Theo doi thread',
+            lastSeen: 9
+          }
+        },
+        drafts: [
+          {
+            key: 'draft:comment:thread-1',
+            kind: 'comment',
+            id: 'thread-1',
+            threadId: 'thread-1',
+            body: 'Noi dung draft rieng tu'
+          }
+        ],
+        savedSearches: [
+          {
+            boardSlug: 'hoc-tap',
+            query: 'lich thi',
+            label: 'lich thi'
+          }
+        ]
+      })
+    });
+    const savedBody = await saved.json();
+    assert.equal(saved.status, 200);
+    assert.equal(savedBody.data.watchlist[0].threadId, 'thread-1');
+    assert.equal(savedBody.data.drafts[0].body, 'Noi dung draft rieng tu');
+    assert.equal(savedBody.data.savedSearches[0].query, 'lich thi');
+
+    const fetched = await fetch(`${baseUrl}/api/account/private-data`, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const fetchedBody = await fetched.json();
+    assert.deepEqual(fetchedBody.data, savedBody.data);
+
+    const clearedDrafts = await fetch(`${baseUrl}/api/account/private-data?section=drafts`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const clearedDraftsBody = await clearedDrafts.json();
+    assert.equal(clearedDrafts.status, 200);
+    assert.equal(clearedDraftsBody.data.watchlist.length, 1);
+    assert.equal(clearedDraftsBody.data.drafts.length, 0);
+    assert.equal(clearedDraftsBody.data.savedSearches.length, 1);
+
+    const clearedAll = await fetch(`${baseUrl}/api/account/private-data`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const clearedAllBody = await clearedAll.json();
+    assert.deepEqual(clearedAllBody.data, { watchlist: [], drafts: [], savedSearches: [] });
+  });
+});
+
+test('http ai rewrite does not receive account private data', async () => {
+  const rewriteInputs = [];
+  const ai = {
+    async moderate() {
+      return { status: 'Safe', labels: [] };
+    },
+    async summarize() {
+      return [];
+    },
+    async suggest() {
+      return [];
+    },
+    async rewrite(text) {
+      rewriteInputs.push(text);
+      return `Da sua: ${text}`;
+    }
+  };
+
+  await withServer(
+    async (baseUrl) => {
+      const registered = await fetch(`${baseUrl}/api/account/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'ai_private_user', password: 'long-enough-pass' })
+      });
+      const registeredBody = await registered.json();
+
+      await fetch(`${baseUrl}/api/account/private-data`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${registeredBody.data.token}`
+        },
+        body: JSON.stringify({
+          watchlist: [{ threadId: 'secret-thread', preview: 'khong gui AI' }],
+          drafts: [{ key: 'draft:thread:hoc-tap', body: 'draft server secret' }],
+          savedSearches: [{ boardSlug: 'hoc-tap', query: 'secret search' }]
+        })
+      });
+
+      const rewritten = await fetch(`${baseUrl}/api/ai/rewrite`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${registeredBody.data.token}`
+        },
+        body: JSON.stringify({
+          body: 'Chi rewrite noi dung nay',
+          posterToken: 'poster-token'
+        })
+      });
+      const rewrittenBody = await rewritten.json();
+      assert.equal(rewritten.status, 200);
+      assert.equal(rewrittenBody.data.text, 'Da sua: Chi rewrite noi dung nay');
+      assert.deepEqual(rewriteInputs, ['Chi rewrite noi dung nay']);
+    },
+    { ai }
+  );
+});
+
 test('http account identity is not exposed on public posts', async () => {
   await withServer(async (baseUrl) => {
     const registered = await fetch(`${baseUrl}/api/account/register`, {

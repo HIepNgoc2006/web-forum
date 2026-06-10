@@ -149,6 +149,73 @@ describe('Account settings', () => {
   });
 });
 
+describe('Account private data', () => {
+  it('syncs watchlist, drafts and saved searches for existing user', async () => {
+    const service = createTestService();
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const data = await service.updateAccountPrivateData(account.id, {
+      watchlist: [
+        {
+          threadId: 'thread-1',
+          boardSlug: 'hoc-tap',
+          boardPath: '/hoc-tap/',
+          globalNumber: 12,
+          preview: 'Thread dang theo doi',
+          lastSeen: 14,
+          maxNumber: 20,
+          replyCount: 8,
+          fileCount: 1
+        }
+      ],
+      drafts: [
+        {
+          key: 'draft:thread:hoc-tap',
+          kind: 'thread',
+          id: 'hoc-tap',
+          boardSlug: 'hoc-tap',
+          body: 'Ban nhap rieng tu',
+          updatedAt: '2026-06-10T12:00:00Z'
+        }
+      ],
+      savedSearches: [
+        {
+          id: 'search-1',
+          boardSlug: 'hoc-tap',
+          query: 'lich thi',
+          label: 'hoc tap: lich thi'
+        }
+      ]
+    });
+
+    assert.equal(data.watchlist.length, 1);
+    assert.equal(data.watchlist[0].threadId, 'thread-1');
+    assert.equal(data.drafts.length, 1);
+    assert.equal(data.drafts[0].body, 'Ban nhap rieng tu');
+    assert.equal(data.savedSearches.length, 1);
+
+    const retrieved = await service.getAccountPrivateData(account.id);
+    assert.deepEqual(retrieved, data);
+  });
+
+  it('clears one section or all private data', async () => {
+    const service = createTestService();
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    await service.updateAccountPrivateData(account.id, {
+      watchlist: [{ threadId: 'thread-1' }],
+      drafts: [{ key: 'draft:thread:hoc-tap', body: 'Draft' }],
+      savedSearches: [{ boardSlug: 'hoc-tap', query: 'exam' }]
+    });
+
+    const withoutDrafts = await service.clearAccountPrivateData(account.id, 'drafts');
+    assert.equal(withoutDrafts.watchlist.length, 1);
+    assert.equal(withoutDrafts.drafts.length, 0);
+    assert.equal(withoutDrafts.savedSearches.length, 1);
+
+    const empty = await service.clearAccountPrivateData(account.id);
+    assert.deepEqual(empty, { watchlist: [], drafts: [], savedSearches: [] });
+  });
+});
+
 describe('Anonymous posting works without login', () => {
   it('creates a thread without account', async () => {
     const service = createTestService();

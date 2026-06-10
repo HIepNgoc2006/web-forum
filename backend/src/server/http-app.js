@@ -511,6 +511,22 @@ export function createHttpServer({
           return;
         }
 
+        if (request.method === 'GET' && routePath === '/api/account/private-data') {
+          ok(response, await service.getAccountPrivateData(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'PUT' && routePath === '/api/account/private-data') {
+          const body = await readJson(request, 500_000);
+          ok(response, await service.updateAccountPrivateData(accountSession.sub, body.privateData ?? body));
+          return;
+        }
+
+        if (request.method === 'DELETE' && routePath === '/api/account/private-data') {
+          ok(response, await service.clearAccountPrivateData(accountSession.sub, url.searchParams.get('section') || ''));
+          return;
+        }
+
         if (request.method === 'PUT' && routePath === '/api/account/settings') {
           const body = await readJson(request, 20_000);
           ok(response, await service.updateAccountSettings(accountSession.sub, body.settings ?? body));
