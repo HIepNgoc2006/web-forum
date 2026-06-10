@@ -727,7 +727,7 @@ button {
   padding: 4px 5px;
 }
 
-.poll-option + .poll-option {
+.poll-option+.poll-option {
   border-top: 1px solid #ead0c4;
 }
 
@@ -858,7 +858,7 @@ button {
   line-height: 1.45;
 }
 
-.policy-box li + li {
+.policy-box li+li {
   margin-top: 6px;
 }
 
@@ -956,7 +956,7 @@ h2 {
   margin-bottom: 1px;
 }
 
-.field-row > span {
+.field-row>span {
   display: block;
   min-height: 24px;
   padding: 4px 6px;
@@ -1404,7 +1404,7 @@ select {
   align-items: center;
 }
 
-.checkbox-row > label {
+.checkbox-row>label {
   min-height: 24px;
   border: 1px solid #aaa;
   background: white;
@@ -2167,7 +2167,7 @@ body.theme-yotsuba.board-page .topbar {
   margin-bottom: 0;
 }
 
-.board-page .field-row > span {
+.board-page .field-row>span {
   min-height: 20px;
   border-color: #000;
   background: #9988ee;
@@ -2865,7 +2865,7 @@ body.theme-yotsuba.board-page .topbar {
   font-weight: normal;
 }
 
-.board-page #threadScreen > .board-ad {
+.board-page #threadScreen>.board-ad {
   display: block;
   width: 480px;
   max-width: calc(100vw - 12px);
@@ -3097,7 +3097,7 @@ body.theme-yotsuba.board-page .topbar {
 
   .post-reply-toggle-row,
   .board-page .board-ad,
-  .board-page #threadScreen > .board-ad,
+  .board-page #threadScreen>.board-ad,
   .board-page #threadScreen .reply-composer {
     width: min(100%, calc(100vw - 12px));
     max-width: calc(100vw - 12px);
@@ -3155,6 +3155,7 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 @media (max-width: 360px) {
+
   .board-page .screen-head h1,
   .board-page #threadScreen .thread-page-title h1 {
     font-size: 20px;

@@ -111,13 +111,16 @@ function requireAdmin(request, jwtSecret) {
   }
 }
 
-function requireAccount(request, jwtSecret) {
+function requireAccount(request, jwtSecret, service) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   try {
     const payload = verifyJwt(token, jwtSecret);
     if (payload.role !== 'user' || !payload.sub) {
       throw new Error('Không có quyền truy cập');
+    }
+    if (service?.isSessionRevoked?.(token)) {
+      throw new Error('Phiên đăng nhập đã bị thu hồi');
     }
     return payload;
   } catch {
@@ -165,6 +168,9 @@ function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
   }
   if (method === 'POST' && parts[1] === 'ai' && parts[2] === 'rewrite') {
     return { limiter: limiters.ai, key: `${ip}:ai:rewrite` };
+  }
+  if (method === 'GET' && parts[1] === 'search') {
+    return { limiter: limiters.search, key: `${ip}:search:${pathname}` };
   }
   if (parts[1] === 'account') {
     return { limiter: limiters.account, key: `${ip}:account:${method}:${pathname}` };
@@ -374,6 +380,7 @@ export function createHttpServer({
     ai: createRateLimiter({ limit: 8, windowMs: 60_000 }),
     account: createRateLimiter({ limit: 20, windowMs: 60_000 }),
     admin: createRateLimiter({ limit: 30, windowMs: 60_000 }),
+    search: createRateLimiter({ limit: 10, windowMs: 60_000 }),
     generic: createRateLimiter({ limit: 60, windowMs: 60_000 })
   };
 
@@ -486,8 +493,18 @@ export function createHttpServer({
         return;
       }
 
+      if (request.method === 'POST' && routePath === '/api/account/logout') {
+        const header = request.headers.authorization ?? '';
+        const rawToken = header.startsWith('Bearer ') ? header.slice(7) : '';
+        if (rawToken) {
+          await service.logoutAccount(rawToken);
+        }
+        ok(response, { ok: true });
+        return;
+      }
+
       if (routePath.startsWith('/api/account')) {
-        const accountSession = requireAccount(request, jwtSecret);
+        const accountSession = requireAccount(request, jwtSecret, service);
 
         if (request.method === 'GET' && routePath === '/api/account/me') {
           ok(response, await service.getAccount(accountSession.sub));
@@ -543,6 +560,18 @@ export function createHttpServer({
       params = match(parts, ['api', 'boards', ':boardSlug', 'archive']);
       if (params && request.method === 'GET') {
         ok(response, await service.listArchivedThreads(params.boardSlug));
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/search/archive') {
+        ok(response, await service.searchArchive({
+          q: url.searchParams.get('q') || '',
+          boardSlug: url.searchParams.get('boardSlug') || '',
+          since: url.searchParams.get('since') || '',
+          until: url.searchParams.get('until') || '',
+          page: url.searchParams.get('page'),
+          pageSize: url.searchParams.get('pageSize')
+        }));
         return;
       }
 

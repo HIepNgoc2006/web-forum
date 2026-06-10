@@ -858,6 +858,21 @@ export function createForumService({
   logger = noopLogger,
   imageStorage = createInlineImageStorage()
 }) {
+  // In-memory token blacklist for session revocation (logout).
+  // Each entry maps jti/token → revokedAt timestamp string.
+  // Tokens are cleaned up after 14 days (matching JWT maxAge).
+  const revokedTokens = new Map();
+  const TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+
+  function cleanExpiredRevocations() {
+    const cutoff = now().getTime() - TOKEN_TTL_MS;
+    for (const [token, revokedAt] of revokedTokens) {
+      if (new Date(revokedAt).getTime() < cutoff) {
+        revokedTokens.delete(token);
+      }
+    }
+  }
+
   function logEvent(event, payload = {}) {
     if (logger === noopLogger) {
       return;
@@ -1037,6 +1052,22 @@ export function createForumService({
       });
     },
 
+    revokeSession(token) {
+      cleanExpiredRevocations();
+      revokedTokens.set(token, now().toISOString());
+      logEvent('session.revoke');
+    },
+
+    isSessionRevoked(token) {
+      cleanExpiredRevocations();
+      return revokedTokens.has(token);
+    },
+
+    async logoutAccount(token) {
+      this.revokeSession(token);
+      return { ok: true };
+    },
+
     async listLatestPosts(limit = 10) {
       const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 20));
@@ -1206,6 +1237,31 @@ export function createForumService({
         .filter((thread) => thread.boardSlug === boardSlug && archivedPublicThread(thread))
         .sort((left, right) => (right.archivedAt ?? '').localeCompare(left.archivedAt ?? ''))
         .map((thread) => serializeThread(thread, state.comments));
+    },
+
+    async searchArchive({ q, boardSlug, since, until, page, pageSize } = {}) {
+      const state = await store.read();
+      const term = normalizeSearchTerm(q);
+
+      // Filter archived threads
+      let candidates = state.threads.filter((thread) => {
+        if (!archivedPublicThread(thread)) return false;
+        if (boardSlug && thread.boardSlug !== boardSlug) return false;
+        if (since && (thread.archivedAt ?? thread.createdAt ?? '').localeCompare(since) < 0) return false;
+        if (until && (thread.archivedAt ?? thread.createdAt ?? '').localeCompare(until) > 0) return false;
+        return true;
+      });
+
+      // Apply text search filter
+      if (term) {
+        candidates = candidates.filter((thread) => threadMatchesSearch(state, thread, term));
+      }
+
+      // Sort newest archived first
+      candidates.sort((left, right) => (right.archivedAt ?? '').localeCompare(left.archivedAt ?? ''));
+
+      const serialized = candidates.map((thread) => serializeThread(thread, state.comments));
+      return pagedResult(serialized, { page, pageSize, maxPageSize: 50 });
     },
 
     async archiveThread(threadId, reason = 'manual') {
