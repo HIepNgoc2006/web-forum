@@ -162,6 +162,19 @@ test('http account api registers, logs in and saves private settings', async () 
     const meBody = await me.json();
     assert.equal(me.status, 200);
     assert.equal(meBody.data.settings.theme, 'tomorrow');
+
+    const logout = await fetch(`${baseUrl}/api/account/logout`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    const logoutBody = await logout.json();
+    assert.equal(logout.status, 200);
+    assert.equal(logoutBody.data.ok, true);
+
+    const revokedMe = await fetch(`${baseUrl}/api/account/me`, {
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    assert.equal(revokedMe.status, 401);
   });
 });
 
