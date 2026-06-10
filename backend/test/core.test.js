@@ -814,8 +814,9 @@ test('s3 image storage uploads image bytes with signed S3-compatible PUT request
   const health = await storage.health();
   const thumbnailRequest = requests[0];
   const request = requests[1];
+  const healthRequest = requests[2];
 
-  assert.equal(requests.length, 2);
+  assert.equal(requests.length, 3);
   assert.equal(request.url.toString(), 'https://storage.example.test/36chan/posts/2026/05/00000000-0000-4000-8000-000000000000.png');
   assert.equal(request.options.method, 'PUT');
   assert.equal(request.options.headers['content-type'], 'image/png');
@@ -844,8 +845,10 @@ test('s3 image storage uploads image bytes with signed S3-compatible PUT request
     'https://cdn.example.test/36chan/posts/2026/05/00000000-0000-4000-8000-000000000000.thumb.jpg'
   );
   assert.equal(Object.hasOwn(saved.thumbnail, 'dataUrl'), false);
+  assert.equal(healthRequest.options.method, 'HEAD');
   assert.equal(health.type, 's3-compatible');
   assert.equal(health.configured, true);
+  assert.equal(health.ready, true);
 });
 
 test('migrateInlineImages moves inline image data to local upload files', async () => {
