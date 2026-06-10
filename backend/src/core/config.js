@@ -124,6 +124,13 @@ export const BOARD_GROUPS = [
 export const MODERATION_LABELS = ['Toxic', 'Spam', 'Hate Speech', 'Fake News', 'PII Risk'];
 export const DEFAULT_MAX_IMAGE_BYTES = 1_500_000;
 export const DEFAULT_MAX_THUMBNAIL_BYTES = 120_000;
+const DEFAULT_BOARD_DESCRIPTION = 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt.';
+const DEFAULT_BOARD_RULES = [
+  'Không đăng thông tin cá nhân, doxxing, hoặc nội dung nhận diện người khác.',
+  'Tin đồn, tố cáo và câu chuyện nhạy cảm cần viết trung lập, không kích động quấy rối.',
+  'Bài sai chủ đề hoặc spam có thể bị ẩn, xóa, hoặc chuyển sang hàng chờ kiểm duyệt.'
+];
+const SAFE_BANNER_URL_PATTERN = /^(?:\/(?!\/)|https:\/\/)/i;
 
 export function readPositiveInteger(value, fallback) {
   const parsed = Number(value);
@@ -142,12 +149,64 @@ export function getBoard(slug) {
   return BOARDS.find((board) => board.slug === slug);
 }
 
-export function publicConfig() {
+function sanitizePlainText(value = '', fallback = '', maxLength = 400) {
+  const text = String(value || fallback)
+    .replace(/<[^>]*>/g, '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return text.slice(0, maxLength);
+}
+
+function sanitizeBoardRules(board, description) {
+  const configuredRules = Array.isArray(board.rules) ? board.rules : [];
+  const fallbackRules = [description, ...DEFAULT_BOARD_RULES];
+  const rules = configuredRules.length ? configuredRules : fallbackRules;
+  return rules
+    .map((rule) => sanitizePlainText(rule, '', 240))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function sanitizeBannerUrl(value = '') {
+  const url = String(value || '').trim();
+  return SAFE_BANNER_URL_PATTERN.test(url) ? url : '';
+}
+
+export function publicBoardConfig(board) {
+  const name = sanitizePlainText(board.name, board.slug || '36chan', 80);
+  const description = sanitizePlainText(board.description, DEFAULT_BOARD_DESCRIPTION, 500);
+  const bannerText = sanitizePlainText(
+    board.banner?.text,
+    `Bảng ${name.toLowerCase()} sinh viên · ${description}`,
+    180
+  );
+  const bannerImageUrl = sanitizeBannerUrl(board.banner?.imageUrl);
+  const bannerAltText = sanitizePlainText(board.banner?.altText, bannerText, 140);
+
   return {
-    boards: BOARDS,
+    ...board,
+    name,
+    category: sanitizePlainText(board.category, 'Khác', 80),
+    description,
+    rules: sanitizeBoardRules(board, description),
+    banner: {
+      text: bannerText,
+      ...(bannerImageUrl ? { imageUrl: bannerImageUrl, altText: bannerAltText } : {})
+    }
+  };
+}
+
+export function publicConfig() {
+  const boards = BOARDS.map((board) => publicBoardConfig(board));
+  const boardBySlug = new Map(boards.map((board) => [board.slug, board]));
+
+  return {
+    boards,
     boardGroups: BOARD_GROUPS.map((group) => ({
       name: group.name,
-      boards: group.slugs.map((slug) => getBoard(slug)).filter(Boolean)
+      boards: group.slugs.map((slug) => boardBySlug.get(slug)).filter(Boolean)
     })),
     lifecycle: THREAD_LIFECYCLE,
     hcaptchaSiteKey: process.env.HCAPTCHA_SITE_KEY ?? '',

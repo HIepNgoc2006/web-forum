@@ -561,10 +561,44 @@ function boardHeading(board) {
   return `${board.path} - ${board.name}`;
 }
 
-function updateBoardAds(board) {
+function boardRulesForDisplay(board) {
+  const rules = Array.isArray(board?.rules) ? board.rules : [];
+  return rules.length ? rules : [board?.description || 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt.'];
+}
+
+function updateBoardPresentation(board) {
   const label = board?.name?.toLowerCase() || '36chan';
-  document.querySelectorAll('.board-ad').forEach((ad) => {
-    ad.textContent = `Bảng ${label} sinh viên · QUẢNG CÁO Ở ĐÂY`;
+  const rules = boardRulesForDisplay(board);
+  document.querySelectorAll('[data-board-rules]').forEach((section) => {
+    const list = section.querySelector('[data-board-rules-list]');
+    if (!list) {
+      return;
+    }
+    list.replaceChildren(...rules.map((rule) => {
+      const item = document.createElement('li');
+      item.textContent = rule;
+      return item;
+    }));
+    section.classList.toggle('hidden', rules.length === 0);
+  });
+
+  document.querySelectorAll('[data-board-banner]').forEach((ad) => {
+    const text = ad.querySelector('[data-board-banner-text]');
+    const image = ad.querySelector('[data-board-banner-image]');
+    if (text) {
+      text.textContent = board?.banner?.text || `Bảng ${label} sinh viên`;
+    }
+    if (image) {
+      if (board?.banner?.imageUrl) {
+        image.src = board.banner.imageUrl;
+        image.alt = board.banner.altText || board.banner.text || board.name || '';
+        image.classList.remove('hidden');
+      } else {
+        image.removeAttribute('src');
+        image.alt = '';
+        image.classList.add('hidden');
+      }
+    }
   });
 }
 
@@ -2039,7 +2073,7 @@ async function loadArchive() {
     els.archiveList.innerHTML = '<p class="muted">Không có kho lưu trữ để hiển thị.</p>';
     return;
   }
-  updateBoardAds(board);
+  updateBoardPresentation(board);
   els.archiveTitle.textContent = `${board.path} - ${board.name} Kho lưu trữ`;
   els.archiveDescription.textContent = board.description;
   els.archiveReturnTop.href = `#board/${board.slug}`;
@@ -2097,7 +2131,7 @@ async function loadBoard() {
   setScreen('board');
   renderBoards();
   syncBoardSubscriptionButtons();
-  updateBoardAds(board);
+  updateBoardPresentation(board);
   els.boardTitle.textContent = boardHeading(board);
   els.boardPath.textContent = board.path;
   els.boardDescription.textContent = board.description;
@@ -2161,7 +2195,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   }
   const board = currentBoard();
   renderBoards();
-  updateBoardAds(board);
+  updateBoardPresentation(board);
   els.threadTitle.textContent = boardHeading(board) || detail.thread.boardSlug;
   els.threadBoardPath.textContent = board?.path || `/${detail.thread.boardSlug}/`;
   els.threadBoardDescription.textContent = board?.description || 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt';

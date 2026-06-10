@@ -9,7 +9,7 @@ import { createMemoryStore } from '../src/core/forum-store.js';
 import { createS3ImageStorage } from '../src/core/image-storage.js';
 import { migrateInlineImages } from '../src/core/image-migration.js';
 import { createMongoModels } from '../src/core/mongo-store.js';
-import { publicConfig } from '../src/core/config.js';
+import { publicBoardConfig, publicConfig } from '../src/core/config.js';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
 import { createPosterHash, securityConfigStatus, signJwt, verifyJwt } from '../src/core/security.js';
 import { parsePostText, sanitizeText } from '../src/core/text-format.js';
@@ -89,6 +89,10 @@ test('publicConfig exposes grouped fixed boards for the home portal', () => {
   assert.equal(confession.name, 'Thú nhận');
   assert.equal(confession.category, 'Trường học');
   assert.equal(confession.path, '/confession/');
+  assert.ok(confession.rules.length >= 2);
+  assert.equal(confession.rules[0], confession.description);
+  assert.equal(confession.banner.text.includes(confession.name.toLowerCase()), true);
+  assert.equal(Object.hasOwn(confession.banner, 'imageUrl'), false);
   assert.equal(deadlineWeek.temporary, true);
   assert.equal(deadlineWeek.category, 'Sự kiện tạm thời');
   assert.equal(config.boardGroups.some((group) => group.name === 'Sự kiện tạm thời'), true);
@@ -101,6 +105,39 @@ test('publicConfig exposes grouped fixed boards for the home portal', () => {
   assert.equal(config.ai.provider, 'google-ai-studio');
   assert.equal(typeof config.ai.configured, 'boolean');
   assert.equal(typeof config.ai.model, 'string');
+});
+
+test('publicBoardConfig sanitizes board presentation and falls back safely', () => {
+  const board = publicBoardConfig({
+    slug: 'test',
+    path: '/test/',
+    name: 'Test <img>',
+    category: 'Debug',
+    description: 'Default <script>alert(1)</script> board',
+    rules: ['Allow text only <b>please</b>', '<img src=x onerror=alert(1)>'],
+    banner: {
+      text: 'Banner <marquee>text</marquee>',
+      imageUrl: 'javascript:alert(1)',
+      altText: 'Alt <b>text</b>'
+    }
+  });
+
+  assert.equal(board.name, 'Test');
+  assert.equal(board.description, 'Default alert(1) board');
+  assert.deepEqual(board.rules, ['Allow text only please']);
+  assert.equal(board.banner.text, 'Banner text');
+  assert.equal(Object.hasOwn(board.banner, 'imageUrl'), false);
+
+  const fallbackBoard = publicBoardConfig({
+    slug: 'fallback',
+    path: '/fallback/',
+    name: 'Fallback',
+    category: 'Debug',
+    description: 'Use this as rule text.'
+  });
+
+  assert.equal(fallbackBoard.rules[0], 'Use this as rule text.');
+  assert.equal(fallbackBoard.banner.text.includes('fallback'), true);
 });
 
 test('mongo store declares production persistence models without opening a connection', async () => {

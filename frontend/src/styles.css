@@ -2197,8 +2197,39 @@ body.theme-yotsuba.board-page .topbar {
   border-color: #000;
 }
 
+.board-page .board-rules {
+  width: min(680px, calc(100vw - 12px));
+  margin: 6px auto 8px;
+  border: 1px solid #b7c5d9;
+  background: #eef2ff;
+  color: #000;
+  padding: 5px 8px 6px;
+  text-align: left;
+}
+
+.board-page .board-rules h2 {
+  margin: 0 0 3px;
+  color: #0f0c5d;
+  font-size: 12px;
+  line-height: 15px;
+  text-align: left;
+}
+
+.board-page .board-rules ul {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.35;
+}
+
+.board-page .board-rules li + li {
+  margin-top: 2px;
+}
+
 .board-page .board-ad {
-  display: block;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   width: min(468px, calc(100vw - 12px));
   min-height: 30px;
   margin: 8px auto;
@@ -2209,8 +2240,21 @@ body.theme-yotsuba.board-page .topbar {
   color: #fff;
   font-size: 13px;
   font-weight: bold;
-  line-height: 30px;
+  line-height: 1.25;
+  padding: 4px 8px;
   text-align: center;
+}
+
+.board-banner-image {
+  display: block;
+  width: 72px;
+  height: 36px;
+  flex: 0 0 auto;
+  object-fit: cover;
+}
+
+.board-banner-image.hidden {
+  display: none;
 }
 
 .board-page .threads-panel {
@@ -2866,7 +2910,7 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 .board-page #threadScreen > .board-ad {
-  display: block;
+  display: flex;
   width: 480px;
   max-width: calc(100vw - 12px);
   min-height: 48px;
@@ -2877,7 +2921,7 @@ body.theme-yotsuba.board-page .topbar {
     repeating-linear-gradient(45deg, #050505 0 11px, #3d241c 11px 22px);
   color: #fff;
   font-size: 13px;
-  line-height: 48px;
+  line-height: 1.25;
 }
 
 .thread-toolbar {
