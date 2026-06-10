@@ -563,18 +563,6 @@ export function createHttpServer({
         return;
       }
 
-      if (request.method === 'GET' && routePath === '/api/search/archive') {
-        ok(response, await service.searchArchive({
-          q: url.searchParams.get('q') || '',
-          boardSlug: url.searchParams.get('boardSlug') || '',
-          since: url.searchParams.get('since') || '',
-          until: url.searchParams.get('until') || '',
-          page: url.searchParams.get('page'),
-          pageSize: url.searchParams.get('pageSize')
-        }));
-        return;
-      }
-
       params = match(parts, ['api', 'boards', ':boardSlug', 'summary']);
       if (params && request.method === 'POST') {
         const body = await readJson(request, 20_000);

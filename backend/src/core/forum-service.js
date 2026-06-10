@@ -1239,31 +1239,6 @@ export function createForumService({
         .map((thread) => serializeThread(thread, state.comments));
     },
 
-    async searchArchive({ q, boardSlug, since, until, page, pageSize } = {}) {
-      const state = await store.read();
-      const term = normalizeSearchTerm(q);
-
-      // Filter archived threads
-      let candidates = state.threads.filter((thread) => {
-        if (!archivedPublicThread(thread)) return false;
-        if (boardSlug && thread.boardSlug !== boardSlug) return false;
-        if (since && (thread.archivedAt ?? thread.createdAt ?? '').localeCompare(since) < 0) return false;
-        if (until && (thread.archivedAt ?? thread.createdAt ?? '').localeCompare(until) > 0) return false;
-        return true;
-      });
-
-      // Apply text search filter
-      if (term) {
-        candidates = candidates.filter((thread) => threadMatchesSearch(state, thread, term));
-      }
-
-      // Sort newest archived first
-      candidates.sort((left, right) => (right.archivedAt ?? '').localeCompare(left.archivedAt ?? ''));
-
-      const serialized = candidates.map((thread) => serializeThread(thread, state.comments));
-      return pagedResult(serialized, { page, pageSize, maxPageSize: 50 });
-    },
-
     async archiveThread(threadId, reason = 'manual') {
       return mutate(async (state) => {
         const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));

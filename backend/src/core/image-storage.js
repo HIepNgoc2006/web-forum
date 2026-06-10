@@ -278,7 +278,7 @@ export function createS3ImageStorage({
   }
 
   async function health() {
-    const base = {
+    return {
       type: 's3-compatible',
       configured: true,
       endpoint: normalizedEndpoint,
@@ -286,38 +286,6 @@ export function createS3ImageStorage({
       region,
       publicBaseUrl: normalizedPublicBaseUrl
     };
-
-    try {
-      const probeUrl = new URL(`${normalizedEndpoint}/${encodePathSegment(bucket)}/`);
-      const signingDate = now();
-      const payloadHash = sha256Hex('');
-      const signingHeaders = {
-        host: probeUrl.host,
-        'x-amz-content-sha256': payloadHash,
-        'x-amz-date': amzTimestamp(signingDate)
-      };
-      const authorization = s3AuthorizationHeader({
-        method: 'HEAD',
-        url: probeUrl,
-        headers: signingHeaders,
-        payloadHash,
-        accessKeyId,
-        secretAccessKey,
-        region,
-        date: signingDate
-      });
-      const response = await fetchImpl(probeUrl, {
-        method: 'HEAD',
-        headers: {
-          'x-amz-content-sha256': signingHeaders['x-amz-content-sha256'],
-          'x-amz-date': signingHeaders['x-amz-date'],
-          authorization: authorization.value
-        }
-      });
-      return { ...base, ready: response.ok || response.status === 301 || response.status === 404 };
-    } catch {
-      return { ...base, ready: false, error: 'connectivity_check_failed' };
-    }
   }
 
   return {
