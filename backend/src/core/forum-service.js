@@ -858,21 +858,6 @@ export function createForumService({
   logger = noopLogger,
   imageStorage = createInlineImageStorage()
 }) {
-  // In-memory token blacklist for session revocation (logout).
-  // Each entry maps jti/token → revokedAt timestamp string.
-  // Tokens are cleaned up after 14 days (matching JWT maxAge).
-  const revokedTokens = new Map();
-  const TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
-
-  function cleanExpiredRevocations() {
-    const cutoff = now().getTime() - TOKEN_TTL_MS;
-    for (const [token, revokedAt] of revokedTokens) {
-      if (new Date(revokedAt).getTime() < cutoff) {
-        revokedTokens.delete(token);
-      }
-    }
-  }
-
   function logEvent(event, payload = {}) {
     if (logger === noopLogger) {
       return;
@@ -1050,22 +1035,6 @@ export function createForumService({
         logEvent('account.settings.update', { username: user.username });
         return serializeAccount(user);
       });
-    },
-
-    revokeSession(token) {
-      cleanExpiredRevocations();
-      revokedTokens.set(token, now().toISOString());
-      logEvent('session.revoke');
-    },
-
-    isSessionRevoked(token) {
-      cleanExpiredRevocations();
-      return revokedTokens.has(token);
-    },
-
-    async logoutAccount(token) {
-      this.revokeSession(token);
-      return { ok: true };
     },
 
     async listLatestPosts(limit = 10) {
