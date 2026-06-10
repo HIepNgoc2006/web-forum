@@ -2087,7 +2087,7 @@ async function searchArchive(page = 1) {
       els.archiveList.innerHTML = result.items.map(archiveThreadHtml).join('');
       els.archiveSearchStatus.textContent = `${result.total} kết quả (trang ${result.page}/${result.totalPages})`;
       if (result.totalPages > 1) {
-        els.archivePagination.innerHTML = archivePageControlsHtml(result, params);
+        els.archivePagination.innerHTML = archivePageControlsHtml(result);
       }
     }
   } catch (error) {
@@ -2096,7 +2096,7 @@ async function searchArchive(page = 1) {
   }
 }
 
-function archivePageControlsHtml(result, params) {
+function archivePageControlsHtml(result) {
   const buttons = [];
   if (result.page > 1) {
     buttons.push(`<button class="ghost-button" data-archive-page="${result.page - 1}" type="button">« Trước</button>`);
@@ -3012,6 +3012,32 @@ function bindEvents() {
   els.threadForm.addEventListener('submit', submitThread);
   els.commentForm.addEventListener('submit', submitComment);
   els.quickReplyForm.addEventListener('submit', submitQuickReply);
+  els.archiveSearchForm.addEventListener('submit', (event) => {
+    event.preventDefault();
+    searchArchive(1).catch((error) => showToast(error.message));
+  });
+  els.accountLogoutButton.addEventListener('click', async () => {
+    if (state.accountToken) {
+      try {
+        await api('/api/account/logout', { method: 'POST', auth: 'account' });
+      } catch {
+        // Ignore network errors on logout
+      }
+    }
+    logoutAccount();
+  });
+  if (els.accountSettingsLogout) {
+    els.accountSettingsLogout.addEventListener('click', async () => {
+      if (state.accountToken) {
+        try {
+          await api('/api/account/logout', { method: 'POST', auth: 'account' });
+        } catch {
+          // Ignore network errors
+        }
+      }
+      logoutAccount();
+    });
+  }
   els.threadBody.addEventListener('input', () => {
     localStorage.setItem(draftKey('thread', state.boardSlug), els.threadBody.value);
     updatePrivacyWarning(els.threadBody.value, els.threadPrivacyWarning);
@@ -3200,6 +3226,13 @@ function bindEvents() {
         state.threadCommentPage = nextPage;
         await loadThread().catch((error) => showToast(error.message));
       }
+      return;
+    }
+
+    const archivePageButton = event.target.closest('[data-archive-page]');
+    if (archivePageButton) {
+      const page = Number(archivePageButton.dataset.archivePage) || 1;
+      await searchArchive(page).catch((error) => showToast(error.message));
       return;
     }
 
