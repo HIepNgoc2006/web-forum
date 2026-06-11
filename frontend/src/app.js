@@ -157,6 +157,10 @@ function defaultAccountPrivateData() {
   };
 }
 
+function accountDraftSyncEnabled() {
+  return state.account?.settings?.syncDrafts !== false;
+}
+
 function readSavedSearches() {
   if (state.accountToken && state.accountPrivateData) {
     return Array.isArray(state.accountPrivateData.savedSearches) ? state.accountPrivateData.savedSearches : [];
@@ -196,7 +200,7 @@ function localDraftEntries() {
 }
 
 function readDraft(key) {
-  if (state.accountToken && state.accountPrivateData) {
+  if (state.accountToken && state.accountPrivateData && accountDraftSyncEnabled()) {
     const draft = (state.accountPrivateData.drafts || []).find((item) => item.key === key);
     if (draft) {
       return draft.body || '';
@@ -207,7 +211,7 @@ function readDraft(key) {
 
 function writeDraft(key, body) {
   localStorage.setItem(key, body);
-  if (!state.accountToken || !state.accountPrivateData) {
+  if (!state.accountToken || !state.accountPrivateData || !accountDraftSyncEnabled()) {
     return;
   }
   const { kind, id } = parseDraftKey(key);
@@ -229,7 +233,7 @@ function writeDraft(key, body) {
 
 function removeDraft(key) {
   localStorage.removeItem(key);
-  if (state.accountToken && state.accountPrivateData) {
+  if (state.accountToken && state.accountPrivateData && accountDraftSyncEnabled()) {
     state.accountPrivateData.drafts = (state.accountPrivateData.drafts || []).filter((item) => item.key !== key);
     scheduleAccountPrivateDataSave();
   }
@@ -505,9 +509,12 @@ function mergeByKey(items, keyFn) {
 function mergeAccountPrivateData(serverData = defaultAccountPrivateData()) {
   const localWatchlist = Object.values(readJsonLocal(watchedThreadsKey, {})).filter((item) => item?.threadId);
   const localSearches = readLocalList(savedSearchesKey).filter((item) => item?.boardSlug && item?.query);
+  const drafts = accountDraftSyncEnabled()
+    ? mergeByKey([...(serverData.drafts || []), ...localDraftEntries()], (item) => item.key)
+    : serverData.drafts || [];
   return normalizeAccountPrivateData({
     watchlist: mergeByKey([...(serverData.watchlist || []), ...localWatchlist], (item) => item.threadId),
-    drafts: mergeByKey([...(serverData.drafts || []), ...localDraftEntries()], (item) => item.key),
+    drafts,
     savedSearches: mergeByKey(
       [...(serverData.savedSearches || []), ...localSearches],
       (item) => `${item.boardSlug}:${item.query}`
