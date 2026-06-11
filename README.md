@@ -71,6 +71,34 @@ MONGODB_URI=mongodb://127.0.0.1:27017/36chan
 
 For production readiness, `GET /api/health` reports `store.type`, `store.configured`, `store.ready`, safe counts, and model readiness without returning `MONGODB_URI`, admin credentials, API keys, or other secret values.
 
+### MongoDB Database Structure
+
+`backend/src/core/mongo-store.js` maps the normalized forum state into these production collections:
+
+| Collection | Purpose | Main keys and indexes |
+|---|---|---|
+| `boards` | Fixed public board catalog seeded from backend config. | Unique `slug`. |
+| `threads` | Original posts, thread lifecycle state, moderation state, poll/image metadata, OP proof fields, and public sorting timestamps. | Unique `id`; `{ boardSlug, bumpedAt }`; `globalNumber`. |
+| `comments` | Replies attached to threads with the same public post, moderation, image, OP proof, and delete-password fields used by threads. | Unique `id`; `{ threadId, globalNumber }`; `globalNumber`. |
+| `users` | Optional accounts for synced settings and private data. Accounts do not replace anonymous posting by default. | Unique sparse `username`; `{ role, createdAt }`. |
+| `reports` | User reports against thread/comment global numbers and admin report workflow status. | `createdAt`; `{ status, boardSlug }`. |
+| `moderationActions` | Audit trail for AI/admin decisions, approve/delete reasons, sanctions, and queue history. | `createdAt`; `postId`. |
+| `sanctions` | Temporary cooldown/ban records keyed by hashed posting fingerprint. | `{ fingerprint, expiresAt }`; `createdAt`. |
+| `aiUsage` | Key/value counters for daily AI budget guards. | `_id` key. |
+| `aiSummaryCache` | Key/value cache for generated thread summaries. | `_id` key. |
+| `stateMeta` | Global metadata such as schema `version` and `nextGlobalNumber`. | `_id` key, currently `global`. |
+
+The Mongo store reads collections into the same normalized state shape used by the JSON fallback (`users`, `threads`, `comments`, `moderationActions`, `reports`, `sanctions`, `aiUsage`, `aiSummaryCache`, and `nextGlobalNumber`). Writes currently normalize the full state and replace the mutable collections in a serialized queue, which keeps JSON and Mongo behavior aligned for the current single-process service design.
+
+Use placeholders in documentation and environment examples:
+
+```bash
+STORE_DRIVER=mongo
+MONGODB_URI=mongodb://127.0.0.1:27017/36chan
+```
+
+Never commit a production `MONGODB_URI`, admin credential, JWT secret, AI key, S3 key, or hCaptcha secret. `/api/health` exposes only safe readiness fields and counts.
+
 For S3-compatible image storage:
 
 ```bash
