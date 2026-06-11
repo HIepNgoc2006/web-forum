@@ -257,3 +257,40 @@ flowchart TD
 ```
 
 Public reading and anonymous posting do not require an account. Accounts only add opt-in cross-device private data and settings sync; public posts remain `Anonymous` unless a per-post `displayName` is explicitly entered.
+
+### Data Flow Diagram
+
+```mermaid
+flowchart LR
+  Browser["Browser SPA\nfrontend/src/app.js"]
+  Admin["Admin user\nJWT-protected UI"]
+  Http["Node HTTP API\nbackend/src/server/http-app.js"]
+  Service["Forum service\nbackend/src/core/forum-service.js"]
+  Store["Forum store\nMongoDB production\nJSON dev/demo fallback"]
+  Mongo[("MongoDB collections")]
+  Json[("backend/data/forum.json")]
+  Uploads["Image storage\nlocal disk or S3/R2"]
+  HCaptcha["hCaptcha verify"]
+  AI["AI provider\nGoogle AI Studio"]
+  Realtime["SSE /events\nrealtime hub"]
+
+  Browser -->|"public config, boards, threads, catalog, archive, latest, feeds"| Http
+  Browser -->|"thread/comment submit: body, captcha token, poster token, optional image metadata"| Http
+  Browser -->|"account token: settings and private data sync"| Http
+  Admin -->|"admin JWT: queue, reports, sanctions, moderation actions"| Http
+
+  Http -->|"rate limits and auth checks"| Service
+  Http -->|"captcha response only for posting"| HCaptcha
+  Service -->|"redacted moderation, summary, suggestions, rewrite prompts"| AI
+  Service -->|"normalized forum state read/write"| Store
+  Service -->|"validated image bytes and metadata"| Uploads
+  Store --> Mongo
+  Store -. "local/dev/demo only" .-> Json
+  Service -->|"public post events only"| Realtime
+  Realtime -->|"thread:created, comment:created, thread:bumped, moderation updates"| Browser
+
+  Http -. "safe readiness only: no secrets" .-> Browser
+  AI -. "no IP, captcha, poster token, admin token, or account private data" .-> Service
+```
+
+Trust boundaries are explicit: public responses and `/api/health` return readiness and counts without secret values; AI calls receive redacted draft/content text; account/admin JWTs stay in request authorization headers and are not written to public post records.
