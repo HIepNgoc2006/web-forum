@@ -294,3 +294,55 @@ flowchart LR
 ```
 
 Trust boundaries are explicit: public responses and `/api/health` return readiness and counts without secret values; AI calls receive redacted draft/content text; account/admin JWTs stay in request authorization headers and are not written to public post records.
+
+### Posting Sequence Diagram
+
+```mermaid
+sequenceDiagram
+  autonumber
+  actor User
+  participant Browser as Browser SPA
+  participant API as Node HTTP API
+  participant Captcha as hCaptcha
+  participant Service as Forum service
+  participant AI as AI provider
+  participant Images as Image storage
+  participant Store as MongoDB or JSON store
+  participant Events as SSE realtime hub
+  actor Admin
+
+  User->>Browser: Compose anonymous thread or comment
+  Browser->>Browser: Autosave draft and run privacy scanner
+  Browser->>API: POST /api/boards/:slug/threads or /api/threads/:id/comments
+  API->>API: Apply route rate limit and parse JSON
+  API->>Captcha: Verify captcha token for posting
+  Captcha-->>API: Pass or reject
+  API->>Service: createThread or createComment
+  Service->>Service: Validate board, lifecycle, sage/noko, limits, and post fields
+  Service->>AI: Moderate redacted post text
+  AI-->>Service: Safe or flagged labels
+  Service->>Images: Save validated image bytes when present
+  Images-->>Service: Public image metadata
+  Service->>Store: Persist normalized thread or comment state
+
+  alt Safe content
+    Store-->>Service: Saved public post
+    Service->>Events: Publish thread or comment event
+    Events-->>Browser: EventSource update
+    API-->>Browser: 201 public post response
+  else Flagged content
+    Store-->>Service: Saved pending post
+    API-->>Browser: 202 pending moderation response
+    Admin->>API: Review pending queue with admin JWT
+    API->>Service: approvePending or deletePending
+    Service->>Store: Record moderation action and update post
+    alt Admin approves
+      Service->>Events: Publish public post event
+      Events-->>Browser: EventSource update
+    else Admin deletes
+      Service-->>API: Deleted stays non-public
+    end
+  end
+```
+
+Pending and deleted posts are stored for moderation history but are not emitted as public SSE content. Logged-in accounts can sync private data around this flow, but account identity is not copied into the public author field by default.
