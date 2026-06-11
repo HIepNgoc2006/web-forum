@@ -1108,6 +1108,10 @@ select {
   font-size: 11px;
 }
 
+body.display-hide-thumbnails .thread-thumb-wrap {
+  display: none;
+}
+
 .thumb,
 .post-image {
   display: block;
@@ -1417,6 +1421,31 @@ select {
   flex-wrap: wrap;
   gap: 6px;
   align-items: center;
+}
+
+.account-board-subscriptions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.account-board-subscriptions label {
+  min-height: 24px;
+  border: 1px solid #aaa;
+  background: white;
+  color: black;
+  padding: 3px 4px;
+}
+
+body.display-compact .thread-op,
+body.display-compact .post.reply {
+  padding-top: 2px;
+  padding-bottom: 2px;
+}
+
+body.display-compact .post-body {
+  margin-top: 2px;
+  margin-bottom: 2px;
 }
 
 .checkbox-row > label {

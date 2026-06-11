@@ -77,6 +77,9 @@ const hiddenPostsKey = 'hiddenPosts';
 const deletePasswordKey = 'deletePassword';
 const subscribedBoardsKey = 'subscribedBoards';
 const themeKey = 'theme';
+const homeBoardKey = 'homeBoard';
+const displayPreferencesKey = 'displayPreferences';
+const notificationPreferencesKey = 'notificationPreferences';
 const aiNotConfiguredMessage =
   'Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.';
 
@@ -117,6 +120,42 @@ function writeJsonLocal(key, value) {
 
 function readLocalList(key) {
   return Array.isArray(readJsonLocal(key, [])) ? readJsonLocal(key, []) : [];
+}
+
+function localDisplayPreferences() {
+  const value = readJsonLocal(displayPreferencesKey, {});
+  return {
+    compactThreads: Boolean(value.compactThreads),
+    hideThumbnails: Boolean(value.hideThumbnails)
+  };
+}
+
+function writeLocalDisplayPreferences(preferences = {}) {
+  const safe = {
+    compactThreads: Boolean(preferences.compactThreads),
+    hideThumbnails: Boolean(preferences.hideThumbnails)
+  };
+  writeJsonLocal(displayPreferencesKey, safe);
+  return safe;
+}
+
+function localNotificationPreferences() {
+  const value = readJsonLocal(notificationPreferencesKey, {});
+  return {
+    email: Boolean(value.email),
+    watchedThreads: value.watchedThreads !== false,
+    boardSubscriptions: Boolean(value.boardSubscriptions)
+  };
+}
+
+function writeLocalNotificationPreferences(preferences = {}) {
+  const safe = {
+    email: Boolean(preferences.email),
+    watchedThreads: preferences.watchedThreads !== false,
+    boardSubscriptions: Boolean(preferences.boardSubscriptions)
+  };
+  writeJsonLocal(notificationPreferencesKey, safe);
+  return safe;
 }
 
 function addLocalSetItem(key, value) {
@@ -171,11 +210,17 @@ function subscribedBoardSlugs() {
   return new Set(readLocalList(subscribedBoardsKey).map(String));
 }
 
+function writeSubscribedBoardSlugs(slugs = []) {
+  const items = [...new Set(slugs.map((slug) => String(slug).trim()).filter(Boolean))];
+  writeJsonLocal(subscribedBoardsKey, items);
+  return items;
+}
+
 function isBoardSubscribed(slug = state.boardSlug) {
   return subscribedBoardSlugs().has(String(slug));
 }
 
-function toggleBoardSubscription(slug = state.boardSlug) {
+async function toggleBoardSubscription(slug = state.boardSlug) {
   const items = subscribedBoardSlugs();
   if (items.has(slug)) {
     items.delete(slug);
@@ -184,7 +229,8 @@ function toggleBoardSubscription(slug = state.boardSlug) {
     items.add(slug);
     showToast('Đã theo dõi bảng.');
   }
-  writeJsonLocal(subscribedBoardsKey, [...items]);
+  writeSubscribedBoardSlugs([...items]);
+  await persistAccountSettings({ silent: true });
 }
 
 function applyTheme(theme = state.theme) {
@@ -196,6 +242,33 @@ function applyTheme(theme = state.theme) {
   document.querySelectorAll('[data-theme-select]').forEach((select) => {
     select.value = safeTheme;
   });
+}
+
+function applyDisplayPreferences(preferences = localDisplayPreferences()) {
+  const safe = writeLocalDisplayPreferences(preferences);
+  document.body.classList.toggle('display-compact', safe.compactThreads);
+  document.body.classList.toggle('display-hide-thumbnails', safe.hideThumbnails);
+  if (els?.accountCompactThreads) {
+    els.accountCompactThreads.checked = safe.compactThreads;
+  }
+  if (els?.accountHideThumbnails) {
+    els.accountHideThumbnails.checked = safe.hideThumbnails;
+  }
+  return safe;
+}
+
+function applyNotificationPreferences(preferences = localNotificationPreferences()) {
+  const safe = writeLocalNotificationPreferences(preferences);
+  if (els?.accountEmailNotifications) {
+    els.accountEmailNotifications.checked = safe.email;
+  }
+  if (els?.accountNotifyWatchedThreads) {
+    els.accountNotifyWatchedThreads.checked = safe.watchedThreads;
+  }
+  if (els?.accountNotifyBoardSubscriptions) {
+    els.accountNotifyBoardSubscriptions.checked = safe.boardSubscriptions;
+  }
+  return safe;
 }
 
 const els = {
@@ -315,7 +388,12 @@ const els = {
   accountTheme: document.querySelector('#accountTheme'),
   accountHomeBoard: document.querySelector('#accountHomeBoard'),
   accountSyncDrafts: document.querySelector('#accountSyncDrafts'),
+  accountCompactThreads: document.querySelector('#accountCompactThreads'),
+  accountHideThumbnails: document.querySelector('#accountHideThumbnails'),
   accountEmailNotifications: document.querySelector('#accountEmailNotifications'),
+  accountNotifyWatchedThreads: document.querySelector('#accountNotifyWatchedThreads'),
+  accountNotifyBoardSubscriptions: document.querySelector('#accountNotifyBoardSubscriptions'),
+  accountBoardSubscriptions: document.querySelector('#accountBoardSubscriptions'),
   accountSettingsLogout: document.querySelector('#accountSettingsLogout'),
   accountLoggedOut: document.querySelector('#accountLoggedOut'),
   accountDisplayOptions: document.querySelectorAll('[data-account-display-option]'),
@@ -368,6 +446,84 @@ function setFormError(element, message = '') {
   element.classList.toggle('hidden', !message);
 }
 
+function accountSettingsFromLocal() {
+  const notifications = localNotificationPreferences();
+  return {
+    theme: state.theme,
+    homeBoard: localStorage.getItem(homeBoardKey) || state.account?.settings?.homeBoard || state.boardSlug || 'confession',
+    syncDrafts: state.account?.settings?.syncDrafts !== false,
+    emailNotifications: notifications.email,
+    displayPreferences: localDisplayPreferences(),
+    notificationPreferences: notifications,
+    boardSubscriptions: [...subscribedBoardSlugs()]
+  };
+}
+
+function syncAccountBoardSubscriptionOptions(settings = state.account?.settings || accountSettingsFromLocal()) {
+  if (!els.accountBoardSubscriptions) {
+    return;
+  }
+  const selected = new Set(
+    Array.isArray(settings.boardSubscriptions) ? settings.boardSubscriptions.map(String) : [...subscribedBoardSlugs()]
+  );
+  els.accountBoardSubscriptions.innerHTML = state.boards
+    .map(
+      (board) => `
+        <label>
+          <input type="checkbox" value="${escapeHtml(board.slug)}" data-account-board-subscription ${
+            selected.has(board.slug) ? 'checked' : ''
+          } />
+          ${escapeHtml(board.path)} ${escapeHtml(board.name)}
+        </label>
+      `
+    )
+    .join('');
+}
+
+function applyAccountSyncedSettings(account = state.account) {
+  const settings = account?.settings;
+  if (!settings) {
+    applyDisplayPreferences();
+    applyNotificationPreferences();
+    syncAccountBoardSubscriptionOptions();
+    return;
+  }
+  applyTheme(settings.theme);
+  localStorage.setItem(homeBoardKey, settings.homeBoard || 'confession');
+  applyDisplayPreferences(settings.displayPreferences);
+  applyNotificationPreferences(settings.notificationPreferences || { email: settings.emailNotifications });
+  writeSubscribedBoardSlugs(Array.isArray(settings.boardSubscriptions) ? settings.boardSubscriptions : []);
+  syncBoardSubscriptionButtons();
+  syncAccountBoardSubscriptionOptions(settings);
+  if ((window.location.hash || '#home').startsWith('#home')) {
+    renderSubscribedBoards();
+  }
+}
+
+async function persistAccountSettings({ silent = false } = {}) {
+  if (!state.accountToken || !state.account) {
+    return null;
+  }
+  try {
+    const account = await api('/api/account/settings', {
+      auth: 'account',
+      method: 'PUT',
+      body: JSON.stringify({ settings: accountSettingsFromLocal() })
+    });
+    state.account = account;
+    updateAccountNav();
+    return account;
+  } catch (error) {
+    if (!silent) {
+      throw error;
+    }
+    if (/đăng nhập|Phiên/.test(error.message)) {
+      setAccountSession();
+    }
+    return null;
+  }
+}
+
 function setAccountSession({ token = '', account = null } = {}) {
   state.accountToken = token;
   state.account = account;
@@ -375,6 +531,9 @@ function setAccountSession({ token = '', account = null } = {}) {
     localStorage.setItem('accountToken', token);
   } else {
     localStorage.removeItem('accountToken');
+  }
+  if (account) {
+    applyAccountSyncedSettings(account);
   }
   updateAccountNav();
 }
@@ -419,19 +578,27 @@ function syncAccountHomeBoardOptions() {
 }
 
 function fillAccountSettings(account = state.account) {
-  const settings = account?.settings || {};
+  const settings = account?.settings || accountSettingsFromLocal();
+  const displayPreferences = settings.displayPreferences || localDisplayPreferences();
+  const notificationPreferences = settings.notificationPreferences || {
+    ...localNotificationPreferences(),
+    email: Boolean(settings.emailNotifications)
+  };
   els.accountStatus.textContent = account
     ? `Đang đăng nhập @${account.username}. Account không thay thế Anonymous trên bài public.`
-    : 'Tài khoản tùy chọn cho dữ liệu riêng.';
-  els.accountSettingsForm.classList.toggle('hidden', !account);
+    : 'Chưa đăng nhập. Settings bên dưới chỉ lưu trên trình duyệt này.';
+  els.accountSettingsForm.classList.remove('hidden');
   els.accountLoggedOut.classList.toggle('hidden', Boolean(account));
-  if (!account) {
-    return;
-  }
+  els.accountSettingsLogout.classList.toggle('hidden', !account);
   els.accountTheme.value = settings.theme || state.theme || 'yotsuba-b';
-  els.accountHomeBoard.value = settings.homeBoard || state.boardSlug || 'confession';
+  els.accountHomeBoard.value = settings.homeBoard || localStorage.getItem(homeBoardKey) || state.boardSlug || 'confession';
   els.accountSyncDrafts.checked = settings.syncDrafts !== false;
-  els.accountEmailNotifications.checked = Boolean(settings.emailNotifications);
+  els.accountCompactThreads.checked = Boolean(displayPreferences.compactThreads);
+  els.accountHideThumbnails.checked = Boolean(displayPreferences.hideThumbnails);
+  els.accountEmailNotifications.checked = Boolean(notificationPreferences.email ?? settings.emailNotifications);
+  els.accountNotifyWatchedThreads.checked = notificationPreferences.watchedThreads !== false;
+  els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
+  syncAccountBoardSubscriptionOptions(settings);
 }
 
 async function loadAccountSession() {
@@ -442,6 +609,7 @@ async function loadAccountSession() {
   try {
     const account = await api('/api/account/me', { auth: 'account' });
     state.account = account;
+    applyAccountSyncedSettings(account);
     updateAccountNav();
     return account;
   } catch {
@@ -2839,7 +3007,30 @@ async function submitAccountSettings(event) {
   setFormError(els.accountSettingsError);
   const button = event.submitter;
   const restoreButton = setButtonLoading(button, 'Đang lưu...');
+  const displayPreferences = writeLocalDisplayPreferences({
+    compactThreads: els.accountCompactThreads.checked,
+    hideThumbnails: els.accountHideThumbnails.checked
+  });
+  const notificationPreferences = writeLocalNotificationPreferences({
+    email: els.accountEmailNotifications.checked,
+    watchedThreads: els.accountNotifyWatchedThreads.checked,
+    boardSubscriptions: els.accountNotifyBoardSubscriptions.checked
+  });
+  const boardSubscriptions = [...els.accountBoardSubscriptions.querySelectorAll('[data-account-board-subscription]:checked')].map(
+    (input) => input.value
+  );
+  applyTheme(els.accountTheme.value);
+  localStorage.setItem(homeBoardKey, els.accountHomeBoard.value);
+  applyDisplayPreferences(displayPreferences);
+  applyNotificationPreferences(notificationPreferences);
+  writeSubscribedBoardSlugs(boardSubscriptions);
+  syncBoardSubscriptionButtons();
   try {
+    if (!state.accountToken || !state.account) {
+      fillAccountSettings();
+      showToast('Đã lưu settings trên trình duyệt này.');
+      return;
+    }
     const account = await api('/api/account/settings', {
       auth: 'account',
       method: 'PUT',
@@ -2848,12 +3039,15 @@ async function submitAccountSettings(event) {
           theme: els.accountTheme.value,
           homeBoard: els.accountHomeBoard.value,
           syncDrafts: els.accountSyncDrafts.checked,
-          emailNotifications: els.accountEmailNotifications.checked
+          emailNotifications: notificationPreferences.email,
+          displayPreferences,
+          notificationPreferences,
+          boardSubscriptions
         }
       })
     });
     state.account = account;
-    applyTheme(account.settings.theme);
+    applyAccountSyncedSettings(account);
     fillAccountSettings(account);
     updateAccountNav();
     showToast('Đã lưu settings tài khoản.');
@@ -3140,7 +3334,7 @@ function bindEvents() {
 
     const boardSubscriptionButton = event.target.closest('[data-toggle-board-subscription]');
     if (boardSubscriptionButton) {
-      toggleBoardSubscription();
+      await toggleBoardSubscription();
       syncBoardSubscriptionButtons();
       return;
     }
@@ -3492,6 +3686,7 @@ function bindEvents() {
     const themeSelect = event.target.closest('[data-theme-select]');
     if (themeSelect) {
       applyTheme(themeSelect.value);
+      persistAccountSettings({ silent: true });
     }
   });
 
@@ -3530,6 +3725,8 @@ function bindEvents() {
 async function init() {
   bindEvents();
   applyTheme();
+  applyDisplayPreferences();
+  applyNotificationPreferences();
   const config = await api('/api/config');
   state.boards = config.boards;
   state.boardGroups = config.boardGroups || [];

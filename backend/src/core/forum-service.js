@@ -52,6 +52,8 @@ const MAX_DISPLAY_NAME_LENGTH = 40;
 const RESERVED_DISPLAY_NAMES = new Set(['admin', 'administrator', 'moderator', 'mod', 'system']);
 const ACCOUNT_USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const ACCOUNT_THEMES = new Set(['yotsuba-b', 'yotsuba', 'tomorrow']);
+const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails'];
+const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions'];
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -268,12 +270,54 @@ function defaultAccountSettings() {
     theme: 'yotsuba-b',
     homeBoard: 'confession',
     syncDrafts: true,
-    emailNotifications: false
+    emailNotifications: false,
+    displayPreferences: {
+      compactThreads: false,
+      hideThumbnails: false
+    },
+    notificationPreferences: {
+      email: false,
+      watchedThreads: true,
+      boardSubscriptions: false
+    },
+    boardSubscriptions: []
   };
 }
 
+function normalizeBoardSubscriptionSlugs(values = []) {
+  const slugs = new Set();
+  for (const item of values) {
+    const slug = String(item || '').trim();
+    if (getBoard(slug)) {
+      slugs.add(slug);
+    }
+    if (slugs.size >= BOARDS.length) {
+      break;
+    }
+  }
+  return [...slugs];
+}
+
 function normalizeAccountSettings(settings = {}, current = defaultAccountSettings()) {
-  const safe = { ...defaultAccountSettings(), ...current };
+  const defaults = defaultAccountSettings();
+  const safe = {
+    ...defaults,
+    ...current,
+    displayPreferences: {
+      ...defaults.displayPreferences,
+      ...(current.displayPreferences && typeof current.displayPreferences === 'object' ? current.displayPreferences : {})
+    },
+    notificationPreferences: {
+      ...defaults.notificationPreferences,
+      ...(current.notificationPreferences && typeof current.notificationPreferences === 'object'
+        ? current.notificationPreferences
+        : {})
+    },
+    boardSubscriptions: normalizeBoardSubscriptionSlugs(current.boardSubscriptions || defaults.boardSubscriptions)
+  };
+  if (typeof current.emailNotifications === 'boolean' && !current.notificationPreferences) {
+    safe.notificationPreferences.email = current.emailNotifications;
+  }
   const theme = String(settings.theme ?? safe.theme);
   if (ACCOUNT_THEMES.has(theme)) {
     safe.theme = theme;
@@ -287,6 +331,25 @@ function normalizeAccountSettings(settings = {}, current = defaultAccountSetting
   }
   if (typeof settings.emailNotifications === 'boolean') {
     safe.emailNotifications = settings.emailNotifications;
+    safe.notificationPreferences.email = settings.emailNotifications;
+  }
+  if (settings.displayPreferences && typeof settings.displayPreferences === 'object') {
+    for (const key of ACCOUNT_DISPLAY_PREFS) {
+      if (typeof settings.displayPreferences[key] === 'boolean') {
+        safe.displayPreferences[key] = settings.displayPreferences[key];
+      }
+    }
+  }
+  if (settings.notificationPreferences && typeof settings.notificationPreferences === 'object') {
+    for (const key of ACCOUNT_NOTIFICATION_PREFS) {
+      if (typeof settings.notificationPreferences[key] === 'boolean') {
+        safe.notificationPreferences[key] = settings.notificationPreferences[key];
+      }
+    }
+    safe.emailNotifications = safe.notificationPreferences.email;
+  }
+  if (Array.isArray(settings.boardSubscriptions)) {
+    safe.boardSubscriptions = normalizeBoardSubscriptionSlugs(settings.boardSubscriptions);
   }
   return safe;
 }

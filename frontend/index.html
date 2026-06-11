@@ -555,9 +555,20 @@
             <label><input id="accountSyncDrafts" type="checkbox" /> Drafts riêng tư</label>
           </label>
           <label class="field-row checkbox-row">
+            <span>Hiển thị</span>
+            <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
+            <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn thumbnail</label>
+          </label>
+          <label class="field-row checkbox-row">
             <span>Thông báo</span>
             <label><input id="accountEmailNotifications" type="checkbox" /> Email notifications</label>
+            <label><input id="accountNotifyWatchedThreads" type="checkbox" /> Thread đang theo dõi</label>
+            <label><input id="accountNotifyBoardSubscriptions" type="checkbox" /> Bảng đang theo dõi</label>
           </label>
+          <div class="field-row account-board-settings">
+            <span>Bảng theo dõi</span>
+            <div id="accountBoardSubscriptions" class="account-board-subscriptions"></div>
+          </div>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Lưu settings</button>
             <button id="accountSettingsLogout" class="ghost-button" type="button">[Đăng xuất]</button>

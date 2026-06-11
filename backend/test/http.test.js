@@ -145,7 +145,17 @@ test('http account api registers, logs in and saves private settings', async () 
           theme: 'tomorrow',
           homeBoard: 'hoc-tap',
           syncDrafts: false,
-          emailNotifications: true
+          emailNotifications: true,
+          displayPreferences: {
+            compactThreads: true,
+            hideThumbnails: false
+          },
+          notificationPreferences: {
+            email: true,
+            watchedThreads: false,
+            boardSubscriptions: true
+          },
+          boardSubscriptions: ['confession', 'an-uong', 'not-a-board']
         }
       })
     });
@@ -155,6 +165,16 @@ test('http account api registers, logs in and saves private settings', async () 
     assert.equal(settingsBody.data.settings.homeBoard, 'hoc-tap');
     assert.equal(settingsBody.data.settings.syncDrafts, false);
     assert.equal(settingsBody.data.settings.emailNotifications, true);
+    assert.deepEqual(settingsBody.data.settings.displayPreferences, {
+      compactThreads: true,
+      hideThumbnails: false
+    });
+    assert.deepEqual(settingsBody.data.settings.notificationPreferences, {
+      email: true,
+      watchedThreads: false,
+      boardSubscriptions: true
+    });
+    assert.deepEqual(settingsBody.data.settings.boardSubscriptions, ['confession', 'an-uong']);
 
     const me = await fetch(`${baseUrl}/api/account/me`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
@@ -162,6 +182,7 @@ test('http account api registers, logs in and saves private settings', async () 
     const meBody = await me.json();
     assert.equal(me.status, 200);
     assert.equal(meBody.data.settings.theme, 'tomorrow');
+    assert.deepEqual(meBody.data.settings.boardSubscriptions, ['confession', 'an-uong']);
 
     const logout = await fetch(`${baseUrl}/api/account/logout`, {
       method: 'POST',
