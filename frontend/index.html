@@ -234,6 +234,11 @@
 
         <div id="boardSummary" class="ai-box hidden"></div>
 
+        <section id="boardRules" class="board-rules hidden" data-board-rules aria-label="Nội quy bảng">
+          <h2>Nội quy bảng</h2>
+          <ul data-board-rules-list></ul>
+        </section>
+
         <div class="board-search-row">
           <input id="boardSearchInput" type="search" placeholder="Tìm OP..." autocomplete="off" aria-label="Tìm OP" />
           [<a id="boardCatalogLink" href="#catalog/confession">Danh mục</a>]
@@ -295,7 +300,10 @@
           </form>
         </section>
 
-        <div class="board-ad">Bảng thú nhận sinh viên chính thức · QUẢNG CÁO Ở ĐÂY</div>
+        <div class="board-ad board-banner" data-board-banner>
+          <img class="board-banner-image hidden" data-board-banner-image alt="" />
+          <span data-board-banner-text>Bảng thú nhận sinh viên chính thức</span>
+        </div>
 
         <section class="threads-panel" aria-labelledby="threadsTitle">
           <div class="panel-title">
@@ -385,6 +393,10 @@
           <button id="threadSummaryButton" class="ghost-button" type="button">[Tóm tắt AI]</button>
         </div>
         <div id="threadSummary" class="ai-box hidden"></div>
+        <section id="threadBoardRules" class="board-rules hidden" data-board-rules aria-label="Nội quy bảng">
+          <h2>Nội quy bảng</h2>
+          <ul data-board-rules-list></ul>
+        </section>
         <section id="replyComposer" class="composer reply-composer hidden" aria-labelledby="replyTitle">
           <div class="reply-panel-title">
             <h2 id="replyTitle">Đăng trả lời</h2>
@@ -440,7 +452,10 @@
             </div>
           </form>
         </section>
-        <div class="board-ad">Bảng thú nhận sinh viên chính thức · QUẢNG CÁO Ở ĐÂY</div>
+        <div class="board-ad board-banner" data-board-banner>
+          <img class="board-banner-image hidden" data-board-banner-image alt="" />
+          <span data-board-banner-text>Bảng thú nhận sinh viên chính thức</span>
+        </div>
         <div id="threadToolbarTop" class="thread-toolbar"></div>
         <article id="threadDetail" class="thread-detail"></article>
         <div id="threadPagination" class="page-controls"></div>
@@ -457,7 +472,10 @@
             <option value="tomorrow">Tomorrow</option>
           </select>
         </form>
-        <div class="board-ad bottom-ad">Bảng thú nhận sinh viên chính thức · QUẢNG CÁO Ở ĐÂY</div>
+        <div class="board-ad board-banner bottom-ad" data-board-banner>
+          <img class="board-banner-image hidden" data-board-banner-image alt="" />
+          <span data-board-banner-text>Bảng thú nhận sinh viên chính thức</span>
+        </div>
       </section>
 
       <section id="registerScreen" class="screen account-screen" aria-labelledby="registerTitle">
@@ -538,9 +556,20 @@
             <label><input id="accountSyncDrafts" type="checkbox" /> Drafts riêng tư</label>
           </label>
           <label class="field-row checkbox-row">
+            <span>Hiển thị</span>
+            <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
+            <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn thumbnail</label>
+          </label>
+          <label class="field-row checkbox-row">
             <span>Thông báo</span>
             <label><input id="accountEmailNotifications" type="checkbox" /> Email notifications</label>
+            <label><input id="accountNotifyWatchedThreads" type="checkbox" /> Thread đang theo dõi</label>
+            <label><input id="accountNotifyBoardSubscriptions" type="checkbox" /> Bảng đang theo dõi</label>
           </label>
+          <div class="field-row account-board-settings">
+            <span>Bảng theo dõi</span>
+            <div id="accountBoardSubscriptions" class="account-board-subscriptions"></div>
+          </div>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Lưu settings</button>
             <button id="accountSettingsLogout" class="ghost-button" type="button">[Đăng xuất]</button>

@@ -9,7 +9,7 @@ import { createMemoryStore } from '../src/core/forum-store.js';
 import { createS3ImageStorage } from '../src/core/image-storage.js';
 import { migrateInlineImages } from '../src/core/image-migration.js';
 import { createMongoModels } from '../src/core/mongo-store.js';
-import { publicConfig } from '../src/core/config.js';
+import { publicBoardConfig, publicConfig } from '../src/core/config.js';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
 import { createPosterHash, securityConfigStatus, signJwt, verifyJwt } from '../src/core/security.js';
 import { parsePostText, sanitizeText } from '../src/core/text-format.js';
@@ -89,6 +89,10 @@ test('publicConfig exposes grouped fixed boards for the home portal', () => {
   assert.equal(confession.name, 'Thú nhận');
   assert.equal(confession.category, 'Trường học');
   assert.equal(confession.path, '/confession/');
+  assert.ok(confession.rules.length >= 2);
+  assert.equal(confession.rules[0], confession.description);
+  assert.equal(confession.banner.text.includes(confession.name.toLowerCase()), true);
+  assert.equal(Object.hasOwn(confession.banner, 'imageUrl'), false);
   assert.equal(deadlineWeek.temporary, true);
   assert.equal(deadlineWeek.category, 'Sự kiện tạm thời');
   assert.equal(config.boardGroups.some((group) => group.name === 'Sự kiện tạm thời'), true);
@@ -101,6 +105,39 @@ test('publicConfig exposes grouped fixed boards for the home portal', () => {
   assert.equal(config.ai.provider, 'google-ai-studio');
   assert.equal(typeof config.ai.configured, 'boolean');
   assert.equal(typeof config.ai.model, 'string');
+});
+
+test('publicBoardConfig sanitizes board presentation and falls back safely', () => {
+  const board = publicBoardConfig({
+    slug: 'test',
+    path: '/test/',
+    name: 'Test <img>',
+    category: 'Debug',
+    description: 'Default <script>alert(1)</script> board',
+    rules: ['Allow text only <b>please</b>', '<img src=x onerror=alert(1)>'],
+    banner: {
+      text: 'Banner <marquee>text</marquee>',
+      imageUrl: 'javascript:alert(1)',
+      altText: 'Alt <b>text</b>'
+    }
+  });
+
+  assert.equal(board.name, 'Test');
+  assert.equal(board.description, 'Default alert(1) board');
+  assert.deepEqual(board.rules, ['Allow text only please']);
+  assert.equal(board.banner.text, 'Banner text');
+  assert.equal(Object.hasOwn(board.banner, 'imageUrl'), false);
+
+  const fallbackBoard = publicBoardConfig({
+    slug: 'fallback',
+    path: '/fallback/',
+    name: 'Fallback',
+    category: 'Debug',
+    description: 'Use this as rule text.'
+  });
+
+  assert.equal(fallbackBoard.rules[0], 'Use this as rule text.');
+  assert.equal(fallbackBoard.banner.text.includes('fallback'), true);
 });
 
 test('mongo store declares production persistence models without opening a connection', async () => {
@@ -1385,6 +1422,78 @@ test('flagged spam or toxic comments raise thread slow mode for repeat posters',
       }),
     /chế độ chậm/
   );
+});
+
+test('sticky threads sort above normal threads and only active public threads can be sticky', async () => {
+  const dates = [
+    new Date('2026-05-22T08:00:00.000Z'),
+    new Date('2026-05-22T08:01:00.000Z'),
+    new Date('2026-05-22T08:02:00.000Z'),
+    new Date('2026-05-22T08:03:00.000Z'),
+    new Date('2026-05-22T08:04:00.000Z')
+  ];
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => dates.shift() ?? new Date('2026-05-22T08:04:00.000Z')
+  });
+
+  const oldest = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Noi quy lop',
+    captchaToken: 'dev-pass',
+    deletePassword: 'owner-pass',
+    ip: '203.0.113.7'
+  });
+  const middle = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Hoi lich hoc',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8'
+  });
+  const newest = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread moi nhat',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9'
+  });
+
+  const sticky = await service.setThreadSticky(oldest.thread.id, true, { actor: 'admin' });
+  const listed = await service.listThreads('hoc-tap');
+  await service.deletePost({ globalNumber: oldest.thread.globalNumber, password: 'owner-pass' });
+  const afterDelete = await service.listThreads('hoc-tap');
+
+  assert.equal(sticky.isSticky, true);
+  assert.equal(sticky.stickiedAt, '2026-05-22T08:03:00.000Z');
+  assert.equal(sticky.stickiedBy, undefined);
+  assert.deepEqual(
+    listed.map((thread) => thread.globalNumber),
+    [oldest.thread.globalNumber, newest.thread.globalNumber, middle.thread.globalNumber]
+  );
+  assert.equal(afterDelete.some((thread) => thread.id === oldest.thread.id), false);
+  await assert.rejects(() => service.setThreadSticky('missing-thread', true, { actor: 'admin' }), /Không tìm thấy chủ đề công khai/);
+});
+
+test('pending threads cannot be stickied onto the public board list', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: flaggedAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const pending = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread can duyet',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  const listed = await service.listThreads('hoc-tap');
+
+  assert.equal(pending.thread.isPending, true);
+  assert.equal(listed.length, 0);
+  await assert.rejects(() => service.setThreadSticky(pending.thread.id, true, { actor: 'admin' }), /Không tìm thấy chủ đề công khai/);
 });
 
 test('OP proof follows local poster token without exposing the proof hash', async () => {
