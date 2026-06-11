@@ -216,3 +216,44 @@ erDiagram
 ```
 
 The public post identity is intentionally anonymous-first: `displayName` is a per-post label, while account `username` stays in `User` and is not exposed as the public author by default. Account watchlist, drafts, and saved searches are embedded in `User.privateData`; local/dev JSON storage mirrors the same normalized state shape, while MongoDB is the production store.
+
+### Activity Diagram
+
+```mermaid
+flowchart TD
+  Start([User opens 36chan]) --> Browse[Browse public boards, catalog, archive, latest posts]
+  Browse --> Choose{Choose action}
+
+  Choose --> Read[Read thread]
+  Read --> Watch{Watch locally or with account?}
+  Watch -->|Local only| LocalWatch[Store watch state in browser localStorage]
+  Watch -->|Logged in and sync enabled| AccountSync[Sync watchlist, drafts, saved searches, and settings through account private data]
+  AccountSync --> Browse
+  LocalWatch --> Browse
+
+  Choose --> Compose[Compose anonymous thread or comment]
+  Compose --> PrivacyScan[Run browser privacy scanner and user edits draft if needed]
+  PrivacyScan --> Submit[Submit to API with captcha, poster token, optional display name, and optional image metadata]
+  Submit --> Validate[Rate limit, captcha, input, image, and board lifecycle validation]
+  Validate --> AiModeration[AI moderation with redacted text only]
+  AiModeration --> Decision{Safe?}
+  Decision -->|Yes| Publish[Persist public post and emit SSE update]
+  Decision -->|No| Pending[Persist pending post for admin review]
+  Publish --> Browse
+
+  Pending --> AdminLogin[Admin logs in with JWT]
+  AdminLogin --> Review[Review pending queue, reports, history, labels, and context]
+  Review --> AdminDecision{Approve or delete?}
+  AdminDecision -->|Approve| Approve[Mark public, record moderation action, emit SSE update]
+  AdminDecision -->|Delete| Delete[Mark deleted, record moderation action and reason]
+  Approve --> Browse
+  Delete --> Browse
+
+  Choose --> Account{Use optional account?}
+  Account -->|Register or login| Login[Create or validate account session]
+  Login --> Settings[Update theme, display preferences, notifications, board subscriptions, and private sync options]
+  Settings --> Browse
+  Account -->|Stay anonymous| Browse
+```
+
+Public reading and anonymous posting do not require an account. Accounts only add opt-in cross-device private data and settings sync; public posts remain `Anonymous` unless a per-post `displayName` is explicitly entered.
