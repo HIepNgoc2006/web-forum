@@ -248,13 +248,6 @@ const els = {
   archiveReturnTop: document.querySelector('#archiveReturnTop'),
   archiveReturnBottom: document.querySelector('#archiveReturnBottom'),
   archiveList: document.querySelector('#archiveList'),
-  archiveSearchForm: document.querySelector('#archiveSearchForm'),
-  archiveSearchInput: document.querySelector('#archiveSearchInput'),
-  archiveSearchBoard: document.querySelector('#archiveSearchBoard'),
-  archiveSearchSince: document.querySelector('#archiveSearchSince'),
-  archiveSearchUntil: document.querySelector('#archiveSearchUntil'),
-  archiveSearchStatus: document.querySelector('#archiveSearchStatus'),
-  archivePagination: document.querySelector('#archivePagination'),
   startThreadButton: document.querySelector('#startThreadButton'),
   threadStartThreadButton: document.querySelector('#threadStartThreadButton'),
   threadComposer: document.querySelector('#threadComposer'),
@@ -356,7 +349,7 @@ function showToast(message) {
 
 function setButtonLoading(button, label = 'Đang gửi...') {
   if (!button) {
-    return () => { };
+    return () => {};
   }
   const previousText = button.textContent;
   button.disabled = true;
@@ -964,10 +957,11 @@ function renderPopularThreads(threads) {
       return `
         <a class="popular-item" href="${href}">
           <strong>${board?.name || thread.boardSlug}</strong>
-          ${thread.image && thumbnailSrc
-          ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
-          : `<span class="popular-placeholder">${initials}</span>`
-        }
+          ${
+            thread.image && thumbnailSrc
+              ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
+              : `<span class="popular-placeholder">${initials}</span>`
+          }
           <span>${title}${title.length >= 120 ? '...' : ''}</span>
         </a>
       `;
@@ -1027,8 +1021,8 @@ function renderWatchedThreads(watchedThreads) {
       const stats = item.unavailable
         ? '<span class="watch-status">không khả dụng</span>'
         : `<span>${Number(item.replyCount || 0).toLocaleString()} trả lời</span><span>${Number(
-          item.fileCount || 0
-        ).toLocaleString()} tệp</span>`;
+            item.fileCount || 0
+          ).toLocaleString()} tệp</span>`;
 
       return `
         <div class="watch-item ${item.unavailable ? 'watch-item-unavailable' : ''}">
@@ -1093,16 +1087,16 @@ function renderSubscribedBoards() {
       </thead>
       <tbody>
         ${boards
-      .map(
-        (board) => `
+          .map(
+            (board) => `
               <tr>
                 <td><a href="#board/${board.slug}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</a></td>
                 <td>${escapeHtml(board.description)}</td>
                 <td><a href="#catalog/${board.slug}">Danh mục</a></td>
               </tr>
             `
-      )
-      .join('')}
+          )
+          .join('')}
       </tbody>
     </table>
   `;
@@ -1116,9 +1110,11 @@ function pageControlsHtml(meta, actionName) {
   const totalPages = Number(meta.totalPages || 1);
   return `
     <span>Trang ${page}/${totalPages}</span>
-    [<button class="link-button" data-page-action="${actionName}" data-page="${page - 1}" type="button" ${page <= 1 ? 'disabled' : ''
+    [<button class="link-button" data-page-action="${actionName}" data-page="${page - 1}" type="button" ${
+      page <= 1 ? 'disabled' : ''
     }>Trước</button>]
-    [<button class="link-button" data-page-action="${actionName}" data-page="${page + 1}" type="button" ${page >= totalPages ? 'disabled' : ''
+    [<button class="link-button" data-page-action="${actionName}" data-page="${page + 1}" type="button" ${
+      page >= totalPages ? 'disabled' : ''
     }>Sau</button>]
     <span>${Number(meta.total || 0).toLocaleString()} mục</span>
   `;
@@ -1143,10 +1139,10 @@ function renderHotBoards(boards) {
       </thead>
       <tbody>
         ${boards
-      .map((item) => {
-        const board = state.boards.find((entry) => entry.slug === item.boardSlug);
-        const latest = item.latestActivityAt ? formatPostDate(item.latestActivityAt) : '-';
-        return `
+          .map((item) => {
+            const board = state.boards.find((entry) => entry.slug === item.boardSlug);
+            const latest = item.latestActivityAt ? formatPostDate(item.latestActivityAt) : '-';
+            return `
               <tr>
                 <td><a href="#board/${item.boardSlug}">${escapeHtml(board?.path || `/${item.boardSlug}/`)}</a></td>
                 <td>${Number(item.postCountLast24h || 0).toLocaleString()}</td>
@@ -1155,8 +1151,8 @@ function renderHotBoards(boards) {
                 <td>${escapeHtml(latest)}</td>
               </tr>
             `;
-      })
-      .join('')}
+          })
+          .join('')}
       </tbody>
     </table>
   `;
@@ -1179,8 +1175,8 @@ function renderCampusPulse(items) {
       </thead>
       <tbody>
         ${items
-      .map(
-        (item) => `
+          .map(
+            (item) => `
               <tr>
                 <td>${escapeHtml(item.keyword)}</td>
                 <td>${item.count}</td>
@@ -1188,8 +1184,8 @@ function renderCampusPulse(items) {
                 <td>${escapeHtml(item.latestActivityAt ? formatPostDate(item.latestActivityAt) : '-')}</td>
               </tr>
             `
-      )
-      .join('')}
+          )
+          .join('')}
       </tbody>
     </table>
   `;
@@ -1250,8 +1246,8 @@ function moderationActionsHtml(actions) {
       </thead>
       <tbody>
         ${actions
-      .map(
-        (action) => `
+          .map(
+            (action) => `
               <tr>
                 <td>${formatPostDate(action.createdAt)}</td>
                 <td>${escapeHtml(moderationActionText(action.action))}</td>
@@ -1261,8 +1257,8 @@ function moderationActionsHtml(actions) {
                 <td>${escapeHtml(action.actor || '-')}</td>
               </tr>
             `
-      )
-      .join('')}
+          )
+          .join('')}
       </tbody>
     </table>
   `;
@@ -1286,8 +1282,8 @@ function reportsHtml(reports) {
       </thead>
       <tbody>
         ${reports
-      .map(
-        (report) => `
+          .map(
+            (report) => `
               <tr>
                 <td>${formatPostDate(report.createdAt)}</td>
                 <td>${escapeHtml(report.boardSlug)} / No.${report.globalNumber}</td>
@@ -1296,8 +1292,8 @@ function reportsHtml(reports) {
                 <td><button class="ghost-button" data-admin-detail="${report.globalNumber}" type="button">[Chi tiết]</button></td>
               </tr>
             `
-      )
-      .join('')}
+          )
+          .join('')}
       </tbody>
     </table>
   `;
@@ -1349,8 +1345,8 @@ function sanctionsHtml(sanctions) {
       </thead>
       <tbody>
         ${sanctions
-      .map(
-        (sanction) => `
+          .map(
+            (sanction) => `
               <tr>
                 <td>${formatPostDate(sanction.createdAt)}</td>
                 <td>${formatPostDate(sanction.expiresAt)}</td>
@@ -1361,8 +1357,8 @@ function sanctionsHtml(sanctions) {
                 <td>${sanction.revokedAt ? 'Đã gỡ' : `<button class="danger-button" data-admin-revoke-sanction="${sanction.id}" type="button">Gỡ</button>`}</td>
               </tr>
             `
-      )
-      .join('')}
+          )
+          .join('')}
       </tbody>
     </table>
   `;
@@ -1729,10 +1725,11 @@ function meta(post, options = {}) {
       ${posterIdentity}
       ${opMarker}
       <span class="status">${labels}</span>
-      ${showReplyAction && canReply
-      ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
-      : ''
-    }
+      ${
+        showReplyAction && canReply
+          ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
+          : ''
+      }
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
     </div>
@@ -1746,8 +1743,8 @@ function backlinksHtml(backlinks = []) {
   return `
     <div class="backlinks">
       ${backlinks
-      .map((number) => `<button class="ref-link" data-ref="${number}" type="button">&gt;&gt;${number}</button>`)
-      .join(' ')}
+        .map((number) => `<button class="ref-link" data-ref="${number}" type="button">&gt;&gt;${number}</button>`)
+        .join(' ')}
     </div>
   `;
 }
@@ -1925,7 +1922,7 @@ function catalogThreadHtml(thread) {
     ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
     : thread.image
       ? '<span class="catalog-placeholder">Có tệp</span>'
-      : '<span class="catalog-placeholder">Không có tệp</span>';
+    : '<span class="catalog-placeholder">Không có tệp</span>';
 
   return `
     <a class="catalog-thread" href="#thread/${thread.id}">
@@ -2034,8 +2031,6 @@ async function loadArchive() {
   const board = state.boards.find((item) => item.slug === state.boardSlug);
   setScreen('archive');
   renderBoards();
-  els.archivePagination.innerHTML = '';
-  els.archiveSearchStatus.classList.add('hidden');
   if (!board) {
     els.archiveTitle.textContent = 'Không tìm thấy bảng';
     els.archiveDescription.textContent = `Bảng /${state.boardSlug}/ không tồn tại.`;
@@ -2050,70 +2045,9 @@ async function loadArchive() {
   els.archiveReturnTop.href = `#board/${board.slug}`;
   els.archiveReturnBottom.href = `#board/${board.slug}`;
 
-  // Populate board filter dropdown
-  els.archiveSearchBoard.innerHTML = '<option value="">Tất cả bảng</option>' +
-    state.boards.map((b) => `<option value="${escapeHtml(b.slug)}"${b.slug === board.slug ? ' selected' : ''}>${escapeHtml(b.path)} ${escapeHtml(b.name)}</option>`).join('');
-
   const threads = await api(`/api/boards/${board.slug}/archive`);
   state.archiveThreads = threads;
   renderArchiveThreads(threads);
-}
-
-async function searchArchive(page = 1) {
-  const q = (els.archiveSearchInput.value || '').trim();
-  const boardSlug = els.archiveSearchBoard.value || '';
-  const since = els.archiveSearchSince.value || '';
-  const until = els.archiveSearchUntil.value || '';
-
-  const params = new URLSearchParams();
-  if (q) params.set('q', q);
-  if (boardSlug) params.set('boardSlug', boardSlug);
-  if (since) params.set('since', since);
-  if (until) params.set('until', until);
-  params.set('page', String(page));
-  params.set('pageSize', '20');
-
-  els.archiveSearchStatus.textContent = 'Đang tìm kiếm...';
-  els.archiveSearchStatus.classList.remove('hidden');
-  els.archiveList.innerHTML = '';
-  els.archivePagination.innerHTML = '';
-
-  try {
-    const result = await api(`/api/search/archive?${params.toString()}`, { auth: 'none' });
-    if (!result.items || result.items.length === 0) {
-      els.archiveList.innerHTML = '<p class="muted">Không tìm thấy chủ đề nào khớp.</p>';
-      els.archiveSearchStatus.textContent = `0 kết quả`;
-    } else {
-      els.archiveList.innerHTML = result.items.map(archiveThreadHtml).join('');
-      els.archiveSearchStatus.textContent = `${result.total} kết quả (trang ${result.page}/${result.totalPages})`;
-      if (result.totalPages > 1) {
-        els.archivePagination.innerHTML = archivePageControlsHtml(result);
-      }
-    }
-  } catch (error) {
-    els.archiveList.innerHTML = `<p class="muted">Lỗi tìm kiếm: ${escapeHtml(error.message)}</p>`;
-    els.archiveSearchStatus.textContent = 'Tìm kiếm thất bại';
-  }
-}
-
-function archivePageControlsHtml(result) {
-  const buttons = [];
-  if (result.page > 1) {
-    buttons.push(`<button class="ghost-button" data-archive-page="${result.page - 1}" type="button">« Trước</button>`);
-  }
-  const start = Math.max(1, result.page - 2);
-  const end = Math.min(result.totalPages, result.page + 2);
-  for (let p = start; p <= end; p++) {
-    if (p === result.page) {
-      buttons.push(`<span class="page-current">${p}</span>`);
-    } else {
-      buttons.push(`<button class="ghost-button" data-archive-page="${p}" type="button">${p}</button>`);
-    }
-  }
-  if (result.page < result.totalPages) {
-    buttons.push(`<button class="ghost-button" data-archive-page="${result.page + 1}" type="button">Sau »</button>`);
-  }
-  return buttons.join(' ');
 }
 
 function renderBoardThreads(threads) {
@@ -2133,10 +2067,11 @@ function renderBoardThreads(threads) {
       return `
         <div class="thread" id="p${thread.globalNumber}">
           <div class="thread-op">
-          ${thread.image
-          ? imageToggleHtml(thread.image, 'thumb')
-          : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
-        }
+          ${
+            thread.image
+              ? imageToggleHtml(thread.image, 'thumb')
+              : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
+          }
             ${meta(thread, { replyAction: false })}
             <a class="thread-open" href="#thread/${thread.id}">[Trả lời]</a>
             <div class="post-body">${renderPostLines(thread.bodyLines || [], { opNumber: thread.globalNumber })}</div>
@@ -2244,23 +2179,24 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   els.threadDetail.innerHTML = `
     ${archivedNotice}
     ${postHtml(detail.thread, 'post op', {
-    opNumber: detail.thread.globalNumber,
-    opPosterHash: detail.thread.posterHash,
-    canReply
-  })}
+      opNumber: detail.thread.globalNumber,
+      opPosterHash: detail.thread.posterHash,
+      canReply
+    })}
     <div class="comment-list">
-      ${visibleComments.length
-      ? visibleComments
-        .map((comment) =>
-          postHtml(comment, 'post comment', {
-            opNumber: detail.thread.globalNumber,
-            opPosterHash: detail.thread.posterHash,
-            canReply
-          })
-        )
-        .join('')
-      : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>'
-    }
+      ${
+        visibleComments.length
+          ? visibleComments
+              .map((comment) =>
+                postHtml(comment, 'post comment', {
+                  opNumber: detail.thread.globalNumber,
+                  opPosterHash: detail.thread.posterHash,
+                  canReply
+                })
+              )
+              .join('')
+          : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>'
+      }
     </div>
   `;
   els.threadPagination.innerHTML = pageControlsHtml(state.threadCommentPageMeta, 'thread-comments');
@@ -2426,10 +2362,10 @@ function pollHtml(poll, canVote = true) {
     <div class="poll-box">
       <div class="poll-title">Thăm dò ẩn danh · ${totalVotes} vote</div>
       ${poll.options
-      .map((option) => {
-        const votes = Number(option.votes || 0);
-        const percent = totalVotes ? Math.round((votes / totalVotes) * 100) : 0;
-        return `
+        .map((option) => {
+          const votes = Number(option.votes || 0);
+          const percent = totalVotes ? Math.round((votes / totalVotes) * 100) : 0;
+          return `
             <div class="poll-option">
               <button data-poll-option="${escapeHtml(option.id)}" type="button" ${canVote ? '' : 'disabled'}>
                 ${escapeHtml(option.text)}
@@ -2438,8 +2374,8 @@ function pollHtml(poll, canVote = true) {
               <span>${votes} (${percent}%)</span>
             </div>
           `;
-      })
-      .join('')}
+        })
+        .join('')}
     </div>
   `;
 }
@@ -2689,9 +2625,10 @@ async function showSummary(target) {
     const result = await api(path, { method: 'POST', body: JSON.stringify(requestBody) });
     box.innerHTML = `
       <strong>${heading}</strong>
-      ${summarizeSinceLastRead
-        ? `<p class="muted">Chỉ gồm bài mới sau No.${escapeHtml(state.threadLastSeenBefore)}.</p>`
-        : ''
+      ${
+        summarizeSinceLastRead
+          ? `<p class="muted">Chỉ gồm bài mới sau No.${escapeHtml(state.threadLastSeenBefore)}.</p>`
+          : ''
       }
       <ul>${result.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>
     `;
@@ -2899,17 +2836,17 @@ function setupRealtime() {
     source.addEventListener(eventName, () => {
       const hash = window.location.hash || '#home';
       if (hash.startsWith('#home') || hash === '') {
-        loadHome().catch(() => { });
+        loadHome().catch(() => {});
       } else if (hash.startsWith('#thread/')) {
-        loadThread().catch(() => { });
+        loadThread().catch(() => {});
       } else if (hash.startsWith('#catalog/')) {
-        loadCatalog().catch(() => { });
+        loadCatalog().catch(() => {});
       } else if (hash.startsWith('#archive/')) {
         if (eventName === 'thread:archived') {
-          loadArchive().catch(() => { });
+          loadArchive().catch(() => {});
         }
       } else if (hash.startsWith('#board/')) {
-        loadBoard().catch(() => { });
+        loadBoard().catch(() => {});
       }
     });
   }
@@ -3012,32 +2949,6 @@ function bindEvents() {
   els.threadForm.addEventListener('submit', submitThread);
   els.commentForm.addEventListener('submit', submitComment);
   els.quickReplyForm.addEventListener('submit', submitQuickReply);
-  els.archiveSearchForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    searchArchive(1).catch((error) => showToast(error.message));
-  });
-  els.accountLogoutButton.addEventListener('click', async () => {
-    if (state.accountToken) {
-      try {
-        await api('/api/account/logout', { method: 'POST', auth: 'account' });
-      } catch {
-        // Ignore network errors on logout
-      }
-    }
-    logoutAccount();
-  });
-  if (els.accountSettingsLogout) {
-    els.accountSettingsLogout.addEventListener('click', async () => {
-      if (state.accountToken) {
-        try {
-          await api('/api/account/logout', { method: 'POST', auth: 'account' });
-        } catch {
-          // Ignore network errors
-        }
-      }
-      logoutAccount();
-    });
-  }
   els.threadBody.addEventListener('input', () => {
     localStorage.setItem(draftKey('thread', state.boardSlug), els.threadBody.value);
     updatePrivacyWarning(els.threadBody.value, els.threadPrivacyWarning);
@@ -3226,13 +3137,6 @@ function bindEvents() {
         state.threadCommentPage = nextPage;
         await loadThread().catch((error) => showToast(error.message));
       }
-      return;
-    }
-
-    const archivePageButton = event.target.closest('[data-archive-page]');
-    if (archivePageButton) {
-      const page = Number(archivePageButton.dataset.archivePage) || 1;
-      await searchArchive(page).catch((error) => showToast(error.message));
       return;
     }
 
