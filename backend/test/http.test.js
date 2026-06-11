@@ -996,6 +996,76 @@ test('http admin sanctions temporarily block matching hashed posting fingerprint
   });
 });
 
+test('http admin can sticky and unsticky active public threads only', async () => {
+  const dates = [
+    new Date('2026-05-22T08:00:00.000Z'),
+    new Date('2026-05-22T08:01:00.000Z'),
+    new Date('2026-05-22T08:02:00.000Z')
+  ];
+  await withServer(
+    async (baseUrl) => {
+      const first = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Noi quy can ghim',
+          captchaToken: 'dev-pass'
+        })
+      });
+      const firstBody = await first.json();
+      await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Thread thuong moi hon',
+          captchaToken: 'dev-pass'
+        })
+      });
+
+      const unauthorized = await fetch(`${baseUrl}/api/admin/threads/${firstBody.data.thread.id}/sticky`, {
+        method: 'POST'
+      });
+      assert.equal(unauthorized.status, 401);
+
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await login.json();
+      const adminHeaders = { authorization: `Bearer ${loginBody.data.token}` };
+      const stickied = await fetch(`${baseUrl}/api/admin/threads/${firstBody.data.thread.id}/sticky`, {
+        method: 'POST',
+        headers: adminHeaders
+      });
+      const stickiedBody = await stickied.json();
+      const listed = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
+      const listedBody = await listed.json();
+      const unstuck = await fetch(`${baseUrl}/api/admin/threads/${firstBody.data.thread.id}/sticky`, {
+        method: 'DELETE',
+        headers: adminHeaders
+      });
+      const unstuckBody = await unstuck.json();
+      const missing = await fetch(`${baseUrl}/api/admin/threads/missing-thread/sticky`, {
+        method: 'POST',
+        headers: adminHeaders
+      });
+
+      assert.equal(stickied.status, 200);
+      assert.equal(stickiedBody.data.isSticky, true);
+      assert.equal(stickiedBody.data.stickiedBy, undefined);
+      assert.equal(listedBody.data[0].id, firstBody.data.thread.id);
+      assert.equal(listedBody.data[0].isSticky, true);
+      assert.equal(unstuck.status, 200);
+      assert.equal(unstuckBody.data.isSticky, false);
+      assert.equal(missing.status, 404);
+    },
+    {
+      now: () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z')
+    }
+  );
+});
+
 test('http api exposes board archive and admin manual archive', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {

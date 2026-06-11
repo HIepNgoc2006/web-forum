@@ -1077,6 +1077,10 @@ select {
   border-bottom: 1px solid #d9bfb7;
 }
 
+.thread-sticky {
+  border-bottom-color: #b86;
+}
+
 .thread::after,
 .thread-op::after,
 .post.op::after {
@@ -1301,6 +1305,17 @@ select {
   margin-left: 4px;
   color: #d00;
   font-weight: bold;
+}
+
+.sticky-label {
+  display: inline-block;
+  margin-left: 4px;
+  border: 1px solid #b86;
+  background: #fca;
+  color: var(--header);
+  padding: 0 3px;
+  font-weight: bold;
+  line-height: 15px;
 }
 
 .archived-label {
