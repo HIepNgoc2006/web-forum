@@ -85,3 +85,134 @@ S3_KEY_PREFIX=uploads
 ```
 
 The backend uses path-style signed `PUT` requests, which works for common S3-compatible services such as MinIO and Cloudflare R2.
+
+## Architecture Diagrams
+
+### Entity Relationship Diagram
+
+```mermaid
+erDiagram
+  BOARD ||--o{ THREAD : contains
+  THREAD ||--o{ COMMENT : has
+  THREAD ||--o{ REPORT : reported_by_global_number
+  COMMENT ||--o{ REPORT : reported_by_global_number
+  THREAD ||--o{ MODERATION_ACTION : moderated_by_global_number
+  COMMENT ||--o{ MODERATION_ACTION : moderated_by_global_number
+  THREAD ||--o{ SANCTION : source_post
+  COMMENT ||--o{ SANCTION : source_post
+  USER ||--|| ACCOUNT_PRIVATE_DATA : embeds
+  STATE_META ||--o{ THREAD : assigns_global_numbers
+  STATE_META ||--o{ COMMENT : assigns_global_numbers
+  AI_USAGE ||--o{ THREAD : rate_limits_ai_features
+  AI_SUMMARY_CACHE ||--o{ THREAD : caches_summary
+
+  BOARD {
+    string slug PK
+    string name
+    string category
+    string path
+    string description
+  }
+
+  THREAD {
+    string id PK
+    string boardSlug FK
+    number globalNumber
+    string displayName
+    string authorFingerprint
+    string posterHash
+    string opProofHash
+    string deletePasswordHash
+    boolean isPending
+    boolean isDeleted
+    string moderationStatus
+    string moderationLabels
+    datetime bumpedAt
+    datetime createdAt
+  }
+
+  COMMENT {
+    string id PK
+    string threadId FK
+    string boardSlug
+    number globalNumber
+    string displayName
+    string authorFingerprint
+    string posterHash
+    string opProofHash
+    string deletePasswordHash
+    boolean isPending
+    boolean isDeleted
+    string moderationStatus
+    datetime createdAt
+  }
+
+  USER {
+    string id PK
+    string username UK
+    string passwordHash
+    string role
+    object settings
+    object privateData
+    datetime createdAt
+    datetime updatedAt
+  }
+
+  ACCOUNT_PRIVATE_DATA {
+    object watchlist
+    object drafts
+    object savedSearches
+  }
+
+  REPORT {
+    string id PK
+    string postType
+    string postId
+    string threadId
+    number globalNumber
+    string boardSlug
+    string status
+    string reporterHash
+    datetime createdAt
+  }
+
+  MODERATION_ACTION {
+    string id PK
+    string action
+    string postType
+    string postId
+    string threadId
+    number globalNumber
+    string boardSlug
+    string actor
+    datetime createdAt
+  }
+
+  SANCTION {
+    string id PK
+    string fingerprint
+    string boardSlug
+    string sourcePostType
+    number sourceGlobalNumber
+    datetime expiresAt
+    datetime createdAt
+  }
+
+  STATE_META {
+    string id PK
+    number version
+    number nextGlobalNumber
+  }
+
+  AI_USAGE {
+    string id PK
+    object value
+  }
+
+  AI_SUMMARY_CACHE {
+    string id PK
+    object value
+  }
+```
+
+The public post identity is intentionally anonymous-first: `displayName` is a per-post label, while account `username` stays in `User` and is not exposed as the public author by default. Account watchlist, drafts, and saved searches are embedded in `User.privateData`; local/dev JSON storage mirrors the same normalized state shape, while MongoDB is the production store.
