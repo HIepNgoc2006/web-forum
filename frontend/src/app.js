@@ -1444,6 +1444,17 @@ function renderBoards() {
     .join('');
 }
 
+async function refreshPublicBoards({ fallbackBoards = state.boards } = {}) {
+  try {
+    state.boards = await api('/api/boards');
+  } catch {
+    state.boards = fallbackBoards;
+  }
+  renderBoards();
+  syncAdminBoardFilter();
+  return state.boards;
+}
+
 function syncBoardSubscriptionButtons() {
   const label = isBoardSubscribed(state.boardSlug) ? 'Bỏ theo dõi bảng' : 'Theo dõi bảng';
   document.querySelectorAll('[data-toggle-board-subscription]').forEach((button) => {
@@ -1518,8 +1529,12 @@ function plainPreview(lines, fallback = '') {
 }
 
 function homeBoardList() {
-  const groupedBoards = state.boardGroups.flatMap((group) => group.boards || []);
-  const source = groupedBoards.length ? groupedBoards : state.boards;
+  const publicBoardsBySlug = new Map(state.boards.map((board) => [board.slug, board]));
+  const groupedBoards = state.boardGroups
+    .flatMap((group) => group.boards || [])
+    .map((board) => publicBoardsBySlug.get(board.slug))
+    .filter(Boolean);
+  const source = groupedBoards.length ? [...groupedBoards, ...state.boards] : state.boards;
   const seen = new Set();
   return source.filter((board) => {
     if (!board || seen.has(board.slug)) {
@@ -2344,6 +2359,9 @@ function adminEndpoint() {
   if (state.adminTab === 'sanctions') {
     return `/api/admin/sanctions${query ? `?limit=100&${query}&status=active` : '?limit=100&status=active'}`;
   }
+  if (state.adminTab === 'boards') {
+    return '/api/admin/boards';
+  }
   if (state.adminTab === 'audit') {
     return `/api/admin/moderation-actions${query ? `?limit=100&${query}` : '?limit=100'}`;
   }
@@ -2362,6 +2380,76 @@ function renderAdminTabs() {
   els.moderationSection.classList.toggle('hidden', true);
 }
 
+function adminBoardPayload(root, { includeSlug = false } = {}) {
+  const payload = {
+    name: root.querySelector('[data-admin-board-name]')?.value || '',
+    category: root.querySelector('[data-admin-board-category]')?.value || '',
+    description: root.querySelector('[data-admin-board-description]')?.value || '',
+    isHidden: Boolean(root.querySelector('[data-admin-board-hidden]')?.checked),
+    isArchived: Boolean(root.querySelector('[data-admin-board-archived]')?.checked)
+  };
+  if (includeSlug) {
+    payload.slug = root.querySelector('[data-admin-board-slug]')?.value || '';
+  }
+  return payload;
+}
+
+function adminBoardsHtml(boards) {
+  const rows = boards
+    .map(
+      (board) => `
+        <tr data-admin-board-row="${escapeHtml(board.slug)}">
+          <td><code>/${escapeHtml(board.slug)}/</code></td>
+          <td><input data-admin-board-name value="${escapeHtml(board.name)}" maxlength="80" /></td>
+          <td><input data-admin-board-category value="${escapeHtml(board.category)}" maxlength="80" /></td>
+          <td><input data-admin-board-description value="${escapeHtml(board.description)}" maxlength="240" /></td>
+          <td class="admin-board-flags">
+            <label><input data-admin-board-hidden type="checkbox" ${board.isHidden ? 'checked' : ''} /> Ẩn</label>
+            <label><input data-admin-board-archived type="checkbox" ${board.isArchived ? 'checked' : ''} /> Lưu trữ</label>
+          </td>
+          <td class="admin-board-actions">
+            <button class="ghost-button" data-admin-board-save type="button">[Lưu]</button>
+            <button class="danger-button" data-admin-board-delete type="button">Xóa</button>
+          </td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <div class="admin-board-manager">
+      <section class="admin-board-create" data-admin-board-create-form>
+        <h2>Thêm bảng</h2>
+        <div class="admin-board-create-grid">
+          <label><span>Slug</span><input data-admin-board-slug placeholder="an-uong" maxlength="40" /></label>
+          <label><span>Tên</span><input data-admin-board-name placeholder="Ăn uống" maxlength="80" /></label>
+          <label><span>Danh mục</span><input data-admin-board-category placeholder="Đời sống" maxlength="80" /></label>
+          <label><span>Mô tả</span><input data-admin-board-description placeholder="Chia sẻ quán ăn, căn tin, deal sinh viên" maxlength="240" /></label>
+          <label><input data-admin-board-hidden type="checkbox" /> Ẩn khỏi public</label>
+          <label><input data-admin-board-archived type="checkbox" /> Lưu trữ</label>
+          <button class="primary-button" data-admin-board-create type="button">Tạo bảng</button>
+        </div>
+      </section>
+      <div class="admin-board-table-wrap">
+        <table class="admin-board-table">
+          <thead>
+            <tr>
+              <th>Board</th>
+              <th>Tên</th>
+              <th>Danh mục</th>
+              <th>Mô tả</th>
+              <th>Trạng thái</th>
+              <th>Thao tác</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="6">Chưa có board.</td></tr>'}</tbody>
+        </table>
+      </div>
+      <p class="muted">Xóa chỉ áp dụng cho board rỗng. Board đã có nội dung nên dùng Ẩn hoặc Lưu trữ.</p>
+    </div>
+  `;
+}
+
 function renderAdminItems(items) {
   state.adminItems = items;
   renderAdminTabs();
@@ -2373,6 +2461,8 @@ function renderAdminItems(items) {
     els.pendingList.innerHTML = deletedPostsHtml(items);
   } else if (state.adminTab === 'sanctions') {
     els.pendingList.innerHTML = `<div class="moderation-log">${sanctionsHtml(items)}</div>`;
+  } else if (state.adminTab === 'boards') {
+    els.pendingList.innerHTML = adminBoardsHtml(items);
   } else {
     els.pendingList.innerHTML = `<div class="moderation-log">${historyActionsHtml(items)}</div>`;
   }
@@ -4356,6 +4446,62 @@ function bindEvents() {
       return;
     }
 
+    const adminBoardCreateButton = event.target.closest('[data-admin-board-create]');
+    if (adminBoardCreateButton) {
+      const form = adminBoardCreateButton.closest('[data-admin-board-create-form]');
+      try {
+        await api('/api/admin/boards', {
+          method: 'POST',
+          body: JSON.stringify(adminBoardPayload(form, { includeSlug: true }))
+        });
+        showToast('Đã tạo board.');
+        await refreshPublicBoards();
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminBoardSaveButton = event.target.closest('[data-admin-board-save]');
+    if (adminBoardSaveButton) {
+      const row = adminBoardSaveButton.closest('[data-admin-board-row]');
+      const slug = row?.dataset.adminBoardRow;
+      if (!slug) {
+        return;
+      }
+      try {
+        await api(`/api/admin/boards/${encodeURIComponent(slug)}`, {
+          method: 'PUT',
+          body: JSON.stringify(adminBoardPayload(row))
+        });
+        showToast('Đã lưu board.');
+        await refreshPublicBoards();
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminBoardDeleteButton = event.target.closest('[data-admin-board-delete]');
+    if (adminBoardDeleteButton) {
+      const row = adminBoardDeleteButton.closest('[data-admin-board-row]');
+      const slug = row?.dataset.adminBoardRow;
+      if (!slug || !window.confirm(`Xóa board /${slug}/? Chỉ board rỗng mới xóa được.`)) {
+        return;
+      }
+      try {
+        await api(`/api/admin/boards/${encodeURIComponent(slug)}`, { method: 'DELETE' });
+        showToast('Đã xóa board.');
+        await refreshPublicBoards();
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
     if (event.target.closest('#adminBulkApprove')) {
       await bulkModerate('approve');
       return;
@@ -4601,8 +4747,8 @@ async function init() {
   state.boardGroups = config.boardGroups || [];
   state.aiConfigured = Boolean(config.ai?.configured);
   state.hcaptchaSiteKey = config.hcaptchaSiteKey || '';
+  await refreshPublicBoards({ fallbackBoards: config.boards });
   setupHcaptcha().catch((error) => showToast(error.message));
-  renderBoards();
   syncAccountHomeBoardOptions();
   await loadAccountSession();
   const password = defaultDeletePassword();

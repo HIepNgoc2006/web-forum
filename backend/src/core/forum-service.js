@@ -2890,6 +2890,39 @@ export function createForumService({
       });
     },
 
+    async deleteBoard(slug, { actor } = {}) {
+      const safeSlug = String(slug ?? '').trim().toLowerCase();
+      if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
+        const error = new Error('Slug board không hợp lệ');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        const index = state.boards.findIndex((board) => board.slug === safeSlug);
+        if (index === -1) {
+          const error = new Error('Không tìm thấy board');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const hasContent =
+          state.threads.some((thread) => thread.boardSlug === safeSlug) ||
+          state.comments.some((comment) => comment.boardSlug === safeSlug) ||
+          (state.reports || []).some((report) => report.boardSlug === safeSlug) ||
+          (state.sanctions || []).some((sanction) => sanction.boardSlug === safeSlug);
+        if (hasContent) {
+          const error = new Error('Board đã có dữ liệu, hãy ẩn hoặc lưu trữ thay vì xóa');
+          error.statusCode = 409;
+          throw error;
+        }
+
+        const [board] = state.boards.splice(index, 1);
+        logEvent('board.deleted', { slug: safeSlug, actor });
+        return { board: serializeBoard(board, { admin: true }) };
+      });
+    },
+
     async listAccountPosts(accountId) {
       if (!accountId) return [];
       const state = await store.read();

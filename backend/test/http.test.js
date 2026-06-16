@@ -167,6 +167,44 @@ test('http admin boards support dynamic create update and public filtering', asy
     const publicBoardsArchivedBody = await publicBoardsArchived.json();
     assert.equal(publicBoardsArchivedBody.data.some((board) => board.slug === 'lab-news'), false);
 
+    const deletedEmpty = await fetch(`${baseUrl}/api/admin/boards/lab-news`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    assert.equal(deletedEmpty.status, 200);
+
+    const adminBoardsAfterDelete = await fetch(`${baseUrl}/api/admin/boards`, {
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    const adminBoardsAfterDeleteBody = await adminBoardsAfterDelete.json();
+    assert.equal(adminBoardsAfterDeleteBody.data.some((board) => board.slug === 'lab-news'), false);
+
+    await fetch(`${baseUrl}/api/admin/boards`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        slug: 'busy-board',
+        name: 'Board co bai',
+        category: 'Truong hoc',
+        description: 'Board dung de test xoa khi co noi dung'
+      })
+    });
+    const busyThread = await fetch(`${baseUrl}/api/boards/busy-board/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Thread cong khai tren board khong duoc hard delete',
+        captchaToken: 'dev-pass'
+      })
+    });
+    assert.equal(busyThread.status, 201);
+
+    const blockedDelete = await fetch(`${baseUrl}/api/admin/boards/busy-board`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    assert.equal(blockedDelete.status, 409);
+
     const invalid = await fetch(`${baseUrl}/api/admin/boards`, {
       method: 'POST',
       headers,

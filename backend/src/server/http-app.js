@@ -960,6 +960,10 @@ export function createHttpServer({
           );
           return;
         }
+        if (params && request.method === 'DELETE') {
+          ok(response, await service.deleteBoard(params.boardSlug, { actor: admin.username ?? 'admin' }));
+          return;
+        }
 
         if (request.method === 'GET' && routePath === '/api/admin/moderation-actions') {
           ok(response, await service.listModerationActions(url.searchParams.get('limit') ?? 50, filters));

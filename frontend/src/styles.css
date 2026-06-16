@@ -3359,6 +3359,74 @@ body.theme-yotsuba.board-page .topbar {
   color: #b8860b;
 }
 
+.admin-board-manager {
+  display: grid;
+  gap: 10px;
+}
+
+.admin-board-create {
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  padding: 8px;
+}
+
+.admin-board-create h2 {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.admin-board-create-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 6px;
+  align-items: end;
+}
+
+.admin-board-create-grid label {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+}
+
+.admin-board-table-wrap {
+  overflow-x: auto;
+}
+
+.admin-board-table {
+  width: 100%;
+  min-width: 840px;
+  border-collapse: collapse;
+  background: var(--reply);
+  font-size: 12px;
+}
+
+.admin-board-table th,
+.admin-board-table td {
+  border: 1px solid var(--reply-border);
+  padding: 5px;
+  vertical-align: top;
+}
+
+.admin-board-table th {
+  background: var(--bar);
+  color: var(--header);
+}
+
+.admin-board-table input:not([type='checkbox']) {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.admin-board-flags {
+  white-space: nowrap;
+}
+
+.admin-board-flags label,
+.admin-board-actions {
+  display: grid;
+  gap: 4px;
+}
+
 /* Analytics dashboard styles */
 .analytics-dashboard {
   padding: 10px;
