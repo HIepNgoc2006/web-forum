@@ -1,0 +1,808 @@
+openapi: 3.0.3
+info:
+  title: 36chan API
+  version: "1.0.0"
+  description: Public, account, admin, feed, upload, and realtime-adjacent HTTP APIs for 36chan web/mobile/desktop clients.
+servers:
+  - url: http://localhost:3000/api
+    description: Local dev API
+tags:
+  - name: Public
+    description: Public browsing, posting, discovery, feeds, and uploads.
+  - name: Account
+    description: Optional account session, settings, private data, and My Posts APIs.
+  - name: Admin
+    description: Moderation, reports, sanctions, boards, and operational admin APIs.
+  - name: AI
+    description: AI rewrite, summaries, and suggestion helpers with privacy guards.
+paths:
+  /config:
+    get:
+      tags: [Public]
+      summary: Get public client configuration
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /health:
+    get:
+      tags: [Public]
+      summary: Get health and readiness without secrets
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /stats:
+    get:
+      tags: [Public]
+      summary: Get public homepage statistics
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /boards:
+    get:
+      tags: [Public]
+      summary: List active public boards
+      responses:
+        "200":
+          description: Public board list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/Board"
+  /boards/hot:
+    get:
+      tags: [Public]
+      summary: List boards with recent activity
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /pulse:
+    get:
+      tags: [Public]
+      summary: List privacy-preserving campus pulse keywords
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /posts/latest:
+    get:
+      tags: [Public]
+      summary: List latest public posts
+      parameters:
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/PostList"
+  /boards/{boardSlug}/threads:
+    get:
+      tags: [Public]
+      summary: List threads in a board
+      parameters:
+        - $ref: "#/components/parameters/BoardSlug"
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+        - name: q
+          in: query
+          schema:
+            type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/PostList"
+        "404":
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Public]
+      summary: Create a thread
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/BoardSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateThreadRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/AnyData"
+        "400":
+          $ref: "#/components/responses/Error"
+  /boards/{boardSlug}/archive:
+    get:
+      tags: [Public]
+      summary: List archived threads in a board
+      parameters:
+        - $ref: "#/components/parameters/BoardSlug"
+      responses:
+        "200":
+          $ref: "#/components/responses/PostList"
+  /boards/{boardSlug}/summary:
+    post:
+      tags: [AI]
+      summary: Summarize public board content
+      parameters:
+        - $ref: "#/components/parameters/BoardSlug"
+      requestBody:
+        $ref: "#/components/requestBodies/PosterTokenBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /threads/{threadId}:
+    get:
+      tags: [Public]
+      summary: Get thread details and comments
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+        - name: commentsPage
+          in: query
+          schema:
+            type: integer
+        - name: commentsPageSize
+          in: query
+          schema:
+            type: integer
+        - name: focusGlobalNumber
+          in: query
+          schema:
+            type: integer
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /threads/{threadId}/comments:
+    post:
+      tags: [Public]
+      summary: Create a comment
+      security:
+        - bearerAuth: []
+        - {}
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/AnyData"
+  /threads/{threadId}/summary:
+    post:
+      tags: [AI]
+      summary: Summarize a thread
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        $ref: "#/components/requestBodies/PosterTokenBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /threads/{threadId}/suggestions:
+    post:
+      tags: [AI]
+      summary: Suggest draft replies for a thread
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        $ref: "#/components/requestBodies/PosterTokenBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /threads/{threadId}/poll:
+    post:
+      tags: [Public]
+      summary: Vote in an anonymous thread poll
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [optionId]
+              properties:
+                optionId:
+                  type: string
+                posterToken:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /posts/{globalNumber}:
+    get:
+      tags: [Public]
+      summary: Look up a public post by global number
+      parameters:
+        - $ref: "#/components/parameters/GlobalNumber"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+    post:
+      tags: [Public]
+      summary: Report a post
+      parameters:
+        - $ref: "#/components/parameters/GlobalNumber"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [reason]
+              properties:
+                reason:
+                  type: string
+                posterToken:
+                  type: string
+      responses:
+        "201":
+          $ref: "#/components/responses/AnyData"
+    delete:
+      tags: [Public]
+      summary: Self-delete a post with delete password
+      parameters:
+        - $ref: "#/components/parameters/GlobalNumber"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+                fileOnly:
+                  type: boolean
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /ai/rewrite:
+    post:
+      tags: [AI]
+      summary: Rewrite a draft safely without posting it
+      security:
+        - bearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [body]
+              properties:
+                body:
+                  type: string
+                posterToken:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /account/register:
+    post:
+      tags: [Account]
+      summary: Register an optional account
+      requestBody:
+        $ref: "#/components/requestBodies/Credentials"
+      responses:
+        "201":
+          $ref: "#/components/responses/AuthData"
+  /account/login:
+    post:
+      tags: [Account]
+      summary: Log in to an optional account
+      requestBody:
+        $ref: "#/components/requestBodies/Credentials"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthData"
+  /account/logout:
+    post:
+      tags: [Account]
+      summary: Revoke current account token
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /account/me:
+    get:
+      tags: [Account]
+      summary: Get current account info
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /account/settings:
+    put:
+      tags: [Account]
+      summary: Update account settings
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /account/private-data:
+    get:
+      tags: [Account]
+      summary: Get private account sync data
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+    put:
+      tags: [Account]
+      summary: Replace private account sync data
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+    delete:
+      tags: [Account]
+      summary: Clear private account sync data
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: section
+          in: query
+          schema:
+            type: string
+            enum: [watchlist, drafts, savedSearches]
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /account/posts:
+    get:
+      tags: [Account]
+      summary: List posts linked to current account without exposing identity publicly
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/PostList"
+  /admin/login:
+    post:
+      tags: [Admin]
+      summary: Admin login
+      requestBody:
+        $ref: "#/components/requestBodies/Credentials"
+      responses:
+        "200":
+          $ref: "#/components/responses/AuthData"
+  /admin/boards:
+    get:
+      tags: [Admin]
+      summary: List all boards including hidden and archived boards
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+    post:
+      tags: [Admin]
+      summary: Create a dynamic board
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BoardWriteRequest"
+      responses:
+        "201":
+          $ref: "#/components/responses/AnyData"
+  /admin/boards/{boardSlug}:
+    put:
+      tags: [Admin]
+      summary: Update a dynamic board
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BoardSlug"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BoardWriteRequest"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /admin/pending:
+    get:
+      tags: [Admin]
+      summary: List pending posts
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BoardSlugQuery"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/PostList"
+  /admin/reports:
+    get:
+      tags: [Admin]
+      summary: List user reports
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BoardSlugQuery"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /admin/moderation-actions:
+    get:
+      tags: [Admin]
+      summary: List moderation audit log entries
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/BoardSlugQuery"
+        - $ref: "#/components/parameters/Limit"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /admin/sanctions:
+    get:
+      tags: [Admin]
+      summary: List active and historical sanctions
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /admin/pending/{id}/approve:
+    post:
+      tags: [Admin]
+      summary: Approve a pending thread or comment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        $ref: "#/components/requestBodies/ReasonBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /admin/pending/{id}/delete:
+    post:
+      tags: [Admin]
+      summary: Delete a pending thread or comment
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        $ref: "#/components/requestBodies/ReasonBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /admin/threads/{threadId}/archive:
+    post:
+      tags: [Admin]
+      summary: Manually archive a public thread
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        $ref: "#/components/requestBodies/ReasonBody"
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /admin/threads/{threadId}/sticky:
+    post:
+      tags: [Admin]
+      summary: Sticky or unsticky a public thread
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: "#/components/parameters/ThreadId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                sticky:
+                  type: boolean
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    BoardSlug:
+      name: boardSlug
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: "^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    BoardSlugQuery:
+      name: boardSlug
+      in: query
+      schema:
+        type: string
+    ThreadId:
+      name: threadId
+      in: path
+      required: true
+      schema:
+        type: string
+    GlobalNumber:
+      name: globalNumber
+      in: path
+      required: true
+      schema:
+        type: integer
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    Page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+    PageSize:
+      name: pageSize
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+    Limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+  requestBodies:
+    Credentials:
+      required: true
+      content:
+        application/json:
+          schema:
+            type: object
+            required: [username, password]
+            properties:
+              username:
+                type: string
+              password:
+                type: string
+                format: password
+    PosterTokenBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              posterToken:
+                type: string
+    ReasonBody:
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              reason:
+                type: string
+  responses:
+    AnyData:
+      description: Standard JSON envelope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+    AuthData:
+      description: Account/admin token response
+      content:
+        application/json:
+          schema:
+            allOf:
+              - $ref: "#/components/schemas/Envelope"
+              - type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      token:
+                        type: string
+    PostList:
+      description: Post list or paginated post list
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Envelope"
+    Error:
+      description: Standard error envelope
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+  schemas:
+    Envelope:
+      type: object
+      properties:
+        data:
+          description: Endpoint-specific response data.
+        error:
+          nullable: true
+          $ref: "#/components/schemas/ErrorObject"
+    ErrorEnvelope:
+      type: object
+      required: [error]
+      properties:
+        error:
+          $ref: "#/components/schemas/ErrorObject"
+    ErrorObject:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+        code:
+          type: string
+    PageMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+        pageSize:
+          type: integer
+        total:
+          type: integer
+        totalPages:
+          type: integer
+    Board:
+      type: object
+      required: [slug, path, name, category, description]
+      properties:
+        slug:
+          type: string
+        path:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        temporary:
+          type: boolean
+        eventEndsAt:
+          type: string
+          nullable: true
+    BoardWriteRequest:
+      type: object
+      properties:
+        slug:
+          type: string
+        name:
+          type: string
+        category:
+          type: string
+        description:
+          type: string
+        isHidden:
+          type: boolean
+        isArchived:
+          type: boolean
+    PublicPost:
+      type: object
+      properties:
+        id:
+          type: string
+        boardSlug:
+          type: string
+        globalNumber:
+          type: integer
+        displayName:
+          type: string
+        body:
+          type: string
+        bodyLines:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+        createdAt:
+          type: string
+        image:
+          $ref: "#/components/schemas/Image"
+    Image:
+      type: object
+      properties:
+        url:
+          type: string
+        mimeType:
+          type: string
+        filename:
+          type: string
+        sizeBytes:
+          type: integer
+        width:
+          type: integer
+        height:
+          type: integer
+    CreateThreadRequest:
+      type: object
+      required: [body, captchaToken]
+      properties:
+        body:
+          type: string
+        captchaToken:
+          type: string
+        posterToken:
+          type: string
+        displayName:
+          type: string
+        options:
+          type: string
+        deletePassword:
+          type: string
+        pollOptions:
+          type: array
+          items:
+            type: string
+        image:
+          $ref: "#/components/schemas/Image"
+    CreateCommentRequest:
+      type: object
+      required: [body, captchaToken]
+      properties:
+        body:
+          type: string
+        captchaToken:
+          type: string
+        posterToken:
+          type: string
+        displayName:
+          type: string
+        options:
+          type: string
+        deletePassword:
+          type: string
