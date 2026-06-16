@@ -516,6 +516,31 @@ export function createHttpServer({
         return;
       }
 
+      if (request.method === 'POST' && routePath === '/api/auth/webauthn/login-options') {
+        const body = await readJson(request, 20_000);
+        const hostHeader = request.headers.host || 'localhost';
+        const rpID = hostHeader.split(':')[0];
+        ok(response, await service.generateWebAuthnLoginOptions(body.username, rpID));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/auth/webauthn/login-verify') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        const hostHeader = request.headers.host || 'localhost';
+        const rpID = hostHeader.split(':')[0];
+        const origin = request.headers.origin || request.headers.referer || 'http://localhost:3000';
+        const cleanOrigin = new URL(origin).origin;
+        const { account } = await service.verifyWebAuthnLoginResponse({
+          username: body.username,
+          body: body.assertionResponse,
+          origin: cleanOrigin,
+          rpID
+        });
+        ok(response, { account, token: accountToken(account, jwtSecret) });
+        return;
+      }
+
       if (routePath.startsWith('/api/account')) {
         const accountSession = requireAccount(request, jwtSecret, service);
 
@@ -527,6 +552,34 @@ export function createHttpServer({
 
         if (request.method === 'GET' && routePath === '/api/account/me') {
           ok(response, await service.getAccount(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/account/passkeys') {
+          ok(response, await service.listPasskeys(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/passkeys/register-options') {
+          const hostHeader = request.headers.host || 'localhost';
+          const rpID = hostHeader.split(':')[0];
+          ok(response, await service.generateWebAuthnRegisterOptions(accountSession.sub, rpID));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/passkeys/register-verify') {
+          const body = await readJson(request, 20_000);
+          const hostHeader = request.headers.host || 'localhost';
+          const rpID = hostHeader.split(':')[0];
+          const origin = request.headers.origin || request.headers.referer || 'http://localhost:3000';
+          const cleanOrigin = new URL(origin).origin;
+          ok(response, await service.verifyWebAuthnRegisterResponse(accountSession.sub, { body, origin: cleanOrigin, rpID }));
+          return;
+        }
+
+        const accountParams = match(parts, ['api', 'account', 'passkeys', ':id']);
+        if (accountParams && request.method === 'DELETE') {
+          ok(response, await service.deletePasskey(accountSession.sub, accountParams.id));
           return;
         }
 

@@ -11,6 +11,7 @@ import { redactSensitiveText } from './ai.js';
 import { createInlineImageStorage } from './image-storage.js';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, verifyHcaptcha } from './security.js';
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.js';
+import * as defaultWebAuthn from './webauthn-service.js';
 
 const noopLogger = () => {};
 const PULSE_STOP_WORDS = new Set([
@@ -1142,7 +1143,8 @@ export function createForumService({
   now = () => new Date(),
   lifecycle = THREAD_LIFECYCLE,
   logger = noopLogger,
-  imageStorage = createInlineImageStorage()
+  imageStorage = createInlineImageStorage(),
+  webauthn = defaultWebAuthn
 }) {
   // In-memory token blacklist for session revocation (logout).
   // Each entry maps jti/token → revokedAt timestamp string.
@@ -1413,6 +1415,157 @@ export function createForumService({
     async logoutAccount(token) {
       this.revokeSession(token);
       return { ok: true };
+    },
+
+    async generateWebAuthnRegisterOptions(userId, rpID) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        const options = await webauthn.getWebAuthnRegisterOptions({ user, rpID });
+        user.webauthnRegistrationChallenge = options.challenge;
+        user.updatedAt = now().toISOString();
+        return options;
+      });
+    },
+
+    async verifyWebAuthnRegisterResponse(userId, { body, origin, rpID }) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!user.webauthnRegistrationChallenge) {
+          const error = new Error('Không tìm thấy yêu cầu đăng ký tương ứng');
+          error.statusCode = 400;
+          throw error;
+        }
+        const verification = await webauthn.verifyWebAuthnRegisterResponse({
+          body,
+          expectedChallenge: user.webauthnRegistrationChallenge,
+          origin,
+          rpID
+        });
+        if (!verification.verified) {
+          const error = new Error('Xác thực thiết bị WebAuthn thất bại');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const { registrationInfo } = verification;
+        const { credential, credentialDeviceType, credentialBackedUp } = registrationInfo;
+        if (!credential?.id || !credential?.publicKey) {
+          const error = new Error('Thiết bị WebAuthn không trả về credential hợp lệ');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        user.webauthnRegistrationChallenge = null;
+        user.passkeys = user.passkeys || [];
+        user.passkeys.push({
+          credentialID: credential.id,
+          publicKey: Buffer.from(credential.publicKey).toString('base64url'),
+          counter: credential.counter ?? 0,
+          credentialDeviceType,
+          credentialBackedUp,
+          transports: credential.transports || body.response?.transports || [],
+          createdAt: now().toISOString()
+        });
+        user.updatedAt = now().toISOString();
+        logEvent('account.passkey.register', { username: user.username });
+        return { ok: true };
+      });
+    },
+
+    async generateWebAuthnLoginOptions(username, rpID) {
+      const safeUsername = normalizeAccountUsername(username);
+      return mutate(async (state) => {
+        const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+        if (!user) {
+          const error = new Error('Tên tài khoản hoặc thiết bị đăng nhập không đúng');
+          error.statusCode = 401;
+          throw error;
+        }
+        const options = await webauthn.getWebAuthnLoginOptions({ user, rpID });
+        user.webauthnLoginChallenge = options.challenge;
+        user.updatedAt = now().toISOString();
+        return options;
+      });
+    },
+
+    async verifyWebAuthnLoginResponse({ username, body, origin, rpID }) {
+      const safeUsername = normalizeAccountUsername(username);
+      return mutate(async (state) => {
+        const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+        if (!user) {
+          const error = new Error('Tên tài khoản hoặc mật khẩu không đúng');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!user.webauthnLoginChallenge) {
+          const error = new Error('Yêu cầu đăng nhập không còn hiệu lực. Vui lòng thử lại');
+          error.statusCode = 400;
+          throw error;
+        }
+        const passkey = (user.passkeys || []).find((p) => p.credentialID === body.id);
+        if (!passkey) {
+          const error = new Error('Thiết bị xác thực không hợp lệ cho tài khoản này');
+          error.statusCode = 401;
+          throw error;
+        }
+        const verification = await webauthn.verifyWebAuthnLoginResponse({
+          body,
+          expectedChallenge: user.webauthnLoginChallenge,
+          origin,
+          rpID,
+          passkey
+        });
+        if (!verification.verified) {
+          const error = new Error('Xác thực chữ ký thiết bị thất bại');
+          error.statusCode = 401;
+          throw error;
+        }
+
+        user.webauthnLoginChallenge = null;
+        passkey.counter = verification.authenticationInfo.newCounter;
+        user.updatedAt = now().toISOString();
+        logEvent('account.passkey.login', { username: user.username });
+        return { account: serializeAccount(state, user) };
+      });
+    },
+
+    async listPasskeys(userId) {
+      const user = (await store.read()).users.find((item) => item.id === userId);
+      if (!user) {
+        const error = new Error('Phiên đăng nhập không còn hợp lệ');
+        error.statusCode = 401;
+        throw error;
+      }
+      return (user.passkeys || []).map((p) => ({
+        id: p.credentialID,
+        credentialDeviceType: p.credentialDeviceType,
+        createdAt: p.createdAt
+      }));
+    },
+
+    async deletePasskey(userId, credentialId) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        user.passkeys = (user.passkeys || []).filter((p) => p.credentialID !== credentialId);
+        user.updatedAt = now().toISOString();
+        logEvent('account.passkey.delete', { username: user.username });
+        return { ok: true };
+      });
     },
 
     async listLatestPosts(limit = 10) {

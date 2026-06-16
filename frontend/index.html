@@ -524,6 +524,7 @@
           </label>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Đăng nhập</button>
+            <button id="loginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>
             [<a href="#register">Tạo tài khoản</a>]
           </div>
         </form>
@@ -576,6 +577,13 @@
           </div>
           <p class="account-note">Settings này không đổi tên hiển thị khi đăng bài và không được đưa vào post public.</p>
         </form>
+        <section id="accountPasskeysPanel" class="login-panel stack hidden" aria-labelledby="accountPasskeysTitle">
+          <h2 id="accountPasskeysTitle">Thiết bị xác thực (Passkey)</h2>
+          <div id="accountPasskeysList" class="account-private-grid"></div>
+          <div class="form-actions account-actions">
+            <button id="addPasskeyButton" class="primary-button" type="button">Thêm Passkey mới</button>
+          </div>
+        </section>
         <section id="accountPrivateDataPanel" class="login-panel stack hidden" aria-labelledby="accountPrivateDataTitle">
           <h2 id="accountPrivateDataTitle">Dữ liệu đồng bộ</h2>
           <div id="accountPrivateDataSummary" class="account-private-grid"></div>

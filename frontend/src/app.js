@@ -1,3 +1,5 @@
+import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
+
 const state = {
   boards: [],
   boardGroups: [],
@@ -498,6 +500,10 @@ const els = {
   accountSettingsLogout: document.querySelector('#accountSettingsLogout'),
   accountPrivateDataPanel: document.querySelector('#accountPrivateDataPanel'),
   accountPrivateDataSummary: document.querySelector('#accountPrivateDataSummary'),
+  accountPasskeysPanel: document.querySelector('#accountPasskeysPanel'),
+  accountPasskeysList: document.querySelector('#accountPasskeysList'),
+  addPasskeyButton: document.querySelector('#addPasskeyButton'),
+  loginPasskeyButton: document.querySelector('#loginPasskeyButton'),
   accountLoggedOut: document.querySelector('#accountLoggedOut'),
   accountDisplayOptions: document.querySelectorAll('[data-account-display-option]'),
   useAccountNameInputs: document.querySelectorAll('[data-use-account-name]'),
@@ -805,6 +811,97 @@ function fillAccountSettings(account = state.account) {
   els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
   syncAccountBoardSubscriptionOptions(settings);
   renderAccountPrivateData();
+  renderPasskeys();
+}
+
+async function renderPasskeys() {
+  if (!els.accountPasskeysPanel || !els.accountPasskeysList) {
+    return;
+  }
+  const loggedIn = Boolean(state.accountToken && state.account);
+  els.accountPasskeysPanel.classList.toggle('hidden', !loggedIn);
+  if (!loggedIn) {
+    els.accountPasskeysList.innerHTML = '';
+    return;
+  }
+  try {
+    const passkeys = await api('/api/account/passkeys', { auth: 'account' });
+    if (!passkeys.length) {
+      els.accountPasskeysList.innerHTML = '<p class="latest-empty">Chưa đăng ký thiết bị xác thực nào.</p>';
+      return;
+    }
+    els.accountPasskeysList.innerHTML = passkeys
+      .map((passkey) => {
+        const deviceType = passkey.credentialDeviceType === 'singleDevice' ? 'Thiết bị đơn (Vân tay/Khuôn mặt)' : 'Đa thiết bị (iCloud/Google Keychain)';
+        const date = new Date(passkey.createdAt).toLocaleString('vi-VN');
+        return `
+          <div class="watch-item">
+            <div class="watch-thread-link">
+              <span class="watch-board">Passkey</span>
+              <span class="watch-preview" style="display:inline-block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(passkey.id)}">ID: ${escapeHtml(passkey.id)}</span>
+              <span class="watch-stats">${escapeHtml(deviceType)} · Tạo lúc: ${escapeHtml(date)}</span>
+            </div>
+            <button class="link-button watch-remove" data-delete-passkey="${escapeHtml(passkey.id)}" type="button">[Xóa]</button>
+          </div>
+        `;
+      })
+      .join('');
+  } catch (error) {
+    els.accountPasskeysList.innerHTML = `<p class="form-error">Lỗi khi tải Passkeys: ${escapeHtml(error.message)}</p>`;
+  }
+}
+
+async function addPasskey() {
+  try {
+    const options = await api('/api/account/passkeys/register-options', {
+      auth: 'account',
+      method: 'POST'
+    });
+
+    const attestationResponse = await startRegistration(options);
+
+    await api('/api/account/passkeys/register-verify', {
+      auth: 'account',
+      method: 'POST',
+      body: JSON.stringify(attestationResponse)
+    });
+
+    showToast('Đăng ký thiết bị xác thực (Passkey) thành công!');
+    await renderPasskeys();
+  } catch (error) {
+    showToast(`Lỗi đăng ký Passkey: ${error.message}`);
+  }
+}
+
+async function loginWithPasskey() {
+  const username = (els.accountUsername.value || '').trim();
+  if (!username) {
+    setFormError(els.accountLoginError, 'Vui lòng nhập tên tài khoản trước.');
+    return;
+  }
+  setFormError(els.accountLoginError);
+  const restoreButton = setButtonLoading(els.loginPasskeyButton, 'Đang xác thực...');
+  try {
+    const options = await api('/api/auth/webauthn/login-options', {
+      method: 'POST',
+      body: JSON.stringify({ username })
+    });
+
+    const assertionResponse = await startAuthentication(options);
+
+    const result = await api('/api/auth/webauthn/login-verify', {
+      method: 'POST',
+      body: JSON.stringify({ username, assertionResponse })
+    });
+
+    setAccountSession({ token: result.token, account: result.account });
+    showToast(`Chào mừng trở lại, @${result.account.username}!`);
+    window.location.hash = '#home';
+  } catch (error) {
+    setFormError(els.accountLoginError, `Đăng nhập Passkey thất bại: ${error.message}`);
+  } finally {
+    restoreButton();
+  }
 }
 
 function renderSavedSearches() {
@@ -3747,6 +3844,37 @@ function bindEvents() {
       const section = clearAccountPrivateButton.dataset.clearAccountPrivate;
       await clearAccountPrivateData(section).catch((error) => showToast(error.message));
       showToast(section ? 'Đã xóa mục dữ liệu riêng.' : 'Đã xóa toàn bộ dữ liệu riêng.');
+      return;
+    }
+
+    const addPasskeyBtn = event.target.closest('#addPasskeyButton');
+    if (addPasskeyBtn) {
+      await addPasskey();
+      return;
+    }
+
+    const loginPasskeyBtn = event.target.closest('#loginPasskeyButton');
+    if (loginPasskeyBtn) {
+      await loginWithPasskey();
+      return;
+    }
+
+    const deletePasskeyBtn = event.target.closest('[data-delete-passkey]');
+    if (deletePasskeyBtn) {
+      const credentialId = deletePasskeyBtn.dataset.deletePasskey;
+      const ok = window.confirm('Bạn chắc chắn muốn xóa thiết bị xác thực này?');
+      if (ok) {
+        try {
+          await api(`/api/account/passkeys/${encodeURIComponent(credentialId)}`, {
+            auth: 'account',
+            method: 'DELETE'
+          });
+          showToast('Đã xóa Passkey.');
+          await renderPasskeys();
+        } catch (error) {
+          showToast(`Lỗi khi xóa Passkey: ${error.message}`);
+        }
+      }
       return;
     }
 
