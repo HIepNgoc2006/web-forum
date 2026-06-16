@@ -70,7 +70,7 @@ STORE_DRIVER=mongo
 MONGODB_URI=mongodb://127.0.0.1:27017/36chan
 ```
 
-For production readiness, `GET /api/health` reports `store.type`, `store.configured`, `store.ready`, safe counts, and model readiness without returning `MONGODB_URI`, admin credentials, API keys, or other secret values.
+For production readiness and Docker/deployment health checks, `GET /api/health` reports app status, store readiness, image storage readiness, AI provider configured state, hCaptcha configured state, safe counts, and model readiness without returning `MONGODB_URI`, admin credentials, API keys, hCaptcha secrets, storage endpoints, or other secret/raw environment values.
 
 ### MongoDB Database Structure
 
@@ -98,7 +98,7 @@ STORE_DRIVER=mongo
 MONGODB_URI=mongodb://127.0.0.1:27017/36chan
 ```
 
-Never commit a production `MONGODB_URI`, admin credential, JWT secret, AI key, S3 key, or hCaptcha secret. `/api/health` exposes only safe readiness fields and counts.
+Never commit a production `MONGODB_URI`, admin credential, JWT secret, AI key, S3 key, or hCaptcha secret. `/api/health` exposes only safe readiness fields and counts for deployment monitors.
 
 ## Docker
 

@@ -198,9 +198,7 @@ export function publicBoardConfig(board) {
   };
 }
 
-export function publicConfig() {
-  const boards = BOARDS.map((board) => publicBoardConfig(board));
-  const boardBySlug = new Map(boards.map((board) => [board.slug, board]));
+export function aiConfigStatus() {
   const explicitAiProvider = process.env.AI_PROVIDER;
   const hasGoogleAi = Boolean(process.env.GOOGLE_AI_API_KEY);
   const hasOpenAiCompatible = Boolean(
@@ -215,6 +213,20 @@ export function publicConfig() {
         : 'openai-compatible';
 
   return {
+    provider: aiProvider,
+    configured: aiProvider === 'openai-compatible' ? hasOpenAiCompatible : hasGoogleAi,
+    model:
+      aiProvider === 'openai-compatible'
+        ? process.env.OPENAI_COMPATIBLE_MODEL ?? 'gpt-4-turbo'
+        : process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash'
+  };
+}
+
+export function publicConfig() {
+  const boards = BOARDS.map((board) => publicBoardConfig(board));
+  const boardBySlug = new Map(boards.map((board) => [board.slug, board]));
+
+  return {
     boards,
     boardGroups: BOARD_GROUPS.map((group) => ({
       name: group.name,
@@ -223,13 +235,6 @@ export function publicConfig() {
     lifecycle: THREAD_LIFECYCLE,
     hcaptchaSiteKey: process.env.HCAPTCHA_SITE_KEY ?? '',
     maxImageBytes: readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES),
-    ai: {
-      provider: aiProvider,
-      configured: aiProvider === 'openai-compatible' ? hasOpenAiCompatible : hasGoogleAi,
-      model:
-        aiProvider === 'openai-compatible'
-          ? process.env.OPENAI_COMPATIBLE_MODEL ?? 'gpt-4-turbo'
-          : process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash'
-    }
+    ai: aiConfigStatus()
   };
 }

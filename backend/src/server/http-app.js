@@ -475,13 +475,18 @@ export function createHttpServer({
       }
 
       if (request.method === 'GET' && routePath === '/api/health') {
+        const security = securityConfigStatus({
+          jwtSecret,
+          adminUsername,
+          adminPassword
+        });
         ok(response, {
           ...(await service.getHealth()),
-          security: securityConfigStatus({
-            jwtSecret,
-            adminUsername,
-            adminPassword
-          })
+          captcha: {
+            provider: 'hcaptcha',
+            configured: security.hcaptchaConfigured
+          },
+          security
         });
         return;
       }

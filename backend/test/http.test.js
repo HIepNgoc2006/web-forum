@@ -620,6 +620,63 @@ test('http account registration requires JWT configuration before mutating users
   );
 });
 
+test('http health exposes deployment readiness without secrets', async () => {
+  const envKeys = [
+    'AI_PROVIDER',
+    'GOOGLE_AI_API_KEY',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_COMPATIBLE_MODEL',
+    'HCAPTCHA_SECRET'
+  ];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  process.env.AI_PROVIDER = 'openai-compatible';
+  delete process.env.GOOGLE_AI_API_KEY;
+  process.env.OPENAI_COMPATIBLE_API_KEY = 'openai-secret-key';
+  process.env.OPENAI_COMPATIBLE_BASE_URL = 'https://ai-secret.example.test/v1';
+  process.env.OPENAI_COMPATIBLE_MODEL = 'gpt-health-test';
+  process.env.HCAPTCHA_SECRET = 'hcaptcha-secret-value';
+
+  try {
+    await withServer(async (baseUrl) => {
+      const health = await fetch(`${baseUrl}/api/health`);
+      const body = await health.json();
+      const payload = body.data;
+      const serialized = JSON.stringify(payload);
+
+      assert.equal(health.status, 200);
+      assert.equal(payload.status, 'ok');
+      assert.equal(payload.store.type, 'json');
+      assert.equal(payload.store.configured, true);
+      assert.equal(payload.store.ready, true);
+      assert.equal(payload.ai.provider, 'openai-compatible');
+      assert.equal(payload.ai.configured, true);
+      assert.equal(payload.ai.model, 'gpt-health-test');
+      assert.equal(payload.imageStorage.type, 'inline-json');
+      assert.equal(payload.imageStorage.configured, true);
+      assert.equal(payload.captcha.provider, 'hcaptcha');
+      assert.equal(payload.captcha.configured, true);
+      assert.equal(payload.security.hcaptchaConfigured, true);
+      assert.equal(serialized.includes('openai-secret-key'), false);
+      assert.equal(serialized.includes('hcaptcha-secret-value'), false);
+      assert.equal(serialized.includes('ai-secret.example.test'), false);
+      assert.equal(serialized.includes('OPENAI_COMPATIBLE_BASE_URL'), false);
+      assert.equal(serialized.includes('HCAPTCHA_SECRET'), false);
+      assert.equal(serialized.includes('Authorization'), false);
+      assert.equal(serialized.includes('Bearer'), false);
+    });
+  } finally {
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
 test('http api supports v1 alias, paged search, backlinks and self delete password', async () => {
   await withServer(async (baseUrl) => {
     const first = await fetch(`${baseUrl}/api/v1/boards/hoc-tap/threads`, {

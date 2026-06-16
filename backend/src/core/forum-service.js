@@ -5,6 +5,7 @@ import {
   DEFAULT_MAX_IMAGE_BYTES,
   DEFAULT_MAX_THUMBNAIL_BYTES,
   THREAD_LIFECYCLE,
+  aiConfigStatus,
   readPositiveInteger
 } from './config.js';
 import { redactSensitiveText } from './ai.js';
@@ -1124,9 +1125,9 @@ async function readImageStorageHealth(imageStorage) {
     const health = await imageStorage.health();
     return {
       type,
-      ...health,
       configured: health.configured ?? true,
-      ready: health.ready ?? health.configured !== false
+      ready: health.ready ?? health.configured !== false,
+      ...(health.error ? { error: health.error } : {})
     };
   } catch {
     return {
@@ -1273,11 +1274,7 @@ export function createForumService({
         status: ready ? 'ok' : 'degraded',
         checkedAt: now().toISOString(),
         store: storeHealth,
-        ai: {
-          provider: 'google-ai-studio',
-          configured: Boolean(process.env.GOOGLE_AI_API_KEY),
-          model: process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash'
-        },
+        ai: aiConfigStatus(),
         imageStorage: imageStorageHealth,
         realtime: {
           clients: realtime.count?.() ?? 0,
