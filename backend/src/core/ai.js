@@ -1,4 +1,4 @@
-const DEFAULT_MODEL = process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash';
+const GOOGLE_AI_MODEL = process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash';
 
 const MODERATION_SYSTEM_PROMPT = `
 Bạn là bộ lọc kiểm duyệt trước khi đăng của 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
@@ -79,39 +79,6 @@ export function redactSensitiveText(text = '') {
     .replace(/\b(?:mssv|ma sinh vien|mã sinh viên|student id)\s*[:#-]?\s*[A-Z0-9]{5,}\b/gi, '[ma sinh vien da an]');
 }
 
-function requireGoogleAiKey() {
-  const apiKey = process.env.GOOGLE_AI_API_KEY;
-  if (!apiKey) {
-    const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
-    error.statusCode = 503;
-    throw error;
-  }
-  return apiKey;
-}
-
-async function generateWithGoogle(prompt, systemPrompt) {
-  const apiKey = requireGoogleAiKey();
-
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${DEFAULT_MODEL}:generateContent?key=${apiKey}`;
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({
-      systemInstruction: {
-        parts: [{ text: systemPrompt }]
-      },
-      contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.3 }
-    })
-  });
-  if (!response.ok) {
-    throw new Error(`Yêu cầu Google AI thất bại: ${response.status}`);
-  }
-
-  const data = await response.json();
-  return data.candidates?.[0]?.content?.parts?.map((part) => part.text).join('\n') ?? '';
-}
-
 function extractJson(text) {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) {
@@ -128,15 +95,44 @@ function bulletize(text, limit = 5) {
     .slice(0, limit);
 }
 
-export function createAiClient() {
+// Google AI Provider
+function createGoogleProvider() {
+  function requireGoogleAiKey() {
+    const apiKey = process.env.GOOGLE_AI_API_KEY;
+    if (!apiKey) {
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      error.statusCode = 503;
+      throw error;
+    }
+    return apiKey;
+  }
+
+  async function generate(prompt, systemPrompt) {
+    const apiKey = requireGoogleAiKey();
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_AI_MODEL}:generateContent?key=${apiKey}`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        systemInstruction: {
+          parts: [{ text: systemPrompt }]
+        },
+        contents: [{ role: 'user', parts: [{ text: prompt }] }],
+        generationConfig: { temperature: 0.3 }
+      })
+    });
+    if (!response.ok) {
+      throw new Error(`Yêu cầu Google AI thất bại: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.candidates?.[0]?.content?.parts?.map((part) => part.text).join('\n') ?? '';
+  }
+
   return {
     async moderate(text) {
-      if (!process.env.GOOGLE_AI_API_KEY) {
-        return heuristicModeration(text);
-      }
-
       try {
-        const result = await generateWithGoogle(`
+        const result = await generate(`
 Nội dung:
 ${redactSensitiveText(text)}
 `, MODERATION_SYSTEM_PROMPT);
@@ -152,7 +148,7 @@ ${redactSensitiveText(text)}
 
     async summarize(items) {
       const text = items.map((item, index) => `${index + 1}. ${redactSensitiveText(item.body)}`).join('\n');
-      const result = await generateWithGoogle(`
+      const result = await generate(`
 Nội dung:
 ${text}
 `, SUMMARY_SYSTEM_PROMPT);
@@ -161,7 +157,7 @@ ${text}
 
     async suggest(contextItems) {
       const text = contextItems.map((item) => redactSensitiveText(item.body)).join('\n');
-      const result = await generateWithGoogle(`
+      const result = await generate(`
 Ngữ cảnh:
 ${text}
 `, SUGGEST_SYSTEM_PROMPT);
@@ -170,11 +166,149 @@ ${text}
 
     async rewrite(text) {
       return (
-        await generateWithGoogle(`
+        await generate(`
 Bản nháp:
 ${redactSensitiveText(text)}
 `, REWRITE_SYSTEM_PROMPT)
       ).trim();
+    }
+  };
+}
+
+// OpenAI-compatible Provider
+function createOpenAiCompatibleProvider() {
+  const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY || process.env.OPENAI_API_KEY;
+  const baseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL || process.env.OPENAI_BASE_URL;
+  const model = process.env.OPENAI_COMPATIBLE_MODEL || process.env.OPENAI_MODEL || 'gpt-4-turbo';
+
+  if (!apiKey || !baseUrl) {
+    const error = new Error('Chưa cấu hình OpenAI-compatible provider. Thêm OPENAI_COMPATIBLE_API_KEY và OPENAI_COMPATIBLE_BASE_URL vào backend/.env để dùng tính năng AI này.');
+    error.statusCode = 503;
+    return {
+      async moderate() {
+        throw error;
+      },
+      async summarize() {
+        throw error;
+      },
+      async suggest() {
+        throw error;
+      },
+      async rewrite() {
+        throw error;
+      }
+    };
+  }
+
+  async function generate(prompt, systemPrompt) {
+    const endpoint = `${baseUrl}/chat/completions`;
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${apiKey}`
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: prompt }
+        ],
+        temperature: 0.3
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Yêu cầu AI thất bại: ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data.choices?.[0]?.message?.content ?? '';
+  }
+
+  return {
+    async moderate(text) {
+      try {
+        const result = await generate(`
+Nội dung:
+${redactSensitiveText(text)}
+`, MODERATION_SYSTEM_PROMPT);
+        const parsed = extractJson(result);
+        const labels = Array.isArray(parsed.labels) ? parsed.labels : [];
+        return parsed.status === 'Flagged'
+          ? { status: 'Flagged', labels }
+          : { status: 'Safe', labels: [] };
+      } catch {
+        return heuristicModeration(text);
+      }
+    },
+
+    async summarize(items) {
+      const text = items.map((item, index) => `${index + 1}. ${redactSensitiveText(item.body)}`).join('\n');
+      const result = await generate(`
+Nội dung:
+${text}
+`, SUMMARY_SYSTEM_PROMPT);
+      return bulletize(result, 5);
+    },
+
+    async suggest(contextItems) {
+      const text = contextItems.map((item) => redactSensitiveText(item.body)).join('\n');
+      const result = await generate(`
+Ngữ cảnh:
+${text}
+`, SUGGEST_SYSTEM_PROMPT);
+      return bulletize(result, 3);
+    },
+
+    async rewrite(text) {
+      return (
+        await generate(`
+Bản nháp:
+${redactSensitiveText(text)}
+`, REWRITE_SYSTEM_PROMPT)
+      ).trim();
+    }
+  };
+}
+
+export function createAiClient() {
+  const explicitProvider = process.env.AI_PROVIDER;
+
+  if (explicitProvider === 'openai-compatible') {
+    return createOpenAiCompatibleProvider();
+  } else if (explicitProvider === 'google' || explicitProvider === 'google-ai-studio') {
+    return createGoogleProvider();
+  }
+
+  // Auto-detect based on configured keys
+  if (process.env.GOOGLE_AI_API_KEY) {
+    return createGoogleProvider();
+  }
+
+  if ((process.env.OPENAI_COMPATIBLE_API_KEY && process.env.OPENAI_COMPATIBLE_BASE_URL) || (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL)) {
+    return createOpenAiCompatibleProvider();
+  }
+
+  // Fallback with Google AI Studio warnings/errors for backward compatibility
+  return {
+    async moderate(text) {
+      return heuristicModeration(text);
+    },
+    async summarize() {
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      error.statusCode = 503;
+      throw error;
+    },
+    async suggest() {
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      error.statusCode = 503;
+      throw error;
+    },
+    async rewrite() {
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      error.statusCode = 503;
+      throw error;
     }
   };
 }

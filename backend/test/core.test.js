@@ -2028,3 +2028,98 @@ test('security config status reports readiness without exposing values', () => {
   assert.equal(Object.hasOwn(status, 'jwtSecret'), false);
   assert.equal(Object.hasOwn(status, 'adminPassword'), false);
 });
+
+test('AI OpenAI-compatible client uses correct configuration and request format', async () => {
+  const originalFetch = global.fetch;
+  const envKeys = [
+    'AI_PROVIDER',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_COMPATIBLE_MODEL'
+  ];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  process.env.AI_PROVIDER = 'openai-compatible';
+  process.env.OPENAI_COMPATIBLE_API_KEY = 'openai-test-key';
+  process.env.OPENAI_COMPATIBLE_BASE_URL = 'https://api.openai-test.com/v1';
+  process.env.OPENAI_COMPATIBLE_MODEL = 'gpt-4-test';
+
+  let capturedUrl;
+  let capturedOptions;
+
+  global.fetch = async (url, options) => {
+    capturedUrl = url;
+    capturedOptions = options;
+    return {
+      ok: true,
+      async json() {
+        return {
+          choices: [
+            {
+              message: {
+                content: '{"status":"Safe","labels":[]}'
+              }
+            }
+          ]
+        };
+      }
+    };
+  };
+
+  try {
+    const ai = createAiClient();
+    const result = await ai.moderate('nội dung an toàn');
+
+    assert.deepEqual(result, { status: 'Safe', labels: [] });
+    assert.equal(capturedUrl, 'https://api.openai-test.com/v1/chat/completions');
+    assert.equal(capturedOptions.headers.authorization, 'Bearer openai-test-key');
+    assert.equal(capturedOptions.headers['content-type'], 'application/json');
+
+    const body = JSON.parse(capturedOptions.body);
+    assert.equal(body.model, 'gpt-4-test');
+    assert.equal(body.messages[0].role, 'system');
+    assert.equal(body.messages[1].role, 'user');
+    assert.equal(body.messages[1].content.includes('nội dung an toàn'), true);
+  } finally {
+    global.fetch = originalFetch;
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
+test('publicConfig reports OpenAI-compatible auto-detect when AI_PROVIDER is unset', () => {
+  const envKeys = [
+    'AI_PROVIDER',
+    'GOOGLE_AI_API_KEY',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_COMPATIBLE_MODEL'
+  ];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  delete process.env.AI_PROVIDER;
+  delete process.env.GOOGLE_AI_API_KEY;
+  process.env.OPENAI_COMPATIBLE_API_KEY = 'openai-test-key';
+  process.env.OPENAI_COMPATIBLE_BASE_URL = 'https://api.openai-test.com/v1';
+  process.env.OPENAI_COMPATIBLE_MODEL = 'gpt-4-test';
+
+  try {
+    const config = publicConfig();
+    assert.equal(config.ai.provider, 'openai-compatible');
+    assert.equal(config.ai.configured, true);
+    assert.equal(config.ai.model, 'gpt-4-test');
+  } finally {
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
