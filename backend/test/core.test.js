@@ -24,8 +24,11 @@ const safeAi = {
   async suggest() {
     return ['Dong y co dieu kien', 'Can them bang chung'];
   },
-  async rewrite(text) {
-    return `Da sua: ${text}`;
+  async rewrite(text, tone = 'neutral') {
+    return `Da sua [${tone}]: ${text}`;
+  },
+  async summarizeReports(reasons) {
+    return `AI tong hop: ${reasons.join(', ')}`;
   }
 };
 
@@ -2032,6 +2035,58 @@ test('security config status reports readiness without exposing values', () => {
   assert.equal(Object.hasOwn(status, 'adminPassword'), false);
 });
 
+test('AI safe rewrite draft supports different tones', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const neutral = await service.rewriteDraft({ body: 'original text', tone: 'neutral' });
+  const aggressive = await service.rewriteDraft({ body: 'original text', tone: 'less-aggressive' });
+  const privacy = await service.rewriteDraft({ body: 'original text', tone: 'privacy-safer' });
+
+  assert.equal(neutral, 'Da sua [neutral]: original text');
+  assert.equal(aggressive, 'Da sua [less-aggressive]: original text');
+  assert.equal(privacy, 'Da sua [privacy-safer]: original text');
+});
+
+test('AI report assistant summarizes post reports', async () => {
+  const store = createMemoryStore();
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread to be reported',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  await service.reportPost({
+    globalNumber: created.thread.globalNumber,
+    reason: 'spam link',
+    ip: '203.0.113.8'
+  });
+  await service.reportPost({
+    globalNumber: created.thread.globalNumber,
+    reason: 'toxic behavior',
+    ip: '203.0.113.9'
+  });
+
+  const summary = await service.summarizePostReports(created.thread.globalNumber, {
+    ip: '127.0.0.1',
+    actor: 'admin'
+  });
+
+  assert.equal(summary, 'AI tong hop: spam link, toxic behavior');
+});
+
 test('getAnalytics calculates board-level counts, AI usage, and moderation health correctly', async () => {
   const store = createMemoryStore();
   const service = createForumService({
@@ -2095,12 +2150,10 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
   process.env.OPENAI_COMPATIBLE_BASE_URL = 'https://api.openai-test.com/v1';
   process.env.OPENAI_COMPATIBLE_MODEL = 'gpt-4-test';
 
-  let capturedUrl;
-  let capturedOptions;
+  const capturedRequests = [];
 
   global.fetch = async (url, options) => {
-    capturedUrl = url;
-    capturedOptions = options;
+    capturedRequests.push({ url, options });
     return {
       ok: true,
       async json() {
@@ -2122,15 +2175,26 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
     const result = await ai.moderate('nội dung an toàn');
 
     assert.deepEqual(result, { status: 'Safe', labels: [] });
-    assert.equal(capturedUrl, 'https://api.openai-test.com/v1/chat/completions');
-    assert.equal(capturedOptions.headers.authorization, 'Bearer openai-test-key');
-    assert.equal(capturedOptions.headers['content-type'], 'application/json');
+    assert.equal(capturedRequests[0].url, 'https://api.openai-test.com/v1/chat/completions');
+    assert.equal(capturedRequests[0].options.headers.authorization, 'Bearer openai-test-key');
+    assert.equal(capturedRequests[0].options.headers['content-type'], 'application/json');
 
-    const body = JSON.parse(capturedOptions.body);
+    const body = JSON.parse(capturedRequests[0].options.body);
     assert.equal(body.model, 'gpt-4-test');
     assert.equal(body.messages[0].role, 'system');
     assert.equal(body.messages[1].role, 'user');
     assert.equal(body.messages[1].content.includes('nội dung an toàn'), true);
+
+    await ai.rewrite('email test@example.com', 'privacy-safer');
+    const rewriteBody = JSON.parse(capturedRequests[1].options.body);
+    assert.equal(rewriteBody.messages[0].content.includes('AN TOÀN RIÊNG TƯ'), true);
+    assert.equal(rewriteBody.messages[1].content.includes('test@example.com'), false);
+
+    await ai.summarizeReports(['lộ email report@example.com và số 0912345678']);
+    const reportBody = JSON.parse(capturedRequests[2].options.body);
+    assert.equal(reportBody.messages[0].content.includes('Tổng hợp danh sách lý do báo cáo'), true);
+    assert.equal(reportBody.messages[1].content.includes('report@example.com'), false);
+    assert.equal(reportBody.messages[1].content.includes('0912345678'), false);
   } finally {
     global.fetch = originalFetch;
     for (const key of envKeys) {

@@ -2702,7 +2702,7 @@ export function createForumService({
       });
     },
 
-    async rewriteDraft({ body, ip, posterToken, actor = 'public' } = {}) {
+    async rewriteDraft({ body, ip, posterToken, actor = 'public', tone = 'neutral' } = {}) {
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
         const error = new Error('Nội dung là bắt buộc');
@@ -2719,7 +2719,30 @@ export function createForumService({
           createdAt: now().toISOString()
         });
         logEvent('ai.rewrite', { actor });
-        return ai.rewrite(normalizedBody);
+        return ai.rewrite(normalizedBody, tone);
+      });
+    },
+
+    async summarizePostReports(globalNumber, { ip, actor = 'admin' } = {}) {
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+        const reports = state.reports.filter((report) => report.globalNumber === Number(globalNumber));
+        if (!reports.length) {
+          return 'Chưa có báo cáo vi phạm nào.';
+        }
+        consumeAiBudget(state, {
+          kind: 'summary',
+          ip,
+          actor,
+          createdAt: now().toISOString()
+        });
+        const reasons = reports.map((report) => redactSensitiveText(report.reason));
+        return ai.summarizeReports(reasons);
       });
     },
 

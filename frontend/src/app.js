@@ -433,6 +433,8 @@ const els = {
   threadPollOptions: document.querySelector('#threadPollOptions'),
   threadPrivacyWarning: document.querySelector('#threadPrivacyWarning'),
   threadRewriteButton: document.querySelector('#threadRewriteButton'),
+  threadRewriteTone: document.querySelector('#threadRewriteTone'),
+  threadAiRewriteLabel: document.querySelector('#threadAiRewriteLabel'),
   threadImage: document.querySelector('#threadImage'),
   threadCaptcha: document.querySelector('#threadCaptcha'),
   imagePreview: document.querySelector('#imagePreview'),
@@ -457,6 +459,8 @@ const els = {
   commentCaptcha: document.querySelector('#commentCaptcha'),
   suggestButton: document.querySelector('#suggestButton'),
   rewriteButton: document.querySelector('#rewriteButton'),
+  rewriteTone: document.querySelector('#rewriteTone'),
+  commentAiRewriteLabel: document.querySelector('#commentAiRewriteLabel'),
   suggestions: document.querySelector('#suggestions'),
   adminTitle: document.querySelector('#adminTitle'),
   loginForm: document.querySelector('#loginForm'),
@@ -2111,7 +2115,8 @@ function adminPostDetailHtml(detail) {
         <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
         <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
       </div>
-      <h3>Báo cáo</h3>
+      <h3>Báo cáo ${reports.length ? `<button class="ghost-button" data-admin-reports-summary="${post.globalNumber}" type="button">[Tóm tắt báo cáo AI]</button>` : ''}</h3>
+      <div id="adminReportsSummaryBox-${post.globalNumber}" class="admin-reports-summary-box hidden"></div>
       ${reports.length ? reportsHtml(reports) : '<p class="muted">Không có báo cáo.</p>'}
       <h3>Làm chậm/Tạm khóa</h3>
       ${sanctions.length ? sanctionsHtml(sanctions) : '<p class="muted">Không có lệnh làm chậm/tạm khóa.</p>'}
@@ -3274,6 +3279,9 @@ async function submitThread(event) {
     clearDisplayName(els.threadForm);
     removeDraft(draftKey('thread', state.boardSlug));
     updatePrivacyWarning('', els.threadPrivacyWarning);
+    if (els.threadAiRewriteLabel) {
+      els.threadAiRewriteLabel.classList.add('hidden');
+    }
     els.threadImage.value = '';
     state.selectedImage = null;
     els.imagePreview.classList.add('hidden');
@@ -3311,6 +3319,9 @@ async function submitComment(event) {
     clearDisplayName(els.commentForm);
     removeDraft(draftKey('comment', state.threadId));
     updatePrivacyWarning('', els.commentPrivacyWarning);
+    if (els.commentAiRewriteLabel) {
+      els.commentAiRewriteLabel.classList.add('hidden');
+    }
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeReplyComposer();
     await loadThread();
@@ -3499,6 +3510,8 @@ async function rewriteDraft(target) {
   const textarea = isThread ? els.threadBody : els.commentBody;
   const warningBox = isThread ? els.threadPrivacyWarning : els.commentPrivacyWarning;
   const button = isThread ? els.threadRewriteButton : els.rewriteButton;
+  const toneSelect = isThread ? els.threadRewriteTone : els.rewriteTone;
+  const label = isThread ? els.threadAiRewriteLabel : els.commentAiRewriteLabel;
   const body = textarea.value.trim();
   if (!body) {
     showToast('Chưa có nội dung để AI sửa.');
@@ -3507,12 +3520,16 @@ async function rewriteDraft(target) {
 
   const restoreButton = setButtonLoading(button, 'Đang sửa...');
   try {
+    const tone = toneSelect ? toneSelect.value : 'neutral';
     const result = await api('/api/ai/rewrite', {
       method: 'POST',
-      body: JSON.stringify({ body, posterToken: state.posterToken })
+      body: JSON.stringify({ body, posterToken: state.posterToken, tone })
     });
     textarea.value = result.text || body;
     updatePrivacyWarning(textarea.value, warningBox);
+    if (label) {
+      label.classList.remove('hidden');
+    }
     textarea.focus();
     showToast('Đã điền bản viết lại vào nháp. Kiểm tra trước khi gửi.');
   } catch (error) {
@@ -3863,10 +3880,16 @@ function bindEvents() {
   els.threadBody.addEventListener('input', () => {
     writeDraft(draftKey('thread', state.boardSlug), els.threadBody.value);
     updatePrivacyWarning(els.threadBody.value, els.threadPrivacyWarning);
+    if (els.threadAiRewriteLabel) {
+      els.threadAiRewriteLabel.classList.add('hidden');
+    }
   });
   els.commentBody.addEventListener('input', () => {
     writeDraft(draftKey('comment', state.threadId), els.commentBody.value);
     updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
+    if (els.commentAiRewriteLabel) {
+      els.commentAiRewriteLabel.classList.add('hidden');
+    }
   });
   els.quickReplyBody.addEventListener('input', () => {
     writeDraft(draftKey('quickReply', state.threadId), els.quickReplyBody.value);
@@ -4241,6 +4264,30 @@ function bindEvents() {
         await loadAdminDetail(adminDetailButton.dataset.adminDetail, host);
       } catch (error) {
         showToast(error.message);
+      }
+      return;
+    }
+
+    const adminReportsSummaryButton = event.target.closest('[data-admin-reports-summary]');
+    if (adminReportsSummaryButton) {
+      const globalNumber = adminReportsSummaryButton.dataset.adminReportsSummary;
+      const box = document.getElementById(`adminReportsSummaryBox-${globalNumber}`);
+      if (box) {
+        box.classList.remove('hidden');
+        box.innerHTML = '<p class="muted">Đang tóm tắt báo cáo...</p>';
+        try {
+          const result = await api(`/api/admin/posts/${globalNumber}/reports/summary`, {
+            method: 'POST'
+          });
+          box.innerHTML = `
+            <div class="reports-summary-content">
+              <strong>${escapeHtml(result.label || 'Tóm tắt báo cáo AI')}:</strong>
+              <p>${escapeHtml(result.summary)}</p>
+            </div>
+          `;
+        } catch (error) {
+          box.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+        }
       }
       return;
     }

@@ -521,6 +521,7 @@ export function createHttpServer({
         ok(response, {
           text: await service.rewriteDraft({
             body: body.body,
+            tone: body.tone,
             ip,
             posterToken: body.posterToken
           })
@@ -995,6 +996,19 @@ export function createHttpServer({
         params = match(parts, ['api', 'admin', 'posts', ':globalNumber']);
         if (params && request.method === 'GET') {
           ok(response, await service.getAdminPostDetail(params.globalNumber));
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'posts', ':globalNumber', 'reports', 'summary']);
+        if (params && request.method === 'POST') {
+          const summary = await service.summarizePostReports(params.globalNumber, {
+            ip,
+            actor: admin.username ?? 'admin'
+          });
+          ok(response, {
+            summary,
+            label: 'Nội dung do AI tổng hợp'
+          });
           return;
         }
 

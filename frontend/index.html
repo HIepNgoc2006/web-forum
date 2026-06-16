@@ -293,7 +293,13 @@
               <input id="threadDeletePassword" name="deletePassword" type="password" autocomplete="off" />
             </label>
             <div class="form-actions">
+              <select id="threadRewriteTone" class="rewrite-tone-select" aria-label="Tông giọng">
+                <option value="neutral">Trung lập</option>
+                <option value="less-aggressive">Bớt gay gắt</option>
+                <option value="privacy-safer">An toàn riêng tư</option>
+              </select>
               <button id="threadRewriteButton" class="ghost-button" type="button">[AI sửa an toàn]</button>
+              <span id="threadAiRewriteLabel" class="ai-label hidden">Đã sửa bằng AI</span>
               <button class="primary-button" type="submit">Gửi</button>
             </div>
             <div id="imagePreview" class="image-preview hidden"></div>
@@ -402,7 +408,13 @@
             <h2 id="replyTitle">Đăng trả lời</h2>
             <div class="reply-ai-actions">
               <button id="suggestButton" class="ghost-button" type="button">[AI gợi ý]</button>
+              <select id="rewriteTone" class="rewrite-tone-select" aria-label="Tông giọng">
+                <option value="neutral">Trung lập</option>
+                <option value="less-aggressive">Bớt gay gắt</option>
+                <option value="privacy-safer">An toàn riêng tư</option>
+              </select>
               <button id="rewriteButton" class="ghost-button" type="button">[AI sửa an toàn]</button>
+              <span id="commentAiRewriteLabel" class="ai-label hidden">Đã sửa bằng AI</span>
             </div>
           </div>
           <div id="suggestions" class="suggestions hidden"></div>

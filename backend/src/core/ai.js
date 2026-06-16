@@ -24,11 +24,36 @@ Viết 2-3 câu phản hồi ngắn, lịch sự, đúng ngữ cảnh, không c�
 Không yêu cầu dữ liệu cá nhân, không đoán danh tính, không tạo nội dung thù ghét hoặc quấy rối.
 `.trim();
 
-const REWRITE_SYSTEM_PROMPT = `
+const REWRITE_NEUTRAL_PROMPT = `
 Bạn là trợ lý viết lại bản nháp cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
-Viết lại nội dung sao cho an toàn hơn trước khi đăng: bỏ thông tin cá nhân, giảm cáo buộc chưa kiểm chứng, bỏ công kích/quấy rối.
-Giữ ý chính nếu có thể, viết bằng tiếng Việt tự nhiên, ngắn gọn.
-Chỉ trả về một bản nháp đã viết lại, không giải thích, không tự đăng thay người dùng.
+Nhiệm vụ: viết lại bản nháp theo tone TRUNG LẬP.
+Yêu cầu: giữ văn phong khách quan, loại bỏ các từ ngữ mang tính phóng đại hoặc cảm tính cực đoan. Giữ ý chính nếu có thể, viết bằng tiếng Việt tự nhiên, ngắn gọn.
+Chỉ trả về một bản nháp đã viết lại dưới dạng văn bản thường (plain text), không giải thích, không thêm bất kỳ tiền tố/hậu tố nào, không tự đăng thay người dùng.
+`.trim();
+
+const REWRITE_LESS_AGGRESSIVE_PROMPT = `
+Bạn là trợ lý viết lại bản nháp cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
+Nhiệm vụ: viết lại bản nháp theo tone BỚT GAY GẮT.
+Yêu cầu: làm dịu các từ ngữ thù địch, loại bỏ công kích cá nhân trực tiếp hoặc ngôn từ thóa mạ. Giữ ý chính nếu có thể, viết bằng tiếng Việt tự nhiên, ngắn gọn.
+Chỉ trả về một bản nháp đã viết lại dưới dạng văn bản thường (plain text), không giải thích, không thêm bất kỳ tiền tố/hậu tố nào, không tự đăng thay người dùng.
+`.trim();
+
+const REWRITE_PRIVACY_SAFER_PROMPT = `
+Bạn là trợ lý viết lại bản nháp cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
+Nhiệm vụ: viết lại bản nháp theo tone AN TOÀN RIÊNG TƯ.
+Yêu cầu: loại bỏ hoàn toàn các thông tin nhạy cảm hoặc bối cảnh dễ suy đoán ra danh tính cá nhân. Giữ ý chính nếu có thể, viết bằng tiếng Việt tự nhiên, ngắn gọn.
+Chỉ trả về một bản nháp đã viết lại dưới dạng văn bản thường (plain text), không giải thích, không thêm bất kỳ tiền tố/hậu tố nào, không tự đăng thay người dùng.
+`.trim();
+
+const REPORT_SUMMARY_SYSTEM_PROMPT = `
+Bạn là trợ lý tổng hợp báo cáo vi phạm cho ban quản trị 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
+Nhiệm vụ: Tổng hợp danh sách lý do báo cáo của người dùng đối với một bài đăng thành một lý do tóm tắt ngắn gọn, rõ ràng.
+Yêu cầu:
+- Viết bằng tiếng Việt tự nhiên, trung lập, khách quan.
+- Tóm tắt ngắn gọn các điểm chính bị người dùng khiếu nại (ví dụ: spam, công kích cá nhân, lộ thông tin...).
+- TUYỆT ĐỐI không tự ý đưa ra quyết định kiểm duyệt (như xóa bài, khóa tài khoản...) hay đưa ra lời khuyên/hành động kiểm duyệt cụ thể. Chỉ trình bày lý do tóm tắt thô từ các báo cáo.
+- Không bịa thêm thông tin, không tự đoán danh tính người viết/người báo cáo.
+- Trả về kết quả ngắn gọn trong vòng 1-2 câu hoặc gạch đầu dòng ngắn.
 `.trim();
 
 function heuristicModeration(text) {
@@ -164,13 +189,28 @@ ${text}
       return bulletize(result, 3);
     },
 
-    async rewrite(text) {
+    async rewrite(text, tone = 'neutral') {
+      let prompt = REWRITE_NEUTRAL_PROMPT;
+      if (tone === 'less-aggressive') {
+        prompt = REWRITE_LESS_AGGRESSIVE_PROMPT;
+      } else if (tone === 'privacy-safer') {
+        prompt = REWRITE_PRIVACY_SAFER_PROMPT;
+      }
       return (
         await generate(`
 Bản nháp:
 ${redactSensitiveText(text)}
-`, REWRITE_SYSTEM_PROMPT)
+`, prompt)
       ).trim();
+    },
+
+    async summarizeReports(reasons) {
+      const text = reasons.map((reason, index) => `${index + 1}. ${redactSensitiveText(reason)}`).join('\n');
+      const result = await generate(`
+Danh sách lý do báo cáo:
+${text}
+`, REPORT_SUMMARY_SYSTEM_PROMPT);
+      return result.trim();
     }
   };
 }
@@ -195,6 +235,9 @@ function createOpenAiCompatibleProvider() {
         throw error;
       },
       async rewrite() {
+        throw error;
+      },
+      async summarizeReports() {
         throw error;
       }
     };
@@ -261,13 +304,28 @@ ${text}
       return bulletize(result, 3);
     },
 
-    async rewrite(text) {
+    async rewrite(text, tone = 'neutral') {
+      let prompt = REWRITE_NEUTRAL_PROMPT;
+      if (tone === 'less-aggressive') {
+        prompt = REWRITE_LESS_AGGRESSIVE_PROMPT;
+      } else if (tone === 'privacy-safer') {
+        prompt = REWRITE_PRIVACY_SAFER_PROMPT;
+      }
       return (
         await generate(`
 Bản nháp:
 ${redactSensitiveText(text)}
-`, REWRITE_SYSTEM_PROMPT)
+`, prompt)
       ).trim();
+    },
+
+    async summarizeReports(reasons) {
+      const text = reasons.map((reason, index) => `${index + 1}. ${redactSensitiveText(reason)}`).join('\n');
+      const result = await generate(`
+Danh sách lý do báo cáo:
+${text}
+`, REPORT_SUMMARY_SYSTEM_PROMPT);
+      return result.trim();
     }
   };
 }
@@ -306,6 +364,11 @@ export function createAiClient() {
       throw error;
     },
     async rewrite() {
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      error.statusCode = 503;
+      throw error;
+    },
+    async summarizeReports() {
       const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
       error.statusCode = 503;
       throw error;

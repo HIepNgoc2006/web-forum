@@ -3294,6 +3294,55 @@ body.theme-yotsuba.board-page .topbar {
   }
 }
 
+/* AI Tone selector, Labels and Reports summary */
+.rewrite-tone-select {
+  padding: 2px 4px;
+  font-size: 12px;
+  border: 1px solid var(--reply-border);
+  background: var(--page);
+  color: var(--text);
+  border-radius: 4px;
+  cursor: pointer;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.ai-label {
+  display: inline-block;
+  padding: 2px 6px;
+  background-color: var(--reply);
+  border: 1px solid var(--reply-border);
+  border-radius: 4px;
+  font-size: 11px;
+  color: var(--text);
+  font-weight: bold;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.ai-label.hidden {
+  display: none !important;
+}
+
+.admin-reports-summary-box {
+  margin: 10px 0;
+  padding: 10px;
+  background: #fdf6e2;
+  border-left: 4px solid #b8860b;
+  border-radius: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: #333;
+}
+
+.admin-reports-summary-box.hidden {
+  display: none !important;
+}
+
+.reports-summary-content strong {
+  color: #b8860b;
+}
+
 /* Analytics dashboard styles */
 .analytics-dashboard {
   padding: 10px;
