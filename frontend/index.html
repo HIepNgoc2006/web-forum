@@ -288,6 +288,7 @@
               <span>Mã xác minh</span>
               <input id="threadCaptcha" value="dev-pass" autocomplete="off" />
             </label>
+            <div class="captcha-widget hidden" data-hcaptcha-target="threadCaptcha"></div>
             <label class="field-row">
               <span>Mật khẩu xóa</span>
               <input id="threadDeletePassword" name="deletePassword" type="password" autocomplete="off" />
@@ -445,6 +446,7 @@
                 <button type="button" disabled>Tiếp</button>
                 <input id="commentCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
                 <span class="captcha-slider" aria-hidden="true"><span></span></span>
+                <div class="captcha-widget hidden" data-hcaptcha-target="commentCaptcha"></div>
               </div>
             </div>
             <label class="field-row">
@@ -775,6 +777,7 @@
           <div class="captcha-slider" aria-hidden="true">
             <span></span>
           </div>
+          <div class="captcha-widget hidden" data-hcaptcha-target="quickReplyCaptcha"></div>
         </div>
         <div class="quick-reply-bottom">
           <label class="quick-file-button">

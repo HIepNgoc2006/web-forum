@@ -4,6 +4,8 @@ const state = {
   boards: [],
   boardGroups: [],
   aiConfigured: false,
+  hcaptchaSiteKey: '',
+  hcaptchaReady: null,
   boardSlug: 'confession',
   threadId: '',
   threadDetail: null,
@@ -556,6 +558,91 @@ function showToast(message) {
   els.toast.classList.remove('hidden');
   window.clearTimeout(showToast.timer);
   showToast.timer = window.setTimeout(() => els.toast.classList.add('hidden'), 3400);
+}
+
+function loadHcaptchaScript() {
+  if (!state.hcaptchaSiteKey) {
+    return Promise.resolve();
+  }
+  if (window.hcaptcha?.render) {
+    return Promise.resolve();
+  }
+  if (state.hcaptchaReady) {
+    return state.hcaptchaReady;
+  }
+  state.hcaptchaReady = new Promise((resolve, reject) => {
+    const existing = document.querySelector('script[data-hcaptcha-script]');
+    if (existing) {
+      existing.addEventListener('load', resolve, { once: true });
+      existing.addEventListener('error', reject, { once: true });
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.src = 'https://js.hcaptcha.com/1/api.js?render=explicit';
+    script.async = true;
+    script.defer = true;
+    script.dataset.hcaptchaScript = 'true';
+    script.addEventListener('load', resolve, { once: true });
+    script.addEventListener('error', reject, { once: true });
+    document.head.appendChild(script);
+  });
+  return state.hcaptchaReady;
+}
+
+function resetHcaptcha(input) {
+  if (!state.hcaptchaSiteKey || !window.hcaptcha?.reset || !input?.id) {
+    return;
+  }
+  const host = document.querySelector(`[data-hcaptcha-target="${input.id}"]`);
+  const widgetId = host?.dataset.hcaptchaWidgetId;
+  if (widgetId !== undefined) {
+    window.hcaptcha.reset(Number(widgetId));
+    input.value = '';
+  }
+}
+
+async function setupHcaptcha() {
+  if (!state.hcaptchaSiteKey) {
+    return;
+  }
+  document.querySelectorAll('[data-hcaptcha-target]').forEach((host) => {
+    const input = document.getElementById(host.dataset.hcaptchaTarget);
+    if (input) {
+      input.value = '';
+      input.classList.add('captcha-token-hidden');
+    }
+    host.classList.remove('hidden');
+  });
+
+  await loadHcaptchaScript();
+  if (!window.hcaptcha?.render) {
+    throw new Error('Không tải được hCaptcha');
+  }
+
+  document.querySelectorAll('[data-hcaptcha-target]').forEach((host) => {
+    if (host.dataset.hcaptchaWidgetId !== undefined) {
+      return;
+    }
+    const input = document.getElementById(host.dataset.hcaptchaTarget);
+    if (!input) {
+      return;
+    }
+    const widgetId = window.hcaptcha.render(host, {
+      sitekey: state.hcaptchaSiteKey,
+      callback(token) {
+        input.value = token;
+      },
+      'expired-callback'() {
+        input.value = '';
+      },
+      'error-callback'() {
+        input.value = '';
+        showToast('hCaptcha gặp lỗi, vui lòng thử lại.');
+      }
+    });
+    host.dataset.hcaptchaWidgetId = String(widgetId);
+  });
 }
 
 function setButtonLoading(button, label = 'Đang gửi...') {
@@ -3247,8 +3334,13 @@ function hasOption(value, option) {
 async function submitThread(event) {
   event.preventDefault();
   const body = els.threadBody.value;
+  const captchaToken = els.threadCaptcha.value.trim();
   if (!confirmPrivacyBeforeSubmit(body, els.threadPrivacyWarning)) {
     showToast('Đã dừng gửi để bạn chỉnh sửa nội dung.');
+    return;
+  }
+  if (state.hcaptchaSiteKey && !captchaToken) {
+    showToast('Vui lòng hoàn tất hCaptcha trước khi gửi.');
     return;
   }
   const button = event.submitter;
@@ -3264,7 +3356,7 @@ async function submitThread(event) {
       options,
       displayName: displayNameValue(els.threadForm),
       deletePassword: els.threadDeletePassword.value,
-      captchaToken: els.threadCaptcha.value,
+      captchaToken,
       posterToken: state.posterToken,
       image: state.selectedImage
     };
@@ -3285,6 +3377,7 @@ async function submitThread(event) {
     els.threadImage.value = '';
     state.selectedImage = null;
     els.imagePreview.classList.add('hidden');
+    resetHcaptcha(els.threadCaptcha);
     closeThreadComposer();
     showToast(result.status === 'pending' ? 'Đã vào hàng đợi chờ quản trị viên duyệt.' : 'Chủ đề đã công khai.');
     if (hasOption(options, 'noko') && result.thread?.id) {
@@ -3307,13 +3400,18 @@ async function submitComment(event) {
   }
   const button = event.submitter || els.commentForm.querySelector('[type="submit"]');
   const body = els.commentBody.value;
+  const captchaToken = els.commentCaptcha.value.trim();
   if (!confirmPrivacyBeforeSubmit(body, els.commentPrivacyWarning)) {
     showToast('Đã dừng gửi để bạn chỉnh sửa nội dung.');
     return;
   }
+  if (state.hcaptchaSiteKey && !captchaToken) {
+    showToast('Vui lòng hoàn tất hCaptcha trước khi gửi.');
+    return;
+  }
   const restoreButton = setButtonLoading(button);
   try {
-    const result = await createComment(body, els.commentCaptcha.value);
+    const result = await createComment(body, captchaToken);
     rememberMyPost(result.comment, 'comment');
     els.commentBody.value = '';
     clearDisplayName(els.commentForm);
@@ -3322,6 +3420,7 @@ async function submitComment(event) {
     if (els.commentAiRewriteLabel) {
       els.commentAiRewriteLabel.classList.add('hidden');
     }
+    resetHcaptcha(els.commentCaptcha);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeReplyComposer();
     await loadThread();
@@ -3386,7 +3485,7 @@ function openQuickReply(number, event) {
     els.quickReplyBody.value = readDraft(draftKey('quickReply', state.threadId));
   }
   addQuoteToQuickReply(number);
-  els.quickReplyCaptcha.value = els.commentCaptcha.value || 'dev-pass';
+  els.quickReplyCaptcha.value = state.hcaptchaSiteKey ? '' : els.commentCaptcha.value || 'dev-pass';
   els.quickReplyDeletePassword.value ||= defaultDeletePassword();
   els.quickReplyFileName.textContent = 'Chưa chọn tệp';
   if (wasHidden) {
@@ -3412,16 +3511,22 @@ async function submitQuickReply(event) {
   }
   const button = event.submitter;
   const body = els.quickReplyBody.value;
+  const captchaToken = els.quickReplyCaptcha.value.trim();
   if (!confirmPrivacyBeforeSubmit(body, els.quickReplyPrivacyWarning)) {
     showToast('Đã dừng gửi để bạn chỉnh sửa nội dung.');
     return;
   }
+  if (state.hcaptchaSiteKey && !captchaToken) {
+    showToast('Vui lòng hoàn tất hCaptcha trước khi gửi.');
+    return;
+  }
   const restoreButton = setButtonLoading(button);
   try {
-    const result = await createComment(body, els.quickReplyCaptcha.value);
+    const result = await createComment(body, captchaToken);
     rememberMyPost(result.comment, 'comment');
     clearDisplayName(els.quickReplyForm);
     removeDraft(draftKey('quickReply', state.threadId));
+    resetHcaptcha(els.quickReplyCaptcha);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeQuickReply();
     await loadThread();
@@ -3897,6 +4002,10 @@ function bindEvents() {
   });
   els.quickReplyClose.addEventListener('click', closeQuickReply);
   els.quickReplyCaptchaButton.addEventListener('click', () => {
+    if (state.hcaptchaSiteKey) {
+      showToast('Hãy hoàn tất hCaptcha trong khung xác minh.');
+      return;
+    }
     els.quickReplyCaptcha.value = 'dev-pass';
   });
   [els.threadDeletePassword, els.commentDeletePassword, els.quickReplyDeletePassword, els.deletePasswordInput].forEach((input) => {
@@ -4491,6 +4600,8 @@ async function init() {
   state.boards = config.boards;
   state.boardGroups = config.boardGroups || [];
   state.aiConfigured = Boolean(config.ai?.configured);
+  state.hcaptchaSiteKey = config.hcaptchaSiteKey || '';
+  setupHcaptcha().catch((error) => showToast(error.message));
   renderBoards();
   syncAccountHomeBoardOptions();
   await loadAccountSession();

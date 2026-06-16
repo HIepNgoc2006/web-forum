@@ -172,6 +172,9 @@ export async function verifyHcaptcha(token, remoteIp) {
 
   const secret = process.env.HCAPTCHA_SECRET;
   if (!secret) {
+    if (process.env.NODE_ENV === 'production') {
+      return false;
+    }
     return token === 'dev-pass' || token.length > 8;
   }
 

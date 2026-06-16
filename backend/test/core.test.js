@@ -11,7 +11,7 @@ import { migrateInlineImages } from '../src/core/image-migration.js';
 import { createMongoModels } from '../src/core/mongo-store.js';
 import { publicBoardConfig, publicConfig } from '../src/core/config.js';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
-import { createPosterHash, securityConfigStatus, signJwt, verifyJwt } from '../src/core/security.js';
+import { createPosterHash, securityConfigStatus, signJwt, verifyHcaptcha, verifyJwt } from '../src/core/security.js';
 import { parsePostText, sanitizeText } from '../src/core/text-format.js';
 
 const safeAi = {
@@ -2033,6 +2033,29 @@ test('security config status reports readiness without exposing values', () => {
   assert.ok(status.warnings.includes('hcaptcha_not_configured'));
   assert.equal(Object.hasOwn(status, 'jwtSecret'), false);
   assert.equal(Object.hasOwn(status, 'adminPassword'), false);
+});
+
+test('hCaptcha dev fallback is disabled in production without a secret', async () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  const originalSecret = process.env.HCAPTCHA_SECRET;
+  process.env.NODE_ENV = 'production';
+  delete process.env.HCAPTCHA_SECRET;
+
+  try {
+    assert.equal(await verifyHcaptcha('dev-pass', '127.0.0.1'), false);
+    assert.equal(await verifyHcaptcha('long-development-token', '127.0.0.1'), false);
+  } finally {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+    if (originalSecret === undefined) {
+      delete process.env.HCAPTCHA_SECRET;
+    } else {
+      process.env.HCAPTCHA_SECRET = originalSecret;
+    }
+  }
 });
 
 test('AI safe rewrite draft supports different tones', async () => {

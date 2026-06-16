@@ -1746,6 +1746,22 @@ body.display-compact .post-body {
   left: -9999px;
 }
 
+.captcha-widget {
+  margin: 4px 0;
+}
+
+.reply-verification-cell .captcha-widget,
+.quick-reply-captcha .captcha-widget {
+  position: relative;
+  z-index: 1;
+  margin-top: 8px;
+}
+
+.captcha-token-hidden {
+  position: absolute !important;
+  left: -9999px !important;
+}
+
 .captcha-slider {
   position: absolute;
   left: 20px;

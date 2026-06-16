@@ -54,6 +54,7 @@ Important runtime values:
 - `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `JWT_SECRET`: enable admin login.
 - `MODERATION_FINGERPRINT_SECRET`: secret used to hash poster/IP fingerprints for temporary cooldown/ban enforcement.
 - `POSTER_PROOF_SECRET`: secret used to recognize OP follow-up replies from the same local poster token without exposing the token.
+- `HCAPTCHA_SITE_KEY`, `HCAPTCHA_SECRET`: enable hCaptcha on public posting. In production, posting fails unless `HCAPTCHA_SECRET` is configured.
 - `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable AI summary/suggestions and provider-backed moderation.
 - `MAX_IMAGE_BYTES`: upload payload limit.
 - `IMAGE_STORAGE_DRIVER`: `local` by default, or `s3` for S3-compatible object storage.
