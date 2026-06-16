@@ -1,0 +1,52 @@
+services:
+  web:
+    build:
+      context: .
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      STORE_DRIVER: mongo
+      MONGODB_URI: mongodb://mongo:27017/36chan
+      IMAGE_STORAGE_DRIVER: local
+      UPLOAD_ROOT: data/uploads
+      ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env before running compose}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Set ADMIN_PASSWORD in .env before running compose}
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env before running compose}
+      MODERATION_FINGERPRINT_SECRET: ${MODERATION_FINGERPRINT_SECRET:?Set MODERATION_FINGERPRINT_SECRET in .env before running compose}
+      POSTER_PROOF_SECRET: ${POSTER_PROOF_SECRET:?Set POSTER_PROOF_SECRET in .env before running compose}
+      HCAPTCHA_SITE_KEY: ${HCAPTCHA_SITE_KEY:?Set HCAPTCHA_SITE_KEY in .env before running compose}
+      HCAPTCHA_SECRET: ${HCAPTCHA_SECRET:?Set HCAPTCHA_SECRET in .env before running compose}
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
+      GOOGLE_AI_MODEL: ${GOOGLE_AI_MODEL:-gemini-1.5-flash}
+      OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
+      OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
+      OPENAI_COMPATIBLE_MODEL: ${OPENAI_COMPATIBLE_MODEL:-gpt-4-turbo}
+      MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-1500000}
+    ports:
+      - "3000:3000"
+    volumes:
+      - uploads:/app/backend/data/uploads
+    depends_on:
+      mongo:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+
+  mongo:
+    image: mongo:7
+    restart: unless-stopped
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  mongo-data:
+  uploads:

@@ -1,0 +1,14 @@
+**/node_modules
+**/.env
+**/.env.*
+!.env.example
+backend/data
+frontend/dist
+.git
+.github
+.code-review-graph
+phase-tracking
+coverage
+npm-debug.log*
+Dockerfile
+docker-compose.yml

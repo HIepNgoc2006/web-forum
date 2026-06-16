@@ -100,6 +100,39 @@ MONGODB_URI=mongodb://127.0.0.1:27017/36chan
 
 Never commit a production `MONGODB_URI`, admin credential, JWT secret, AI key, S3 key, or hCaptcha secret. `/api/health` exposes only safe readiness fields and counts.
 
+## Docker
+
+Create a local compose env file, replace every placeholder secret, then build and run the production-like stack with MongoDB:
+
+```bash
+cp compose.env.example .env
+docker compose up --build
+```
+
+The compose stack serves the built Vite frontend and backend on `http://localhost:3000`, uses MongoDB via `STORE_DRIVER=mongo`, and stores local uploads in the `uploads` Docker volume.
+
+`docker-compose.yml` fails fast when required production secrets are missing. For config validation without committing secrets, run:
+
+```bash
+docker compose --env-file compose.env.example config --quiet
+```
+
+Set real secrets through your shell or the ignored local compose `.env` before running a deploy-like environment:
+
+```bash
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=replace-with-long-password
+JWT_SECRET=replace-with-long-random-secret
+MODERATION_FINGERPRINT_SECRET=replace-with-long-random-secret
+POSTER_PROOF_SECRET=replace-with-long-random-secret
+HCAPTCHA_SITE_KEY=10000000-ffff-ffff-ffff-000000000001
+HCAPTCHA_SECRET=replace-with-hcaptcha-secret
+STORE_DRIVER=mongo
+MONGODB_URI=mongodb://mongo:27017/36chan
+```
+
+Configure `HCAPTCHA_SITE_KEY` and `HCAPTCHA_SECRET` before using the compose stack as a real public deployment. Use `npm run dev` for local no-secret development.
+
 For S3-compatible image storage:
 
 ```bash
