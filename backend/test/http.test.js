@@ -41,6 +41,7 @@ async function withServer(
   callback,
   {
     ai = safeAi,
+    store = createMemoryStore(),
     now = () => new Date('2026-05-22T08:00:00.000Z'),
     imageStorage,
     uploadRoot = path.resolve('data/uploads-test'),
@@ -49,7 +50,7 @@ async function withServer(
 ) {
   const realtime = { publish() {} };
   const service = createForumService({
-    store: createMemoryStore(),
+    store,
     ai,
     realtime,
     now,
@@ -876,6 +877,40 @@ test('http api exposes health without leaking secrets', async () => {
   });
 });
 
+test('http api returns 503 when health is degraded', async () => {
+  const unavailableStore = {
+    type: 'mongo',
+    async read() {
+      throw new Error('mongodb://user:secret@example.test/36chan');
+    },
+    async health() {
+      return {
+        type: 'mongo',
+        configured: true,
+        ready: false,
+        error: 'unavailable'
+      };
+    }
+  };
+
+  await withServer(
+    async (baseUrl) => {
+      const health = await fetch(`${baseUrl}/api/health`);
+      const healthBody = await health.json();
+      const serialized = JSON.stringify(healthBody.data);
+
+      assert.equal(health.status, 503);
+      assert.equal(healthBody.data.status, 'degraded');
+      assert.equal(healthBody.data.store.type, 'mongo');
+      assert.equal(healthBody.data.store.ready, false);
+      assert.equal(healthBody.data.store.error, 'unavailable');
+      assert.equal(serialized.includes('mongodb://'), false);
+      assert.equal(serialized.includes('user:secret@example.test'), false);
+    },
+    { store: unavailableStore }
+  );
+});
+
 test('http api stores image metadata from thread creation payloads', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
@@ -943,7 +978,9 @@ test('http api thread upload limit uses defaults when env values are invalid', a
 });
 
 test('http api stores uploaded images on local disk and serves them from /uploads', async () => {
-  const uploadRoot = await fs.mkdtemp(path.resolve('data/uploads-test-'));
+  const dataRoot = path.resolve('data');
+  await fs.mkdir(dataRoot, { recursive: true });
+  const uploadRoot = await fs.mkdtemp(path.join(dataRoot, 'uploads-test-'));
   try {
     await withServer(
       async (baseUrl) => {

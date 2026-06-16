@@ -895,7 +895,9 @@ test('s3 image storage uploads image bytes with signed S3-compatible PUT request
 });
 
 test('migrateInlineImages moves inline image data to local upload files', async () => {
-  const testRoot = await fs.mkdtemp(path.resolve('data/image-migration-test-'));
+  const dataRoot = path.resolve('data');
+  await fs.mkdir(dataRoot, { recursive: true });
+  const testRoot = await fs.mkdtemp(path.join(dataRoot, 'image-migration-test-'));
   const forumPath = path.join(testRoot, 'forum.json');
   const uploadRoot = path.join(testRoot, 'uploads');
 

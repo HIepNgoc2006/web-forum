@@ -480,14 +480,16 @@ export function createHttpServer({
           adminUsername,
           adminPassword
         });
-        ok(response, {
-          ...(await service.getHealth()),
+        const health = await service.getHealth();
+        const payload = {
+          ...health,
           captcha: {
             provider: 'hcaptcha',
             configured: security.hcaptchaConfigured
           },
           security
-        });
+        };
+        ok(response, payload, health.status === 'ok' ? 200 : 503);
         return;
       }
 
