@@ -7,9 +7,10 @@ import {
   THREAD_LIFECYCLE,
   readPositiveInteger
 } from './config.js';
+import { redactSensitiveText } from './ai.js';
 import { createInlineImageStorage } from './image-storage.js';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, verifyHcaptcha } from './security.js';
-import { normalizeBody, parsePostText } from './text-format.js';
+import { normalizeBody, parsePostText, sanitizeText } from './text-format.js';
 
 const noopLogger = () => {};
 const PULSE_STOP_WORDS = new Set([
@@ -73,6 +74,9 @@ function stripPrivatePostFields(post) {
     accountId: _accountId,
     ...publicFields
   } = post;
+  if (publicFields.body) {
+    publicFields.body = sanitizeText(publicFields.body);
+  }
   return publicFields;
 }
 
@@ -580,7 +584,7 @@ function verifyDeletePassword(post, password) {
 }
 
 function referencedPostNumbers(body = '') {
-  return [...String(body).matchAll(/>>(\d+)/g)].map((match) => Number(match[1])).filter((number) => Number.isFinite(number));
+  return [...String(body).matchAll(/(?:>>|&gt;&gt;)(\d+)/g)].map((match) => Number(match[1])).filter((number) => Number.isFinite(number));
 }
 
 function addBacklinks(posts) {
@@ -2321,7 +2325,9 @@ export function createForumService({
       const comments = sinceNumber
         ? detail.comments.filter((comment) => Number(comment.globalNumber) > sinceNumber)
         : detail.comments;
-      const items = (sinceNumber ? comments : [detail.thread, ...comments]).map((item) => ({ body: item.body }));
+      const items = (sinceNumber ? comments : [detail.thread, ...comments]).map((item) => ({
+        body: redactSensitiveText(item.body)
+      }));
       if (sinceNumber && !items.length) {
         return ['Chưa có bình luận mới từ lần đọc trước.'];
       }
@@ -2339,7 +2345,7 @@ export function createForumService({
 
     async summarizeBoard(boardSlug, { ip, posterToken, actor = 'public' } = {}) {
       const threads = await this.listThreads(boardSlug);
-      const items = threads.map((thread) => ({ body: thread.body }));
+      const items = threads.map((thread) => ({ body: redactSensitiveText(thread.body) }));
       return mutate(async (state) => {
         const createdAt = now().toISOString();
         const fingerprint = boardSummaryFingerprint(threads);
@@ -2354,7 +2360,9 @@ export function createForumService({
 
     async suggestComments(threadId, { ip, posterToken, actor = 'public' } = {}) {
       const detail = await this.getThread(threadId);
-      const items = [detail.thread, ...detail.comments.slice(-3)].map((item) => ({ body: item.body }));
+      const items = [detail.thread, ...detail.comments.slice(-3)].map((item) => ({
+        body: redactSensitiveText(item.body)
+      }));
       return mutate(async (state) => {
         consumeAiBudget(state, {
           kind: 'suggestion',
