@@ -2966,6 +2966,7 @@ async function submitThread(event) {
       image: state.selectedImage
     };
     const result = await api(`/api/boards/${state.boardSlug}/threads`, {
+      auth: 'account',
       method: 'POST',
       body: JSON.stringify(payload)
     });
@@ -3025,6 +3026,7 @@ async function submitComment(event) {
 async function createComment(body, captchaToken) {
   const form = els.quickReply.classList.contains('hidden') ? els.commentForm : els.quickReplyForm;
   return api(`/api/threads/${state.threadId}/comments`, {
+    auth: 'account',
     method: 'POST',
     body: JSON.stringify({
       body,

@@ -130,12 +130,13 @@ function requireAccount(request, jwtSecret, service) {
   }
 }
 
-function getOptionalAccount(request, jwtSecret) {
+function getOptionalAccount(request, jwtSecret, service) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return undefined;
   try {
     const payload = verifyJwt(token, jwtSecret);
+    if (service?.isSessionRevoked?.(token)) return undefined;
     if (payload.role === 'user' && payload.sub) return payload.sub;
   } catch {}
   return undefined;
@@ -584,7 +585,7 @@ export function createHttpServer({
             ip,
             posterToken: body.posterToken,
             displayName: body.displayName,
-            accountId: getOptionalAccount(request, jwtSecret)
+            accountId: getOptionalAccount(request, jwtSecret, service)
           }),
           201
         );
@@ -637,7 +638,7 @@ export function createHttpServer({
             ip,
             posterToken: body.posterToken,
             displayName: body.displayName,
-            accountId: getOptionalAccount(request, jwtSecret)
+            accountId: getOptionalAccount(request, jwtSecret, service)
           }),
           201
         );

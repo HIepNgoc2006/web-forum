@@ -392,6 +392,45 @@ test('http account identity is not exposed on public posts', async () => {
     const publicBody = await publicPosts.json();
     assert.equal(publicBody.data.thread.accountId, undefined);
     assert.equal(publicBody.data.comments[0].accountId, undefined);
+
+    const logout = await fetch(`${baseUrl}/api/account/logout`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${registeredBody.data.token}` }
+    });
+    assert.equal(logout.status, 200);
+
+    const postedWithRevokedToken = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${registeredBody.data.token}`
+      },
+      body: JSON.stringify({
+        body: 'Dang bai bang token da logout',
+        captchaToken: 'dev-pass'
+      })
+    });
+    assert.equal(postedWithRevokedToken.status, 201);
+
+    await new Promise((resolve) => setTimeout(resolve, 1100));
+
+    const loggedInAgain = await fetch(`${baseUrl}/api/account/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass' })
+    });
+    const loggedInAgainBody = await loggedInAgain.json();
+    assert.equal(loggedInAgain.status, 200);
+    const myPostsAfterLogout = await fetch(`${baseUrl}/api/account/posts`, {
+      headers: { authorization: `Bearer ${loggedInAgainBody.data.token}` }
+    });
+    const myPostsAfterLogoutBody = await myPostsAfterLogout.json();
+    assert.equal(myPostsAfterLogout.status, 200);
+    assert.equal(myPostsAfterLogoutBody.data.length, 2);
+    assert.equal(
+      myPostsAfterLogoutBody.data.some((item) => item.post.bodyLines[0].text === 'Dang bai bang token da logout'),
+      false
+    );
   });
 });
 
