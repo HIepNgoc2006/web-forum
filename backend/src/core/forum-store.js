@@ -1,9 +1,11 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { BOARDS } from './config.js';
 
 export const EMPTY_STATE = {
   version: 1,
   nextGlobalNumber: 1,
+  boards: BOARDS,
   users: [],
   threads: [],
   comments: [],
@@ -20,9 +22,11 @@ function clone(value) {
 
 export function normalizeState(value = {}) {
   const cloned = clone(value);
+  const boards = Array.isArray(cloned.boards) && cloned.boards.length > 0 ? cloned.boards : BOARDS;
   return {
     ...EMPTY_STATE,
     ...cloned,
+    boards,
     users: Array.isArray(cloned.users) ? cloned.users : [],
     threads: Array.isArray(cloned.threads) ? cloned.threads : [],
     comments: Array.isArray(cloned.comments) ? cloned.comments : [],

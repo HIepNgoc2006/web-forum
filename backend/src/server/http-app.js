@@ -322,7 +322,8 @@ async function serveStatic(request, response, staticRoot) {
       response.end(await fs.readFile(candidate));
     }
     return true;
-  } catch {
+  } catch (error) {
+    console.error('HTTP 500 ERROR:', error);
     if (!url.pathname.startsWith('/api') && !url.pathname.startsWith('/events') && !url.pathname.startsWith('/uploads')) {
       const indexPath = path.join(staticRoot, 'index.html');
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
@@ -739,6 +740,51 @@ export function createHttpServer({
           return;
         }
 
+        if (request.method === 'GET' && routePath === '/api/admin/boards') {
+          ok(response, await service.listAdminBoards());
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/admin/boards') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.createBoard(
+              {
+                slug: body.slug,
+                name: body.name,
+                category: body.category,
+                description: body.description,
+                isHidden: body.isHidden,
+                isArchived: body.isArchived
+              },
+              { actor: admin.username ?? 'admin' }
+            ),
+            201
+          );
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'boards', ':boardSlug']);
+        if (params && request.method === 'PUT') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.updateBoard(
+              params.boardSlug,
+              {
+                name: body.name,
+                category: body.category,
+                description: body.description,
+                isHidden: body.isHidden,
+                isArchived: body.isArchived
+              },
+              { actor: admin.username ?? 'admin' }
+            )
+          );
+          return;
+        }
+
         if (request.method === 'GET' && routePath === '/api/admin/moderation-actions') {
           ok(response, await service.listModerationActions(url.searchParams.get('limit') ?? 50, filters));
           return;
@@ -867,6 +913,7 @@ export function createHttpServer({
       error.statusCode = 404;
       throw error;
     } catch (error) {
+      console.error('API ERROR:', error);
       fail(response, error);
     }
   });

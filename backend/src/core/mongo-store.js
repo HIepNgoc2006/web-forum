@@ -163,7 +163,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       BOARDS.map((board) => ({
         updateOne: {
           filter: { slug: board.slug },
-          update: { $set: board },
+          update: { $setOnInsert: board },
           upsert: true
         }
       })),
@@ -177,8 +177,9 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
     async read() {
       const models = await getModels();
       await ensureBoards(models);
-      const [meta, users, threads, comments, moderationActions, reports, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
+      const [meta, boards, users, threads, comments, moderationActions, reports, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
         models.StateMeta.findById('global').lean(),
+        models.Board.find({}).lean(),
         models.User.find({}).lean(),
         models.Thread.find({}).lean(),
         models.Comment.find({}).lean(),
@@ -192,6 +193,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       return normalizeState({
         version: meta?.version ?? EMPTY_STATE.version,
         nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber,
+        boards: boards.map(plainDocument),
         users: users.map(plainDocument),
         threads: threads.map(plainDocument),
         comments: comments.map(plainDocument),
@@ -218,6 +220,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           },
           { upsert: true }
         );
+        await replaceCollection(models.Board, normalized.boards);
         await replaceCollection(models.User, normalized.users);
         await replaceCollection(models.Thread, normalized.threads);
         await replaceCollection(models.Comment, normalized.comments);

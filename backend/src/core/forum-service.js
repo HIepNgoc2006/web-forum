@@ -5,7 +5,6 @@ import {
   DEFAULT_MAX_IMAGE_BYTES,
   DEFAULT_MAX_THUMBNAIL_BYTES,
   THREAD_LIFECYCLE,
-  getBoard,
   readPositiveInteger
 } from './config.js';
 import { createInlineImageStorage } from './image-storage.js';
@@ -58,6 +57,7 @@ const MAX_ACCOUNT_SAVED_SEARCHES = 50;
 const MAX_ACCOUNT_DRAFT_LENGTH = 12_000;
 const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails'];
 const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions'];
+const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -99,6 +99,65 @@ function archiveThreadRecord(thread, reason, archivedAt) {
 
 function boardEventEnded(board, at) {
   return Boolean(board?.temporary && board.eventEndsAt && String(board.eventEndsAt).localeCompare(at) <= 0);
+}
+
+function publicBoard(board = {}) {
+  return Boolean(board?.slug) && !board.isHidden && !board.isArchived;
+}
+
+function serializeBoard(board = {}, { admin = false } = {}) {
+  const serialized = {
+    slug: board.slug,
+    path: board.path || `/${board.slug}/`,
+    name: board.name,
+    category: board.category,
+    description: board.description,
+    temporary: Boolean(board.temporary),
+    eventEndsAt: board.eventEndsAt ?? null
+  };
+  if (admin) {
+    serialized.isHidden = Boolean(board.isHidden);
+    serialized.isArchived = Boolean(board.isArchived);
+  }
+  return serialized;
+}
+
+function findBoard(state, slug, { publicOnly = false } = {}) {
+  const board = state.boards.find((item) => item.slug === slug);
+  if (!board || (publicOnly && !publicBoard(board))) {
+    return null;
+  }
+  return board;
+}
+
+function assertBoardText(value, field, maxLength) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) {
+    const error = new Error(`${field} là bắt buộc`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return text.slice(0, maxLength);
+}
+
+function normalizeBoardInput({ slug, name, category, description, isHidden, isArchived } = {}, { requireSlug = true } = {}) {
+  const board = {};
+  if (requireSlug || slug !== undefined) {
+    const safeSlug = String(slug ?? '').trim().toLowerCase();
+    if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
+      const error = new Error('Slug board không hợp lệ');
+      error.statusCode = 400;
+      throw error;
+    }
+    board.slug = safeSlug;
+    board.path = `/${safeSlug}/`;
+  }
+  if (name !== undefined || requireSlug) board.name = assertBoardText(name, 'Tên board', 80);
+  if (category !== undefined || requireSlug) board.category = assertBoardText(category, 'Danh mục board', 80);
+  if (description !== undefined || requireSlug) board.description = assertBoardText(description, 'Mô tả board', 240);
+  if (typeof isHidden === 'boolean') board.isHidden = isHidden;
+  if (typeof isArchived === 'boolean') board.isArchived = isArchived;
+  return board;
 }
 
 function assertEventBoardOpen(board, at) {
@@ -289,21 +348,22 @@ function defaultAccountSettings() {
   };
 }
 
-function normalizeBoardSubscriptionSlugs(values = []) {
+function normalizeBoardSubscriptionSlugs(values = [], state = {}) {
+  const boards = Array.isArray(state.boards) && state.boards.length > 0 ? state.boards : BOARDS;
   const slugs = new Set();
   for (const item of values) {
     const slug = String(item || '').trim();
-    if (getBoard(slug)) {
+    if (boards.find((board) => board.slug === slug && !board.isArchived)) {
       slugs.add(slug);
     }
-    if (slugs.size >= BOARDS.length) {
+    if (slugs.size >= boards.length) {
       break;
     }
   }
   return [...slugs];
 }
 
-function normalizeAccountSettings(settings = {}, current = defaultAccountSettings()) {
+function normalizeAccountSettings(state, settings = {}, current = defaultAccountSettings()) {
   const defaults = defaultAccountSettings();
   const safe = {
     ...defaults,
@@ -318,7 +378,7 @@ function normalizeAccountSettings(settings = {}, current = defaultAccountSetting
         ? current.notificationPreferences
         : {})
     },
-    boardSubscriptions: normalizeBoardSubscriptionSlugs(current.boardSubscriptions || defaults.boardSubscriptions)
+    boardSubscriptions: normalizeBoardSubscriptionSlugs(current.boardSubscriptions || defaults.boardSubscriptions, state)
   };
   if (typeof current.emailNotifications === 'boolean' && !current.notificationPreferences) {
     safe.notificationPreferences.email = current.emailNotifications;
@@ -328,7 +388,7 @@ function normalizeAccountSettings(settings = {}, current = defaultAccountSetting
     safe.theme = theme;
   }
   const boardSlug = String(settings.homeBoard ?? safe.homeBoard);
-  if (getBoard(boardSlug)) {
+  if (findBoard(state, boardSlug, { publicOnly: true })) {
     safe.homeBoard = boardSlug;
   }
   if (typeof settings.syncDrafts === 'boolean') {
@@ -354,7 +414,7 @@ function normalizeAccountSettings(settings = {}, current = defaultAccountSetting
     safe.emailNotifications = safe.notificationPreferences.email;
   }
   if (Array.isArray(settings.boardSubscriptions)) {
-    safe.boardSubscriptions = normalizeBoardSubscriptionSlugs(settings.boardSubscriptions);
+    safe.boardSubscriptions = normalizeBoardSubscriptionSlugs(settings.boardSubscriptions, state);
   }
   return safe;
 }
@@ -489,12 +549,12 @@ function serializeAccountPrivateData(value = {}) {
   return normalizeAccountPrivateData(value, value);
 }
 
-function serializeAccount(user = {}) {
+function serializeAccount(state, user = {}) {
   return {
     id: user.id,
     username: user.username,
     role: user.role || 'user',
-    settings: normalizeAccountSettings({}, user.settings),
+    settings: normalizeAccountSettings(state, {}, user.settings),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
   };
@@ -1137,7 +1197,7 @@ export function createForumService({
   }
 
   function archiveExpiredEventThreads(state, boardSlug, archivedAt) {
-    const board = getBoard(boardSlug);
+    const board = state.boards.find(b => b.slug === boardSlug);
     if (!boardEventEnded(board, archivedAt)) {
       return false;
     }
@@ -1155,8 +1215,13 @@ export function createForumService({
 
   return {
     async listBoards() {
-      const { BOARDS } = await import('./config.js');
-      return BOARDS;
+      const state = await store.read();
+      return state.boards.filter(publicBoard).map((board) => serializeBoard(board));
+    },
+
+    async listAdminBoards() {
+      const state = await store.read();
+      return state.boards.map((board) => serializeBoard(board, { admin: true }));
     },
 
     async getStats() {
@@ -1165,6 +1230,7 @@ export function createForumService({
       const publicComments = state.comments.filter(publicPost);
       const publicPosts = [...publicThreads, ...publicComments];
       const activeBoards = new Set(publicThreads.map((thread) => thread.boardSlug));
+      const publicBoards = state.boards.filter(publicBoard);
       const files = publicPosts.map((post) => post.image).filter(Boolean);
       const nowMs = now().getTime();
       const oneHourAgo = nowMs - 60 * 60 * 1000;
@@ -1176,8 +1242,8 @@ export function createForumService({
         totalThreads: publicThreads.length,
         totalPosts: publicPosts.length,
         activeBoards: activeBoards.size,
-        publicBoardCount: BOARDS.length,
-        totalBoardCount: BOARDS.length,
+        publicBoardCount: publicBoards.length,
+        totalBoardCount: state.boards.length,
         postCountLast24h: publicPosts.filter((post) => postTime(post) >= oneDayAgo).length,
         postCountLastHour: publicPosts.filter((post) => postTime(post) >= oneHourAgo).length,
         fileCount: files.length,
@@ -1235,29 +1301,31 @@ export function createForumService({
         };
         state.users.push(user);
         logEvent('account.register', { username: safeUsername });
-        return serializeAccount(user);
+        return serializeAccount(state, user);
       });
     },
 
     async loginAccount({ username, password } = {}) {
       const safeUsername = normalizeAccountUsername(username);
-      const user = (await store.read()).users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+      const state = await store.read();
+      const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
       if (!user || !verifyAccountPassword(password, user.passwordHash)) {
         const error = new Error('Tên tài khoản hoặc mật khẩu không đúng');
         error.statusCode = 401;
         throw error;
       }
-      return serializeAccount(user);
+      return serializeAccount(state, user);
     },
 
     async getAccount(userId) {
-      const user = (await store.read()).users.find((item) => item.id === userId);
+      const state = await store.read();
+      const user = state.users.find((item) => item.id === userId);
       if (!user) {
         const error = new Error('Phiên đăng nhập không còn hợp lệ');
         error.statusCode = 401;
         throw error;
       }
-      return serializeAccount(user);
+      return serializeAccount(state, user);
     },
 
     async updateAccountSettings(userId, settings = {}) {
@@ -1268,10 +1336,10 @@ export function createForumService({
           error.statusCode = 401;
           throw error;
         }
-        user.settings = normalizeAccountSettings(settings, user.settings);
+        user.settings = normalizeAccountSettings(state, settings, user.settings);
         user.updatedAt = now().toISOString();
         logEvent('account.settings.update', { username: user.username });
-        return serializeAccount(user);
+        return serializeAccount(state, user);
       });
     },
 
@@ -1366,12 +1434,13 @@ export function createForumService({
 
     async listHotBoards(limit = 8) {
       const state = await store.read();
-      const safeLimit = Math.max(1, Math.min(Number(limit) || 8, BOARDS.length));
+      const publicBoards = state.boards.filter(publicBoard);
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 8, publicBoards.length || 1));
       const oneDayAgo = now().getTime() - 24 * 60 * 60 * 1000;
       const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
       const activeThreadIds = new Set(state.threads.filter(activePublicThread).map((thread) => thread.id));
       const metrics = new Map(
-        BOARDS.map((board) => [
+        publicBoards.map((board) => [
           board.slug,
           {
             boardSlug: board.slug,
@@ -1473,13 +1542,13 @@ export function createForumService({
     },
 
     async listThreads(boardSlug, options = {}) {
-      if (!getBoard(boardSlug)) {
+      const state = await store.read();
+      if (!findBoard(state, boardSlug, { publicOnly: true })) {
         const error = new Error('Không tìm thấy bảng');
         error.statusCode = 404;
         throw error;
       }
 
-      const state = await store.read();
       const checkedAt = now().toISOString();
       if (archiveExpiredEventThreads(state, boardSlug, checkedAt)) {
         await store.write(state);
@@ -1497,13 +1566,14 @@ export function createForumService({
     },
 
     async listArchivedThreads(boardSlug) {
-      if (!getBoard(boardSlug)) {
+      const state = await store.read();
+      const board = findBoard(state, boardSlug);
+      if (!board || board.isHidden) {
         const error = new Error('Không tìm thấy bảng');
         error.statusCode = 404;
         throw error;
       }
 
-      const state = await store.read();
       const checkedAt = now().toISOString();
       if (archiveExpiredEventThreads(state, boardSlug, checkedAt)) {
         await store.write(state);
@@ -1576,7 +1646,8 @@ export function createForumService({
       deletePassword = '',
       accountId
     }) {
-      const board = getBoard(boardSlug);
+      const state = await store.read();
+      const board = findBoard(state, boardSlug, { publicOnly: true });
       if (!board) {
         const error = new Error('Không tìm thấy bảng');
         error.statusCode = 404;
@@ -1733,7 +1804,7 @@ export function createForumService({
           error.statusCode = 404;
           throw error;
         }
-        assertEventBoardOpen(getBoard(thread.boardSlug), createdAt);
+        assertEventBoardOpen(findBoard(state, thread.boardSlug), createdAt);
         enforceThreadSlowMode(state, thread, { authorFingerprint, createdAt });
 
         const repliesBeforeCreate = publicReplyCount(state, threadId);
@@ -2315,6 +2386,50 @@ export function createForumService({
         });
         logEvent('ai.rewrite', { actor });
         return ai.rewrite(normalizedBody);
+      });
+    },
+
+    async createBoard({ slug, name, category, description, isHidden, isArchived } = {}, { actor } = {}) {
+      const input = normalizeBoardInput({ slug, name, category, description, isHidden, isArchived });
+      return mutate(async (state) => {
+        if (state.boards.find((b) => b.slug === input.slug)) {
+          const error = new Error('Board đã tồn tại');
+          error.statusCode = 409;
+          throw error;
+        }
+        const board = {
+          ...input,
+          isHidden: Boolean(input.isHidden),
+          isArchived: Boolean(input.isArchived)
+        };
+        state.boards.push(board);
+        logEvent('board.created', { slug: board.slug, actor });
+        return { board: serializeBoard(board, { admin: true }) };
+      });
+    },
+
+    async updateBoard(slug, { name, category, description, isHidden, isArchived } = {}, { actor } = {}) {
+      const safeSlug = String(slug ?? '').trim().toLowerCase();
+      if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
+        const error = new Error('Slug board không hợp lệ');
+        error.statusCode = 400;
+        throw error;
+      }
+      const updates = normalizeBoardInput(
+        { name, category, description, isHidden, isArchived },
+        { requireSlug: false }
+      );
+      return mutate(async (state) => {
+        const board = state.boards.find((b) => b.slug === safeSlug);
+        if (!board) {
+          const error = new Error('Không tìm thấy board');
+          error.statusCode = 404;
+          throw error;
+        }
+        Object.assign(board, updates);
+
+        logEvent('board.updated', { slug: safeSlug, actor });
+        return { board: serializeBoard(board, { admin: true }) };
       });
     },
 

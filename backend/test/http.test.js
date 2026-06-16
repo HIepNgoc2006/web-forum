@@ -105,6 +105,82 @@ test('http api creates public thread and protects admin pending queue', async ()
   });
 });
 
+test('http admin boards support dynamic create update and public filtering', async () => {
+  await withServer(async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const loginBody = await login.json();
+    const headers = {
+      authorization: `Bearer ${loginBody.data.token}`,
+      'content-type': 'application/json'
+    };
+
+    const created = await fetch(`${baseUrl}/api/admin/boards`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        slug: 'lab-news',
+        name: 'Tin lab',
+        category: 'Truong hoc',
+        description: 'Thong bao phong lab',
+        isHidden: true
+      })
+    });
+    const createdBody = await created.json();
+    assert.equal(created.status, 201);
+    assert.equal(createdBody.data.board.slug, 'lab-news');
+    assert.equal(createdBody.data.board.isHidden, true);
+
+    const publicBoardsBefore = await fetch(`${baseUrl}/api/boards`);
+    const publicBoardsBeforeBody = await publicBoardsBefore.json();
+    assert.equal(publicBoardsBeforeBody.data.some((board) => board.slug === 'lab-news'), false);
+
+    const adminBoards = await fetch(`${baseUrl}/api/admin/boards`, {
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    const adminBoardsBody = await adminBoards.json();
+    assert.equal(adminBoards.status, 200);
+    assert.equal(adminBoardsBody.data.some((board) => board.slug === 'lab-news' && board.isHidden), true);
+
+    const shown = await fetch(`${baseUrl}/api/admin/boards/lab-news`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ isHidden: false })
+    });
+    assert.equal(shown.status, 200);
+
+    const publicBoardsAfter = await fetch(`${baseUrl}/api/boards`);
+    const publicBoardsAfterBody = await publicBoardsAfter.json();
+    assert.equal(publicBoardsAfterBody.data.some((board) => board.slug === 'lab-news'), true);
+
+    const archived = await fetch(`${baseUrl}/api/admin/boards/lab-news`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ isArchived: true })
+    });
+    assert.equal(archived.status, 200);
+
+    const publicBoardsArchived = await fetch(`${baseUrl}/api/boards`);
+    const publicBoardsArchivedBody = await publicBoardsArchived.json();
+    assert.equal(publicBoardsArchivedBody.data.some((board) => board.slug === 'lab-news'), false);
+
+    const invalid = await fetch(`${baseUrl}/api/admin/boards`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        slug: '../bad',
+        name: 'Bad',
+        category: 'Bad',
+        description: 'Bad'
+      })
+    });
+    assert.equal(invalid.status, 400);
+  });
+});
+
 test('http account api registers, logs in and saves private settings', async () => {
   await withServer(async (baseUrl) => {
     const registered = await fetch(`${baseUrl}/api/account/register`, {
