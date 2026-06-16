@@ -70,6 +70,7 @@ function stripPrivatePostFields(post) {
     deletePasswordHash: _deletePasswordHash,
     pollVotes: _pollVotes,
     stickiedBy: _stickiedBy,
+    accountId: _accountId,
     ...publicFields
   } = post;
   return publicFields;
@@ -1572,7 +1573,8 @@ export function createForumService({
       posterToken,
       displayName = '',
       options = '',
-      deletePassword = ''
+      deletePassword = '',
+      accountId
     }) {
       const board = getBoard(boardSlug);
       if (!board) {
@@ -1605,6 +1607,7 @@ export function createForumService({
           boardSlug,
           body: normalizedBody,
           displayName: normalizedDisplayName,
+          accountId,
           image: storedImage,
           poll,
           pollVotes: poll ? {} : undefined,
@@ -1710,7 +1713,7 @@ export function createForumService({
       };
     },
 
-    async createComment({ threadId, body, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '' }) {
+    async createComment({ threadId, body, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '', accountId }) {
       await requireCaptcha(captchaToken, ip);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
@@ -1747,6 +1750,7 @@ export function createForumService({
           boardSlug: thread.boardSlug,
           body: normalizedBody,
           displayName: normalizedDisplayName,
+          accountId,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),
@@ -2311,6 +2315,26 @@ export function createForumService({
         });
         logEvent('ai.rewrite', { actor });
         return ai.rewrite(normalizedBody);
+      });
+    },
+
+    async listAccountPosts(accountId) {
+      if (!accountId) return [];
+      const state = await store.read();
+      const threads = state.threads
+        .filter((thread) => thread.accountId === accountId && !thread.isDeleted)
+        .map((thread) => ({ type: 'thread', post: serializeThread(thread, state.comments) }));
+      const comments = state.comments
+        .filter((comment) => comment.accountId === accountId && !comment.isDeleted)
+        .map((comment) => {
+          const thread = state.threads.find((item) => item.id === comment.threadId);
+          return { type: 'comment', post: serializeComment(comment, thread) };
+        });
+
+      return [...threads, ...comments].sort((left, right) => {
+        const timeDiff = right.post.createdAt.localeCompare(left.post.createdAt);
+        if (timeDiff !== 0) return timeDiff;
+        return right.post.globalNumber - left.post.globalNumber;
       });
     }
   };

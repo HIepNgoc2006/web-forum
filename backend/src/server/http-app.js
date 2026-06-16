@@ -130,6 +130,17 @@ function requireAccount(request, jwtSecret, service) {
   }
 }
 
+function getOptionalAccount(request, jwtSecret) {
+  const header = request.headers.authorization ?? '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return undefined;
+  try {
+    const payload = verifyJwt(token, jwtSecret);
+    if (payload.role === 'user' && payload.sub) return payload.sub;
+  } catch {}
+  return undefined;
+}
+
 function accountToken(account, jwtSecret) {
   if (!jwtSecret) {
     const error = new Error('Chưa cấu hình JWT_SECRET cho tài khoản');
@@ -506,6 +517,12 @@ export function createHttpServer({
       if (routePath.startsWith('/api/account')) {
         const accountSession = requireAccount(request, jwtSecret, service);
 
+        if (request.method === 'GET' && routePath === '/api/account/posts') {
+          const accountSession = requireAccount(request, jwtSecret, service);
+          ok(response, await service.listAccountPosts(accountSession.sub));
+          return;
+        }
+
         if (request.method === 'GET' && routePath === '/api/account/me') {
           ok(response, await service.getAccount(accountSession.sub));
           return;
@@ -566,7 +583,8 @@ export function createHttpServer({
             captchaToken: body.captchaToken,
             ip,
             posterToken: body.posterToken,
-            displayName: body.displayName
+            displayName: body.displayName,
+            accountId: getOptionalAccount(request, jwtSecret)
           }),
           201
         );
@@ -618,7 +636,8 @@ export function createHttpServer({
             captchaToken: body.captchaToken,
             ip,
             posterToken: body.posterToken,
-            displayName: body.displayName
+            displayName: body.displayName,
+            accountId: getOptionalAccount(request, jwtSecret)
           }),
           201
         );

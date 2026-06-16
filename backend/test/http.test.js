@@ -361,6 +361,37 @@ test('http account identity is not exposed on public posts', async () => {
     assert.equal(createdBody.data.thread.username, undefined);
     assert.equal(createdBody.data.thread.accountId, undefined);
     assert.equal(JSON.stringify(createdBody.data.thread).includes('private_user'), false);
+
+    const comment = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${registeredBody.data.token}`
+      },
+      body: JSON.stringify({
+        body: 'Tra loi khi da dang nhap account',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const commentBody = await comment.json();
+    assert.equal(comment.status, 201);
+    assert.equal(commentBody.data.comment.accountId, undefined);
+
+    const myPosts = await fetch(`${baseUrl}/api/account/posts`, {
+      headers: { authorization: `Bearer ${registeredBody.data.token}` }
+    });
+    const myPostsBody = await myPosts.json();
+    assert.equal(myPosts.status, 200);
+    assert.equal(myPostsBody.data.length, 2);
+    assert.equal(myPostsBody.data[0].type, 'comment'); // Newest first
+    assert.equal(myPostsBody.data[0].post.bodyLines[0].text, 'Tra loi khi da dang nhap account');
+    assert.equal(myPostsBody.data[1].type, 'thread');
+    assert.equal(myPostsBody.data[1].post.bodyLines[0].text, 'Dang bai khi da dang nhap account');
+
+    const publicPosts = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
+    const publicBody = await publicPosts.json();
+    assert.equal(publicBody.data.thread.accountId, undefined);
+    assert.equal(publicBody.data.comments[0].accountId, undefined);
   });
 });
 
