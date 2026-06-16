@@ -528,6 +528,30 @@
             [<a href="#register">Tạo tài khoản</a>]
           </div>
         </form>
+        <form id="account2FAVerifyForm" class="login-panel stack hidden">
+          <div id="account2FAVerifyError" class="form-error hidden" role="alert"></div>
+          <p class="muted">Tài khoản này đã kích hoạt bảo mật 2 lớp. Vui lòng nhập mã xác thực từ ứng dụng của bạn.</p>
+          <div id="totpInputSection" class="stack">
+            <label class="field-row">
+              <span>Mã 2FA (6 chữ số)</span>
+              <input id="login2FACode" maxlength="6" placeholder="Mã 6 chữ số" style="font-size:18px; text-align:center;" type="text" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Xác thực</button>
+              <button id="useBackupCodeLink" class="link-button" type="button">[Dùng mã dự phòng]</button>
+            </div>
+          </div>
+          <div id="backupCodeInputSection" class="stack hidden">
+            <label class="field-row">
+              <span>Mã dự phòng (8 ký tự)</span>
+              <input id="loginBackupCode" maxlength="10" placeholder="Mã dự phòng" style="font-size:18px; text-align:center; text-transform:uppercase;" type="text" />
+            </label>
+            <div class="form-actions account-actions">
+              <button id="submitBackupCodeButton" class="primary-button" type="button">Xác thực bằng mã dự phòng</button>
+              <button id="useTotpLink" class="link-button" type="button">[Quay lại nhập mã 2FA]</button>
+            </div>
+          </div>
+        </form>
       </section>
 
       <section id="accountScreen" class="screen account-screen" aria-labelledby="accountTitle">
@@ -592,6 +616,42 @@
             <button class="ghost-button" data-clear-account-private="savedSearches" type="button">[Xóa tìm kiếm]</button>
             <button class="ghost-button" data-clear-account-private="drafts" type="button">[Xóa drafts]</button>
             <button class="ghost-button" data-clear-account-private="" type="button">[Xóa tất cả]</button>
+          </div>
+        </section>
+        <section id="accountTwoFactorPanel" class="login-panel stack hidden" aria-labelledby="accountTwoFactorTitle">
+          <h2 id="accountTwoFactorTitle">Bảo mật 2 lớp (TOTP 2FA)</h2>
+          <div id="account2FADisabledSection" class="stack">
+            <p class="muted">2FA hiện tại đang TẮT. Bật 2FA giúp bảo vệ tài khoản của bạn khỏi truy cập trái phép.</p>
+            <button id="enable2FAButton" class="primary-button" style="max-width:200px;" type="button">Bắt đầu thiết lập 2FA</button>
+          </div>
+          <div id="account2FASetupSection" class="stack hidden">
+            <p class="muted">Quét mã QR bằng ứng dụng xác thực (Google Authenticator, Microsoft Authenticator, v.v.):</p>
+            <div style="text-align: center; margin: 10px 0;">
+              <img id="qrcodeImage" src="" alt="Mã QR thiết lập 2FA" style="max-width:200px; display:inline-block;" />
+            </div>
+            <p class="muted">Hoặc nhập mã khóa thủ công: <code id="manualSecretCode" style="font-weight: bold; background: #eee; padding: 2px 5px; border-radius: 3px;"></code></p>
+            <div class="stack" style="background: #fff9db; border: 1px solid #f59f00; padding: 10px; border-radius: 4px; margin: 10px 0;">
+              <p style="font-weight:bold; color:#f08c00; margin:0 0 5px 0;">LƯU Ý: LƯU TRỮ MÃ DỰ PHÒNG</p>
+              <p class="muted" style="margin:0 0 5px 0;">Lưu lại các mã dự phòng sau. Mỗi mã chỉ sử dụng được một lần để khôi phục tài khoản nếu bạn mất thiết bị 2FA.</p>
+              <textarea id="backupCodesDisplay" readonly rows="5" style="width:100%; font-family:monospace; resize:none;"></textarea>
+            </div>
+            <div class="field-row">
+              <span>Nhập mã 2FA xác nhận</span>
+              <input id="verify2FACode" maxlength="6" placeholder="Mã 6 chữ số" style="max-width: 150px; font-size:16px; text-align:center;" type="text" />
+            </div>
+            <div class="form-actions account-actions">
+              <button id="verify2FASetupButton" class="primary-button" type="button">Xác nhận và kích hoạt</button>
+              <button id="cancel2FASetupButton" class="ghost-button" type="button">Hủy</button>
+            </div>
+          </div>
+          <div id="account2FAEnabledSection" class="stack hidden">
+            <p class="muted" style="color:#2b8a3e; font-weight:bold;">✔ 2FA hiện tại đang BẬT trên tài khoản của bạn.</p>
+            <p class="muted">Nếu muốn tắt 2FA, nhập mật khẩu xác nhận bên dưới:</p>
+            <div class="field-row">
+              <span>Nhập mật khẩu</span>
+              <input id="disable2FAPassword" placeholder="Mật khẩu tài khoản" style="max-width: 200px;" type="password" />
+            </div>
+            <button id="disable2FAButton" class="ghost-button" style="max-width:200px; color:#c92a2a;" type="button">[Hủy kích hoạt 2FA]</button>
           </div>
         </section>
         <div id="accountLoggedOut" class="login-panel stack">

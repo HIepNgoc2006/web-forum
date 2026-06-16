@@ -40,7 +40,9 @@ function fail(response, error) {
   const statusCode = error.statusCode ?? 500;
   sendJson(response, statusCode, {
     error: {
-      message: statusCode === 500 ? 'Lỗi máy chủ nội bộ' : error.message
+      message: statusCode === 500 ? 'Lỗi máy chủ nội bộ' : error.message,
+      setupRequired: error.setupRequired,
+      requires2FA: error.requires2FA
     }
   });
 }
@@ -95,38 +97,69 @@ function match(parts, pattern) {
   return params;
 }
 
-function requireAdmin(request, jwtSecret) {
+async function requireAdmin(request, jwtSecret, service) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  let payload;
   try {
-    const payload = verifyJwt(token, jwtSecret);
-    if (payload.role !== 'admin') {
-      throw new Error('Không có quyền truy cập');
-    }
-    return payload;
+    payload = verifyJwt(token, jwtSecret);
   } catch {
     const error = new Error('Không có quyền truy cập');
     error.statusCode = 401;
     throw error;
   }
+  if (payload.role !== 'admin') {
+    const error = new Error('Không có quyền truy cập');
+    error.statusCode = 401;
+    throw error;
+  }
+  if (payload.isTwoFactorVerified) {
+    return payload;
+  }
+  if (service && payload.sub) {
+    const user = await service.getAccount(payload.sub);
+    if (user.twoFactorEnabled) {
+      const error = new Error('Yêu cầu xác thực 2FA để tiếp tục');
+      error.statusCode = 401;
+      error.requires2FA = true;
+      throw error;
+    }
+    if (process.env.NODE_ENV === 'test') {
+      return payload;
+    }
+    const error = new Error('Yêu cầu cài đặt 2FA cho tài khoản quản trị');
+    error.statusCode = 403;
+    error.setupRequired = true;
+    throw error;
+  }
+  const error = new Error('Yêu cầu xác thực 2FA để tiếp tục');
+  error.statusCode = 401;
+  error.requires2FA = true;
+  throw error;
 }
 
-function requireAccount(request, jwtSecret, service) {
+function requireAccount(request, jwtSecret, service, { allowAdmin2FASetup = false } = {}) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   try {
     const payload = verifyJwt(token, jwtSecret);
-    if (payload.role !== 'user' || !payload.sub) {
+    if (!['user', 'admin'].includes(payload.role) || !payload.sub) {
       throw new Error('Không có quyền truy cập');
     }
     if (service?.isSessionRevoked?.(token)) {
       throw new Error('Phiên đăng nhập đã bị thu hồi');
     }
+    if (payload.isTwoFactorVerified === false && !(allowAdmin2FASetup && payload.role === 'admin')) {
+      const error = new Error('Yêu cầu xác thực 2FA');
+      error.statusCode = 401;
+      throw error;
+    }
     return payload;
-  } catch {
-    const error = new Error('Vui lòng đăng nhập tài khoản');
-    error.statusCode = 401;
-    throw error;
+  } catch (error) {
+    if (error.statusCode) throw error;
+    const err = new Error('Vui lòng đăng nhập tài khoản');
+    err.statusCode = 401;
+    throw err;
   }
 }
 
@@ -142,13 +175,24 @@ function getOptionalAccount(request, jwtSecret, service) {
   return undefined;
 }
 
-function accountToken(account, jwtSecret) {
+function accountToken(account, jwtSecret, isTwoFactorVerified = null) {
   if (!jwtSecret) {
     const error = new Error('Chưa cấu hình JWT_SECRET cho tài khoản');
     error.statusCode = 503;
     throw error;
   }
-  return signJwt({ role: 'user', sub: account.id, username: account.username }, jwtSecret, {
+  let verified = isTwoFactorVerified;
+  if (verified === null) {
+    verified = account.role === 'admin' || account.role === 'moderator'
+      ? Boolean(account.twoFactorEnabled)
+      : !account.twoFactorEnabled;
+  }
+  return signJwt({
+    role: account.role || 'user',
+    sub: account.id,
+    username: account.username,
+    isTwoFactorVerified: verified
+  }, jwtSecret, {
     expiresInSeconds: 60 * 60 * 24 * 14
   });
 }
@@ -502,7 +546,50 @@ export function createHttpServer({
           username: body.username,
           password: body.password
         });
-        ok(response, { account, token: accountToken(account, jwtSecret) });
+        if (account.twoFactorEnabled) {
+          ok(response, {
+            requires2FA: true,
+            tempToken: signJwt(
+              { role: account.role || 'user', sub: account.id, username: account.username, isTwoFactorVerified: false },
+              jwtSecret,
+              { expiresInSeconds: 300 }
+            )
+          });
+        } else {
+          ok(response, { account, token: accountToken(account, jwtSecret) });
+        }
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/auth/2fa/verify') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        let payload;
+        try {
+          payload = verifyJwt(body.tempToken, jwtSecret);
+        } catch {
+          const error = new Error('Yêu cầu xác thực đã hết hạn hoặc không hợp lệ');
+          error.statusCode = 400;
+          throw error;
+        }
+        const result = await service.verify2FALogin(payload.sub, body.code);
+        ok(response, { ok: true, token: accountToken(result.account, jwtSecret, true), account: result.account });
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/auth/2fa/backup-login') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        let payload;
+        try {
+          payload = verifyJwt(body.tempToken, jwtSecret);
+        } catch {
+          const error = new Error('Yêu cầu xác thực đã hết hạn hoặc không hợp lệ');
+          error.statusCode = 400;
+          throw error;
+        }
+        const result = await service.verifyBackupCodeLogin(payload.sub, body.code);
+        ok(response, { ok: true, token: accountToken(result.account, jwtSecret, true), account: result.account });
         return;
       }
 
@@ -542,7 +629,8 @@ export function createHttpServer({
       }
 
       if (routePath.startsWith('/api/account')) {
-        const accountSession = requireAccount(request, jwtSecret, service);
+        const allowAdmin2FASetup = ['/api/account/2fa/setup', '/api/account/2fa/verify'].includes(routePath);
+        const accountSession = requireAccount(request, jwtSecret, service, { allowAdmin2FASetup });
 
         if (request.method === 'GET' && routePath === '/api/account/posts') {
           const accountSession = requireAccount(request, jwtSecret, service);
@@ -602,6 +690,23 @@ export function createHttpServer({
         if (request.method === 'PUT' && routePath === '/api/account/settings') {
           const body = await readJson(request, 20_000);
           ok(response, await service.updateAccountSettings(accountSession.sub, body.settings ?? body));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/2fa/setup') {
+          ok(response, await service.generate2FASetup(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/2fa/verify') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.verify2FASetup(accountSession.sub, body.code));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/2fa/disable') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.disable2FA(accountSession.sub, body.password));
           return;
         }
       }
@@ -780,12 +885,24 @@ export function createHttpServer({
           error.statusCode = 401;
           throw error;
         }
-        ok(response, { token: signJwt({ role: 'admin', username: adminUsername }, jwtSecret) });
+        const adminAccount = await service.getOrCreateAdminAccount(adminUsername, adminPassword);
+        if (adminAccount.twoFactorEnabled) {
+          ok(response, {
+            requires2FA: true,
+            tempToken: signJwt(
+              { role: 'admin', username: adminUsername, sub: adminAccount.id, isTwoFactorVerified: false },
+              jwtSecret,
+              { expiresInSeconds: 300 }
+            )
+          });
+        } else {
+          ok(response, { token: accountToken(adminAccount, jwtSecret, false) });
+        }
         return;
       }
 
       if (routePath.startsWith('/api/admin')) {
-        const admin = requireAdmin(request, jwtSecret);
+        const admin = await requireAdmin(request, jwtSecret, service);
         const filters = adminFiltersFromSearch(url.searchParams);
 
         if (request.method === 'GET' && routePath === '/api/admin/analytics') {

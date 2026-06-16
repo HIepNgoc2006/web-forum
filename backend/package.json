@@ -25,6 +25,7 @@
     "@simplewebauthn/server": "^13.3.1",
     "express": "^5.2.1",
     "mongoose": "^9.6.2",
+    "qrcode": "^1.5.4",
     "socket.io": "^4.8.3"
   }
 }

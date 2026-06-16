@@ -11,6 +11,7 @@ import { redactSensitiveText } from './ai.js';
 import { createInlineImageStorage } from './image-storage.js';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, verifyHcaptcha } from './security.js';
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.js';
+import * as defaultTotp from './totp-service.js';
 import * as defaultWebAuthn from './webauthn-service.js';
 
 const noopLogger = () => {};
@@ -559,6 +560,7 @@ function serializeAccount(state, user = {}) {
     id: user.id,
     username: user.username,
     role: user.role || 'user',
+    twoFactorEnabled: Boolean(user.twoFactorEnabled),
     settings: normalizeAccountSettings(state, {}, user.settings),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
@@ -1144,6 +1146,7 @@ export function createForumService({
   lifecycle = THREAD_LIFECYCLE,
   logger = noopLogger,
   imageStorage = createInlineImageStorage(),
+  totp = defaultTotp,
   webauthn = defaultWebAuthn
 }) {
   // In-memory token blacklist for session revocation (logout).
@@ -1415,6 +1418,176 @@ export function createForumService({
     async logoutAccount(token) {
       this.revokeSession(token);
       return { ok: true };
+    },
+
+    async getOrCreateAdminAccount(username, password) {
+      const safeUsername = normalizeAccountUsername(username);
+      return mutate(async (state) => {
+        let admin = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+        if (!admin) {
+          const createdAt = now().toISOString();
+          admin = {
+            id: crypto.randomUUID(),
+            username: safeUsername,
+            passwordHash: accountPasswordHash(password),
+            role: 'admin',
+            settings: defaultAccountSettings(),
+            createdAt,
+            updatedAt: createdAt
+          };
+          state.users.push(admin);
+        } else {
+          admin.passwordHash = accountPasswordHash(password);
+          admin.role = 'admin';
+          admin.updatedAt = now().toISOString();
+        }
+        return serializeAccount(state, admin);
+      });
+    },
+
+    async generate2FASetup(userId) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        const secret = totp.generateSecret();
+        const codes = totp.generateBackupCodes();
+        const qrCodeUrl = await totp.generateQrCodeDataUrl(user.username, secret);
+
+        user.tempTwoFactorSecret = secret;
+        user.tempBackupCodes = codes.map((code) => crypto.createHash('sha256').update(code).digest('hex'));
+        user.updatedAt = now().toISOString();
+
+        return { secret, qrCodeUrl, backupCodes: codes };
+      });
+    },
+
+    async verify2FASetup(userId, code) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!user.tempTwoFactorSecret) {
+          const error = new Error('Không tìm thấy yêu cầu cài đặt 2FA');
+          error.statusCode = 400;
+          throw error;
+        }
+        if (!totp.verifyTOTP(code, user.tempTwoFactorSecret)) {
+          const error = new Error('Mã xác thực 2FA không chính xác');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        user.twoFactorSecret = user.tempTwoFactorSecret;
+        user.backupCodes = user.tempBackupCodes;
+        user.twoFactorEnabled = true;
+        user.tempTwoFactorSecret = null;
+        user.tempBackupCodes = null;
+        user.updatedAt = now().toISOString();
+
+        logEvent('account.2fa.enable', { username: user.username });
+        return { ok: true, account: serializeAccount(state, user) };
+      });
+    },
+
+    async verify2FALogin(userId, code) {
+      const state = await store.read();
+      const user = state.users.find((item) => item.id === userId);
+      if (!user) {
+        const error = new Error('Không tìm thấy tài khoản');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+        const error = new Error('Tài khoản chưa kích hoạt 2FA');
+        error.statusCode = 400;
+        throw error;
+      }
+      if (!totp.verifyTOTP(code, user.twoFactorSecret)) {
+        const error = new Error('Mã xác thực 2FA không chính xác');
+        error.statusCode = 400;
+        throw error;
+      }
+      return { ok: true, account: serializeAccount(state, user) };
+    },
+
+    async verifyBackupCodeLogin(userId, code) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Không tìm thấy tài khoản');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (!user.twoFactorEnabled || !user.backupCodes || user.backupCodes.length === 0) {
+          const error = new Error('Tài khoản chưa kích hoạt 2FA hoặc không có mã dự phòng');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const normalizedCode = String(code).toUpperCase().trim();
+        const hashedInput = crypto.createHash('sha256').update(normalizedCode).digest('hex');
+        const index = user.backupCodes.indexOf(hashedInput);
+        if (index === -1) {
+          const error = new Error('Mã dự phòng không hợp lệ');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        user.backupCodes.splice(index, 1);
+        user.updatedAt = now().toISOString();
+
+        logEvent('account.2fa.backupCodeUsed', { username: user.username });
+        return { ok: true, account: serializeAccount(state, user) };
+      });
+    },
+
+    async disable2FA(userId, password) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!verifyAccountPassword(password, user.passwordHash)) {
+          const error = new Error('Mật khẩu không đúng');
+          error.statusCode = 401;
+          throw error;
+        }
+
+        user.twoFactorEnabled = false;
+        user.twoFactorSecret = null;
+        user.backupCodes = null;
+        user.updatedAt = now().toISOString();
+
+        logEvent('account.2fa.disable', { username: user.username });
+        return { ok: true, account: serializeAccount(state, user) };
+      });
+    },
+
+    async resetUser2FA(username) {
+      const safeUsername = normalizeAccountUsername(username);
+      return mutate(async (state) => {
+        const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+        if (!user) {
+          const error = new Error('Không tìm thấy tài khoản');
+          error.statusCode = 404;
+          throw error;
+        }
+        user.twoFactorEnabled = false;
+        user.twoFactorSecret = null;
+        user.backupCodes = null;
+        user.updatedAt = now().toISOString();
+        logEvent('account.2fa.adminReset', { username: user.username });
+        return { ok: true };
+      });
     },
 
     async generateWebAuthnRegisterOptions(userId, rpID) {

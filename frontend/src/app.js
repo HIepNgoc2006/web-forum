@@ -14,6 +14,7 @@ const state = {
   token: localStorage.getItem('adminToken') || '',
   accountToken: localStorage.getItem('accountToken') || '',
   account: null,
+  temp2FAToken: null,
   accountPrivateData: null,
   accountPrivateSaveTimer: null,
   posterToken: getPosterToken(),
@@ -485,6 +486,14 @@ const els = {
   accountUsername: document.querySelector('#accountUsername'),
   accountPassword: document.querySelector('#accountPassword'),
   accountLoginError: document.querySelector('#accountLoginError'),
+  account2FAVerifyForm: document.querySelector('#account2FAVerifyForm'),
+  account2FAVerifyError: document.querySelector('#account2FAVerifyError'),
+  login2FACode: document.querySelector('#login2FACode'),
+  loginBackupCode: document.querySelector('#loginBackupCode'),
+  submitBackupCodeButton: document.querySelector('#submitBackupCodeButton'),
+  backupCodeInputSection: document.querySelector('#backupCodeInputSection'),
+  useBackupCodeLink: document.querySelector('#useBackupCodeLink'),
+  useTotpLink: document.querySelector('#useTotpLink'),
   accountStatus: document.querySelector('#accountStatus'),
   accountSettingsForm: document.querySelector('#accountSettingsForm'),
   accountSettingsError: document.querySelector('#accountSettingsError'),
@@ -504,6 +513,17 @@ const els = {
   accountPasskeysList: document.querySelector('#accountPasskeysList'),
   addPasskeyButton: document.querySelector('#addPasskeyButton'),
   loginPasskeyButton: document.querySelector('#loginPasskeyButton'),
+  account2FADisabledSection: document.querySelector('#account2FADisabledSection'),
+  enable2FAButton: document.querySelector('#enable2FAButton'),
+  account2FASetupSection: document.querySelector('#account2FASetupSection'),
+  qrcodeImage: document.querySelector('#qrcodeImage'),
+  backupCodesDisplay: document.querySelector('#backupCodesDisplay'),
+  verify2FACode: document.querySelector('#verify2FACode'),
+  verify2FASetupButton: document.querySelector('#verify2FASetupButton'),
+  cancel2FASetupButton: document.querySelector('#cancel2FASetupButton'),
+  account2FAEnabledSection: document.querySelector('#account2FAEnabledSection'),
+  disable2FAPassword: document.querySelector('#disable2FAPassword'),
+  disable2FAButton: document.querySelector('#disable2FAButton'),
   accountLoggedOut: document.querySelector('#accountLoggedOut'),
   accountDisplayOptions: document.querySelectorAll('[data-account-display-option]'),
   useAccountNameInputs: document.querySelectorAll('[data-use-account-name]'),
@@ -811,7 +831,80 @@ function fillAccountSettings(account = state.account) {
   els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
   syncAccountBoardSubscriptionOptions(settings);
   renderAccountPrivateData();
+  render2FAState();
   renderPasskeys();
+}
+
+function render2FAState() {
+  if (!els.account2FADisabledSection || !els.account2FASetupSection || !els.account2FAEnabledSection) {
+    return;
+  }
+  const loggedIn = Boolean(state.accountToken && state.account);
+  const enabled = Boolean(state.account?.twoFactorEnabled);
+  els.account2FADisabledSection.classList.toggle('hidden', !loggedIn || enabled);
+  els.account2FASetupSection.classList.add('hidden');
+  els.account2FAEnabledSection.classList.toggle('hidden', !loggedIn || !enabled);
+  if (els.verify2FACode) els.verify2FACode.value = '';
+  if (els.disable2FAPassword) els.disable2FAPassword.value = '';
+}
+
+async function start2FASetup() {
+  try {
+    const data = await api('/api/account/2fa/setup', {
+      auth: 'account',
+      method: 'POST'
+    });
+    els.qrcodeImage.src = data.qrCodeUrl;
+    els.backupCodesDisplay.value = data.backupCodes.join('\n');
+    els.account2FADisabledSection.classList.add('hidden');
+    els.account2FASetupSection.classList.remove('hidden');
+    els.verify2FACode.focus();
+  } catch (error) {
+    showToast(`Lỗi thiết lập 2FA: ${error.message}`);
+  }
+}
+
+async function verify2FASetup() {
+  const code = (els.verify2FACode.value || '').trim();
+  if (!code) {
+    showToast('Vui lòng nhập mã 2FA để xác nhận.');
+    return;
+  }
+  try {
+    const result = await api('/api/account/2fa/verify', {
+      auth: 'account',
+      method: 'POST',
+      body: JSON.stringify({ code })
+    });
+    state.account = result.account || { ...state.account, twoFactorEnabled: true };
+    showToast('Kích hoạt bảo mật 2 lớp (2FA) thành công!');
+    render2FAState();
+  } catch (error) {
+    showToast(`Kích hoạt 2FA thất bại: ${error.message}`);
+  }
+}
+
+async function disable2FA() {
+  const password = els.disable2FAPassword.value;
+  if (!password) {
+    showToast('Vui lòng nhập mật khẩu để tắt 2FA.');
+    return;
+  }
+  if (!window.confirm('Bạn chắc chắn muốn TẮT bảo mật 2 lớp (2FA)?')) {
+    return;
+  }
+  try {
+    const result = await api('/api/account/2fa/disable', {
+      auth: 'account',
+      method: 'POST',
+      body: JSON.stringify({ password })
+    });
+    state.account = result.account || { ...state.account, twoFactorEnabled: false };
+    showToast('Đã tắt bảo mật 2 lớp (2FA).');
+    render2FAState();
+  } catch (error) {
+    showToast(`Tắt 2FA thất bại: ${error.message}`);
+  }
 }
 
 async function renderPasskeys() {
@@ -1035,7 +1128,11 @@ async function api(path, options = {}) {
   const response = await fetch(path, { ...fetchOptions, headers });
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(payload.error?.message || 'Yêu cầu thất bại');
+    const error = new Error(payload.error?.message || 'Yêu cầu thất bại');
+    error.statusCode = response.status;
+    error.setupRequired = payload.error?.setupRequired;
+    error.requires2FA = payload.error?.requires2FA;
+    throw error;
   }
   return payload.data;
 }
@@ -3491,6 +3588,14 @@ async function submitAccountLogin(event) {
       })
     });
     els.accountPassword.value = '';
+    if (result.requires2FA) {
+      state.temp2FAToken = result.tempToken;
+      els.account2FAVerifyForm.classList.remove('hidden');
+      els.login2FACode.value = '';
+      els.login2FACode.focus();
+      showToast('Vui lòng nhập mã 2FA để hoàn tất đăng nhập.');
+      return;
+    }
     setAccountSession({ token: result.token, account: result.account });
     await loadAccountPrivateData({ mergeLocal: true });
     showToast('Đã đăng nhập tài khoản.');
@@ -3499,6 +3604,53 @@ async function submitAccountLogin(event) {
     setFormError(els.accountLoginError, error.message);
   } finally {
     restoreButton();
+  }
+}
+
+async function submitAccount2FAVerify(event) {
+  event.preventDefault();
+  setFormError(els.account2FAVerifyError);
+  try {
+    const code = (els.login2FACode.value || '').trim();
+    if (!code) {
+      throw new Error('Vui lòng nhập mã 2FA.');
+    }
+    const result = await api('/api/auth/2fa/verify', {
+      auth: 'none',
+      method: 'POST',
+      body: JSON.stringify({ tempToken: state.temp2FAToken, code })
+    });
+    els.account2FAVerifyForm.classList.add('hidden');
+    state.temp2FAToken = null;
+    setAccountSession({ token: result.token, account: result.account });
+    await loadAccountPrivateData({ mergeLocal: true });
+    showToast('Xác thực 2FA thành công. Đã đăng nhập.');
+    window.location.hash = '#account';
+  } catch (error) {
+    setFormError(els.account2FAVerifyError, error.message);
+  }
+}
+
+async function submitBackupCodeLogin() {
+  setFormError(els.account2FAVerifyError);
+  try {
+    const code = (els.loginBackupCode.value || '').trim();
+    if (!code) {
+      throw new Error('Vui lòng nhập mã dự phòng.');
+    }
+    const result = await api('/api/auth/2fa/backup-login', {
+      auth: 'none',
+      method: 'POST',
+      body: JSON.stringify({ tempToken: state.temp2FAToken, code })
+    });
+    els.account2FAVerifyForm.classList.add('hidden');
+    state.temp2FAToken = null;
+    setAccountSession({ token: result.token, account: result.account });
+    await loadAccountPrivateData({ mergeLocal: true });
+    showToast('Đăng nhập bằng mã dự phòng thành công.');
+    window.location.hash = '#account';
+  } catch (error) {
+    setFormError(els.account2FAVerifyError, error.message);
   }
 }
 
@@ -4238,9 +4390,24 @@ function bindEvents() {
 
   els.registerForm.addEventListener('submit', submitAccountRegister);
   els.accountLoginForm.addEventListener('submit', submitAccountLogin);
+  els.account2FAVerifyForm?.addEventListener('submit', submitAccount2FAVerify);
   els.accountSettingsForm.addEventListener('submit', submitAccountSettings);
   els.accountLogoutButton.addEventListener('click', () => logoutAccount());
   els.accountSettingsLogout.addEventListener('click', () => logoutAccount());
+  els.enable2FAButton?.addEventListener('click', start2FASetup);
+  els.verify2FASetupButton?.addEventListener('click', verify2FASetup);
+  els.cancel2FASetupButton?.addEventListener('click', render2FAState);
+  els.disable2FAButton?.addEventListener('click', disable2FA);
+  els.useBackupCodeLink?.addEventListener('click', () => {
+    els.backupCodeInputSection.classList.remove('hidden');
+    els.loginBackupCode.focus();
+  });
+  els.submitBackupCodeButton?.addEventListener('click', submitBackupCodeLogin);
+  els.useTotpLink?.addEventListener('click', () => {
+    els.backupCodeInputSection.classList.add('hidden');
+    els.loginBackupCode.value = '';
+    els.login2FACode.focus();
+  });
 
   els.loginForm.addEventListener('submit', async (event) => {
     event.preventDefault();
