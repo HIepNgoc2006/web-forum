@@ -23,6 +23,9 @@ const safeAi = {
   },
   async suggest() {
     return ['Dong y co dieu kien', 'Can them bang chung'];
+  },
+  async rewrite(text) {
+    return `Da sua: ${text}`;
   }
 };
 
@@ -2027,6 +2030,54 @@ test('security config status reports readiness without exposing values', () => {
   assert.ok(status.warnings.includes('hcaptcha_not_configured'));
   assert.equal(Object.hasOwn(status, 'jwtSecret'), false);
   assert.equal(Object.hasOwn(status, 'adminPassword'), false);
+});
+
+test('getAnalytics calculates board-level counts, AI usage, and moderation health correctly', async () => {
+  const store = createMemoryStore();
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  let analytics = await service.getAnalytics();
+  assert.equal(typeof analytics.boardActivity, 'object');
+  assert.equal(analytics.boardActivity['hoc-tap'].activeThreads, 0);
+  assert.equal(analytics.aiUsage.byKind.moderation, 0);
+  assert.equal(analytics.aiUsage.total, 0);
+  assert.equal(analytics.moderationQueue.pendingCount, 0);
+  assert.equal(analytics.moderationQueue.oldestPendingAgeMinutes, 0);
+  assert.equal(analytics.moderationQueue.averageResolutionTimeMinutes, 0);
+
+  const flaggedService = createForumService({
+    store,
+    ai: flaggedAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  await flaggedService.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Flagged spam body',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.11'
+  });
+
+  await service.rewriteDraft({
+    body: 'Test rewrite body',
+    ip: '203.0.113.12',
+    posterToken: 'reader-xyz'
+  });
+
+  analytics = await service.getAnalytics();
+  assert.equal(analytics.aiUsage.total, 1);
+  assert.deepEqual(Object.keys(analytics.aiUsage.byKind).sort(), ['moderation', 'rewrite', 'suggestion', 'summary']);
+  assert.equal(analytics.aiUsage.byKind.rewrite, 1);
+  assert.equal(analytics.boardActivity['hoc-tap'].pendingThreads, 1);
+  assert.equal(analytics.moderationQueue.pendingCount, 1);
+  assert.equal(analytics.moderationQueue.pendingThreads, 1);
+  assert.equal(analytics.moderationQueue.oldestPendingAgeMinutes, 0);
 });
 
 test('AI OpenAI-compatible client uses correct configuration and request format', async () => {

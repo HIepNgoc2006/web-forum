@@ -735,6 +735,11 @@ export function createHttpServer({
         const admin = requireAdmin(request, jwtSecret);
         const filters = adminFiltersFromSearch(url.searchParams);
 
+        if (request.method === 'GET' && routePath === '/api/admin/analytics') {
+          ok(response, await service.getAnalytics());
+          return;
+        }
+
         if (request.method === 'GET' && routePath === '/api/admin/pending') {
           ok(response, await service.listPending(filters));
           return;

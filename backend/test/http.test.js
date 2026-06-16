@@ -181,6 +181,40 @@ test('http admin boards support dynamic create update and public filtering', asy
   });
 });
 
+test('http admin analytics returns aggregate metrics without poster identifiers', async () => {
+  await withServer(async (baseUrl) => {
+    await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Noi dung analytics co email secret@example.com',
+        captchaToken: 'dev-pass',
+        posterToken: 'poster-secret-token'
+      })
+    });
+
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const loginBody = await login.json();
+    const analytics = await fetch(`${baseUrl}/api/admin/analytics`, {
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    const analyticsBody = await analytics.json();
+    const serialized = JSON.stringify(analyticsBody.data);
+
+    assert.equal(analytics.status, 200);
+    assert.equal(analyticsBody.data.boardActivity['hoc-tap'].activeThreads, 1);
+    assert.equal(serialized.includes('poster-secret-token'), false);
+    assert.equal(serialized.includes('authorFingerprint'), false);
+    assert.equal(serialized.includes('posterHash'), false);
+    assert.equal(serialized.includes('127.0.0.1'), false);
+    assert.equal(serialized.includes('secret@example.com'), false);
+  });
+});
+
 test('http account api registers, logs in and saves private settings', async () => {
   await withServer(async (baseUrl) => {
     const registered = await fetch(`${baseUrl}/api/account/register`, {

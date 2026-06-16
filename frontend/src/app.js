@@ -1931,6 +1931,103 @@ function historyActionsHtml(actions) {
   return moderationActionsHtml(actions);
 }
 
+function adminAnalyticsHtml(analytics) {
+  const boardRows = (analytics.boardActivity || [])
+    .map((board) => {
+      return `
+        <tr>
+          <td><strong>/${escapeHtml(board.slug)}/</strong> - ${escapeHtml(board.name)}</td>
+          <td>${board.threads.active} / ${board.threads.pending} / ${board.threads.deleted}</td>
+          <td>${board.comments.active} / ${board.comments.pending} / ${board.comments.deleted}</td>
+          <td><span class="analytics-badge">${board.reportsCount}</span></td>
+        </tr>
+      `;
+    })
+    .join('');
+
+  const kindList = Object.entries(analytics.aiUsage?.byKind || {})
+    .map(([kind, count]) => `<li><strong>${escapeHtml(kind)}:</strong> ${count} yêu cầu</li>`)
+    .join('');
+
+  const dailyRows = (analytics.aiUsage?.daily || [])
+    .map((day) => `<tr><td>${escapeHtml(day.date)}</td><td>${day.count} yêu cầu</td></tr>`)
+    .join('');
+
+  const queue = analytics.moderationQueue || {};
+  return `
+    <div class="analytics-dashboard">
+      <div class="analytics-row">
+        <div class="analytics-card">
+          <h4>Hàng đợi kiểm duyệt</h4>
+          <div class="analytics-metric">${queue.pendingCount}</div>
+          <p class="muted">${queue.pendingThreads} chủ đề, ${queue.pendingComments} bình luận chưa duyệt</p>
+        </div>
+        <div class="analytics-card">
+          <h4>Thời gian chờ lâu nhất</h4>
+          <div class="analytics-metric">${queue.oldestPendingAgeMinutes}m</div>
+          <p class="muted">Tuổi của bài viết chờ duyệt lâu nhất</p>
+        </div>
+        <div class="analytics-card">
+          <h4>Thời gian giải quyết TB</h4>
+          <div class="analytics-metric">${queue.averageResolutionTimeMinutes}m</div>
+          <p class="muted">Trung bình từ lúc đăng đến khi duyệt/xóa (Tổng: ${queue.resolvedCount || 0})</p>
+        </div>
+        <div class="analytics-card">
+          <h4>Tổng lượt gọi AI</h4>
+          <div class="analytics-metric">${analytics.aiUsage?.total || 0}</div>
+          <p class="muted">Tóm tắt, gợi ý bình luận và viết lại nháp</p>
+        </div>
+      </div>
+
+      <div class="analytics-grid">
+        <div class="analytics-section">
+          <h3>Hoạt động của Bảng tin</h3>
+          <table class="analytics-table">
+            <thead>
+              <tr>
+                <th>Bảng</th>
+                <th>Chủ đề (Duyệt/Chờ/Xóa)</th>
+                <th>Bình luận (Duyệt/Chờ/Xóa)</th>
+                <th>Lượt báo cáo</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${boardRows}
+            </tbody>
+          </table>
+        </div>
+
+        <div class="analytics-section">
+          <h3>Sử dụng AI chi tiết</h3>
+          <ul>
+            ${kindList}
+          </ul>
+          <h3>Biểu đồ sử dụng hàng ngày (7 ngày qua)</h3>
+          <table class="analytics-table">
+            <thead>
+              <tr>
+                <th>Ngày</th>
+                <th>Số lượt gọi</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${dailyRows}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminAnalytics(analytics) {
+  renderAdminTabs();
+  els.pendingList.innerHTML = adminAnalyticsHtml(analytics);
+  if (els.adminSelectAll) {
+    els.adminSelectAll.checked = false;
+  }
+}
+
 function adminQueryString() {
   const params = new URLSearchParams();
   if (els.adminBoardFilter.value) {
@@ -1963,6 +2060,9 @@ function adminEndpoint() {
   }
   if (state.adminTab === 'audit') {
     return `/api/admin/moderation-actions${query ? `?limit=100&${query}` : '?limit=100'}`;
+  }
+  if (state.adminTab === 'analytics') {
+    return `/api/admin/analytics`;
   }
   return `/api/admin/pending${suffix}`;
 }
@@ -2747,8 +2847,12 @@ async function loadAdmin() {
   }
 
   try {
-    const items = await api(adminEndpoint());
-    renderAdminItems(items);
+    const data = await api(adminEndpoint());
+    if (state.adminTab === 'analytics') {
+      renderAdminAnalytics(data);
+    } else {
+      renderAdminItems(data);
+    }
   } catch (error) {
     state.token = '';
     localStorage.removeItem('adminToken');

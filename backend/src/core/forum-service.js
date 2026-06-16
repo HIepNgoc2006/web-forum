@@ -2389,6 +2389,106 @@ export function createForumService({
       });
     },
 
+    async getAnalytics() {
+      const state = await store.read();
+      const boardActivity = {};
+      for (const board of state.boards) {
+        const boardThreads = state.threads.filter((t) => t.boardSlug === board.slug);
+        const boardComments = state.comments.filter((c) => c.boardSlug === board.slug);
+        const boardReports = state.reports.filter((r) => r.boardSlug === board.slug);
+        boardActivity[board.slug] = {
+          activeThreads: boardThreads.filter((t) => !t.isPending && !t.isDeleted).length,
+          activeComments: boardComments.filter((c) => !c.isPending && !c.isDeleted).length,
+          pendingThreads: boardThreads.filter((t) => t.isPending && !t.isDeleted).length,
+          pendingComments: boardComments.filter((c) => c.isPending && !c.isDeleted).length,
+          deletedThreads: boardThreads.filter((t) => t.isDeleted).length,
+          deletedComments: boardComments.filter((c) => c.isDeleted).length,
+          totalReports: boardReports.length
+        };
+      }
+
+      let totalAiUsage = 0;
+      const byKind = { moderation: 0, summary: 0, suggestion: 0, rewrite: 0 };
+      const dailyUsage = {};
+
+      for (const key of Object.keys(state.aiUsage || {})) {
+        const val = state.aiUsage[key];
+        const parts = key.split(':');
+        if (parts.length >= 2) {
+          const date = parts[0];
+          const kind = parts[1];
+          const count = val.count || 0;
+
+          totalAiUsage += count;
+          if (byKind[kind] !== undefined) {
+            byKind[kind] += count;
+          } else {
+            byKind[kind] = (byKind[kind] || 0) + count;
+          }
+
+          dailyUsage[date] = (dailyUsage[date] || 0) + count;
+        }
+      }
+
+      const sortedDailyUsage = Object.keys(dailyUsage)
+        .sort()
+        .slice(-7)
+        .map((date) => ({ date, count: dailyUsage[date] }));
+
+      const pendingThreadsCount = state.threads.filter((t) => t.isPending && !t.isDeleted).length;
+      const pendingCommentsCount = state.comments.filter((c) => c.isPending && !c.isDeleted).length;
+      const pendingCount = pendingThreadsCount + pendingCommentsCount;
+
+      let oldestPendingAgeMinutes = 0;
+      const allPending = [
+        ...state.threads.filter((t) => t.isPending && !t.isDeleted),
+        ...state.comments.filter((c) => c.isPending && !c.isDeleted)
+      ];
+
+      if (allPending.length > 0) {
+        const oldest = allPending.reduce((oldestAcc, current) => {
+          return new Date(current.createdAt) < new Date(oldestAcc.createdAt) ? current : oldestAcc;
+        }, allPending[0]);
+        oldestPendingAgeMinutes = Math.max(0, Math.round((now().getTime() - new Date(oldest.createdAt).getTime()) / 60000));
+      }
+
+      let totalResolutionTimeMs = 0;
+      let resolvedCount = 0;
+
+      for (const action of state.moderationActions || []) {
+        if (action.action === 'admin:approve' || action.action === 'admin:delete') {
+          const post = state.threads.find((t) => t.id === action.postId) || state.comments.find((c) => c.id === action.postId);
+          if (post && post.createdAt && action.createdAt) {
+            const durationMs = new Date(action.createdAt).getTime() - new Date(post.createdAt).getTime();
+            if (durationMs >= 0) {
+              totalResolutionTimeMs += durationMs;
+              resolvedCount += 1;
+            }
+          }
+        }
+      }
+      const averageResolutionTimeMinutes = resolvedCount > 0
+        ? Math.round((totalResolutionTimeMs / resolvedCount) / 60000)
+        : 0;
+
+      return {
+        boardActivity,
+        aiUsage: {
+          total: totalAiUsage,
+          byKind,
+          daily: sortedDailyUsage
+        },
+        moderationQueue: {
+          pendingCount,
+          pendingThreads: pendingThreadsCount,
+          pendingComments: pendingCommentsCount,
+          oldestPendingAgeMinutes,
+          averageResolutionTimeMinutes,
+          resolvedCount
+        }
+      };
+    },
+
     async createBoard({ slug, name, category, description, isHidden, isArchived } = {}, { actor } = {}) {
       const input = normalizeBoardInput({ slug, name, category, description, isHidden, isArchived });
       return mutate(async (state) => {

@@ -3293,3 +3293,97 @@ body.theme-yotsuba.board-page .topbar {
     max-width: min(150px, calc(100vw - 16px));
   }
 }
+
+/* Analytics dashboard styles */
+.analytics-dashboard {
+  padding: 10px;
+  color: #111;
+  font-family: inherit;
+}
+
+.analytics-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 15px;
+  margin-bottom: 25px;
+}
+
+.analytics-card {
+  background: #fff;
+  border: 1px solid var(--reply-border);
+  border-radius: 6px;
+  padding: 15px;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.analytics-card h4 {
+  margin: 0 0 10px 0;
+  color: var(--text);
+  font-size: 14px;
+}
+
+.analytics-metric {
+  font-size: 28px;
+  font-weight: bold;
+  color: var(--header);
+  margin-bottom: 5px;
+}
+
+.analytics-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 25px;
+}
+
+@media (min-width: 768px) {
+  .analytics-grid {
+    grid-template-columns: 1.2fr 0.8fr;
+  }
+}
+
+.analytics-section {
+  background: #fff;
+  border: 1px solid var(--reply-border);
+  border-radius: 6px;
+  padding: 20px;
+  box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.analytics-section h3 {
+  margin-top: 0;
+  margin-bottom: 15px;
+  color: var(--text);
+  font-size: 16px;
+  border-bottom: 1px solid var(--reply-border);
+  padding-bottom: 8px;
+}
+
+.analytics-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.analytics-table th,
+.analytics-table td {
+  padding: 8px;
+  text-align: left;
+  border-bottom: 1px solid #eee;
+}
+
+.analytics-table th {
+  background: var(--reply);
+  color: var(--text);
+  font-weight: bold;
+}
+
+.analytics-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  background: #fca;
+  color: var(--text);
+  border-radius: 10px;
+  font-size: 11px;
+  font-weight: bold;
+}
