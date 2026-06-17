@@ -309,10 +309,54 @@ function assertAccountUsername(value = '') {
   return username;
 }
 
-function assertAccountPassword(value = '') {
+const MIN_PASSWORD_LENGTH = 10;
+const MAX_PASSWORD_LENGTH = 160;
+
+// Small embedded blocklist of obviously weak/common passwords. Compared
+// case-insensitively. Not exhaustive by design — an online breach (HIBP)
+// check can be layered on later.
+const COMMON_PASSWORDS = new Set([
+  'password', 'password1', 'password12', 'password123', 'passw0rd',
+  '1234567890', '0123456789', '12345678', '123456789', '123123123',
+  'qwertyuiop', 'qwerty123', 'iloveyou1', 'letmein123', 'welcome123',
+  'admin12345', 'changeme12', 'baseball12', 'football12', 'monkey1234',
+  'abc1234567', 'dragon1234', 'sunshine12', 'princess12', '36chan1234'
+]);
+
+function isTrivialSequence(value = '') {
+  if (value.length < 2) {
+    return false;
+  }
+  let ascending = true;
+  let descending = true;
+  for (let i = 1; i < value.length; i += 1) {
+    const delta = value.charCodeAt(i) - value.charCodeAt(i - 1);
+    if (delta !== 1) ascending = false;
+    if (delta !== -1) descending = false;
+  }
+  return ascending || descending;
+}
+
+function assertAccountPassword(value = '', { username = '' } = {}) {
   const password = String(value ?? '');
-  if (password.length < 8 || password.length > 160) {
-    const error = new Error('Mật khẩu cần từ 8 đến 160 ký tự');
+  if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
+    const error = new Error(`Mật khẩu cần từ ${MIN_PASSWORD_LENGTH} đến ${MAX_PASSWORD_LENGTH} ký tự`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const lower = password.toLowerCase();
+  if (COMMON_PASSWORDS.has(lower)) {
+    const error = new Error('Mật khẩu quá phổ biến, vui lòng chọn mật khẩu khác');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (username && lower === String(username).toLowerCase()) {
+    const error = new Error('Mật khẩu không được trùng với tên tài khoản');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (/^(.)\1+$/.test(password) || isTrivialSequence(lower)) {
+    const error = new Error('Mật khẩu quá đơn giản, vui lòng chọn mật khẩu khác');
     error.statusCode = 400;
     throw error;
   }
@@ -1295,7 +1339,7 @@ export function createForumService({
     async registerAccount({ username, password, captchaToken, ip } = {}) {
       await requireCaptcha(captchaToken, ip);
       const safeUsername = assertAccountUsername(username);
-      const safePassword = assertAccountPassword(password);
+      const safePassword = assertAccountPassword(password, { username: safeUsername });
       return mutate(async (state) => {
         const existing = state.users.find((user) => normalizeAccountUsername(user.username) === safeUsername);
         if (existing) {

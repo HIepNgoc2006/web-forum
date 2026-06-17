@@ -2324,6 +2324,32 @@ test('register requires a valid captcha token', async () => {
   assert.equal(account.username, 'with_captcha');
 });
 
+test('register enforces the password policy', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const register = (username, password) =>
+    service.registerAccount({ username, password, captchaToken: 'dev-pass', ip: '203.0.113.7' });
+
+  // Too short (below the 10-character minimum).
+  await assert.rejects(() => register('shortpw', 'abc12'), (error) => error.statusCode === 400);
+  // Common/blocklisted password.
+  await assert.rejects(() => register('commonpw', 'password123'), (error) => error.statusCode === 400);
+  // Password equal to the username.
+  await assert.rejects(() => register('sameaspw12', 'sameaspw12'), (error) => error.statusCode === 400);
+  // Trivial sequence and single-character repeat.
+  await assert.rejects(() => register('seqpw', '0123456789'), (error) => error.statusCode === 400);
+  await assert.rejects(() => register('reppw', 'aaaaaaaaaa'), (error) => error.statusCode === 400);
+
+  // A reasonable strong password is accepted.
+  const account = await register('strong_user', 'a-strong-passphrase-2026');
+  assert.equal(account.username, 'strong_user');
+});
+
 test('account locks after repeated failed logins and unlocks after the window', async () => {
   let clock = new Date('2026-05-22T08:00:00.000Z').getTime();
   const service = createForumService({

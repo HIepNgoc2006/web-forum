@@ -181,7 +181,7 @@ describe('HTTP 2FA Integration API', () => {
       const registerRes = await fetch(`${baseUrl}/api/account/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'user2fa', password: 'password123', captchaToken: 'dev-pass' })
+        body: JSON.stringify({ username: 'user2fa', password: 'strong-2fa-pass', captchaToken: 'dev-pass' })
       });
       const registerBody = await registerRes.json();
       assert.equal(registerRes.status, 201);
@@ -214,7 +214,7 @@ describe('HTTP 2FA Integration API', () => {
       const loginRes = await fetch(`${baseUrl}/api/account/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'user2fa', password: 'password123', captchaToken: 'dev-pass' })
+        body: JSON.stringify({ username: 'user2fa', password: 'strong-2fa-pass', captchaToken: 'dev-pass' })
       });
       const loginBody = await loginRes.json();
       assert.equal(loginRes.status, 200);
