@@ -323,6 +323,8 @@ async function main() {
     cwd: tempRoot,
     env: {
       ...process.env,
+      // Browser smoke verifies dashboard rendering; backend tests cover production admin 2FA enforcement.
+      NODE_ENV: 'test',
       PORT: String(port),
       STORE_DRIVER: 'json',
       STATIC_ROOT: path.join(repoRoot, 'frontend/dist'),
