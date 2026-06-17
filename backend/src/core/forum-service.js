@@ -1276,7 +1276,7 @@ export function createForumService({
         store: storeHealth,
         ai: aiConfigStatus(),
         imageStorage: imageStorageHealth,
-        realtime: {
+        realtime: realtime.metrics?.() ?? {
           clients: realtime.count?.() ?? 0,
           boards: realtime.boardCounts?.() ?? {}
         }
