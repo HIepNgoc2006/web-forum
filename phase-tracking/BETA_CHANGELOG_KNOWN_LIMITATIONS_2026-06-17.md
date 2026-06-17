@@ -45,10 +45,11 @@ rtk npm run release:verify
 | Manual device QA | Local browser smoke does not replace a multi-browser/manual mobile device pass. | Complete manual deployed-environment smoke before widening beta traffic. |
 | hCaptcha | Development fallback accepts `dev-pass`; production requires `HCAPTCHA_SECRET`. | Treat missing production hCaptcha config as a launch blocker unless explicitly waived. |
 | AI providers | Summary/suggestion/rewrite require a configured Google or OpenAI-compatible provider. | Launch without AI only if product scope explicitly waives AI features. |
+| AI daily board digest | Deferred by #62 because it adds a new AI cost/admin workflow before quota observability is complete. | Implement later in #119 as an admin-triggered action only. |
 | Admin 2FA recovery | Admin 2FA reset exists in service code, but a dedicated operator runbook/script is not published. | Use trusted-admin intervention only; document a recovery script before broad admin onboarding. |
 | Storage rollback | Production image uploads should stay on S3-compatible storage when public uploads are in use. | Do not roll production back to JSON storage; follow `docs/launch-runbook.md`. |
 | Observability | Health and analytics are available, and #63 documents the production scale limits. | Complete #115, #116, and #117 before broad traffic ramp. |
-| Account docs | Account/security user-facing docs are tracked separately. | Complete issue #61 before broad user onboarding. |
+| Account docs | Account/security user-facing docs are published in `docs/account-security.md`. | Keep the guide current as account features change. |
 
 ## Security and Privacy Notes
 
