@@ -554,7 +554,9 @@ export function createHttpServer({
         const body = await readJson(request, 20_000);
         const account = await service.loginAccount({
           username: body.username,
-          password: body.password
+          password: body.password,
+          captchaToken: body.captchaToken,
+          ip
         });
         if (account.twoFactorEnabled) {
           ok(response, {

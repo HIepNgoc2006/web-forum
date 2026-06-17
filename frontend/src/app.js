@@ -619,6 +619,7 @@ const els = {
   accountLoginForm: document.querySelector('#accountLoginForm'),
   accountUsername: document.querySelector('#accountUsername'),
   accountPassword: document.querySelector('#accountPassword'),
+  accountLoginCaptcha: document.querySelector('#accountLoginCaptcha'),
   accountLoginError: document.querySelector('#accountLoginError'),
   account2FAVerifyForm: document.querySelector('#account2FAVerifyForm'),
   account2FAVerifyError: document.querySelector('#account2FAVerifyError'),
@@ -4095,6 +4096,11 @@ async function submitAccountRegister(event) {
 async function submitAccountLogin(event) {
   event.preventDefault();
   setFormError(els.accountLoginError);
+  const captchaToken = (els.accountLoginCaptcha?.value || '').trim();
+  if (state.hcaptchaSiteKey && !captchaToken) {
+    setFormError(els.accountLoginError, 'Vui lòng hoàn tất xác minh hCaptcha trước khi đăng nhập.');
+    return;
+  }
   const button = event.submitter;
   const restoreButton = setButtonLoading(button, 'Đang đăng nhập...');
   try {
@@ -4103,10 +4109,12 @@ async function submitAccountLogin(event) {
       method: 'POST',
       body: JSON.stringify({
         username: els.accountUsername.value,
-        password: els.accountPassword.value
+        password: els.accountPassword.value,
+        captchaToken
       })
     });
     els.accountPassword.value = '';
+    resetHcaptcha(els.accountLoginCaptcha);
     if (result.requires2FA) {
       state.temp2FAToken = result.tempToken;
       els.account2FAVerifyForm.classList.remove('hidden');
@@ -4120,6 +4128,7 @@ async function submitAccountLogin(event) {
     showToast('Đã đăng nhập tài khoản.');
     window.location.hash = '#account';
   } catch (error) {
+    resetHcaptcha(els.accountLoginCaptcha);
     setFormError(els.accountLoginError, error.message);
   } finally {
     restoreButton();

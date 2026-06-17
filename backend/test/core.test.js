@@ -2420,7 +2420,7 @@ test('login runs password verification even for unknown usernames (timing equali
     const samples = [];
     for (let i = 0; i < 4; i += 1) {
       const start = process.hrtime.bigint();
-      await service.loginAccount({ username, password: 'definitely-wrong' }).catch(() => {});
+      await service.loginAccount({ username, password: 'definitely-wrong', captchaToken: 'dev-pass' }).catch(() => {});
       samples.push(Number(process.hrtime.bigint() - start));
     }
     samples.sort((a, b) => a - b);
@@ -2437,6 +2437,36 @@ test('login runs password verification even for unknown usernames (timing equali
     missingUser >= existingWrong * 0.5,
     `missing-user login (${missingUser}ns) too fast vs existing-user (${existingWrong}ns)`
   );
+});
+
+test('login requires a valid captcha token', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  await service.registerAccount({
+    username: 'login_captcha_user',
+    password: 'correct-horse-battery',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  // Correct credentials but no captcha token are rejected before auth runs.
+  await assert.rejects(
+    () => service.loginAccount({ username: 'login_captcha_user', password: 'correct-horse-battery' }),
+    (error) => error.statusCode === 403
+  );
+
+  const account = await service.loginAccount({
+    username: 'login_captcha_user',
+    password: 'correct-horse-battery',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  assert.equal(account.username, 'login_captcha_user');
 });
 
 test('register requires a valid captcha token', async () => {
@@ -2506,20 +2536,20 @@ test('account locks after repeated failed logins and unlocks after the window', 
   // Five consecutive wrong passwords trip the lockout.
   for (let i = 0; i < 5; i += 1) {
     await assert.rejects(
-      () => service.loginAccount({ username: 'lock_target', password: 'wrong' }),
+      () => service.loginAccount({ username: 'lock_target', password: 'wrong', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 401
     );
   }
 
   // Locked: even the correct password is rejected with 429.
   await assert.rejects(
-    () => service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery' }),
+    () => service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' }),
     (error) => error.statusCode === 429
   );
 
   // After the lockout window passes, the correct password works again.
   clock += 15 * 60 * 1000 + 1000;
-  const account = await service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery' });
+  const account = await service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' });
   assert.equal(account.username, 'lock_target');
 });
 
@@ -2541,19 +2571,19 @@ test('a successful login resets the failed-attempt counter', async () => {
   // Four failures (below the threshold of five), then a success.
   for (let i = 0; i < 4; i += 1) {
     await assert.rejects(
-      () => service.loginAccount({ username: 'reset_target', password: 'wrong' }),
+      () => service.loginAccount({ username: 'reset_target', password: 'wrong', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 401
     );
   }
-  await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery' });
+  await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' });
 
   // Counter reset: four more failures still do not lock (would need five fresh).
   for (let i = 0; i < 4; i += 1) {
     await assert.rejects(
-      () => service.loginAccount({ username: 'reset_target', password: 'wrong' }),
+      () => service.loginAccount({ username: 'reset_target', password: 'wrong', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 401
     );
   }
-  const account = await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery' });
+  const account = await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' });
   assert.equal(account.username, 'reset_target');
 });
