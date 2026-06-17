@@ -673,13 +673,7 @@ const els = {
   quickReplyPrivacyWarning: document.querySelector('#quickReplyPrivacyWarning'),
   quickReplyCaptcha: document.querySelector('#quickReplyCaptcha'),
   quickReplyCaptchaButton: document.querySelector('#quickReplyCaptchaButton'),
-  quickReplyFileName: document.querySelector('#quickReplyFileName'),
-  threadDeletePassword: document.querySelector('#threadDeletePassword'),
-  commentDeletePassword: document.querySelector('#commentDeletePassword'),
-  quickReplyDeletePassword: document.querySelector('#quickReplyDeletePassword'),
-  deletePasswordInput: document.querySelector('#deletePasswordInput'),
-  deleteFileOnly: document.querySelector('#deleteFileOnly'),
-  deletePostButton: document.querySelector('#deletePostButton')
+  quickReplyFileName: document.querySelector('#quickReplyFileName')
 };
 
 function showToast(message) {
@@ -999,13 +993,45 @@ function updateAccountDisplayOptions() {
   }
 }
 
+function decodeJwtPayload(token) {
+  try {
+    const part = String(token || '').split('.')[1];
+    if (!part) {
+      return null;
+    }
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/'));
+    return JSON.parse(json);
+  } catch {
+    return null;
+  }
+}
+
+function adminUsernameFromToken() {
+  if (!state.token) {
+    return '';
+  }
+  const payload = decodeJwtPayload(state.token);
+  return payload && payload.role === 'admin' ? payload.username || '' : '';
+}
+
 function updateAccountNav() {
   const loggedIn = Boolean(state.accountToken && state.account);
-  els.accountLoginLink.classList.toggle('hidden', loggedIn);
-  els.accountRegisterLink.classList.toggle('hidden', loggedIn);
-  els.accountSettingsLink.classList.toggle('hidden', !loggedIn);
+  const adminUsername = loggedIn ? '' : adminUsernameFromToken();
+  const adminOnly = Boolean(adminUsername);
+  els.accountLoginLink.classList.toggle('hidden', loggedIn || adminOnly);
+  els.accountRegisterLink.classList.toggle('hidden', loggedIn || adminOnly);
+  els.accountSettingsLink.classList.toggle('hidden', !loggedIn && !adminOnly);
   els.accountLogoutButton.classList.toggle('hidden', !loggedIn);
-  els.accountSettingsLink.textContent = loggedIn ? `@${state.account.username}` : 'Tài khoản';
+  if (loggedIn) {
+    els.accountSettingsLink.textContent = `@${state.account.username}`;
+    els.accountSettingsLink.setAttribute('href', '#account');
+  } else if (adminOnly) {
+    els.accountSettingsLink.textContent = `@${adminUsername}`;
+    els.accountSettingsLink.setAttribute('href', '#admin');
+  } else {
+    els.accountSettingsLink.textContent = 'Tài khoản';
+    els.accountSettingsLink.setAttribute('href', '#account');
+  }
   updateAccountDisplayOptions();
 }
 
@@ -1594,7 +1620,6 @@ function syncBoardSubscriptionButtons() {
 function openThreadComposer({ focus = true } = {}) {
   els.threadComposer.classList.remove('hidden');
   els.startThreadButton.classList.add('hidden');
-  els.threadDeletePassword.value ||= defaultDeletePassword();
   const savedDraft = readDraft(draftKey('thread', state.boardSlug));
   if (savedDraft && !els.threadBody.value) {
     els.threadBody.value = savedDraft;
@@ -1614,7 +1639,6 @@ function syncReplyComposer() {
   const canReply = !state.threadIsArchived && !state.threadIsLocked;
   els.replyComposer.classList.toggle('hidden', !state.replyComposerOpen || !canReply);
   els.postReplyToggle.classList.toggle('hidden', state.replyComposerOpen || !canReply);
-  els.commentDeletePassword.value ||= defaultDeletePassword();
   if (!state.replyComposerOpen || !canReply) {
     els.suggestions.classList.add('hidden');
   }
@@ -2348,6 +2372,8 @@ function adminPostDetailHtml(detail) {
         ${post.type === 'thread' ? adminLockButtonHtml(post) : ''}
         <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
         <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
+        ${post.image ? `<button class="ghost-button" data-admin-delete-post="${post.globalNumber}" data-file-only="true" type="button">[Xóa tệp]</button>` : ''}
+        <button class="danger-button" data-admin-delete-post="${post.globalNumber}" type="button">Xóa bài</button>
       </div>
       <h3>Báo cáo ${reports.length ? `<button class="ghost-button" data-admin-reports-summary="${post.globalNumber}" type="button">[Tóm tắt báo cáo AI]</button>` : ''}</h3>
       <div id="adminReportsSummaryBox-${post.globalNumber}" class="admin-reports-summary-box hidden"></div>
@@ -3497,6 +3523,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
 async function loadAdmin() {
   setScreen('admin');
   const loggedIn = Boolean(state.token);
+  updateAccountNav();
   els.loginForm.classList.toggle('hidden', loggedIn);
   els.admin2FAVerifyForm?.classList.add('hidden');
   els.admin2FASetupPanel?.classList.add('hidden');
@@ -3745,7 +3772,7 @@ async function submitThread(event) {
         .filter(Boolean),
       options,
       displayName: displayNameValue(els.threadForm),
-      deletePassword: els.threadDeletePassword.value,
+      deletePassword: defaultDeletePassword(),
       captchaToken,
       posterToken: state.posterToken,
       image: state.selectedImage
@@ -3832,7 +3859,7 @@ async function createComment(body, captchaToken) {
       posterToken: state.posterToken,
       displayName: displayNameValue(form),
       options: formValue(form, 'options'),
-      deletePassword: formValue(form, 'deletePassword')
+      deletePassword: defaultDeletePassword()
     })
   });
 }
@@ -3876,7 +3903,6 @@ function openQuickReply(number, event) {
   }
   addQuoteToQuickReply(number);
   els.quickReplyCaptcha.value = state.hcaptchaSiteKey ? '' : els.commentCaptcha.value || 'dev-pass';
-  els.quickReplyDeletePassword.value ||= defaultDeletePassword();
   els.quickReplyFileName.textContent = 'Chưa chọn tệp';
   if (wasHidden) {
     positionQuickReply(event);
@@ -4359,6 +4385,30 @@ function loadFullImageForToggle(imageToggle) {
 function bindEvents() {
   window.addEventListener('hashchange', route);
   window.addEventListener('keydown', handleKeyboardShortcut);
+  // Image error events don't bubble, so listen in the capture phase. When a
+  // thumbnail fails to load (e.g. a stale storage URL returning 404), swap the
+  // broken-image icon for a neutral placeholder instead of leaving it ugly.
+  document.addEventListener(
+    'error',
+    (event) => {
+      const img = event.target;
+      if (!(img instanceof HTMLImageElement) || img.dataset.thumbBroken === '1') {
+        return;
+      }
+      if (!img.closest('.thread-thumb-wrap, .catalog-thumb')) {
+        return;
+      }
+      img.dataset.thumbBroken = '1';
+      const placeholder = document.createElement('span');
+      placeholder.className = `${img.className} placeholder thumb-broken`.trim();
+      placeholder.textContent = 'Tệp lỗi';
+      if (img.dataset.fullSrc) {
+        placeholder.dataset.fullSrc = img.dataset.fullSrc;
+      }
+      img.replaceWith(placeholder);
+    },
+    true
+  );
   els.homeBoardSearchForm.addEventListener('submit', (event) => {
     event.preventDefault();
     const board = findBoardByQuery(els.homeBoardSearchInput.value);
@@ -4413,11 +4463,6 @@ function bindEvents() {
       return;
     }
     els.quickReplyCaptcha.value = 'dev-pass';
-  });
-  [els.threadDeletePassword, els.commentDeletePassword, els.quickReplyDeletePassword, els.deletePasswordInput].forEach((input) => {
-    input.addEventListener('input', () => {
-      localStorage.setItem(deletePasswordKey, input.value);
-    });
   });
   els.quickReplyHandle.addEventListener('mousedown', (event) => {
     if (event.target.closest('button')) {
@@ -4650,33 +4695,6 @@ function bindEvents() {
       return;
     }
 
-    if (event.target.closest('#deletePostButton')) {
-      const target = currentPermalinkPost() || state.threadGlobalNumber;
-      if (!target) {
-        showToast('Mở link No. của bài cần xóa trước.');
-        return;
-      }
-      if (!els.deletePasswordInput.value) {
-        showToast('Nhập mật khẩu xóa.');
-        return;
-      }
-      const ok = window.confirm(`Xóa ${els.deleteFileOnly.checked ? 'tệp của ' : ''}No.${target}?`);
-      if (!ok) {
-        return;
-      }
-      try {
-        await api(`/api/posts/${target}`, {
-          method: 'DELETE',
-          body: JSON.stringify({ password: els.deletePasswordInput.value, fileOnly: els.deleteFileOnly.checked })
-        });
-        showToast('Đã xóa.');
-        await loadThread();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-
     const scrollButton = event.target.closest('[data-scroll-thread]');
     if (scrollButton) {
       const target = scrollButton.dataset.scrollThread === 'bottom' ? els.threadToolbarBottom : els.threadScreen;
@@ -4899,6 +4917,37 @@ function bindEvents() {
         });
         showToast('Đã lưu ghi chú.');
         await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminDeletePostButton = event.target.closest('[data-admin-delete-post]');
+    if (adminDeletePostButton) {
+      const globalNumber = adminDeletePostButton.dataset.adminDeletePost;
+      const fileOnly = adminDeletePostButton.dataset.fileOnly === 'true';
+      const reason = await showReasonModal(
+        fileOnly ? `Lý do xóa tệp của No.${globalNumber}:` : `Lý do xóa bài No.${globalNumber}:`,
+        'delete'
+      );
+      if (reason === null) {
+        return;
+      }
+      try {
+        await api(`/api/admin/posts/${globalNumber}`, {
+          method: 'DELETE',
+          body: JSON.stringify({ reason, fileOnly })
+        });
+        showToast(fileOnly ? 'Đã xóa tệp.' : 'Đã xóa bài.');
+        const hash = window.location.hash || '';
+        if (hash.startsWith('#thread/')) {
+          await loadThread();
+        } else if (hash.startsWith('#board/')) {
+          await loadBoard();
+        } else {
+          await loadAdmin();
+        }
       } catch (error) {
         showToast(error.message);
       }
@@ -5192,11 +5241,6 @@ async function init() {
   setupHcaptcha().catch((error) => showToast(error.message));
   syncAccountHomeBoardOptions();
   await loadAccountSession();
-  const password = defaultDeletePassword();
-  els.threadDeletePassword.value = password;
-  els.commentDeletePassword.value = password;
-  els.quickReplyDeletePassword.value = password;
-  els.deletePasswordInput.value = password;
   syncAdminBoardFilter();
   route();
 }

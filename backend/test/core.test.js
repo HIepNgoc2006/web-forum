@@ -1062,6 +1062,53 @@ test('deleting pending content stores admin reason in moderation log', async () 
   assert.equal(actions[0].postType, 'thread');
 });
 
+test('admin can delete a live post without the delete password', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Bai dang hoat dong',
+    captchaToken: 'dev-pass',
+    deletePassword: 'owner-pass',
+    ip: '203.0.113.9'
+  });
+  assert.equal(created.thread.isPending, false);
+
+  const result = await service.adminDeletePost(created.thread.globalNumber, {
+    reason: 'vi pham noi quy',
+    actor: 'pengu1'
+  });
+  assert.equal(result.ok, true);
+
+  const board = await service.listThreads('tam-su');
+  assert.equal(board.find((thread) => thread.globalNumber === created.thread.globalNumber), undefined);
+
+  const actions = await service.listModerationActions(10);
+  const deleteAction = actions.find((action) => action.action === 'admin:delete');
+  assert.ok(deleteAction);
+  assert.equal(deleteAction.actor, 'pengu1');
+  assert.equal(deleteAction.reason, 'vi pham noi quy');
+});
+
+test('admin delete rejects an unknown post number', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  await assert.rejects(
+    () => service.adminDeletePost(999999, { actor: 'pengu1' }),
+    (error) => error.statusCode === 404
+  );
+});
+
 test('user reports store a reporter hash without raw IP or poster token', async () => {
   const service = createForumService({
     store: createMemoryStore(),

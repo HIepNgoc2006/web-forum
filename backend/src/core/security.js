@@ -308,8 +308,18 @@ export async function verifyHcaptcha(token, remoteIp) {
         });
         response.on('end', () => {
           try {
-            resolve(Boolean(JSON.parse(data).success));
+            const parsed = JSON.parse(data);
+            if (!parsed.success) {
+              // hCaptcha returns `error-codes` explaining the failure, e.g.
+              // `invalid-input-secret`, `sitekey-secret-mismatch`,
+              // `invalid-or-already-seen-response`. Surface them so a misconfig
+              // (wrong/unpaired keys, unregistered hostname) is diagnosable
+              // instead of an opaque "Xác minh hCaptcha thất bại".
+              console.warn('hcaptcha.verify.failed', JSON.stringify(parsed['error-codes'] ?? []));
+            }
+            resolve(Boolean(parsed.success));
           } catch {
+            console.warn('hcaptcha.verify.parse-error');
             resolve(false);
           }
         });
