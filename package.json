@@ -13,6 +13,7 @@
     "start": "npm --prefix backend start",
     "test": "npm --prefix backend test",
     "test:e2e": "node scripts/browser-smoke.mjs",
+    "loadtest:write": "node scripts/load-test-write-path.mjs",
     "build": "npm --prefix frontend run build",
     "check": "npm --prefix backend run check && npm --prefix frontend run lint",
     "release:verify": "npm test && npm run check && npm run build && npm run test:e2e",
