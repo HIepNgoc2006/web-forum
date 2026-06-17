@@ -1553,6 +1553,71 @@ body.display-compact .post-body {
   margin-top: 6px;
 }
 
+.health-dashboard {
+  max-width: 980px;
+  margin: 8px auto;
+}
+
+.health-header {
+  padding: 8px 0;
+  margin-bottom: 8px;
+  border-bottom: 1px solid var(--reply-border);
+}
+
+.health-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 8px;
+}
+
+.health-card {
+  border: 1px solid var(--reply-border);
+  background: #f0e0d6;
+  padding: 8px;
+}
+
+.health-card h3 {
+  margin: 0 0 6px;
+  color: #800;
+  font-size: 13px;
+  border-bottom: 1px solid var(--reply-border);
+  padding-bottom: 4px;
+}
+
+.health-card h4 {
+  margin: 6px 0 2px;
+  font-size: 12px;
+  color: #800;
+}
+
+.health-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.health-table td {
+  padding: 2px 4px;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.health-table td:first-child {
+  color: #666;
+  white-space: nowrap;
+  width: 40%;
+}
+
+.health-warnings {
+  margin: 2px 0 0;
+  padding-left: 16px;
+  font-size: 12px;
+  list-style: disc;
+}
+
+.health-warnings li {
+  margin: 2px 0;
+}
+
 .admin-detail {
   margin-top: 6px;
   border: 1px dashed var(--reply-border);

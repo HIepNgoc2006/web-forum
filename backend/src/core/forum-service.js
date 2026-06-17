@@ -1284,6 +1284,27 @@ export function createForumService({
       };
     },
 
+    async getAdminHealth() {
+      const health = await this.getHealth();
+      const mem = process.memoryUsage();
+      return {
+        ...health,
+        process: {
+          nodeVersion: process.version,
+          platform: process.platform,
+          arch: process.arch,
+          pid: process.pid,
+          uptimeSeconds: Math.floor(process.uptime()),
+          memory: {
+            rss: mem.rss,
+            heapUsed: mem.heapUsed,
+            heapTotal: mem.heapTotal,
+            external: mem.external
+          }
+        }
+      };
+    },
+
     async registerAccount({ username, password } = {}) {
       const safeUsername = assertAccountUsername(username);
       const safePassword = assertAccountPassword(password);

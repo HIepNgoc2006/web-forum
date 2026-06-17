@@ -918,6 +918,27 @@ export function createHttpServer({
           return;
         }
 
+        if (request.method === 'GET' && routePath === '/api/admin/health') {
+          const health = await service.getAdminHealth();
+          const security = securityConfigStatus({
+            jwtSecret,
+            adminUsername,
+            adminPassword
+          });
+          ok(response, {
+            ...health,
+            captcha: {
+              provider: 'hcaptcha',
+              configured: security.hcaptchaConfigured
+            },
+            security: {
+              adminConfigured: security.adminConfigured,
+              warnings: security.warnings
+            }
+          });
+          return;
+        }
+
         if (request.method === 'POST' && routePath === '/api/admin/board-digest') {
           ok(response, await service.generateBoardDigest({ ip, actor: admin.username ?? 'admin' }));
           return;
