@@ -47,7 +47,7 @@ rtk npm run release:verify
 | AI providers | Summary/suggestion/rewrite require a configured Google or OpenAI-compatible provider. | Launch without AI only if product scope explicitly waives AI features. |
 | Admin 2FA recovery | Admin 2FA reset exists in service code, but a dedicated operator runbook/script is not published. | Use trusted-admin intervention only; document a recovery script before broad admin onboarding. |
 | Storage rollback | Production image uploads should stay on S3-compatible storage when public uploads are in use. | Do not roll production back to JSON storage; follow `docs/launch-runbook.md`. |
-| Observability | Health and analytics are available, but production alerting limits are still tracked separately. | Complete issue #63 for scale/observability review. |
+| Observability | Health and analytics are available, and #63 documents the production scale limits. | Complete #115, #116, and #117 before broad traffic ramp. |
 | Account docs | Account/security user-facing docs are tracked separately. | Complete issue #61 before broad user onboarding. |
 
 ## Security and Privacy Notes
@@ -76,8 +76,8 @@ rtk npm run release:verify
 | #111 browser smoke admin dashboard blocker | P1 | Closed by PR #112 |
 | #60 beta changelog and known limitations | P0 | Closes with this PR |
 | #61 account/security documentation | P1 | Open follow-up before broad user onboarding |
-| #63 production scale and observability review | P1 | Open follow-up before broad traffic ramp |
+| #63 production scale and observability review | P1 | Closes with this PR; follow-ups #115, #116, and #117 remain before broad traffic ramp |
 
 ## Release Note
 
-Beta is suitable for release-candidate validation once this changelog lands, #61 and #63 are completed or explicitly waived, and `rtk npm run release:verify` passes on the release commit.
+Beta is suitable for release-candidate validation once #61 and #63 are merged and `rtk npm run release:verify` passes on the release commit. Treat #115, #116, and #117 as P1 operational follow-ups before broad traffic ramp.
