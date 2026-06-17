@@ -11,7 +11,16 @@ import { migrateInlineImages } from '../src/core/image-migration.js';
 import { createMongoModels } from '../src/core/mongo-store.js';
 import { publicBoardConfig, publicConfig } from '../src/core/config.js';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
-import { createPosterHash, securityConfigStatus, signJwt, verifyHcaptcha, verifyJwt } from '../src/core/security.js';
+import {
+  assertProductionSecrets,
+  createModerationFingerprint,
+  createPosterHash,
+  createPosterProofHash,
+  securityConfigStatus,
+  signJwt,
+  verifyHcaptcha,
+  verifyJwt
+} from '../src/core/security.js';
 import { parsePostText, sanitizeText } from '../src/core/text-format.js';
 
 const safeAi = {
@@ -2035,6 +2044,101 @@ test('security config status reports readiness without exposing values', () => {
   assert.ok(status.warnings.includes('hcaptcha_not_configured'));
   assert.equal(Object.hasOwn(status, 'jwtSecret'), false);
   assert.equal(Object.hasOwn(status, 'adminPassword'), false);
+});
+
+test('assertProductionSecrets throws in production with insecure config and never leaks values', () => {
+  const originalEnv = {
+    NODE_ENV: process.env.NODE_ENV,
+    HCAPTCHA_SECRET: process.env.HCAPTCHA_SECRET,
+    MODERATION_FINGERPRINT_SECRET: process.env.MODERATION_FINGERPRINT_SECRET,
+    POSTER_PROOF_SECRET: process.env.POSTER_PROOF_SECRET
+  };
+  process.env.NODE_ENV = 'production';
+  delete process.env.HCAPTCHA_SECRET;
+  delete process.env.MODERATION_FINGERPRINT_SECRET;
+  delete process.env.POSTER_PROOF_SECRET;
+
+  try {
+    assert.throws(
+      () =>
+        assertProductionSecrets({
+          jwtSecret: 'change-me-please',
+          adminUsername: 'root',
+          adminPassword: 'a-strong-admin-password'
+        }),
+      (error) => {
+        assert.ok(/insecure secret configuration/.test(error.message));
+        assert.ok(!error.message.includes('change-me-please'));
+        return true;
+      }
+    );
+
+    // A fully-configured production setup passes.
+    const ok = assertProductionSecrets({
+      jwtSecret: 'a'.repeat(40),
+      adminUsername: 'root',
+      adminPassword: 'a-strong-admin-password',
+      hcaptchaSecret: 'hc-secret',
+      moderationFingerprintSecret: 'mod-secret',
+      posterProofSecret: 'proof-secret'
+    });
+    assert.ok(Array.isArray(ok.warnings));
+  } finally {
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
+test('assertProductionSecrets only warns (never throws) outside production', () => {
+  const originalNodeEnv = process.env.NODE_ENV;
+  process.env.NODE_ENV = 'development';
+  try {
+    const status = assertProductionSecrets({ jwtSecret: '', adminUsername: 'admin', adminPassword: 'pass' });
+    assert.ok(status.warnings.length > 0);
+  } finally {
+    if (originalNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = originalNodeEnv;
+    }
+  }
+});
+
+test('hashing secrets refuse the dev literal fallback in production', () => {
+  const originalEnv = {
+    NODE_ENV: process.env.NODE_ENV,
+    JWT_SECRET: process.env.JWT_SECRET,
+    MODERATION_FINGERPRINT_SECRET: process.env.MODERATION_FINGERPRINT_SECRET,
+    POSTER_PROOF_SECRET: process.env.POSTER_PROOF_SECRET
+  };
+  process.env.NODE_ENV = 'production';
+  delete process.env.JWT_SECRET;
+  delete process.env.MODERATION_FINGERPRINT_SECRET;
+  delete process.env.POSTER_PROOF_SECRET;
+
+  try {
+    assert.throws(() => createModerationFingerprint({ ip: '203.0.113.7', posterToken: 'abc' }), /MODERATION_FINGERPRINT_SECRET/);
+    assert.throws(() => createPosterProofHash({ threadId: 't1', posterToken: 'abc' }), /POSTER_PROOF_SECRET/);
+
+    // With a dedicated secret present, hashing works.
+    process.env.MODERATION_FINGERPRINT_SECRET = 'mod-secret';
+    process.env.POSTER_PROOF_SECRET = 'proof-secret';
+    assert.equal(typeof createModerationFingerprint({ ip: '203.0.113.7', posterToken: 'abc' }), 'string');
+    assert.equal(typeof createPosterProofHash({ threadId: 't1', posterToken: 'abc' }), 'string');
+  } finally {
+    for (const key of Object.keys(originalEnv)) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
 });
 
 test('hCaptcha dev fallback is disabled in production without a secret', async () => {

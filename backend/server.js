@@ -8,6 +8,7 @@ import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-
 import { createMongoStore } from './src/core/mongo-store.js';
 import { createHttpServer } from './src/server/http-app.js';
 import { createRealtimeHub } from './src/server/realtime.js';
+import { assertProductionSecrets } from './src/core/security.js';
 
 async function loadEnv() {
   try {
@@ -28,6 +29,24 @@ async function loadEnv() {
 }
 
 await loadEnv();
+
+// Fail fast in production rather than silently running with predictable
+// default/missing secrets. In non-production this only surfaces warnings.
+const securityStatus = assertProductionSecrets({
+  jwtSecret: process.env.JWT_SECRET,
+  adminUsername: process.env.ADMIN_USERNAME,
+  adminPassword: process.env.ADMIN_PASSWORD
+});
+if (securityStatus.warnings.length > 0) {
+  console.log(
+    JSON.stringify({
+      time: new Date().toISOString(),
+      level: 'warn',
+      event: 'security.config',
+      warnings: securityStatus.warnings
+    })
+  );
+}
 
 async function resolveStaticRoot() {
   if (process.env.STATIC_ROOT) {

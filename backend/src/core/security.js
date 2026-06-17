@@ -9,6 +9,21 @@ function sign(input, secret) {
   return crypto.createHmac('sha256', secret).update(input).digest('base64url');
 }
 
+// Resolve a hashing secret. Falls back to JWT_SECRET, then (only outside
+// production) to a clearly-labeled dev literal. In production a missing
+// dedicated secret with no JWT_SECRET is a hard error rather than a
+// predictable, source-visible default.
+function secretOrDevFallback(primary, devFallback, name) {
+  const secret = primary || process.env.JWT_SECRET;
+  if (secret) {
+    return secret;
+  }
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error(`Missing ${name}: set ${name} or JWT_SECRET in production.`);
+  }
+  return devFallback;
+}
+
 export function createPosterHash({ ip, threadId, salt, posterToken = '' }) {
   const token = String(posterToken).slice(0, 128);
   const digest = crypto
@@ -25,12 +40,20 @@ export function createPosterProofHash({ threadId, posterToken = '' }) {
   if (!token) {
     return null;
   }
-  const secret = process.env.POSTER_PROOF_SECRET || process.env.JWT_SECRET || '36chan-dev-poster-proof-secret';
+  const secret = secretOrDevFallback(
+    process.env.POSTER_PROOF_SECRET,
+    '36chan-dev-poster-proof-secret',
+    'POSTER_PROOF_SECRET'
+  );
   return crypto.createHmac('sha256', secret).update(`${threadId}:${token}`).digest('hex');
 }
 
 export function createModerationFingerprint({ ip, posterToken = '' }) {
-  const secret = process.env.MODERATION_FINGERPRINT_SECRET || process.env.JWT_SECRET || '36chan-dev-fingerprint-secret';
+  const secret = secretOrDevFallback(
+    process.env.MODERATION_FINGERPRINT_SECRET,
+    '36chan-dev-fingerprint-secret',
+    'MODERATION_FINGERPRINT_SECRET'
+  );
   const token = String(posterToken).slice(0, 128);
   return crypto.createHmac('sha256', secret).update(`${ip}:${token}`).digest('hex');
 }
@@ -134,6 +157,37 @@ export function securityConfigStatus({
     hcaptchaConfigured,
     warnings
   };
+}
+
+// Warnings that must block startup in production. Each corresponds to a
+// predictable/default/forgeable secret that would silently weaken security.
+const PRODUCTION_FATAL_WARNINGS = new Set([
+  'jwt_secret_default_or_missing',
+  'jwt_secret_short',
+  'moderation_fingerprint_secret_falls_back_to_jwt',
+  'poster_proof_secret_falls_back_to_jwt',
+  'hcaptcha_not_configured'
+]);
+
+// Computes the security config status and, in production, throws when any
+// disqualifying secret is missing/default. Returns the status (with all
+// warnings) in non-production so callers can log them without failing.
+// Never includes secret values in its output or error message.
+export function assertProductionSecrets(config = {}) {
+  const { nodeEnv = process.env.NODE_ENV, ...statusConfig } = config;
+  const status = securityConfigStatus(statusConfig);
+  if (nodeEnv !== 'production') {
+    return status;
+  }
+  const fatal = status.warnings.filter((warning) => PRODUCTION_FATAL_WARNINGS.has(warning));
+  if (fatal.length > 0) {
+    throw new Error(
+      `Refusing to start in production with insecure secret configuration: ${fatal.join(', ')}. ` +
+        'Set a strong non-default JWT_SECRET (>=32 chars), MODERATION_FINGERPRINT_SECRET, ' +
+        'POSTER_PROOF_SECRET, and HCAPTCHA_SECRET.'
+    );
+  }
+  return status;
 }
 
 export function getClientIp(request) {
