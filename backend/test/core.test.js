@@ -2264,6 +2264,44 @@ test('publicConfig reports OpenAI-compatible auto-detect when AI_PROVIDER is uns
   }
 });
 
+test('login runs password verification even for unknown usernames (timing equalization)', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  await service.registerAccount({
+    username: 'timing_user',
+    password: 'correct-horse-battery',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  const timeLogin = async (username) => {
+    const samples = [];
+    for (let i = 0; i < 4; i += 1) {
+      const start = process.hrtime.bigint();
+      await service.loginAccount({ username, password: 'definitely-wrong' }).catch(() => {});
+      samples.push(Number(process.hrtime.bigint() - start));
+    }
+    samples.sort((a, b) => a - b);
+    return samples[Math.floor(samples.length / 2)]; // median ns
+  };
+
+  const existingWrong = await timeLogin('timing_user');
+  const missingUser = await timeLogin('does_not_exist_at_all');
+
+  // If the missing-user path skipped PBKDF2 it would be orders of magnitude
+  // faster. Require it to stay within a generous fraction of the existing-user
+  // path so the timing cannot be used to enumerate usernames.
+  assert.ok(
+    missingUser >= existingWrong * 0.5,
+    `missing-user login (${missingUser}ns) too fast vs existing-user (${existingWrong}ns)`
+  );
+});
+
 test('register requires a valid captcha token', async () => {
   const service = createForumService({
     store: createMemoryStore(),

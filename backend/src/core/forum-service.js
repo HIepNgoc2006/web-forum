@@ -338,6 +338,12 @@ function verifyAccountPassword(password, stored = '') {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+// A well-formed hash used to equalize login timing when the account does not
+// exist, so the expensive PBKDF2 path runs on both the "no such user" and the
+// "user exists, wrong password" branches and the latency cannot be used to
+// enumerate usernames.
+const DUMMY_PASSWORD_HASH = accountPasswordHash(crypto.randomUUID());
+
 function defaultAccountSettings() {
   return {
     theme: 'yotsuba-b',
@@ -1329,7 +1335,14 @@ export function createForumService({
         throw error;
       }
 
-      if (!user || !verifyAccountPassword(password, user.passwordHash)) {
+      // Always run a PBKDF2 verification so the timing of a missing-user login
+      // matches that of an existing user with the wrong password (prevents
+      // username enumeration via response latency).
+      const passwordOk = user
+        ? verifyAccountPassword(password, user.passwordHash)
+        : (verifyAccountPassword(password, DUMMY_PASSWORD_HASH), false);
+
+      if (!user || !passwordOk) {
         if (user) {
           user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
           if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
