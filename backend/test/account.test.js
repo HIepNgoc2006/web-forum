@@ -60,7 +60,7 @@ describe('Account registration and login', () => {
     const service = createTestService();
     await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await assert.rejects(
-      () => service.loginAccount({ username: 'testuser', password: 'wrongpass12' }),
+      () => service.loginAccount({ username: 'testuser', password: 'wrongpass12', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 401
     );
   });
@@ -68,7 +68,7 @@ describe('Account registration and login', () => {
   it('rejects login with non-existent username', async () => {
     const service = createTestService();
     await assert.rejects(
-      () => service.loginAccount({ username: 'ghost', password: 'securepass12' }),
+      () => service.loginAccount({ username: 'ghost', password: 'securepass12', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 401
     );
   });

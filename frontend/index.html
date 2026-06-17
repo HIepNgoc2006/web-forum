@@ -542,6 +542,11 @@
             <span>Mật khẩu</span>
             <input id="accountPassword" type="password" autocomplete="current-password" />
           </label>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <input id="accountLoginCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+            <div class="captcha-widget hidden" data-hcaptcha-target="accountLoginCaptcha"></div>
+          </div>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Đăng nhập</button>
             <button id="loginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>

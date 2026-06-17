@@ -1388,7 +1388,8 @@ export function createForumService({
       });
     },
 
-    async loginAccount({ username, password } = {}) {
+    async loginAccount({ username, password, captchaToken, ip } = {}) {
+      await requireCaptcha(captchaToken, ip);
       const safeUsername = normalizeAccountUsername(username);
       const state = await store.read();
       const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
