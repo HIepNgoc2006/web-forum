@@ -1,3 +1,4 @@
+import './src/core/env-init.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -10,25 +11,8 @@ import { createHttpServer } from './src/server/http-app.js';
 import { createRealtimeHub } from './src/server/realtime.js';
 import { assertProductionSecrets } from './src/core/security.js';
 
-async function loadEnv() {
-  try {
-    const raw = await fs.readFile('.env', 'utf8');
-    for (const line of raw.split('\n')) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
-        continue;
-      }
-      const [key, ...rest] = trimmed.split('=');
-      if (!process.env[key]) {
-        process.env[key] = rest.join('=').replace(/^"|"$/g, '');
-      }
-    }
-  } catch {
-    // .env is optional; .env.example documents the available keys.
-  }
-}
-
-await loadEnv();
+// Environment variables are loaded synchronously in env-init.js (the first
+// import above) to ensure they are available to static imports at module load.
 
 // Fail fast in production rather than silently running with predictable
 // default/missing secrets. In non-production this only surfaces warnings.
