@@ -17,6 +17,7 @@ const state = {
   accountToken: localStorage.getItem('accountToken') || '',
   account: null,
   temp2FAToken: null,
+  adminTemp2FAToken: null,
   accountPrivateData: null,
   accountPrivateSaveTimer: null,
   posterToken: getPosterToken(),
@@ -582,6 +583,10 @@ const els = {
   loginForm: document.querySelector('#loginForm'),
   adminUsername: document.querySelector('#adminUsername'),
   adminPassword: document.querySelector('#adminPassword'),
+  admin2FAVerifyForm: document.querySelector('#admin2FAVerifyForm'),
+  admin2FAVerifyError: document.querySelector('#admin2FAVerifyError'),
+  admin2FACode: document.querySelector('#admin2FACode'),
+  admin2FACancelButton: document.querySelector('#admin2FACancelButton'),
   logoutButton: document.querySelector('#logoutButton'),
   adminTools: document.querySelector('#adminTools'),
   adminBoardFilter: document.querySelector('#adminBoardFilter'),
@@ -3484,6 +3489,7 @@ async function loadAdmin() {
   setScreen('admin');
   const loggedIn = Boolean(state.token);
   els.loginForm.classList.toggle('hidden', loggedIn);
+  els.admin2FAVerifyForm?.classList.add('hidden');
   els.logoutButton.classList.toggle('hidden', !loggedIn);
   els.adminTools.classList.toggle('hidden', !loggedIn);
   if (!loggedIn) {
@@ -5054,13 +5060,52 @@ function bindEvents() {
           password: els.adminPassword.value
         })
       });
+      els.adminPassword.value = '';
+      if (result.requires2FA) {
+        state.adminTemp2FAToken = result.tempToken;
+        els.loginForm.classList.add('hidden');
+        els.admin2FAVerifyForm?.classList.remove('hidden');
+        els.admin2FACode.value = '';
+        els.admin2FACode.focus();
+        showToast('Vui lòng nhập mã 2FA để hoàn tất đăng nhập quản trị.');
+        return;
+      }
       state.token = result.token;
       localStorage.setItem('adminToken', state.token);
-      els.adminPassword.value = '';
       await loadAdmin();
     } catch (error) {
       showToast(error.message);
     }
+  });
+
+  els.admin2FAVerifyForm?.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    setFormError(els.admin2FAVerifyError);
+    try {
+      const code = (els.admin2FACode.value || '').trim();
+      if (!code) {
+        throw new Error('Vui lòng nhập mã 2FA.');
+      }
+      const result = await api('/api/auth/2fa/verify', {
+        auth: 'none',
+        method: 'POST',
+        body: JSON.stringify({ tempToken: state.adminTemp2FAToken, code })
+      });
+      state.adminTemp2FAToken = null;
+      state.token = result.token;
+      localStorage.setItem('adminToken', state.token);
+      els.admin2FAVerifyForm.classList.add('hidden');
+      showToast('Xác thực 2FA thành công.');
+      await loadAdmin();
+    } catch (error) {
+      setFormError(els.admin2FAVerifyError, error.message);
+    }
+  });
+
+  els.admin2FACancelButton?.addEventListener('click', () => {
+    state.adminTemp2FAToken = null;
+    els.admin2FAVerifyForm?.classList.add('hidden');
+    els.loginForm.classList.remove('hidden');
   });
 
   els.logoutButton.addEventListener('click', () => {
