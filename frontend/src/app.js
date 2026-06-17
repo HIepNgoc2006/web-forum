@@ -2317,6 +2317,13 @@ function adminAnalyticsHtml(analytics) {
           </table>
         </div>
       </div>
+
+      <div class="analytics-section">
+        <h3>Bản tổng hợp bảng tin (AI)</h3>
+        <p class="muted">Quản trị viên kích hoạt thủ công. Chỉ dùng nội dung bài viết công khai; không gửi dữ liệu tài khoản, IP hay token cho AI.</p>
+        <button type="button" class="btn" data-board-digest>Tạo bản tổng hợp hôm nay</button>
+        <div data-board-digest-result class="reports-summary-box hidden"></div>
+      </div>
     </div>
   `;
 }
@@ -4538,6 +4545,29 @@ function bindEvents() {
             <div class="reports-summary-content">
               <strong>${escapeHtml(result.label || 'Tóm tắt báo cáo AI')}:</strong>
               <p>${escapeHtml(result.summary)}</p>
+            </div>
+          `;
+        } catch (error) {
+          box.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
+        }
+      }
+      return;
+    }
+
+    const boardDigestButton = event.target.closest('[data-board-digest]');
+    if (boardDigestButton) {
+      const box = document.querySelector('[data-board-digest-result]');
+      if (box) {
+        box.classList.remove('hidden');
+        box.innerHTML = '<p class="muted">Đang tạo bản tổng hợp...</p>';
+        try {
+          const result = await api('/api/admin/board-digest', { method: 'POST' });
+          const bullets = (result.bullets || []).map((line) => `<li>${escapeHtml(line)}</li>`).join('');
+          box.innerHTML = `
+            <div class="reports-summary-content">
+              <strong>${escapeHtml(result.label || 'Nội dung do AI tổng hợp')}</strong>
+              <p class="muted">${result.threadCount} chủ đề công khai trên ${result.boardCount} bảng</p>
+              <ul>${bullets}</ul>
             </div>
           `;
         } catch (error) {

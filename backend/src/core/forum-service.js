@@ -1015,7 +1015,8 @@ function consumeAiBudget(state, { kind, ip, posterToken, actor, createdAt }) {
   const limits = {
     summary: 20,
     suggestion: 30,
-    rewrite: 20
+    rewrite: 20,
+    digest: Number(process.env.ADMIN_DIGEST_DAILY_LIMIT) || 5
   };
   const limit = limits[kind] ?? 10;
   const key = aiBudgetKey({ kind, ip, posterToken, actor, createdAt });
@@ -2678,6 +2679,50 @@ export function createForumService({
         }
         logEvent('ai.summary', { target: 'board', boardSlug });
         return cacheSummary(state, cacheKey, fingerprint, () => ai.summarize(items), createdAt);
+      });
+    },
+
+    // Admin-triggered daily board digest (#119). Public board content only; no
+    // account data, IPs, session/poster/admin tokens, or captcha tokens are
+    // read or sent to AI. Result is explicitly labelled as AI-generated, cached
+    // per day, and guarded by a stricter admin digest budget.
+    async generateBoardDigest({ ip, actor = 'admin', limit = 50 } = {}) {
+      const label = 'Nội dung do AI tổng hợp';
+      return mutate(async (state) => {
+        const createdAt = now().toISOString();
+        const publicBoardSlugs = new Set(state.boards.filter(publicBoard).map((board) => board.slug));
+        const threads = state.threads
+          .filter((thread) => publicBoardSlugs.has(thread.boardSlug) && activePublicThread(thread))
+          .sort(compareBoardThreads)
+          .slice(0, Math.max(1, Math.min(Number(limit) || 50, 100)));
+        // Only redacted public thread bodies are sent to AI.
+        const items = threads.map((thread) => ({ body: redactSensitiveText(thread.body) }));
+
+        if (!items.length) {
+          logEvent('ai.digest', { target: 'board-digest', threadCount: 0, empty: true });
+          return {
+            label,
+            generatedAt: createdAt,
+            boardCount: publicBoardSlugs.size,
+            threadCount: 0,
+            bullets: ['Chưa đủ dữ liệu công khai để tạo bản tổng hợp.']
+          };
+        }
+
+        const fingerprint = `${daySalt(now())}:${boardSummaryFingerprint(threads)}`;
+        const cacheKey = `digest:${daySalt(now())}`;
+        if (state.aiSummaryCache[cacheKey]?.fingerprint !== fingerprint) {
+          consumeAiBudget(state, { kind: 'digest', ip, actor, createdAt });
+        }
+        logEvent('ai.digest', { target: 'board-digest', threadCount: threads.length });
+        const bullets = await cacheSummary(state, cacheKey, fingerprint, () => ai.summarize(items), createdAt);
+        return {
+          label,
+          generatedAt: createdAt,
+          boardCount: publicBoardSlugs.size,
+          threadCount: threads.length,
+          bullets
+        };
       });
     },
 

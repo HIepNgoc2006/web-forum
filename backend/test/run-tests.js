@@ -7,3 +7,4 @@ import './image-storage.test.js';
 import './totp.test.js';
 import './webauthn.test.js';
 import './security-regression.test.js';
+import './board-digest.test.js';

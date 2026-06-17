@@ -918,6 +918,11 @@ export function createHttpServer({
           return;
         }
 
+        if (request.method === 'POST' && routePath === '/api/admin/board-digest') {
+          ok(response, await service.generateBoardDigest({ ip, actor: admin.username ?? 'admin' }));
+          return;
+        }
+
         if (request.method === 'GET' && routePath === '/api/admin/pending') {
           ok(response, await service.listPending(filters));
           return;
