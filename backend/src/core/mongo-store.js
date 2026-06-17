@@ -183,7 +183,6 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
 
     async read() {
       const models = await getModels();
-      await ensureBoards(models);
       const [meta, boards, users, threads, comments, moderationActions, reports, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
         models.StateMeta.findById('global').lean(),
         models.Board.find({}).lean(),
@@ -216,7 +215,6 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       queue = queue.then(async () => {
         const models = await getModels();
         const normalized = normalizeState(nextState);
-        await ensureBoards(models);
         await models.StateMeta.updateOne(
           { _id: 'global' },
           {
