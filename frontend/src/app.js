@@ -2968,6 +2968,39 @@ function postPermalink(post, options = {}) {
   return `#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`;
 }
 
+function readVote(globalNumber) {
+  try {
+    return localStorage.getItem(`vote:${globalNumber}`) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeVote(globalNumber, direction) {
+  try {
+    if (direction) {
+      localStorage.setItem(`vote:${globalNumber}`, direction);
+    } else {
+      localStorage.removeItem(`vote:${globalNumber}`);
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+}
+
+function voteControlHtml(post) {
+  const votes = post.votes || { up: 0, down: 0, score: 0 };
+  const score = Number(votes.score ?? (Number(votes.up || 0) - Number(votes.down || 0)));
+  const myVote = readVote(post.globalNumber);
+  return `
+    <span class="post-votes">
+      <button class="vote-button vote-up${myVote === 'up' ? ' active' : ''}" data-vote="up" data-vote-target="${post.globalNumber}" type="button" title="Upvote" aria-label="Upvote">▲</button>
+      <span class="vote-score" title="Điểm">${score}</span>
+      <button class="vote-button vote-down${myVote === 'down' ? ' active' : ''}" data-vote="down" data-vote-target="${post.globalNumber}" type="button" title="Downvote" aria-label="Downvote">▼</button>
+    </span>
+  `;
+}
+
 function meta(post, options = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -2995,6 +3028,7 @@ function meta(post, options = {}) {
       ${opMarker}
       ${stickyLabelHtml(post)}
       <span class="status">${labels}</span>
+      ${voteControlHtml(post)}
       ${
         showReplyAction && canReply
           ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
@@ -4296,7 +4330,7 @@ function setupRealtime() {
     els.socketStatus.classList.add('offline');
     els.socketStatus.classList.remove('live');
   };
-  for (const eventName of ['thread:created', 'thread:bumped', 'thread:updated', 'comment:created', 'thread:archived']) {
+  for (const eventName of ['thread:created', 'thread:bumped', 'thread:updated', 'comment:created', 'comment:updated', 'thread:archived']) {
     source.addEventListener(eventName, () => {
       const hash = window.location.hash || '#home';
       if (hash.startsWith('#home') || hash === '') {
@@ -4739,6 +4773,22 @@ function bindEvents() {
         });
         showToast('Đã vote thăm dò.');
         await loadThread();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const voteButton = event.target.closest('[data-vote]');
+    if (voteButton) {
+      const globalNumber = voteButton.dataset.voteTarget;
+      const direction = voteButton.dataset.vote;
+      try {
+        const result = await api(`/api/posts/${globalNumber}/vote`, {
+          method: 'POST',
+          body: JSON.stringify({ direction, posterToken: state.posterToken })
+        });
+        writeVote(globalNumber, result.myVote || '');
       } catch (error) {
         showToast(error.message);
       }

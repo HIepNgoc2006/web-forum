@@ -1281,6 +1281,43 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   display: none;
 }
 
+.post-votes {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.vote-button {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--dead);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.vote-button:hover {
+  color: var(--text);
+}
+
+.vote-button.vote-up.active {
+  color: #2e7d32;
+}
+
+.vote-button.vote-down.active {
+  color: #d00;
+}
+
+.vote-score {
+  min-width: 1.2em;
+  text-align: center;
+  font-size: 11px;
+  color: var(--dead);
+}
+
 .thread-meta {
   display: block;
   clear: both;

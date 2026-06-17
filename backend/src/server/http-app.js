@@ -853,6 +853,21 @@ export function createHttpServer({
         return;
       }
 
+      params = match(parts, ['api', 'posts', ':globalNumber', 'vote']);
+      if (params && request.method === 'POST') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.votePost({
+            globalNumber: params.globalNumber,
+            direction: body.direction,
+            ip,
+            posterToken: body.posterToken
+          })
+        );
+        return;
+      }
+
       params = match(parts, ['api', 'posts', ':globalNumber']);
       if (params && request.method === 'GET') {
         ok(response, await service.lookupPost(params.globalNumber));

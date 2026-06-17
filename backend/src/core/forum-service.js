@@ -75,6 +75,7 @@ function stripPrivatePostFields(post) {
     opProofHash: _opProofHash,
     deletePasswordHash: _deletePasswordHash,
     pollVotes: _pollVotes,
+    voters: _voters,
     stickiedBy: _stickiedBy,
     accountId: _accountId,
     ...publicFields
@@ -693,6 +694,12 @@ function createPoll(pollOptions) {
   return { options, totalVotes: 0 };
 }
 
+function publicVotes(post) {
+  const up = Number(post?.votes?.up || 0);
+  const down = Number(post?.votes?.down || 0);
+  return { up, down, score: up - down };
+}
+
 function serializePoll(poll) {
   if (!poll?.options?.length) {
     return null;
@@ -820,6 +827,7 @@ function serializeThread(thread, comments) {
     slowModeUntil: thread.slowModeUntil ?? null,
     slowModeSeconds: Number(thread.slowModeSeconds || 0),
     bodyLines: parsePostText(thread.body),
+    votes: publicVotes(thread),
     replyCount: publicComments.length
   };
 }
@@ -829,7 +837,8 @@ function serializeComment(comment, thread = null) {
     ...stripPrivatePostFields(comment),
     displayName: publicDisplayName(comment.displayName),
     isOp: Boolean(thread?.opProofHash && comment.opProofHash && thread.opProofHash === comment.opProofHash),
-    bodyLines: parsePostText(comment.body)
+    bodyLines: parsePostText(comment.body),
+    votes: publicVotes(comment)
   };
 }
 
@@ -2439,6 +2448,56 @@ export function createForumService({
           postType: report.postType
         });
         return report;
+      });
+    },
+
+    async votePost({ globalNumber, direction, ip, posterToken } = {}) {
+      const dir = direction === 'up' || direction === 'down' ? direction : null;
+      if (!dir) {
+        const error = new Error('Lựa chọn vote không hợp lệ');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        const found = findPublicPostByGlobalNumber(state, globalNumber);
+        if (!found) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const post = found.post;
+        const fingerprint = createModerationFingerprint({ ip, posterToken });
+        post.voters ??= {};
+        if (post.voters[fingerprint] === dir) {
+          delete post.voters[fingerprint];
+        } else {
+          post.voters[fingerprint] = dir;
+        }
+
+        let up = 0;
+        let down = 0;
+        for (const value of Object.values(post.voters)) {
+          if (value === 'up') {
+            up += 1;
+          } else if (value === 'down') {
+            down += 1;
+          }
+        }
+        post.votes = { up, down };
+        const myVote = post.voters[fingerprint] ?? null;
+
+        if (found.postType === 'thread') {
+          realtime.publish('thread:updated', { thread: serializeThread(post, state.comments) });
+        } else {
+          const thread = state.threads.find((item) => item.id === post.threadId);
+          realtime.publish('comment:updated', {
+            threadId: post.threadId,
+            comment: serializeComment(post, thread)
+          });
+        }
+        return { votes: publicVotes(post), myVote };
       });
     },
 

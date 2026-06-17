@@ -656,6 +656,70 @@ test('anonymous poll allows one vote per hashed fingerprint without exposing vot
   );
 });
 
+test('votePost toggles upvote/downvote on a comment without leaking voters', async () => {
+  const realtime = createEvents();
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime,
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread de vote',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  const reply = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Binh luan de vote',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8',
+    posterToken: 'author'
+  });
+  const target = reply.comment.globalNumber;
+
+  const up = await service.votePost({
+    globalNumber: target,
+    direction: 'up',
+    ip: '203.0.113.9',
+    posterToken: 'reader-a'
+  });
+  assert.deepEqual(up.votes, { up: 1, down: 0, score: 1 });
+  assert.equal(up.myVote, 'up');
+  assert.equal(realtime.events.at(-1).event, 'comment:updated');
+
+  const detail = await service.getThread(created.thread.id);
+  assert.equal(detail.comments[0].votes.score, 1);
+  assert.equal(JSON.stringify(detail.comments[0]).includes('voters'), false);
+
+  // Same voter, same direction -> toggle off.
+  const off = await service.votePost({
+    globalNumber: target,
+    direction: 'up',
+    ip: '203.0.113.9',
+    posterToken: 'reader-a'
+  });
+  assert.deepEqual(off.votes, { up: 0, down: 0, score: 0 });
+  assert.equal(off.myVote, null);
+
+  // Switch a voter from up to down keeps a single vote.
+  await service.votePost({ globalNumber: target, direction: 'up', ip: '203.0.113.9', posterToken: 'reader-a' });
+  const down = await service.votePost({
+    globalNumber: target,
+    direction: 'down',
+    ip: '203.0.113.9',
+    posterToken: 'reader-a'
+  });
+  assert.deepEqual(down.votes, { up: 0, down: 1, score: -1 });
+  assert.equal(down.myVote, 'down');
+
+  await assert.rejects(
+    () => service.votePost({ globalNumber: target, direction: 'sideways', ip: '203.0.113.9' }),
+    /vote không hợp lệ/
+  );
+});
+
 test('thread image metadata is sanitized and returned with public thread data', async () => {
   const service = createForumService({
     store: createMemoryStore(),
