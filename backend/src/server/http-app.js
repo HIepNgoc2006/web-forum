@@ -1039,6 +1039,18 @@ export function createHttpServer({
           ok(response, await service.getAdminPostDetail(params.globalNumber));
           return;
         }
+        if (params && request.method === 'DELETE') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.adminDeletePost(params.globalNumber, {
+              reason: body.reason,
+              fileOnly: Boolean(body.fileOnly),
+              actor: admin.username ?? 'admin'
+            })
+          );
+          return;
+        }
 
         params = match(parts, ['api', 'admin', 'posts', ':globalNumber', 'reports', 'summary']);
         if (params && request.method === 'POST') {

@@ -6,7 +6,10 @@ import { EMPTY_STATE, normalizeState } from './forum-store.js';
 const MODEL_OPTIONS = {
   strict: false,
   versionKey: false,
-  minimize: false
+  minimize: false,
+  // Disable Mongoose's virtual `id` alias so a literal `id` field (UUID) is
+  // persisted instead of being silently dropped in favour of the ObjectId _id.
+  id: false
 };
 
 const BOARD_SCHEMA = new mongoose.Schema(
@@ -137,11 +140,9 @@ export function createMongoModels(connection) {
 async function replaceCollection(model, items) {
   await model.deleteMany({});
   if (items.length > 0) {
-    const docs = items.map(({ id, ...rest }) => {
-      if (id !== undefined) rest._id = id;
-      return rest;
-    });
-    await model.insertMany(docs, { ordered: true });
+    // `id: false` on the schema keeps the literal UUID `id` field, while Mongo
+    // assigns its own ObjectId `_id`. plainDocument() reads `id` back unchanged.
+    await model.insertMany(items, { ordered: true });
   }
 }
 

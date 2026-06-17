@@ -1171,6 +1171,19 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   text-align: center;
 }
 
+.thumb-broken {
+  display: grid;
+  width: 90px;
+  height: 70px;
+  padding: 0;
+  place-items: center;
+  border: 1px dashed var(--reply-border);
+  background: var(--reply);
+  color: var(--dead);
+  font-size: 11px;
+  text-align: center;
+}
+
 .placeholder.image-lazy-placeholder {
   display: grid;
   width: 125px;

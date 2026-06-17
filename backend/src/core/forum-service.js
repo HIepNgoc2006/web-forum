@@ -2552,6 +2552,56 @@ export function createForumService({
       };
     },
 
+    async adminDeletePost(globalNumber, { reason = '', actor = 'admin', fileOnly = false } = {}) {
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found || found.post.isDeleted) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const deletedAt = now().toISOString();
+        const safeReason = sanitizeReason(reason);
+        if (fileOnly) {
+          if (!found.post.image) {
+            const error = new Error('Bài viết không có tệp để xóa');
+            error.statusCode = 400;
+            throw error;
+          }
+          found.post.image = null;
+          found.post.fileDeletedAt = deletedAt;
+        } else {
+          found.post.isDeleted = true;
+          found.post.deletedAt = deletedAt;
+          found.post.deleteReason = safeReason || 'admin-delete';
+        }
+        recordModerationAction(state, {
+          action: fileOnly ? 'admin:delete-file' : 'admin:delete',
+          actor,
+          postType: found.postType,
+          post: found.post,
+          reason: safeReason || (fileOnly ? 'file-only' : 'admin-delete'),
+          createdAt: deletedAt
+        });
+        logEvent('moderation.delete', {
+          postType: found.postType,
+          boardSlug: found.post.boardSlug,
+          globalNumber: found.post.globalNumber,
+          actor,
+          fileOnly: Boolean(fileOnly)
+        });
+
+        if (found.postType === 'thread') {
+          realtime.publish('thread:updated', { threadId: found.post.id, deleted: !fileOnly, fileOnly: Boolean(fileOnly) });
+        } else {
+          const parent = state.threads.find((thread) => thread.id === found.post.threadId);
+          realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+        }
+        return { ok: true, fileOnly: Boolean(fileOnly), globalNumber: found.post.globalNumber };
+      });
+    },
+
     async addModeratorNote(globalNumber, { note = '', actor = 'admin' } = {}) {
       const safeNote = sanitizeReason(note);
       if (!safeNote) {

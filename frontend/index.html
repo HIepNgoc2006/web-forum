@@ -25,7 +25,6 @@
         <a id="accountRegisterLink" href="#register">Đăng ký</a>
         <a id="accountSettingsLink" class="hidden" href="#account">Tài khoản</a>
         <button id="accountLogoutButton" class="top-link-button hidden" type="button">Đăng xuất</button>
-        <a href="#home">Trang chủ</a>
         <a href="#admin">Quản trị</a>
       </div>
     </header>
@@ -289,10 +288,6 @@
               <input id="threadCaptcha" value="dev-pass" autocomplete="off" />
             </label>
             <div class="captcha-widget hidden" data-hcaptcha-target="threadCaptcha"></div>
-            <label class="field-row">
-              <span>Mật khẩu xóa</span>
-              <input id="threadDeletePassword" name="deletePassword" type="password" autocomplete="off" />
-            </label>
             <div class="form-actions">
               <select id="threadRewriteTone" class="rewrite-tone-select" aria-label="Tông giọng">
                 <option value="neutral">Trung lập</option>
@@ -453,10 +448,6 @@
               <span>Tệp</span>
               <input name="file" type="file" accept="image/*" disabled />
             </label>
-            <label class="field-row">
-              <span>Mật khẩu xóa</span>
-              <input id="commentDeletePassword" name="deletePassword" type="password" autocomplete="off" />
-            </label>
             <p class="reply-notes">
               Vui lòng đọc <a href="#policy">Nội quy & riêng tư</a> trước khi đăng.<br />
               Có thể giữ định dạng code bằng thẻ [code].
@@ -475,10 +466,6 @@
         <div id="threadPagination" class="page-controls"></div>
         <div id="threadToolbarBottom" class="thread-toolbar"></div>
         <form id="deletePostForm" class="thread-footer-controls">
-          <span>Xóa bài</span>
-          <input id="deletePasswordInput" type="password" autocomplete="off" aria-label="Mật khẩu xóa" />
-          <label><input id="deleteFileOnly" name="fileOnly" type="checkbox" /> Chỉ tệp</label>
-          <button id="deletePostButton" class="primary-button" type="button">Xóa</button>
           <span>Giao diện</span>
           <select name="style" data-theme-select aria-label="Giao diện">
             <option value="yotsuba-b">Yotsuba B</option>
@@ -817,7 +804,6 @@
           <input name="useAccountName" type="checkbox" data-use-account-name /> @username
         </label>
         <input id="quickReplyOptions" name="options" aria-label="Tùy chọn" placeholder="Tùy chọn" autocomplete="off" />
-        <input id="quickReplyDeletePassword" name="deletePassword" type="password" aria-label="Mật khẩu xóa" autocomplete="off" />
         <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>
         <div id="quickReplyPrivacyWarning" class="privacy-warning quick-privacy-warning hidden" role="status"></div>
         <div class="quick-reply-captcha">
