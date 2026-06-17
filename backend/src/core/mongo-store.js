@@ -70,7 +70,10 @@ function flexibleSchema(indexes = []) {
 }
 
 function plainDocument(document) {
-  const { _id: _ignored, ...plain } = document;
+  const { _id, ...plain } = document;
+  if (!plain.id && _id) {
+    plain.id = typeof _id === 'object' && _id.toString ? _id.toString() : String(_id);
+  }
   return plain;
 }
 
@@ -134,7 +137,11 @@ export function createMongoModels(connection) {
 async function replaceCollection(model, items) {
   await model.deleteMany({});
   if (items.length > 0) {
-    await model.insertMany(items, { ordered: true });
+    const docs = items.map(({ id, ...rest }) => {
+      if (id !== undefined) rest._id = id;
+      return rest;
+    });
+    await model.insertMany(docs, { ordered: true });
   }
 }
 
