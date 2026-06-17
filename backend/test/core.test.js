@@ -16,6 +16,7 @@ import {
   createModerationFingerprint,
   createPosterHash,
   createPosterProofHash,
+  createRateLimiter,
   securityConfigStatus,
   signJwt,
   verifyHcaptcha,
@@ -2365,6 +2366,38 @@ test('publicConfig reports OpenAI-compatible auto-detect when AI_PROVIDER is uns
         process.env[key] = originalEnv[key];
       }
     }
+  }
+});
+
+test('rate limiter evicts expired buckets so the map stays bounded', () => {
+  const windowMs = 1000;
+  const limiter = createRateLimiter({ limit: 5, windowMs, sweepIntervalMs: 0 });
+  try {
+    for (let i = 0; i < 50; i += 1) {
+      limiter.check(`ip-${i}`);
+    }
+    assert.equal(limiter.size(), 50);
+
+    // After the window passes, a sweep removes every expired entry.
+    limiter.sweep(Date.now() + windowMs + 1);
+    assert.equal(limiter.size(), 0);
+  } finally {
+    limiter.stop();
+  }
+});
+
+test('rate limiter enforces the limit and accepts a shared Map-like backend', () => {
+  const shared = new Map();
+  const limiter = createRateLimiter({ limit: 2, windowMs: 60_000, store: shared, sweepIntervalMs: 0 });
+  try {
+    assert.equal(limiter.check('k').ok, true); // 1
+    assert.equal(limiter.check('k').ok, true); // 2
+    assert.equal(limiter.check('k').ok, false); // 3 over limit
+    // State lives in the injected backend, not a private Map.
+    assert.equal(shared.has('k'), true);
+    assert.equal(shared.get('k').count, 3);
+  } finally {
+    limiter.stop();
   }
 });
 

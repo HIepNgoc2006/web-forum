@@ -32,6 +32,7 @@ rtk npm run release:verify
 - Set provider-side AI quota and spend alerts before enabling public AI features broadly.
 - Use platform/CDN cache rules for frontend assets until static cache headers are implemented in the backend.
 - Review realtime client counts during beta and restart/scale conservatively if SSE clients climb unexpectedly.
+- Rate limiting (`createRateLimiter` in `backend/src/core/security.js`) is **per process**: counters live in an in-process map (now bounded by automatic eviction of expired buckets). With multiple instances behind a load balancer the effective limit is multiplied by the instance count, which weakens the per-IP layer of the auth brute-force protection (#129). For multi-instance deployments, inject a shared Map-like backend (e.g. Redis-backed) via the limiter's `store` option so counters are shared. Until then, prefer a single process for auth-sensitive routes or keep instance count low.
 
 ## Follow-up Issues
 

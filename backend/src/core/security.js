@@ -198,8 +198,47 @@ export function getClientIp(request) {
   return request.socket.remoteAddress ?? '127.0.0.1';
 }
 
-export function createRateLimiter({ limit = 40, windowMs = 60_000 } = {}) {
-  const buckets = new Map();
+/**
+ * Fixed-window rate limiter.
+ *
+ * By default it keeps counters in a per-process Map. Two notes for operators:
+ *
+ * 1. **Eviction**: expired buckets are swept opportunistically on each `check`
+ *    and on an `unref`'d interval, so the map stays bounded even when most keys
+ *    (e.g. one-off client IPs) never recur. The interval never keeps the
+ *    process alive; call `stop()` for deterministic cleanup in tests/shutdown.
+ * 2. **Multi-instance**: a per-process Map is NOT shared across instances. With
+ *    N processes behind a load balancer an attacker effectively gets N× the
+ *    limit. To rate-limit across instances, pass a shared `store` that
+ *    implements a synchronous Map-like interface (`get`/`set`/`delete` and
+ *    iteration of `[key, { count, resetAt }]` entries) backed by e.g. Redis.
+ *    Auth brute-force protection assumes such a shared counter at scale.
+ *
+ * @param {object} [options]
+ * @param {number} [options.limit] max requests per window
+ * @param {number} [options.windowMs] window length in ms
+ * @param {Map} [options.store] optional shared, Map-like backend
+ * @param {number} [options.sweepIntervalMs] eviction interval (0 disables)
+ */
+export function createRateLimiter({ limit = 40, windowMs = 60_000, store, sweepIntervalMs = windowMs } = {}) {
+  const buckets = store ?? new Map();
+
+  function sweep(now = Date.now()) {
+    for (const [key, bucket] of buckets) {
+      if (bucket.resetAt <= now) {
+        buckets.delete(key);
+      }
+    }
+  }
+
+  let timer = null;
+  if (sweepIntervalMs > 0 && typeof setInterval === 'function') {
+    timer = setInterval(() => sweep(), sweepIntervalMs);
+    if (typeof timer.unref === 'function') {
+      timer.unref();
+    }
+  }
+
   return {
     check(key) {
       const now = Date.now();
@@ -209,12 +248,25 @@ export function createRateLimiter({ limit = 40, windowMs = 60_000 } = {}) {
         return { ok: true, remaining: limit - 1 };
       }
       current.count += 1;
+      // Re-set so non-by-reference backends (e.g. a Redis adapter) persist the
+      // mutated bucket; harmless for the default Map.
+      buckets.set(key, current);
       const remaining = Math.max(0, limit - current.count);
       return {
         ok: current.count <= limit,
         remaining,
         retryAfter: Math.ceil((current.resetAt - now) / 1000)
       };
+    },
+    sweep,
+    size() {
+      return typeof buckets.size === 'number' ? buckets.size : undefined;
+    },
+    stop() {
+      if (timer) {
+        clearInterval(timer);
+        timer = null;
+      }
     }
   };
 }
