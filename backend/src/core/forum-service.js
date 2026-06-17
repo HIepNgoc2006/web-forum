@@ -813,6 +813,8 @@ function serializeThread(thread, comments) {
     isArchived: Boolean(thread.isArchived),
     archivedAt: thread.archivedAt ?? null,
     archivedReason: thread.archivedReason ?? null,
+    isLocked: Boolean(thread.isLocked),
+    lockedAt: thread.lockedAt ?? null,
     isSticky: Boolean(thread.isSticky && activePublicThread(thread)),
     stickiedAt: thread.isSticky && activePublicThread(thread) ? (thread.stickiedAt ?? null) : null,
     slowModeUntil: thread.slowModeUntil ?? null,
@@ -2047,6 +2049,39 @@ export function createForumService({
       });
     },
 
+    async setThreadLocked(threadId, locked, { actor = 'admin' } = {}) {
+      return mutate(async (state) => {
+        const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
+        if (!thread) {
+          const error = new Error('Không tìm thấy chủ đề công khai');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const actionAt = now().toISOString();
+        const nextLocked = Boolean(locked);
+        thread.isLocked = nextLocked;
+        thread.lockedAt = nextLocked ? actionAt : null;
+        thread.lockedBy = nextLocked ? actor : null;
+        recordModerationAction(state, {
+          action: nextLocked ? 'admin:lock' : 'admin:unlock',
+          actor,
+          postType: 'thread',
+          post: thread,
+          reason: nextLocked ? 'lock' : 'unlock',
+          createdAt: actionAt
+        });
+        logEvent(nextLocked ? 'thread.lock' : 'thread.unlock', {
+          boardSlug: thread.boardSlug,
+          globalNumber: thread.globalNumber,
+          actor
+        });
+        const serialized = serializeThread(thread, state.comments);
+        realtime.publish('thread:updated', { thread: serialized });
+        return serialized;
+      });
+    },
+
     async createThread({
       boardSlug,
       body,
@@ -2216,6 +2251,11 @@ export function createForumService({
         if (!thread) {
           const error = new Error('Không tìm thấy chủ đề');
           error.statusCode = 404;
+          throw error;
+        }
+        if (thread.isLocked) {
+          const error = new Error('Chủ đề đã bị khóa, không thể trả lời');
+          error.statusCode = 403;
           throw error;
         }
         assertEventBoardOpen(findBoard(state, thread.boardSlug), createdAt);

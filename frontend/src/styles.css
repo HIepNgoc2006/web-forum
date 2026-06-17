@@ -1327,6 +1327,11 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   font-weight: bold;
 }
 
+.locked-label {
+  color: #c60;
+  font-weight: bold;
+}
+
 .archived-notice {
   clear: both;
   width: fit-content;
