@@ -487,6 +487,7 @@ const els = {
   registerForm: document.querySelector('#registerForm'),
   registerUsername: document.querySelector('#registerUsername'),
   registerPassword: document.querySelector('#registerPassword'),
+  registerCaptcha: document.querySelector('#registerCaptcha'),
   registerError: document.querySelector('#registerError'),
   accountLoginForm: document.querySelector('#accountLoginForm'),
   accountUsername: document.querySelector('#accountUsername'),
@@ -3769,6 +3770,11 @@ function hideReferencePreview() {
 async function submitAccountRegister(event) {
   event.preventDefault();
   setFormError(els.registerError);
+  const captchaToken = (els.registerCaptcha?.value || '').trim();
+  if (state.hcaptchaSiteKey && !captchaToken) {
+    setFormError(els.registerError, 'Vui lòng hoàn tất xác minh hCaptcha trước khi đăng ký.');
+    return;
+  }
   const button = event.submitter;
   const restoreButton = setButtonLoading(button, 'Đang đăng ký...');
   try {
@@ -3777,15 +3783,18 @@ async function submitAccountRegister(event) {
       method: 'POST',
       body: JSON.stringify({
         username: els.registerUsername.value,
-        password: els.registerPassword.value
+        password: els.registerPassword.value,
+        captchaToken
       })
     });
     els.registerPassword.value = '';
+    resetHcaptcha(els.registerCaptcha);
     setAccountSession({ token: result.token, account: result.account });
     await loadAccountPrivateData({ mergeLocal: true });
     showToast('Đã đăng ký và đăng nhập tài khoản.');
     window.location.hash = '#account';
   } catch (error) {
+    resetHcaptcha(els.registerCaptcha);
     setFormError(els.registerError, error.message);
   } finally {
     restoreButton();

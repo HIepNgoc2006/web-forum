@@ -271,7 +271,7 @@ test('security: account API rejects access after logout (session revocation)', a
     const registered = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'revoke_test', password: 'long-enough-pass' })
+      body: JSON.stringify({ username: 'revoke_test', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
     const registeredBody = await registered.json();
     const token = registeredBody.data.token;

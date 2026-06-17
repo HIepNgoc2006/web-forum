@@ -104,7 +104,7 @@ describe('TOTP Service Cryptography', () => {
 describe('Forum Service 2FA Functions', () => {
   it('handles 2FA setup lifecycle for users', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     
     // Default state: disabled
     assert.equal(account.twoFactorEnabled, false);
@@ -161,7 +161,7 @@ describe('Forum Service 2FA Functions', () => {
 
   it('allows administrative reset of 2FA', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const setup = await service.generate2FASetup(account.id);
     const validCode = totpService.generateTOTP(setup.secret);
     await service.verify2FASetup(account.id, validCode);
@@ -181,7 +181,7 @@ describe('HTTP 2FA Integration API', () => {
       const registerRes = await fetch(`${baseUrl}/api/account/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'user2fa', password: 'password123' })
+        body: JSON.stringify({ username: 'user2fa', password: 'password123', captchaToken: 'dev-pass' })
       });
       const registerBody = await registerRes.json();
       assert.equal(registerRes.status, 201);
@@ -214,7 +214,7 @@ describe('HTTP 2FA Integration API', () => {
       const loginRes = await fetch(`${baseUrl}/api/account/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'user2fa', password: 'password123' })
+        body: JSON.stringify({ username: 'user2fa', password: 'password123', captchaToken: 'dev-pass' })
       });
       const loginBody = await loginRes.json();
       assert.equal(loginRes.status, 200);

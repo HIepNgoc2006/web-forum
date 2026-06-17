@@ -54,6 +54,8 @@ const ANONYMOUS_DISPLAY_NAME = 'Anonymous';
 const MAX_DISPLAY_NAME_LENGTH = 40;
 const RESERVED_DISPLAY_NAMES = new Set(['admin', 'administrator', 'moderator', 'mod', 'system']);
 const ACCOUNT_USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const MAX_FAILED_LOGINS = 5;
+const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
 const ACCOUNT_THEMES = new Set(['yotsuba-b', 'yotsuba', 'tomorrow']);
 const MAX_ACCOUNT_WATCHLIST_ITEMS = 100;
 const MAX_ACCOUNT_DRAFTS = 40;
@@ -1284,7 +1286,8 @@ export function createForumService({
       };
     },
 
-    async registerAccount({ username, password } = {}) {
+    async registerAccount({ username, password, captchaToken, ip } = {}) {
+      await requireCaptcha(captchaToken, ip);
       const safeUsername = assertAccountUsername(username);
       const safePassword = assertAccountPassword(password);
       return mutate(async (state) => {
@@ -1316,10 +1319,36 @@ export function createForumService({
       const safeUsername = normalizeAccountUsername(username);
       const state = await store.read();
       const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+
+      const lockedUntil = user && user.lockedUntil ? new Date(user.lockedUntil).getTime() : 0;
+      if (lockedUntil && lockedUntil > now().getTime()) {
+        const retryAfter = Math.ceil((lockedUntil - now().getTime()) / 1000);
+        const error = new Error('Tài khoản tạm thời bị khóa do đăng nhập sai nhiều lần. Vui lòng thử lại sau.');
+        error.statusCode = 429;
+        error.retryAfter = retryAfter;
+        throw error;
+      }
+
       if (!user || !verifyAccountPassword(password, user.passwordHash)) {
+        if (user) {
+          user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+          if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
+            user.lockedUntil = new Date(now().getTime() + LOGIN_LOCKOUT_MS).toISOString();
+            user.failedLoginAttempts = 0;
+          }
+          user.updatedAt = now().toISOString();
+          await store.write(state);
+        }
         const error = new Error('Tên tài khoản hoặc mật khẩu không đúng');
         error.statusCode = 401;
         throw error;
+      }
+
+      if (user.failedLoginAttempts || user.lockedUntil) {
+        user.failedLoginAttempts = 0;
+        user.lockedUntil = null;
+        user.updatedAt = now().toISOString();
+        await store.write(state);
       }
       return serializeAccount(state, user);
     },

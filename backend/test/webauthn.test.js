@@ -89,7 +89,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       const regRes = await fetch(`${baseUrl}/api/account/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'webauthnuser', password: 'securepass123' })
+        body: JSON.stringify({ username: 'webauthnuser', password: 'securepass123', captchaToken: 'dev-pass' })
       });
       assert.strictEqual(regRes.status, 201);
       const regData = await regRes.json();
@@ -207,7 +207,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       const regRes = await fetch(`${baseUrl}/api/account/register`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'anotheruser', password: 'securepass123' })
+        body: JSON.stringify({ username: 'anotheruser', password: 'securepass123', captchaToken: 'dev-pass' })
       });
       const regData = await regRes.json();
       const userToken = regData.data.token;

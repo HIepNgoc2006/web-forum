@@ -2263,3 +2263,96 @@ test('publicConfig reports OpenAI-compatible auto-detect when AI_PROVIDER is uns
     }
   }
 });
+
+test('register requires a valid captcha token', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  await assert.rejects(
+    () => service.registerAccount({ username: 'no_captcha', password: 'long-enough-pass' }),
+    (error) => error.statusCode === 403
+  );
+
+  const account = await service.registerAccount({
+    username: 'with_captcha',
+    password: 'long-enough-pass',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  assert.equal(account.username, 'with_captcha');
+});
+
+test('account locks after repeated failed logins and unlocks after the window', async () => {
+  let clock = new Date('2026-05-22T08:00:00.000Z').getTime();
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date(clock)
+  });
+
+  await service.registerAccount({
+    username: 'lock_target',
+    password: 'correct-horse-battery',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  // Five consecutive wrong passwords trip the lockout.
+  for (let i = 0; i < 5; i += 1) {
+    await assert.rejects(
+      () => service.loginAccount({ username: 'lock_target', password: 'wrong' }),
+      (error) => error.statusCode === 401
+    );
+  }
+
+  // Locked: even the correct password is rejected with 429.
+  await assert.rejects(
+    () => service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery' }),
+    (error) => error.statusCode === 429
+  );
+
+  // After the lockout window passes, the correct password works again.
+  clock += 15 * 60 * 1000 + 1000;
+  const account = await service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery' });
+  assert.equal(account.username, 'lock_target');
+});
+
+test('a successful login resets the failed-attempt counter', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  await service.registerAccount({
+    username: 'reset_target',
+    password: 'correct-horse-battery',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  // Four failures (below the threshold of five), then a success.
+  for (let i = 0; i < 4; i += 1) {
+    await assert.rejects(
+      () => service.loginAccount({ username: 'reset_target', password: 'wrong' }),
+      (error) => error.statusCode === 401
+    );
+  }
+  await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery' });
+
+  // Counter reset: four more failures still do not lock (would need five fresh).
+  for (let i = 0; i < 4; i += 1) {
+    await assert.rejects(
+      () => service.loginAccount({ username: 'reset_target', password: 'wrong' }),
+      (error) => error.statusCode === 401
+    );
+  }
+  const account = await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery' });
+  assert.equal(account.username, 'reset_target');
+});

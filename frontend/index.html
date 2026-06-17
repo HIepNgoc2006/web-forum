@@ -510,6 +510,11 @@
             <span>Mật khẩu</span>
             <input id="registerPassword" type="password" autocomplete="new-password" />
           </label>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <input id="registerCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+            <div class="captcha-widget hidden" data-hcaptcha-target="registerCaptcha"></div>
+          </div>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Đăng ký</button>
             [<a href="#login">Đã có tài khoản</a>]

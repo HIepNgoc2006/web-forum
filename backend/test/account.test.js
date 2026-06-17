@@ -18,7 +18,7 @@ function createTestService(overrides = {}) {
 describe('Account registration and login', () => {
   it('registers a new account', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     assert.strictEqual(account.username, 'testuser');
     assert.strictEqual(account.role, 'user');
     assert.ok(account.id);
@@ -26,9 +26,9 @@ describe('Account registration and login', () => {
 
   it('rejects duplicate username', async () => {
     const service = createTestService();
-    await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await assert.rejects(
-      () => service.registerAccount({ username: 'testuser', password: 'anotherpass1' }),
+      () => service.registerAccount({ username: 'testuser', password: 'anotherpass1', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 409
     );
   });
@@ -36,7 +36,7 @@ describe('Account registration and login', () => {
   it('rejects invalid username format', async () => {
     const service = createTestService();
     await assert.rejects(
-      () => service.registerAccount({ username: 'AB', password: 'securepass12' }),
+      () => service.registerAccount({ username: 'AB', password: 'securepass12', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 400
     );
   });
@@ -44,21 +44,21 @@ describe('Account registration and login', () => {
   it('rejects short password', async () => {
     const service = createTestService();
     await assert.rejects(
-      () => service.registerAccount({ username: 'testuser', password: 'short' }),
+      () => service.registerAccount({ username: 'testuser', password: 'short', captchaToken: 'dev-pass' }),
       (error) => error.statusCode === 400
     );
   });
 
   it('logs in with correct credentials', async () => {
     const service = createTestService();
-    await service.registerAccount({ username: 'testuser', password: 'securepass12' });
-    const account = await service.loginAccount({ username: 'testuser', password: 'securepass12' });
+    await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const account = await service.loginAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     assert.strictEqual(account.username, 'testuser');
   });
 
   it('rejects login with wrong password', async () => {
     const service = createTestService();
-    await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await assert.rejects(
       () => service.loginAccount({ username: 'testuser', password: 'wrongpass12' }),
       (error) => error.statusCode === 401
@@ -118,7 +118,7 @@ describe('Account session revocation (logout)', () => {
 describe('GET /api/account/me after logout', () => {
   it('getAccount still works for valid user', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const retrieved = await service.getAccount(account.id);
     assert.strictEqual(retrieved.username, 'testuser');
   });
@@ -135,7 +135,7 @@ describe('GET /api/account/me after logout', () => {
 describe('Account settings', () => {
   it('updates settings for existing user', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const updated = await service.updateAccountSettings(account.id, {
       theme: 'tomorrow',
       displayPreferences: {
@@ -165,7 +165,7 @@ describe('Account settings', () => {
 
   it('rejects invalid theme', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const updated = await service.updateAccountSettings(account.id, { theme: 'invalid-theme' });
     // Should keep the default theme instead of accepting invalid
     assert.strictEqual(updated.settings.theme, 'yotsuba-b');
@@ -175,7 +175,7 @@ describe('Account settings', () => {
 describe('Account private data', () => {
   it('syncs watchlist, drafts and saved searches for existing user', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const data = await service.updateAccountPrivateData(account.id, {
       watchlist: [
         {
@@ -222,7 +222,7 @@ describe('Account private data', () => {
 
   it('clears one section or all private data', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12' });
+    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await service.updateAccountPrivateData(account.id, {
       watchlist: [{ threadId: 'thread-1' }],
       drafts: [{ key: 'draft:thread:hoc-tap', body: 'Draft' }],

@@ -259,7 +259,7 @@ test('http account api registers, logs in and saves private settings', async () 
     const registered = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'SinhVien_36', password: 'long-enough-pass' })
+      body: JSON.stringify({ username: 'SinhVien_36', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
     const registeredBody = await registered.json();
     assert.equal(registered.status, 201);
@@ -270,14 +270,14 @@ test('http account api registers, logs in and saves private settings', async () 
     const duplicate = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'sinhvien_36', password: 'long-enough-pass' })
+      body: JSON.stringify({ username: 'sinhvien_36', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
     assert.equal(duplicate.status, 409);
 
     const login = await fetch(`${baseUrl}/api/account/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'sinhvien_36', password: 'long-enough-pass' })
+      body: JSON.stringify({ username: 'sinhvien_36', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
     const loginBody = await login.json();
     assert.equal(login.status, 200);
@@ -353,7 +353,7 @@ test('http account api syncs and clears private watchlist drafts and saved searc
     const registered = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'sync_user', password: 'long-enough-pass' })
+      body: JSON.stringify({ username: 'sync_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
     const registeredBody = await registered.json();
     const token = registeredBody.data.token;
@@ -447,7 +447,7 @@ test('http ai rewrite does not receive account private data', async () => {
       const registered = await fetch(`${baseUrl}/api/account/register`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ username: 'ai_private_user', password: 'long-enough-pass' })
+        body: JSON.stringify({ username: 'ai_private_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
       });
       const registeredBody = await registered.json();
 
@@ -489,7 +489,7 @@ test('http account identity is not exposed on public posts', async () => {
     const registered = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass' })
+      body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
     const registeredBody = await registered.json();
 
@@ -566,7 +566,7 @@ test('http account identity is not exposed on public posts', async () => {
     const loggedInAgain = await fetch(`${baseUrl}/api/account/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass' })
+      body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
     const loggedInAgainBody = await loggedInAgain.json();
     assert.equal(loggedInAgain.status, 200);
