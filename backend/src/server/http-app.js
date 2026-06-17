@@ -1068,6 +1068,15 @@ export function createHttpServer({
           return;
         }
 
+        params = match(parts, ['api', 'admin', 'threads', ':threadId', 'lock']);
+        if (params && (request.method === 'POST' || request.method === 'DELETE')) {
+          ok(
+            response,
+            await service.setThreadLocked(params.threadId, request.method === 'POST', { actor: admin.username ?? 'admin' })
+          );
+          return;
+        }
+
         params = match(parts, ['api', 'admin', 'pending', 'bulk']);
         if (params && request.method === 'POST') {
           const body = await readJson(request, 40_000);

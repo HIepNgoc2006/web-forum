@@ -24,6 +24,7 @@ const state = {
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,
+  threadIsLocked: false,
   boardPage: 1,
   boardPageSize: 15,
   boardSearchTerm: '',
@@ -1482,7 +1483,7 @@ function closeThreadComposer() {
 }
 
 function syncReplyComposer() {
-  const canReply = !state.threadIsArchived;
+  const canReply = !state.threadIsArchived && !state.threadIsLocked;
   els.replyComposer.classList.toggle('hidden', !state.replyComposerOpen || !canReply);
   els.postReplyToggle.classList.toggle('hidden', state.replyComposerOpen || !canReply);
   els.commentDeletePassword.value ||= defaultDeletePassword();
@@ -1492,8 +1493,8 @@ function syncReplyComposer() {
 }
 
 function openReplyComposer({ focus = true } = {}) {
-  if (state.threadIsArchived) {
-    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+  if (state.threadIsArchived || state.threadIsLocked) {
+    showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
     return;
   }
   state.replyComposerOpen = true;
@@ -2020,7 +2021,9 @@ function moderationActionText(action) {
       'admin:ban': 'Tạm khóa',
       'admin:unsanction': 'Gỡ khóa',
       'admin:sticky': 'Ghim chủ đề',
-      'admin:unsticky': 'Gỡ ghim chủ đề'
+      'admin:unsticky': 'Gỡ ghim chủ đề',
+      'admin:lock': 'Khóa chủ đề',
+      'admin:unlock': 'Mở khóa chủ đề'
     }[action] || action
   );
 }
@@ -2214,6 +2217,7 @@ function adminPostDetailHtml(detail) {
       <div class="pending-actions">
         <button class="ghost-button" data-admin-note="${post.globalNumber}" type="button">[Ghi chú]</button>
         ${post.type === 'thread' ? adminStickyButtonHtml(post) : ''}
+        ${post.type === 'thread' ? adminLockButtonHtml(post) : ''}
         <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
         <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
       </div>
@@ -2748,13 +2752,14 @@ function threadToolbarHtml(detail, position) {
   const posts = [detail.thread, ...detail.comments];
   const fileCount = posts.filter((post) => post.image).length;
   const commentMeta = detail.commentPage;
-  const canReply = !detail.thread.isArchived;
+  const canReply = !detail.thread.isArchived && !detail.thread.isLocked;
   const replyLink =
     position === 'bottom' && canReply
       ? '<button class="link-button toolbar-reply-link" data-open-reply type="button">Đăng trả lời</button>'
       : '<span></span>';
   const checked = state.autoUpdate ? 'checked' : '';
   const archivedLabel = detail.thread.isArchived ? '<span class="archived-label">Đã lưu trữ</span>' : '';
+  const lockedLabel = detail.thread.isLocked ? '<span class="locked-label">🔒 Đã khóa</span>' : '';
   const watchLabel = isThreadWatched(detail.thread.id) ? 'Bỏ theo dõi' : 'Theo dõi';
   const slowModeLabel = detail.thread.slowModeUntil
     ? `<span class="archived-label">Chế độ chậm ${Number(detail.thread.slowModeSeconds || 0)}s</span>`
@@ -2770,6 +2775,7 @@ function threadToolbarHtml(detail, position) {
       [<label title="Tự lấy phản hồi mới"><input type="checkbox" data-auto-update ${checked}> Tự động</label>]
       <span class="auto-countdown">${state.autoUpdate ? state.autoCountdown : ''}</span>
       ${archivedLabel}
+      ${lockedLabel}
       ${slowModeLabel}
     </div>
     ${replyLink}
@@ -2866,6 +2872,15 @@ function adminStickyButtonHtml(thread) {
   const nextSticky = !thread.isSticky;
   const label = nextSticky ? 'Ghim' : 'Gỡ ghim';
   return `<button class="ghost-button" data-admin-sticky-thread="${escapeHtml(thread.id)}" data-sticky-next="${nextSticky}" type="button">[${label}]</button>`;
+}
+
+function adminLockButtonHtml(thread) {
+  if (!thread?.id || thread.isArchived) {
+    return '';
+  }
+  const nextLocked = !thread.isLocked;
+  const label = nextLocked ? 'Khóa' : 'Mở khóa';
+  return `<button class="ghost-button" data-admin-lock-thread="${escapeHtml(thread.id)}" data-lock-next="${nextLocked}" type="button">[${label}]</button>`;
 }
 
 function focusPermalinkPost(globalNumber, { scroll = false } = {}) {
@@ -3156,7 +3171,8 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   state.threadGlobalNumber = detail.thread.globalNumber;
   state.threadPosterHash = detail.thread.posterHash;
   state.threadIsArchived = Boolean(detail.thread.isArchived);
-  if (resetReply || state.threadIsArchived) {
+  state.threadIsLocked = Boolean(detail.thread.isLocked);
+  if (resetReply || state.threadIsArchived || state.threadIsLocked) {
     closeReplyComposer({ clear: true });
   } else {
     syncReplyComposer();
@@ -3175,11 +3191,18 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
         Không thể đăng trả lời mới.
       </div>`
     : '';
-  const canReply = !detail.thread.isArchived;
+  const lockedNotice = !detail.thread.isArchived && detail.thread.isLocked
+    ? `<div class="archived-notice">
+        🔒 Chủ đề đã bị khóa${detail.thread.lockedAt ? ` lúc ${escapeHtml(formatPostDate(detail.thread.lockedAt))}` : ''}.
+        Không thể đăng trả lời mới.
+      </div>`
+    : '';
+  const canReply = !detail.thread.isArchived && !detail.thread.isLocked;
   const hiddenPosts = hiddenPostNumbers();
   const visibleComments = detail.comments.filter((comment) => !hiddenPosts.has(String(comment.globalNumber)));
   els.threadDetail.innerHTML = `
     ${archivedNotice}
+    ${lockedNotice}
     ${postHtml(detail.thread, 'post op', {
       opNumber: detail.thread.globalNumber,
       opPosterHash: detail.thread.posterHash,
@@ -3484,8 +3507,8 @@ async function submitThread(event) {
 
 async function submitComment(event) {
   event.preventDefault();
-  if (state.threadIsArchived) {
-    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+  if (state.threadIsArchived || state.threadIsLocked) {
+    showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
     return;
   }
   const button = event.submitter || els.commentForm.querySelector('[type="submit"]');
@@ -3564,8 +3587,8 @@ function addQuoteToQuickReply(number) {
 }
 
 function openQuickReply(number, event) {
-  if (state.threadIsArchived) {
-    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+  if (state.threadIsArchived || state.threadIsLocked) {
+    showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
     return;
   }
   const wasHidden = els.quickReply.classList.contains('hidden');
@@ -3594,8 +3617,8 @@ function closeQuickReply() {
 
 async function submitQuickReply(event) {
   event.preventDefault();
-  if (state.threadIsArchived) {
-    showToast('Chủ đề đã lưu trữ, không thể trả lời.');
+  if (state.threadIsArchived || state.threadIsLocked) {
+    showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
     closeQuickReply();
     return;
   }
@@ -4579,6 +4602,33 @@ function bindEvents() {
           method: nextSticky ? 'POST' : 'DELETE'
         });
         showToast(nextSticky ? 'Đã ghim chủ đề.' : 'Đã gỡ ghim chủ đề.');
+        const hash = window.location.hash || '';
+        if (hash.startsWith('#board/')) {
+          await loadBoard();
+        } else if (hash.startsWith('#thread/')) {
+          await loadThread();
+        } else {
+          await loadAdmin();
+        }
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminLockButton = event.target.closest('[data-admin-lock-thread]');
+    if (adminLockButton) {
+      const threadId = adminLockButton.dataset.adminLockThread;
+      const nextLocked = adminLockButton.dataset.lockNext === 'true';
+      const ok = window.confirm(nextLocked ? 'Khóa chủ đề này? Người dùng sẽ không thể trả lời.' : 'Mở khóa chủ đề này?');
+      if (!ok) {
+        return;
+      }
+      try {
+        await api(`/api/admin/threads/${encodeURIComponent(threadId)}/lock`, {
+          method: nextLocked ? 'POST' : 'DELETE'
+        });
+        showToast(nextLocked ? 'Đã khóa chủ đề.' : 'Đã mở khóa chủ đề.');
         const hash = window.location.hash || '';
         if (hash.startsWith('#board/')) {
           await loadBoard();
