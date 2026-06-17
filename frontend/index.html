@@ -702,6 +702,18 @@
             <button class="primary-button" type="submit">Đăng nhập</button>
           </div>
         </form>
+        <form id="admin2FAVerifyForm" class="login-panel stack hidden">
+          <div id="admin2FAVerifyError" class="form-error hidden" role="alert"></div>
+          <p class="muted">Tài khoản quản trị đã kích hoạt bảo mật 2 lớp. Vui lòng nhập mã xác thực từ ứng dụng của bạn.</p>
+          <label class="field-row">
+            <span>Mã 2FA (6 chữ số)</span>
+            <input id="admin2FACode" maxlength="6" placeholder="Mã 6 chữ số" style="font-size:18px; text-align:center;" type="text" />
+          </label>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Xác thực</button>
+            <button id="admin2FACancelButton" class="ghost-button" type="button">[Hủy]</button>
+          </div>
+        </form>
         <div id="adminTools" class="admin-tools hidden">
           <div class="admin-tabs" aria-label="Chọn hàng đợi quản trị">
             <button class="admin-tab active" data-admin-tab="pending" type="button">AI chờ duyệt</button>
