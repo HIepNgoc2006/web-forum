@@ -714,6 +714,31 @@
             <button id="admin2FACancelButton" class="ghost-button" type="button">[Hủy]</button>
           </div>
         </form>
+        <div id="admin2FASetupPanel" class="login-panel stack hidden">
+          <h2>Thiết lập bảo mật 2 lớp (2FA)</h2>
+          <p class="muted">Tài khoản quản trị yêu cầu bảo mật 2 lớp để sử dụng. Vui lòng thiết lập 2FA để tiếp tục.</p>
+          <div id="admin2FASetupStart">
+            <button id="adminStart2FAButton" class="primary-button" type="button">Bắt đầu thiết lập 2FA</button>
+          </div>
+          <div id="admin2FASetupQR" class="stack hidden">
+            <p class="muted">Quét mã QR bằng ứng dụng xác thực (Google Authenticator, Microsoft Authenticator, v.v.):</p>
+            <div style="text-align: center; margin: 10px 0;">
+              <img id="admin2FAQRImage" src="" alt="Mã QR thiết lập 2FA" style="max-width:200px; display:inline-block;" />
+            </div>
+            <div class="stack" style="background: #fff9db; border: 1px solid #f59f00; padding: 10px; border-radius: 4px; margin: 10px 0;">
+              <p style="font-weight:bold; color:#f08c00; margin:0 0 5px 0;">LƯU Ý: LƯU TRỮ MÃ DỰ PHÒNG</p>
+              <p class="muted" style="margin:0 0 5px 0;">Lưu lại các mã dự phòng sau. Mỗi mã chỉ sử dụng được một lần để khôi phục tài khoản nếu bạn mất thiết bị 2FA.</p>
+              <textarea id="admin2FABackupCodes" readonly rows="5" style="width:100%; font-family:monospace; resize:none;"></textarea>
+            </div>
+            <label class="field-row">
+              <span>Nhập mã 2FA xác nhận</span>
+              <input id="admin2FASetupCode" maxlength="6" placeholder="Mã 6 chữ số" style="max-width: 150px; font-size:16px; text-align:center;" type="text" />
+            </label>
+            <div class="form-actions account-actions">
+              <button id="adminVerify2FASetupButton" class="primary-button" type="button">Xác nhận và kích hoạt</button>
+            </div>
+          </div>
+        </div>
         <div id="adminTools" class="admin-tools hidden">
           <div class="admin-tabs" aria-label="Chọn hàng đợi quản trị">
             <button class="admin-tab active" data-admin-tab="pending" type="button">AI chờ duyệt</button>
