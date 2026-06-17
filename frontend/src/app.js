@@ -2454,6 +2454,131 @@ function renderAdminAnalytics(analytics) {
   }
 }
 
+function formatUptime(seconds) {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  const mins = Math.floor((seconds % 3600) / 60);
+  const parts = [];
+  if (days) parts.push(`${days}d`);
+  if (hours) parts.push(`${hours}h`);
+  parts.push(`${mins}m`);
+  return parts.join(' ');
+}
+
+function healthStatusBadge(ready, label) {
+  const color = ready ? '#2b8a3e' : '#c92a2a';
+  const icon = ready ? '✔' : '✘';
+  return `<span style="color:${color}; font-weight:bold;">${icon} ${escapeHtml(label)}</span>`;
+}
+
+function adminHealthHtml(health) {
+  const overallColor = health.status === 'ok' ? '#2b8a3e' : '#c92a2a';
+  const overallIcon = health.status === 'ok' ? '✔' : '⚠';
+
+  const storeRows = health.store ? `
+    <tr><td>Loại</td><td><strong>${escapeHtml(health.store.type || 'unknown')}</strong></td></tr>
+    <tr><td>Trạng thái</td><td>${healthStatusBadge(health.store.ready, health.store.ready ? 'Sẵn sàng' : 'Không sẵn sàng')}</td></tr>
+    ${health.store.threads !== undefined ? `<tr><td>Chủ đề</td><td>${health.store.threads}</td></tr>` : ''}
+    ${health.store.comments !== undefined ? `<tr><td>Bình luận</td><td>${health.store.comments}</td></tr>` : ''}
+    ${health.store.users !== undefined ? `<tr><td>Tài khoản</td><td>${health.store.users}</td></tr>` : ''}
+    ${health.store.reports !== undefined ? `<tr><td>Báo cáo</td><td>${health.store.reports}</td></tr>` : ''}
+    ${health.store.sanctions !== undefined ? `<tr><td>Lệnh chế tài</td><td>${health.store.sanctions}</td></tr>` : ''}
+    ${health.store.moderationActions !== undefined ? `<tr><td>Kiểm duyệt</td><td>${health.store.moderationActions}</td></tr>` : ''}
+    ${health.store.nextGlobalNumber !== undefined ? `<tr><td>Số bài kế tiếp</td><td>#${health.store.nextGlobalNumber}</td></tr>` : ''}
+  ` : '<tr><td colspan="2" class="muted">Không có dữ liệu</td></tr>';
+
+  const aiRows = health.ai ? `
+    <tr><td>Provider</td><td><strong>${escapeHtml(health.ai.provider || 'unknown')}</strong></td></tr>
+    <tr><td>Trạng thái</td><td>${healthStatusBadge(health.ai.configured, health.ai.configured ? 'Đã cấu hình' : 'Chưa cấu hình')}</td></tr>
+    <tr><td>Model</td><td>${escapeHtml(health.ai.model || 'unknown')}</td></tr>
+  ` : '<tr><td colspan="2" class="muted">Không có dữ liệu</td></tr>';
+
+  const imageRows = health.imageStorage ? `
+    <tr><td>Loại</td><td><strong>${escapeHtml(health.imageStorage.type || 'unknown')}</strong></td></tr>
+    <tr><td>Trạng thái</td><td>${healthStatusBadge(health.imageStorage.ready, health.imageStorage.ready ? 'Sẵn sàng' : 'Không sẵn sàng')}</td></tr>
+    ${health.imageStorage.error ? `<tr><td>Lỗi</td><td style="color:#c92a2a;">${escapeHtml(health.imageStorage.error)}</td></tr>` : ''}
+  ` : '<tr><td colspan="2" class="muted">Không có dữ liệu</td></tr>';
+
+  const realtimeRows = health.realtime ? `
+    <tr><td>SSE clients</td><td><strong>${health.realtime.clients ?? 0}</strong></td></tr>
+    ${health.realtime.boards ? Object.entries(health.realtime.boards).map(([slug, count]) =>
+      `<tr><td style="padding-left:20px;">/${escapeHtml(slug)}/</td><td>${count}</td></tr>`
+    ).join('') : ''}
+  ` : '<tr><td colspan="2" class="muted">Không có dữ liệu</td></tr>';
+
+  const captchaRows = health.captcha ? `
+    <tr><td>Provider</td><td><strong>${escapeHtml(health.captcha.provider || 'unknown')}</strong></td></tr>
+    <tr><td>Trạng thái</td><td>${healthStatusBadge(health.captcha.configured, health.captcha.configured ? 'Đã cấu hình' : 'Chưa cấu hình')}</td></tr>
+  ` : '';
+
+  const securityWarnings = health.security?.warnings?.length
+    ? health.security.warnings.map((w) => `<li style="color:#c92a2a;">${escapeHtml(w.replace(/_/g, ' '))}</li>`).join('')
+    : '<li style="color:#2b8a3e;">Không có cảnh báo</li>';
+
+  const processRows = health.process ? `
+    <tr><td>Node.js</td><td><strong>${escapeHtml(health.process.nodeVersion)}</strong></td></tr>
+    <tr><td>Platform</td><td>${escapeHtml(health.process.platform)} / ${escapeHtml(health.process.arch)}</td></tr>
+    <tr><td>PID</td><td>${health.process.pid}</td></tr>
+    <tr><td>Uptime</td><td><strong>${formatUptime(health.process.uptimeSeconds)}</strong></td></tr>
+    <tr><td>RSS</td><td>${formatBytes(health.process.memory.rss)}</td></tr>
+    <tr><td>Heap used</td><td>${formatBytes(health.process.memory.heapUsed)} / ${formatBytes(health.process.memory.heapTotal)}</td></tr>
+    <tr><td>External</td><td>${formatBytes(health.process.memory.external)}</td></tr>
+  ` : '';
+
+  return `
+    <div class="health-dashboard">
+      <div class="health-header">
+        <span style="color:${overallColor}; font-size:1.2em; font-weight:bold;">${overallIcon} ${health.status === 'ok' ? 'Hệ thống hoạt động bình thường' : 'Hệ thống đang gặp sự cố'}</span>
+        <span class="muted" style="margin-left:12px;">Kiểm tra lúc ${escapeHtml(health.checkedAt ? new Date(health.checkedAt).toLocaleString('vi-VN') : '—')}</span>
+      </div>
+      <div class="health-grid">
+        <div class="health-card">
+          <h3>Cơ sở dữ liệu</h3>
+          <table class="health-table"><tbody>${storeRows}</tbody></table>
+        </div>
+        <div class="health-card">
+          <h3>AI kiểm duyệt</h3>
+          <table class="health-table"><tbody>${aiRows}</tbody></table>
+        </div>
+        <div class="health-card">
+          <h3>Lưu trữ ảnh</h3>
+          <table class="health-table"><tbody>${imageRows}</tbody></table>
+        </div>
+        <div class="health-card">
+          <h3>Kết nối thời gian thực</h3>
+          <table class="health-table"><tbody>${realtimeRows}</tbody></table>
+        </div>
+        ${captchaRows ? `
+        <div class="health-card">
+          <h3>Captcha</h3>
+          <table class="health-table"><tbody>${captchaRows}</tbody></table>
+        </div>` : ''}
+        <div class="health-card">
+          <h3>Bảo mật</h3>
+          <table class="health-table"><tbody>
+            <tr><td>Admin auth</td><td>${healthStatusBadge(health.security?.adminConfigured, health.security?.adminConfigured ? 'Đã cấu hình' : 'Chưa cấu hình')}</td></tr>
+          </tbody></table>
+          <h4>Cảnh báo</h4>
+          <ul class="health-warnings">${securityWarnings}</ul>
+        </div>
+        ${processRows ? `
+        <div class="health-card">
+          <h3>Tiến trình</h3>
+          <table class="health-table"><tbody>${processRows}</tbody></table>
+        </div>` : ''}
+      </div>
+    </div>
+  `;
+}
+
+function renderAdminHealth(data) {
+  renderAdminTabs();
+  els.pendingList.innerHTML = adminHealthHtml(data);
+  if (els.adminSelectAll) {
+    els.adminSelectAll.checked = false;
+  }
+}
+
 function adminQueryString() {
   const params = new URLSearchParams();
   if (els.adminBoardFilter.value) {
@@ -2492,6 +2617,9 @@ function adminEndpoint() {
   }
   if (state.adminTab === 'analytics') {
     return `/api/admin/analytics`;
+  }
+  if (state.adminTab === 'health') {
+    return '/api/admin/health';
   }
   return `/api/admin/pending${suffix}`;
 }
@@ -3371,6 +3499,8 @@ async function loadAdmin() {
     const data = await api(adminEndpoint());
     if (state.adminTab === 'analytics') {
       renderAdminAnalytics(data);
+    } else if (state.adminTab === 'health') {
+      renderAdminHealth(data);
     } else {
       renderAdminItems(data);
     }
