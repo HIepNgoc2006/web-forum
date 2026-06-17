@@ -587,6 +587,14 @@ const els = {
   admin2FAVerifyError: document.querySelector('#admin2FAVerifyError'),
   admin2FACode: document.querySelector('#admin2FACode'),
   admin2FACancelButton: document.querySelector('#admin2FACancelButton'),
+  admin2FASetupPanel: document.querySelector('#admin2FASetupPanel'),
+  admin2FASetupStart: document.querySelector('#admin2FASetupStart'),
+  adminStart2FAButton: document.querySelector('#adminStart2FAButton'),
+  admin2FASetupQR: document.querySelector('#admin2FASetupQR'),
+  admin2FAQRImage: document.querySelector('#admin2FAQRImage'),
+  admin2FABackupCodes: document.querySelector('#admin2FABackupCodes'),
+  admin2FASetupCode: document.querySelector('#admin2FASetupCode'),
+  adminVerify2FASetupButton: document.querySelector('#adminVerify2FASetupButton'),
   logoutButton: document.querySelector('#logoutButton'),
   adminTools: document.querySelector('#adminTools'),
   adminBoardFilter: document.querySelector('#adminBoardFilter'),
@@ -3490,6 +3498,7 @@ async function loadAdmin() {
   const loggedIn = Boolean(state.token);
   els.loginForm.classList.toggle('hidden', loggedIn);
   els.admin2FAVerifyForm?.classList.add('hidden');
+  els.admin2FASetupPanel?.classList.add('hidden');
   els.logoutButton.classList.toggle('hidden', !loggedIn);
   els.adminTools.classList.toggle('hidden', !loggedIn);
   if (!loggedIn) {
@@ -3511,6 +3520,15 @@ async function loadAdmin() {
       renderAdminItems(data);
     }
   } catch (error) {
+    if (error.setupRequired) {
+      els.loginForm.classList.add('hidden');
+      els.adminTools.classList.add('hidden');
+      els.admin2FASetupPanel?.classList.remove('hidden');
+      els.admin2FASetupStart?.classList.remove('hidden');
+      els.admin2FASetupQR?.classList.add('hidden');
+      showToast(error.message);
+      return;
+    }
     state.token = '';
     localStorage.removeItem('adminToken');
     showToast(error.message);
@@ -5106,6 +5124,42 @@ function bindEvents() {
     state.adminTemp2FAToken = null;
     els.admin2FAVerifyForm?.classList.add('hidden');
     els.loginForm.classList.remove('hidden');
+  });
+
+  els.adminStart2FAButton?.addEventListener('click', async () => {
+    try {
+      const data = await api('/api/account/2fa/setup', { auth: 'admin', method: 'POST' });
+      els.admin2FAQRImage.src = data.qrCodeUrl;
+      els.admin2FABackupCodes.value = data.backupCodes.join('\n');
+      els.admin2FASetupStart.classList.add('hidden');
+      els.admin2FASetupQR.classList.remove('hidden');
+      els.admin2FASetupCode.value = '';
+      els.admin2FASetupCode.focus();
+    } catch (error) {
+      showToast(`Lỗi thiết lập 2FA: ${error.message}`);
+    }
+  });
+
+  els.adminVerify2FASetupButton?.addEventListener('click', async () => {
+    const code = (els.admin2FASetupCode.value || '').trim();
+    if (!code) {
+      showToast('Vui lòng nhập mã 2FA để xác nhận.');
+      return;
+    }
+    try {
+      await api('/api/account/2fa/verify', {
+        auth: 'admin',
+        method: 'POST',
+        body: JSON.stringify({ code })
+      });
+      showToast('Kích hoạt 2FA thành công! Vui lòng đăng nhập lại với mã 2FA.');
+      state.token = '';
+      localStorage.removeItem('adminToken');
+      els.admin2FASetupPanel?.classList.add('hidden');
+      loadAdmin();
+    } catch (error) {
+      showToast(`Kích hoạt 2FA thất bại: ${error.message}`);
+    }
   });
 
   els.logoutButton.addEventListener('click', () => {
