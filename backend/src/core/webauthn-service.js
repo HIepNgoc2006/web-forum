@@ -25,7 +25,7 @@ export async function getWebAuthnRegisterOptions({ user, rpID }) {
     })),
     authenticatorSelection: {
       residentKey: 'required',
-      userVerification: 'preferred'
+      userVerification: 'required'
     }
   });
 }
@@ -44,7 +44,7 @@ export async function verifyWebAuthnRegisterResponse({
     expectedChallenge,
     expectedOrigin: origin,
     expectedRPID: rpID,
-    requireUserVerification: false
+    requireUserVerification: true
   });
 }
 
@@ -61,7 +61,7 @@ export async function getWebAuthnLoginOptions({ user, rpID }) {
       type: 'public-key',
       transports: passkey.transports
     })),
-    userVerification: 'preferred'
+    userVerification: 'required'
   });
 }
 
@@ -86,6 +86,6 @@ export async function verifyWebAuthnLoginResponse({
       counter: passkey.counter,
       transports: passkey.transports
     },
-    requireUserVerification: false
+    requireUserVerification: true
   });
 }

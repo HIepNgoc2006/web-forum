@@ -6,6 +6,22 @@ import crypto from 'node:crypto';
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
 import { createHttpServer } from '../src/server/http-app.js';
+import {
+  getWebAuthnLoginOptions,
+  getWebAuthnRegisterOptions
+} from '../src/core/webauthn-service.js';
+
+describe('WebAuthn user verification policy', () => {
+  it('requires user verification in registration and login options', async () => {
+    const user = { id: 'user-1', username: 'uvuser', passkeys: [] };
+
+    const registerOptions = await getWebAuthnRegisterOptions({ user, rpID: 'localhost' });
+    assert.strictEqual(registerOptions.authenticatorSelection.userVerification, 'required');
+
+    const loginOptions = await getWebAuthnLoginOptions({ user, rpID: 'localhost' });
+    assert.strictEqual(loginOptions.userVerification, 'required');
+  });
+});
 
 const mockWebAuthn = {
   getWebAuthnRegisterOptions: async ({ user, rpID }) => {
