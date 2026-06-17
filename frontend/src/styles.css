@@ -1623,6 +1623,69 @@ body.display-compact .post-body {
   width: min(420px, calc(100% - 20px));
 }
 
+.reason-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.45);
+}
+
+.reason-modal {
+  width: min(420px, calc(100vw - 24px));
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  padding: 12px 14px;
+  box-shadow: 2px 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.reason-modal-title {
+  margin: 0 0 8px;
+  color: var(--header);
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.reason-modal-label {
+  display: block;
+  margin: 6px 0 3px;
+  color: var(--text);
+  font-size: 12px;
+}
+
+.reason-macro-select {
+  display: block;
+  width: 100%;
+  min-height: 24px;
+  border: 1px solid var(--reply-border);
+  background: #fff;
+  color: #000;
+  padding: 2px 4px;
+  font: inherit;
+  font-size: 13px;
+}
+
+.reason-textarea {
+  display: block;
+  width: 100%;
+  min-height: 60px;
+  border: 1px solid var(--reply-border);
+  background: #fff;
+  color: #000;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.reason-modal-actions {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 10px;
+}
+
 .quick-reply {
   position: fixed;
   z-index: 80;

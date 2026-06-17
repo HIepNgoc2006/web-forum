@@ -47,6 +47,119 @@ const state = {
   adminItems: []
 };
 
+const REASON_MACROS = {
+  approve: [
+    'Nội dung hợp lệ',
+    'Đã xác minh an toàn',
+    'Nội dung không vi phạm'
+  ],
+  delete: [
+    'Vi phạm nội quy',
+    'Nội dung rác/spam',
+    'Chứa thông tin cá nhân',
+    'Nội dung thù ghét',
+    'Tin giả/chưa xác minh'
+  ],
+  ban: [
+    'Spam nhiều lần',
+    'Vi phạm nghiêm trọng',
+    'Quấy rối người khác',
+    'Đăng nội dung bất hợp pháp'
+  ],
+  cooldown: [
+    'Spam nhiều lần',
+    'Đăng quá nhanh',
+    'Quấy rối người khác'
+  ],
+  revoke: [
+    'Hết hạn xử lý',
+    'Xem xét lại, không vi phạm',
+    'Yêu cầu gỡ bỏ'
+  ],
+  'bulk-approve': [
+    'Nội dung hợp lệ',
+    'Đã xác minh an toàn',
+    'Duyệt hàng loạt theo đợt'
+  ],
+  'bulk-delete': [
+    'Vi phạm nội quy',
+    'Nội dung rác/spam',
+    'Xóa hàng loạt theo đợt'
+  ]
+};
+
+function showReasonModal(title, context) {
+  return new Promise((resolve) => {
+    const macros = REASON_MACROS[context] || REASON_MACROS.approve;
+    const overlay = document.createElement('div');
+    overlay.className = 'reason-modal-overlay';
+    overlay.innerHTML = `
+      <div class="reason-modal">
+        <div class="reason-modal-title">${title}</div>
+        <label class="reason-modal-label" for="reasonMacroSelect">Chọn mẫu lý do:</label>
+        <select class="reason-macro-select" id="reasonMacroSelect">
+          <option value="">-- Tùy chỉnh --</option>
+          ${macros.map((m, i) => `<option value="${i}">${m}</option>`).join('')}
+        </select>
+        <label class="reason-modal-label" for="reasonTextarea">Lý do (có thể sửa):</label>
+        <textarea class="reason-textarea" id="reasonTextarea" rows="3" placeholder="Nhập lý do..."></textarea>
+        <div class="reason-modal-actions">
+          <button class="primary-button" id="reasonConfirmBtn" type="button">Xác nhận</button>
+          <button class="ghost-button" id="reasonCancelBtn" type="button">Hủy</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const select = overlay.querySelector('#reasonMacroSelect');
+    const textarea = overlay.querySelector('#reasonTextarea');
+    const confirmBtn = overlay.querySelector('#reasonConfirmBtn');
+    const cancelBtn = overlay.querySelector('#reasonCancelBtn');
+
+    select.addEventListener('change', () => {
+      const index = select.value;
+      if (index !== '') {
+        textarea.value = macros[Number(index)];
+      } else {
+        textarea.value = '';
+      }
+      textarea.focus();
+    });
+
+    function cleanup() {
+      overlay.remove();
+    }
+
+    confirmBtn.addEventListener('click', () => {
+      const value = textarea.value.trim();
+      cleanup();
+      resolve(value);
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      cleanup();
+      resolve(null);
+    });
+
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        cleanup();
+        resolve(null);
+      }
+    });
+
+    document.addEventListener('keydown', function onKey(e) {
+      if (e.key === 'Escape') {
+        document.removeEventListener('keydown', onKey);
+        cleanup();
+        resolve(null);
+      }
+    });
+
+    textarea.focus();
+  });
+}
+
 function getPosterToken() {
   const key = 'posterToken';
   const current = localStorage.getItem(key);
@@ -2531,9 +2644,10 @@ async function bulkModerate(action) {
     showToast('Chưa chọn bài nào.');
     return;
   }
-  const reason = window.prompt(action === 'approve' ? 'Lý do duyệt hàng loạt:' : 'Lý do xóa hàng loạt:', '') || '';
-  const ok = window.confirm(action === 'approve' ? `Duyệt ${ids.length} bài đã chọn?` : `Xóa ${ids.length} bài đã chọn?`);
-  if (!ok) {
+  const macroContext = action === 'approve' ? 'bulk-approve' : 'bulk-delete';
+  const macroTitle = action === 'approve' ? `Lý do duyệt ${ids.length} bài:` : `Lý do xóa ${ids.length} bài:`;
+  const reason = await showReasonModal(macroTitle, macroContext);
+  if (reason === null) {
     return;
   }
   await api('/api/admin/pending/bulk', {
@@ -4644,7 +4758,7 @@ function bindEvents() {
       if (!durationMinutes) {
         return;
       }
-      const reason = window.prompt(kind === 'ban' ? 'Lý do tạm khóa:' : 'Lý do làm chậm:', '') || '';
+      const reason = await showReasonModal(kind === 'ban' ? 'Lý do tạm khóa:' : 'Lý do làm chậm:', kind) || '';
       try {
         await api(`/api/admin/posts/${globalNumber}/sanctions`, {
           method: 'POST',
@@ -4660,9 +4774,8 @@ function bindEvents() {
 
     const revokeSanctionButton = event.target.closest('[data-admin-revoke-sanction]');
     if (revokeSanctionButton) {
-      const reason = window.prompt('Lý do gỡ lệnh làm chậm/tạm khóa:', '') || '';
-      const ok = window.confirm('Gỡ lệnh làm chậm/tạm khóa này?');
-      if (!ok) {
+      const reason = await showReasonModal('Lý do gỡ lệnh làm chậm/tạm khóa:', 'revoke');
+      if (reason === null) {
         return;
       }
       try {
@@ -4682,12 +4795,13 @@ function bindEvents() {
     if (pendingButton) {
       const item = pendingButton.closest('.pending-item');
       const action = pendingButton.dataset.action;
-      const ok = window.confirm(action === 'approve' ? 'Duyệt bài này?' : 'Xóa bài này?');
-      if (!ok) {
+      const reason = await showReasonModal(
+        action === 'approve' ? 'Lý do duyệt bài:' : 'Lý do xóa bài:',
+        action === 'approve' ? 'approve' : 'delete'
+      );
+      if (reason === null) {
         return;
       }
-      const reason =
-        window.prompt(action === 'approve' ? 'Lý do duyệt (tùy chọn):' : 'Lý do xóa (tùy chọn):', '') || '';
       try {
         await api(
           action === 'approve'
