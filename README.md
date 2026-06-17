@@ -43,6 +43,8 @@ npm run release:verify
 
 CI runs the same release verification through `.github/workflows/ci.yml`.
 
+For account, anonymous posting, passkey, 2FA, and admin security rules, see `docs/account-security.md`.
+
 ## Configuration
 
 Copy `backend/.env.example` to `backend/.env` for local backend settings.
