@@ -1,4 +1,4 @@
-const GOOGLE_AI_MODEL = process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash';
+// GOOGLE_AI_MODEL is read dynamically from process.env to avoid module initialization ordering issues.
 
 const MODERATION_SYSTEM_PROMPT = `
 Bạn là bộ lọc kiểm duyệt trước khi đăng của 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
@@ -134,7 +134,8 @@ function createGoogleProvider() {
 
   async function generate(prompt, systemPrompt) {
     const apiKey = requireGoogleAiKey();
-    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GOOGLE_AI_MODEL}:generateContent?key=${apiKey}`;
+    const model = process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash';
+    const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
     const response = await fetch(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
