@@ -22,6 +22,8 @@ const state = {
   accountPrivateSaveTimer: null,
   posterToken: getPosterToken(),
   selectedImage: null,
+  commentImage: null,
+  quickReplyImage: null,
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,
@@ -574,6 +576,8 @@ const els = {
   commentBody: document.querySelector('#commentBody'),
   commentPrivacyWarning: document.querySelector('#commentPrivacyWarning'),
   commentCaptcha: document.querySelector('#commentCaptcha'),
+  commentImage: document.querySelector('#commentImage'),
+  commentImagePreview: document.querySelector('#commentImagePreview'),
   suggestButton: document.querySelector('#suggestButton'),
   rewriteButton: document.querySelector('#rewriteButton'),
   rewriteTone: document.querySelector('#rewriteTone'),
@@ -676,7 +680,7 @@ const els = {
   quickReplyBody: document.querySelector('#quickReplyBody'),
   quickReplyPrivacyWarning: document.querySelector('#quickReplyPrivacyWarning'),
   quickReplyCaptcha: document.querySelector('#quickReplyCaptcha'),
-  quickReplyCaptchaButton: document.querySelector('#quickReplyCaptchaButton'),
+  quickReplyFile: document.querySelector('#quickReplyFile'),
   quickReplyFileName: document.querySelector('#quickReplyFileName')
 };
 
@@ -3856,6 +3860,48 @@ function imagePreviewHtml(image) {
   `;
 }
 
+// Shared change handler for a file input that stages an image on `state[stateKey]`.
+// Optionally renders a preview panel and/or updates a filename label.
+function handleImageInputChange(input, { stateKey, preview = null, fileNameEl = null }) {
+  return async () => {
+    const reset = () => {
+      state[stateKey] = null;
+      if (preview) {
+        preview.innerHTML = '';
+        preview.classList.add('hidden');
+      }
+      if (fileNameEl) {
+        fileNameEl.textContent = 'Chưa chọn tệp';
+      }
+    };
+    const file = input.files?.[0];
+    if (!file) {
+      reset();
+      return;
+    }
+    if (!file.type.startsWith('image/')) {
+      showToast('Chỉ hỗ trợ ảnh.');
+      input.value = '';
+      reset();
+      return;
+    }
+    try {
+      state[stateKey] = await fileToDataUrl(file);
+      if (preview) {
+        preview.innerHTML = imagePreviewHtml(state[stateKey]);
+        preview.classList.remove('hidden');
+      }
+      if (fileNameEl) {
+        fileNameEl.textContent = file.name;
+      }
+    } catch (error) {
+      showToast(error.message);
+      input.value = '';
+      reset();
+    }
+  };
+}
+
 function formValue(form, name) {
   return String(new FormData(form).get(name) || '');
 }
@@ -3972,6 +4018,10 @@ async function submitComment(event) {
     if (els.commentAiRewriteLabel) {
       els.commentAiRewriteLabel.classList.add('hidden');
     }
+    els.commentImage.value = '';
+    state.commentImage = null;
+    els.commentImagePreview.innerHTML = '';
+    els.commentImagePreview.classList.add('hidden');
     resetHcaptcha(els.commentCaptcha);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeReplyComposer();
@@ -3984,12 +4034,15 @@ async function submitComment(event) {
 }
 
 async function createComment(body, captchaToken) {
-  const form = els.quickReply.classList.contains('hidden') ? els.commentForm : els.quickReplyForm;
+  const useQuickReply = !els.quickReply.classList.contains('hidden');
+  const form = useQuickReply ? els.quickReplyForm : els.commentForm;
+  const image = useQuickReply ? state.quickReplyImage : state.commentImage;
   return api(`/api/threads/${state.threadId}/comments`, {
     auth: 'account',
     method: 'POST',
     body: JSON.stringify({
       body,
+      image,
       captchaToken,
       posterToken: state.posterToken,
       displayName: displayNameValue(form),
@@ -4038,6 +4091,8 @@ function openQuickReply(number, event) {
   }
   addQuoteToQuickReply(number);
   els.quickReplyCaptcha.value = state.hcaptchaSiteKey ? '' : els.commentCaptcha.value || 'dev-pass';
+  els.quickReplyFile.value = '';
+  state.quickReplyImage = null;
   els.quickReplyFileName.textContent = 'Chưa chọn tệp';
   if (wasHidden) {
     positionQuickReply(event);
@@ -4077,6 +4132,9 @@ async function submitQuickReply(event) {
     rememberMyPost(result.comment, 'comment');
     clearDisplayName(els.quickReplyForm);
     removeDraft(draftKey('quickReply', state.threadId));
+    els.quickReplyFile.value = '';
+    state.quickReplyImage = null;
+    els.quickReplyFileName.textContent = 'Chưa chọn tệp';
     resetHcaptcha(els.quickReplyCaptcha);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
     closeQuickReply();
@@ -4592,13 +4650,6 @@ function bindEvents() {
     updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
   });
   els.quickReplyClose.addEventListener('click', closeQuickReply);
-  els.quickReplyCaptchaButton.addEventListener('click', () => {
-    if (state.hcaptchaSiteKey) {
-      showToast('Hãy hoàn tất hCaptcha trong khung xác minh.');
-      return;
-    }
-    els.quickReplyCaptcha.value = 'dev-pass';
-  });
   els.quickReplyHandle.addEventListener('mousedown', (event) => {
     if (event.target.closest('button')) {
       return;
@@ -4628,34 +4679,18 @@ function bindEvents() {
   els.suggestButton.addEventListener('click', loadSuggestions);
   els.threadRewriteButton.addEventListener('click', () => rewriteDraft('thread'));
   els.rewriteButton.addEventListener('click', () => rewriteDraft('comment'));
-  els.threadImage.addEventListener('change', async () => {
-    const file = els.threadImage.files?.[0];
-    if (!file) {
-      state.selectedImage = null;
-      els.imagePreview.innerHTML = '';
-      els.imagePreview.classList.add('hidden');
-      return;
-    }
-    if (!file.type.startsWith('image/')) {
-      showToast('Chỉ hỗ trợ ảnh.');
-      els.threadImage.value = '';
-      state.selectedImage = null;
-      els.imagePreview.innerHTML = '';
-      els.imagePreview.classList.add('hidden');
-      return;
-    }
-    try {
-      state.selectedImage = await fileToDataUrl(file);
-      els.imagePreview.innerHTML = imagePreviewHtml(state.selectedImage);
-      els.imagePreview.classList.remove('hidden');
-    } catch (error) {
-      showToast(error.message);
-      els.threadImage.value = '';
-      state.selectedImage = null;
-      els.imagePreview.innerHTML = '';
-      els.imagePreview.classList.add('hidden');
-    }
-  });
+  els.threadImage.addEventListener(
+    'change',
+    handleImageInputChange(els.threadImage, { stateKey: 'selectedImage', preview: els.imagePreview })
+  );
+  els.commentImage.addEventListener(
+    'change',
+    handleImageInputChange(els.commentImage, { stateKey: 'commentImage', preview: els.commentImagePreview })
+  );
+  els.quickReplyFile.addEventListener(
+    'change',
+    handleImageInputChange(els.quickReplyFile, { stateKey: 'quickReplyImage', fileNameEl: els.quickReplyFileName })
+  );
 
   document.body.addEventListener('click', async (event) => {
     const imageToggle = event.target.closest('[data-image-toggle]');

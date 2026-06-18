@@ -437,17 +437,15 @@
             <div class="field-row">
               <span>Xác minh</span>
               <div class="reply-verification-cell">
-                <button type="button">Lấy Captcha</button>
-                <button type="button" disabled>Tiếp</button>
                 <input id="commentCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
-                <span class="captcha-slider" aria-hidden="true"><span></span></span>
                 <div class="captcha-widget hidden" data-hcaptcha-target="commentCaptcha"></div>
               </div>
             </div>
             <label class="field-row">
               <span>Tệp</span>
-              <input name="file" type="file" accept="image/*" disabled />
+              <input id="commentImage" name="file" type="file" accept="image/*" />
             </label>
+            <div id="commentImagePreview" class="image-preview hidden"></div>
             <p class="reply-notes">
               Vui lòng đọc <a href="#policy">Nội quy & riêng tư</a> trước khi đăng.<br />
               Có thể giữ định dạng code bằng thẻ [code].
@@ -816,18 +814,13 @@
         <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>
         <div id="quickReplyPrivacyWarning" class="privacy-warning quick-privacy-warning hidden" role="status"></div>
         <div class="quick-reply-captcha">
-          <button id="quickReplyCaptchaButton" type="button">Lấy Captcha</button>
-          <button type="button" disabled>Tiếp</button>
           <input id="quickReplyCaptcha" value="dev-pass" aria-label="Xác minh" autocomplete="off" />
-          <div class="captcha-slider" aria-hidden="true">
-            <span></span>
-          </div>
           <div class="captcha-widget hidden" data-hcaptcha-target="quickReplyCaptcha"></div>
         </div>
         <div class="quick-reply-bottom">
           <label class="quick-file-button">
             Chọn tệp
-            <input id="quickReplyFile" type="file" accept="image/*" disabled />
+            <input id="quickReplyFile" type="file" accept="image/*" />
           </label>
           <span id="quickReplyFileName">Chưa chọn tệp</span>
           <button class="quick-post-button" type="submit">Gửi</button>

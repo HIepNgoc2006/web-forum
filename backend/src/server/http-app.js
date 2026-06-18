@@ -806,12 +806,13 @@ export function createHttpServer({
 
       params = match(parts, ['api', 'threads', ':threadId', 'comments']);
       if (params && request.method === 'POST') {
-        const body = await readJson(request);
+        const body = await readJson(request, imageUploadJsonLimit());
         ok(
           response,
           await service.createComment({
             threadId: params.threadId,
             body: body.body,
+            image: body.image,
             options: body.options,
             deletePassword: body.deletePassword,
             captchaToken: body.captchaToken,

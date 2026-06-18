@@ -2264,7 +2264,7 @@ export function createForumService({
       };
     },
 
-    async createComment({ threadId, body, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '', accountId }) {
+    async createComment({ threadId, body, image, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '', accountId }) {
       await requireCaptcha(captchaToken, ip);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
@@ -2272,6 +2272,7 @@ export function createForumService({
         error.statusCode = 400;
         throw error;
       }
+      const safeImage = validateImage(image);
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
       const normalizedDisplayName = assertDisplayName(displayName);
@@ -2299,6 +2300,7 @@ export function createForumService({
           throw error;
         }
         const moderation = await ai.moderate(normalizedBody);
+        const storedImage = safeImage ? await imageStorage.save(safeImage) : null;
 
         const comment = {
           id: crypto.randomUUID(),
@@ -2307,6 +2309,7 @@ export function createForumService({
           body: normalizedBody,
           displayName: normalizedDisplayName,
           accountId,
+          image: storedImage,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),
