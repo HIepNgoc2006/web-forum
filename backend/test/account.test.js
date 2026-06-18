@@ -18,10 +18,12 @@ function createTestService(overrides = {}) {
 describe('Account registration and login', () => {
   it('registers a new account', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const { account, recoveryCode } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     assert.strictEqual(account.username, 'testuser');
     assert.strictEqual(account.role, 'user');
     assert.ok(account.id);
+    assert.strictEqual(account.hasRecoveryCode, true);
+    assert.match(recoveryCode, /^[A-Z0-9]{5}(-[A-Z0-9]{5})+$/);
   });
 
   it('rejects duplicate username', async () => {
@@ -74,6 +76,115 @@ describe('Account registration and login', () => {
   });
 });
 
+describe('Forgot password (recovery code)', () => {
+  it('resets the password with a valid recovery code and rotates it', async () => {
+    const service = createTestService();
+    const { recoveryCode } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+
+    const result = await service.resetAccountPasswordWithRecoveryCode({
+      username: 'testuser',
+      recoveryCode,
+      newPassword: 'brandnewpass34',
+      captchaToken: 'dev-pass'
+    });
+    assert.notStrictEqual(result.recoveryCode, recoveryCode);
+
+    // Old password no longer works; new one does.
+    await assert.rejects(
+      () => service.loginAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' }),
+      (error) => error.statusCode === 401
+    );
+    const account = await service.loginAccount({ username: 'testuser', password: 'brandnewpass34', captchaToken: 'dev-pass' });
+    assert.strictEqual(account.username, 'testuser');
+  });
+
+  it('accepts the recovery code regardless of dashes/case', async () => {
+    const service = createTestService();
+    const { recoveryCode } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const messy = recoveryCode.replace(/-/g, '').toLowerCase();
+    await service.resetAccountPasswordWithRecoveryCode({
+      username: 'testuser',
+      recoveryCode: messy,
+      newPassword: 'brandnewpass34',
+      captchaToken: 'dev-pass'
+    });
+    const account = await service.loginAccount({ username: 'testuser', password: 'brandnewpass34', captchaToken: 'dev-pass' });
+    assert.strictEqual(account.username, 'testuser');
+  });
+
+  it('rejects an invalid recovery code without changing the password', async () => {
+    const service = createTestService();
+    await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    await assert.rejects(
+      () => service.resetAccountPasswordWithRecoveryCode({
+        username: 'testuser',
+        recoveryCode: 'WRONG-CODE0-00000',
+        newPassword: 'brandnewpass34',
+        captchaToken: 'dev-pass'
+      }),
+      (error) => error.statusCode === 400
+    );
+    const account = await service.loginAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    assert.strictEqual(account.username, 'testuser');
+  });
+
+  it('uses the same error for unknown username and wrong code (no enumeration)', async () => {
+    const service = createTestService();
+    await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const ghostError = await service.resetAccountPasswordWithRecoveryCode({
+      username: 'ghost', recoveryCode: 'WRONG-CODE0-00000', newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
+    }).catch((error) => error);
+    const wrongCodeError = await service.resetAccountPasswordWithRecoveryCode({
+      username: 'testuser', recoveryCode: 'WRONG-CODE0-00000', newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
+    }).catch((error) => error);
+    assert.strictEqual(ghostError.message, wrongCodeError.message);
+    assert.strictEqual(ghostError.statusCode, wrongCodeError.statusCode);
+  });
+
+  it('rejects a recovery code already spent by a prior reset', async () => {
+    const service = createTestService();
+    const { recoveryCode } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    await service.resetAccountPasswordWithRecoveryCode({
+      username: 'testuser', recoveryCode, newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
+    });
+    await assert.rejects(
+      () => service.resetAccountPasswordWithRecoveryCode({
+        username: 'testuser', recoveryCode, newPassword: 'thirdpassword5', captchaToken: 'dev-pass'
+      }),
+      (error) => error.statusCode === 400
+    );
+  });
+
+  it('regenerates a recovery code for a logged-in user with correct password', async () => {
+    const service = createTestService();
+    const { account, recoveryCode } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const result = await service.regenerateRecoveryCode(account.id, 'securepass12');
+    assert.notStrictEqual(result.recoveryCode, recoveryCode);
+
+    // Old code no longer works, new one does.
+    await assert.rejects(
+      () => service.resetAccountPasswordWithRecoveryCode({
+        username: 'testuser', recoveryCode, newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
+      }),
+      (error) => error.statusCode === 400
+    );
+    await service.resetAccountPasswordWithRecoveryCode({
+      username: 'testuser', recoveryCode: result.recoveryCode, newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
+    });
+    const loggedIn = await service.loginAccount({ username: 'testuser', password: 'brandnewpass34', captchaToken: 'dev-pass' });
+    assert.strictEqual(loggedIn.username, 'testuser');
+  });
+
+  it('rejects recovery code regeneration with wrong password', async () => {
+    const service = createTestService();
+    const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    await assert.rejects(
+      () => service.regenerateRecoveryCode(account.id, 'wrongpass99'),
+      (error) => error.statusCode === 401
+    );
+  });
+});
+
 describe('Account session revocation (logout)', () => {
   const JWT_SECRET = 'test-jwt-secret-that-is-long-enough';
 
@@ -118,7 +229,7 @@ describe('Account session revocation (logout)', () => {
 describe('GET /api/account/me after logout', () => {
   it('getAccount still works for valid user', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const retrieved = await service.getAccount(account.id);
     assert.strictEqual(retrieved.username, 'testuser');
   });
@@ -135,7 +246,7 @@ describe('GET /api/account/me after logout', () => {
 describe('Account settings', () => {
   it('updates settings for existing user', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const updated = await service.updateAccountSettings(account.id, {
       theme: 'tomorrow',
       displayPreferences: {
@@ -165,7 +276,7 @@ describe('Account settings', () => {
 
   it('rejects invalid theme', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const updated = await service.updateAccountSettings(account.id, { theme: 'invalid-theme' });
     // Should keep the default theme instead of accepting invalid
     assert.strictEqual(updated.settings.theme, 'yotsuba-b');
@@ -175,7 +286,7 @@ describe('Account settings', () => {
 describe('Account private data', () => {
   it('syncs watchlist, drafts and saved searches for existing user', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const data = await service.updateAccountPrivateData(account.id, {
       watchlist: [
         {
@@ -222,7 +333,7 @@ describe('Account private data', () => {
 
   it('clears one section or all private data', async () => {
     const service = createTestService();
-    const account = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
+    const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await service.updateAccountPrivateData(account.id, {
       watchlist: [{ threadId: 'thread-1' }],
       drafts: [{ key: 'draft:thread:hoc-tap', body: 'Draft' }],

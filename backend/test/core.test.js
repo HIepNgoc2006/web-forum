@@ -2717,7 +2717,7 @@ test('register requires a valid captcha token', async () => {
     (error) => error.statusCode === 403
   );
 
-  const account = await service.registerAccount({
+  const { account } = await service.registerAccount({
     username: 'with_captcha',
     password: 'long-enough-pass',
     captchaToken: 'dev-pass',
@@ -2748,7 +2748,7 @@ test('register enforces the password policy', async () => {
   await assert.rejects(() => register('reppw', 'aaaaaaaaaa'), (error) => error.statusCode === 400);
 
   // A reasonable strong password is accepted.
-  const account = await register('strong_user', 'a-strong-passphrase-2026');
+  const { account } = await register('strong_user', 'a-strong-passphrase-2026');
   assert.equal(account.username, 'strong_user');
 });
 

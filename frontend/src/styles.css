@@ -3677,3 +3677,18 @@ body.theme-yotsuba.board-page .topbar {
   font-size: 11px;
   font-weight: bold;
 }
+
+.recovery-code {
+  display: block;
+  padding: 10px 12px;
+  border: 1px solid #b7c5d9;
+  border-radius: 4px;
+  background: #f6f7ff;
+  color: var(--text);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: 18px;
+  letter-spacing: 1px;
+  text-align: center;
+  word-break: break-all;
+  user-select: all;
+}

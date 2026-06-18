@@ -625,6 +625,27 @@ const els = {
   registerPassword: document.querySelector('#registerPassword'),
   registerCaptcha: document.querySelector('#registerCaptcha'),
   registerError: document.querySelector('#registerError'),
+  registerRecoveryNotice: document.querySelector('#registerRecoveryNotice'),
+  registerRecoveryCode: document.querySelector('#registerRecoveryCode'),
+  registerRecoveryCopy: document.querySelector('#registerRecoveryCopy'),
+  registerRecoveryContinue: document.querySelector('#registerRecoveryContinue'),
+  forgotScreen: document.querySelector('#forgotScreen'),
+  forgotPasswordForm: document.querySelector('#forgotPasswordForm'),
+  forgotUsername: document.querySelector('#forgotUsername'),
+  forgotRecoveryCode: document.querySelector('#forgotRecoveryCode'),
+  forgotNewPassword: document.querySelector('#forgotNewPassword'),
+  forgotCaptcha: document.querySelector('#forgotCaptcha'),
+  forgotError: document.querySelector('#forgotError'),
+  forgotSuccess: document.querySelector('#forgotSuccess'),
+  forgotNewRecoveryCode: document.querySelector('#forgotNewRecoveryCode'),
+  forgotRecoveryCopy: document.querySelector('#forgotRecoveryCopy'),
+  accountRecoveryPanel: document.querySelector('#accountRecoveryPanel'),
+  recoveryCodeForm: document.querySelector('#recoveryCodeForm'),
+  recoveryCodeError: document.querySelector('#recoveryCodeError'),
+  recoveryCodePassword: document.querySelector('#recoveryCodePassword'),
+  recoveryCodeResult: document.querySelector('#recoveryCodeResult'),
+  recoveryCodeResultValue: document.querySelector('#recoveryCodeResultValue'),
+  recoveryCodeCopy: document.querySelector('#recoveryCodeCopy'),
   accountLoginForm: document.querySelector('#accountLoginForm'),
   accountUsername: document.querySelector('#accountUsername'),
   accountPassword: document.querySelector('#accountPassword'),
@@ -1049,7 +1070,7 @@ function logoutAccount({ message = 'Đã đăng xuất tài khoản.' } = {}) {
   if (message) {
     showToast(message);
   }
-  if (['#account', '#login', '#register'].some((prefix) => (window.location.hash || '').startsWith(prefix))) {
+  if (['#account', '#login', '#register', '#forgot'].some((prefix) => (window.location.hash || '').startsWith(prefix))) {
     window.location.hash = '#home';
   }
 }
@@ -1088,6 +1109,7 @@ function fillAccountSettings(account = state.account) {
   renderAccountPrivateData();
   render2FAState();
   renderPasskeys();
+  renderAccountRecoveryPanel();
 }
 
 function render2FAState() {
@@ -1499,6 +1521,7 @@ function setScreen(name) {
     els.threadScreen,
     els.registerScreen,
     els.loginScreen,
+    els.forgotScreen,
     els.accountScreen,
     els.adminScreen
   ]) {
@@ -1506,7 +1529,7 @@ function setScreen(name) {
   }
   document.body.classList.toggle('home-page', name === 'home');
   document.body.classList.toggle('policy-page', name === 'policy');
-  document.body.classList.toggle('account-page', ['register', 'login', 'account'].includes(name));
+  document.body.classList.toggle('account-page', ['register', 'login', 'forgot', 'account'].includes(name));
   document.body.classList.toggle(
     'board-page',
     name === 'board' || name === 'catalog' || name === 'archive' || name === 'thread'
@@ -1525,6 +1548,8 @@ function setScreen(name) {
     els.registerScreen.classList.add('active');
   } else if (name === 'login') {
     els.loginScreen.classList.add('active');
+  } else if (name === 'forgot') {
+    els.forgotScreen.classList.add('active');
   } else if (name === 'account') {
     els.accountScreen.classList.add('active');
   } else if (name === 'admin') {
@@ -3741,12 +3766,19 @@ function route() {
   } else if (name === 'policy') {
     loadPolicy();
   } else if (name === 'register') {
+    els.registerForm.classList.remove('hidden');
+    els.registerRecoveryNotice.classList.add('hidden');
     setScreen('register');
     setFormError(els.registerError);
     window.scrollTo({ top: 0 });
   } else if (name === 'login') {
     setScreen('login');
     setFormError(els.accountLoginError);
+    window.scrollTo({ top: 0 });
+  } else if (name === 'forgot') {
+    resetForgotPasswordForm();
+    setScreen('forgot');
+    setFormError(els.forgotError);
     window.scrollTo({ top: 0 });
   } else if (name === 'account') {
     loadAccountSettings().catch((error) => showToast(error.message));
@@ -4326,13 +4358,113 @@ async function submitAccountRegister(event) {
     setAccountSession({ token: result.token, account: result.account });
     await loadAccountPrivateData({ mergeLocal: true });
     showToast('Đã đăng ký và đăng nhập tài khoản.');
-    window.location.hash = '#account';
+    // Reveal the one-time recovery code before sending the user to settings.
+    if (result.recoveryCode) {
+      els.registerRecoveryCode.textContent = result.recoveryCode;
+      els.registerForm.classList.add('hidden');
+      els.registerRecoveryNotice.classList.remove('hidden');
+    } else {
+      window.location.hash = '#account';
+    }
   } catch (error) {
     resetHcaptcha(els.registerCaptcha);
     setFormError(els.registerError, error.message);
   } finally {
     restoreButton();
   }
+}
+
+async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    showToast('Đã sao chép vào clipboard.');
+  } catch {
+    showToast('Không thể sao chép tự động, vui lòng copy thủ công.');
+  }
+}
+
+function resetForgotPasswordForm() {
+  if (!els.forgotPasswordForm) {
+    return;
+  }
+  els.forgotPasswordForm.reset();
+  els.forgotPasswordForm.classList.remove('hidden');
+  els.forgotSuccess.classList.add('hidden');
+  setFormError(els.forgotError);
+  resetHcaptcha(els.forgotCaptcha);
+}
+
+async function submitForgotPassword(event) {
+  event.preventDefault();
+  setFormError(els.forgotError);
+  const captchaToken = (els.forgotCaptcha?.value || '').trim();
+  if (state.hcaptchaSiteKey && !captchaToken) {
+    setFormError(els.forgotError, 'Vui lòng hoàn tất xác minh hCaptcha trước khi đặt lại mật khẩu.');
+    return;
+  }
+  const button = event.submitter;
+  const restoreButton = setButtonLoading(button, 'Đang đặt lại...');
+  try {
+    const result = await api('/api/account/forgot-password', {
+      auth: 'none',
+      method: 'POST',
+      body: JSON.stringify({
+        username: els.forgotUsername.value,
+        recoveryCode: els.forgotRecoveryCode.value,
+        newPassword: els.forgotNewPassword.value,
+        captchaToken
+      })
+    });
+    els.forgotNewPassword.value = '';
+    els.forgotRecoveryCode.value = '';
+    resetHcaptcha(els.forgotCaptcha);
+    els.forgotNewRecoveryCode.textContent = result.recoveryCode || '';
+    els.forgotPasswordForm.classList.add('hidden');
+    els.forgotSuccess.classList.remove('hidden');
+    showToast('Đã đặt lại mật khẩu. Vui lòng đăng nhập lại.');
+  } catch (error) {
+    resetHcaptcha(els.forgotCaptcha);
+    setFormError(els.forgotError, error.message);
+  } finally {
+    restoreButton();
+  }
+}
+
+async function submitRecoveryCodeRegen(event) {
+  event.preventDefault();
+  setFormError(els.recoveryCodeError);
+  const button = event.submitter;
+  const restoreButton = setButtonLoading(button, 'Đang tạo...');
+  try {
+    const result = await api('/api/account/recovery-code', {
+      auth: 'account',
+      method: 'POST',
+      body: JSON.stringify({ password: els.recoveryCodePassword.value })
+    });
+    els.recoveryCodePassword.value = '';
+    els.recoveryCodeResultValue.textContent = result.recoveryCode || '';
+    els.recoveryCodeResult.classList.remove('hidden');
+    if (state.account) {
+      state.account.hasRecoveryCode = true;
+    }
+    showToast('Đã tạo mã khôi phục mới. Mã cũ đã hết hiệu lực.');
+  } catch (error) {
+    setFormError(els.recoveryCodeError, error.message);
+  } finally {
+    restoreButton();
+  }
+}
+
+function renderAccountRecoveryPanel() {
+  if (!els.accountRecoveryPanel) {
+    return;
+  }
+  const loggedIn = Boolean(state.accountToken && state.account);
+  els.accountRecoveryPanel.classList.toggle('hidden', !loggedIn);
+  // Never keep a previously revealed code on screen across renders.
+  els.recoveryCodeResult.classList.add('hidden');
+  els.recoveryCodeResultValue.textContent = '';
+  setFormError(els.recoveryCodeError);
 }
 
 async function submitAccountLogin(event) {
@@ -5358,7 +5490,15 @@ function bindEvents() {
   });
 
   els.registerForm.addEventListener('submit', submitAccountRegister);
+  els.registerRecoveryContinue?.addEventListener('click', () => {
+    window.location.hash = '#account';
+  });
+  els.registerRecoveryCopy?.addEventListener('click', () => copyToClipboard(els.registerRecoveryCode.textContent || ''));
   els.accountLoginForm.addEventListener('submit', submitAccountLogin);
+  els.forgotPasswordForm?.addEventListener('submit', submitForgotPassword);
+  els.forgotRecoveryCopy?.addEventListener('click', () => copyToClipboard(els.forgotNewRecoveryCode.textContent || ''));
+  els.recoveryCodeForm?.addEventListener('submit', submitRecoveryCodeRegen);
+  els.recoveryCodeCopy?.addEventListener('click', () => copyToClipboard(els.recoveryCodeResultValue.textContent || ''));
   els.account2FAVerifyForm?.addEventListener('submit', submitAccount2FAVerify);
   els.accountSettingsForm.addEventListener('submit', submitAccountSettings);
   els.accountLogoutButton.addEventListener('click', () => logoutAccount());

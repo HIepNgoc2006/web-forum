@@ -539,13 +539,29 @@ export function createHttpServer({
       if (request.method === 'POST' && routePath === '/api/account/register') {
         requireAccountJwt(jwtSecret);
         const body = await readJson(request, 20_000);
-        const account = await service.registerAccount({
+        const { account, recoveryCode } = await service.registerAccount({
           username: body.username,
           password: body.password,
           captchaToken: body.captchaToken,
           ip
         });
-        ok(response, { account, token: accountToken(account, jwtSecret) }, 201);
+        ok(response, { account, recoveryCode, token: accountToken(account, jwtSecret) }, 201);
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/account/forgot-password') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        // Intentionally does NOT issue a session token: the user must log in
+        // afterwards, which re-applies 2FA if the account has it enabled.
+        const { recoveryCode } = await service.resetAccountPasswordWithRecoveryCode({
+          username: body.username,
+          recoveryCode: body.recoveryCode,
+          newPassword: body.newPassword,
+          captchaToken: body.captchaToken,
+          ip
+        });
+        ok(response, { ok: true, recoveryCode });
         return;
       }
 
@@ -728,6 +744,13 @@ export function createHttpServer({
         if (request.method === 'POST' && routePath === '/api/account/2fa/disable') {
           const body = await readJson(request, 20_000);
           ok(response, await service.disable2FA(accountSession.sub, body.password));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/recovery-code') {
+          const body = await readJson(request, 20_000);
+          const { recoveryCode } = await service.regenerateRecoveryCode(accountSession.sub, body.password);
+          ok(response, { ok: true, recoveryCode });
           return;
         }
       }

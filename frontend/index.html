@@ -507,6 +507,15 @@
           </div>
           <p class="account-note">Username tài khoản không tự động hiện trên bài public. Tên hiển thị khi đăng bài vẫn là trường riêng và mặc định là Anonymous.</p>
         </form>
+        <div id="registerRecoveryNotice" class="login-panel stack hidden" role="status">
+          <h2>Lưu mã khôi phục của bạn</h2>
+          <p class="muted">Đây là cách duy nhất để đặt lại mật khẩu nếu bạn quên. Mã chỉ hiển thị một lần — hãy lưu ở nơi an toàn.</p>
+          <code id="registerRecoveryCode" class="recovery-code"></code>
+          <div class="form-actions account-actions">
+            <button id="registerRecoveryCopy" class="ghost-button" type="button">[Sao chép]</button>
+            <button id="registerRecoveryContinue" class="primary-button" type="button">Tôi đã lưu mã, tiếp tục</button>
+          </div>
+        </div>
       </section>
 
       <section id="loginScreen" class="screen account-screen" aria-labelledby="accountLoginTitle">
@@ -536,6 +545,7 @@
             <button class="primary-button" type="submit">Đăng nhập</button>
             <button id="loginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>
             [<a href="#register">Tạo tài khoản</a>]
+            [<a href="#forgot">Quên mật khẩu</a>]
           </div>
         </form>
         <form id="account2FAVerifyForm" class="login-panel stack hidden">
@@ -562,6 +572,50 @@
             </div>
           </div>
         </form>
+      </section>
+
+      <section id="forgotScreen" class="screen account-screen" aria-labelledby="forgotTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/forgot/</p>
+            <h1 id="forgotTitle">Quên mật khẩu</h1>
+            <p class="muted">Dùng mã khôi phục bạn đã lưu khi đăng ký để đặt lại mật khẩu. Sau khi đặt lại, bạn sẽ nhận một mã khôi phục mới.</p>
+          </div>
+        </div>
+        <form id="forgotPasswordForm" class="login-panel stack">
+          <div id="forgotError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản</span>
+            <input id="forgotUsername" autocomplete="username" maxlength="32" />
+          </label>
+          <label class="field-row">
+            <span>Mã khôi phục</span>
+            <input id="forgotRecoveryCode" autocomplete="off" placeholder="VD: A1B2C-3D4E5-F6789-0ABCD" style="text-transform:uppercase;" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu mới</span>
+            <input id="forgotNewPassword" type="password" autocomplete="new-password" />
+          </label>
+          <p class="muted account-hint">Mật khẩu cần ít nhất 10 ký tự, không trùng tên tài khoản và không dùng mật khẩu quá phổ biến hoặc quá đơn giản.</p>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <input id="forgotCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+            <div class="captcha-widget hidden" data-hcaptcha-target="forgotCaptcha"></div>
+          </div>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đặt lại mật khẩu</button>
+            [<a href="#login">Quay lại đăng nhập</a>]
+          </div>
+        </form>
+        <div id="forgotSuccess" class="login-panel stack hidden" role="status">
+          <h2>Đã đặt lại mật khẩu</h2>
+          <p class="muted">Mã cũ đã hết hiệu lực. Đây là mã khôi phục mới — lưu lại nơi an toàn:</p>
+          <code id="forgotNewRecoveryCode" class="recovery-code"></code>
+          <div class="form-actions account-actions">
+            <button id="forgotRecoveryCopy" class="ghost-button" type="button">[Sao chép]</button>
+            <a class="primary-button" href="#login">Đăng nhập</a>
+          </div>
+        </div>
       </section>
 
       <section id="accountScreen" class="screen account-screen" aria-labelledby="accountTitle">
@@ -616,6 +670,27 @@
           <div id="accountPasskeysList" class="account-private-grid"></div>
           <div class="form-actions account-actions">
             <button id="addPasskeyButton" class="primary-button" type="button">Thêm Passkey mới</button>
+          </div>
+        </section>
+        <section id="accountRecoveryPanel" class="login-panel stack hidden" aria-labelledby="accountRecoveryTitle">
+          <h2 id="accountRecoveryTitle">Mã khôi phục</h2>
+          <p class="muted">Mã khôi phục dùng để đặt lại mật khẩu khi bạn quên. Tạo mã mới sẽ vô hiệu hóa mã cũ. Nhập mật khẩu hiện tại để tạo mã mới.</p>
+          <form id="recoveryCodeForm" class="stack">
+            <div id="recoveryCodeError" class="form-error hidden" role="alert"></div>
+            <label class="field-row">
+              <span>Mật khẩu hiện tại</span>
+              <input id="recoveryCodePassword" type="password" autocomplete="current-password" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Tạo mã khôi phục mới</button>
+            </div>
+          </form>
+          <div id="recoveryCodeResult" class="stack hidden" role="status">
+            <p class="muted">Mã khôi phục mới (chỉ hiển thị một lần):</p>
+            <code id="recoveryCodeResultValue" class="recovery-code"></code>
+            <div class="form-actions account-actions">
+              <button id="recoveryCodeCopy" class="ghost-button" type="button">[Sao chép]</button>
+            </div>
           </div>
         </section>
         <section id="accountPrivateDataPanel" class="login-panel stack hidden" aria-labelledby="accountPrivateDataTitle">

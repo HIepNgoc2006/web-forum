@@ -383,6 +383,19 @@ function verifyAccountPassword(password, stored = '') {
   return actual.length === expected.length && crypto.timingSafeEqual(actual, expected);
 }
 
+// Recovery codes let a user reset a forgotten password without email/SMS:
+// a one-time code is issued at registration (and can be regenerated while
+// logged in), stored only as a SHA-256 hash, and rotated after each use.
+function generateRecoveryCode() {
+  const raw = crypto.randomBytes(10).toString('hex').toUpperCase();
+  return raw.match(/.{1,5}/g).join('-');
+}
+
+function hashRecoveryCode(code) {
+  const normalized = String(code ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return crypto.createHash('sha256').update(normalized).digest('hex');
+}
+
 // A well-formed hash used to equalize login timing when the account does not
 // exist, so the expensive PBKDF2 path runs on both the "no such user" and the
 // "user exists, wrong password" branches and the latency cannot be used to
@@ -615,6 +628,7 @@ function serializeAccount(state, user = {}) {
     username: user.username,
     role: user.role || 'user',
     twoFactorEnabled: Boolean(user.twoFactorEnabled),
+    hasRecoveryCode: Boolean(user.recoveryCodeHash),
     settings: normalizeAccountSettings(state, {}, user.settings),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
@@ -1438,10 +1452,12 @@ export function createForumService({
         }
 
         const createdAt = now().toISOString();
+        const recoveryCode = generateRecoveryCode();
         const user = {
           id: crypto.randomUUID(),
           username: safeUsername,
           passwordHash: accountPasswordHash(safePassword),
+          recoveryCodeHash: hashRecoveryCode(recoveryCode),
           role: 'user',
           settings: defaultAccountSettings(),
           privateData: defaultAccountPrivateData(),
@@ -1450,7 +1466,7 @@ export function createForumService({
         };
         state.users.push(user);
         logEvent('account.register', { username: safeUsername });
-        return serializeAccount(state, user);
+        return { account: serializeAccount(state, user), recoveryCode };
       });
     },
 
@@ -1498,6 +1514,61 @@ export function createForumService({
         await store.write(state);
       }
       return serializeAccount(state, user);
+    },
+
+    async resetAccountPasswordWithRecoveryCode({ username, recoveryCode, newPassword, captchaToken, ip } = {}) {
+      await requireCaptcha(captchaToken, ip);
+      const safeUsername = normalizeAccountUsername(username);
+      const safePassword = assertAccountPassword(newPassword, { username: safeUsername });
+      return mutate(async (state) => {
+        const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+        // Same error for "no such user" and "wrong code" so the response cannot
+        // be used to confirm which usernames exist.
+        const providedHash = hashRecoveryCode(recoveryCode);
+        const codeOk =
+          user &&
+          user.recoveryCodeHash &&
+          crypto.timingSafeEqual(Buffer.from(providedHash, 'hex'), Buffer.from(user.recoveryCodeHash, 'hex'));
+        if (!user || !codeOk) {
+          const error = new Error('Tên tài khoản hoặc mã khôi phục không đúng');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        user.passwordHash = accountPasswordHash(safePassword);
+        // Rotate the recovery code: the used one is now spent.
+        const nextRecoveryCode = generateRecoveryCode();
+        user.recoveryCodeHash = hashRecoveryCode(nextRecoveryCode);
+        user.failedLoginAttempts = 0;
+        user.lockedUntil = null;
+        user.updatedAt = now().toISOString();
+
+        logEvent('account.password.reset', { username: user.username });
+        return { account: serializeAccount(state, user), recoveryCode: nextRecoveryCode };
+      });
+    },
+
+    async regenerateRecoveryCode(userId, password) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!verifyAccountPassword(password, user.passwordHash)) {
+          const error = new Error('Mật khẩu không đúng');
+          error.statusCode = 401;
+          throw error;
+        }
+
+        const recoveryCode = generateRecoveryCode();
+        user.recoveryCodeHash = hashRecoveryCode(recoveryCode);
+        user.updatedAt = now().toISOString();
+
+        logEvent('account.recoveryCode.regenerate', { username: user.username });
+        return { account: serializeAccount(state, user), recoveryCode };
+      });
     },
 
     async getAccount(userId) {
