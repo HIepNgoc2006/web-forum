@@ -771,6 +771,66 @@ test('thread image metadata is sanitized and returned with public thread data', 
   assert.deepEqual(listed[0].image, created.thread.image);
 });
 
+test('comment image metadata is sanitized and returned with public comment data', async () => {
+  const realtime = createEvents();
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime,
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread co anh tra loi',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  const reply = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Binh luan kem anh',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8',
+    posterToken: 'author',
+    image: {
+      name: 'reply\u0000.png',
+      type: 'IMAGE/PNG',
+      dataUrl: 'data:image/png;base64,AAAA',
+      sizeBytes: '4096',
+      width: '320.4',
+      height: 240,
+      thumbnail: {
+        name: 'rthumb\u0000.jpg',
+        type: 'IMAGE/JPEG',
+        dataUrl: 'data:image/jpeg;base64,AAA=',
+        sizeBytes: '2',
+        width: '80.8',
+        height: '60.2'
+      }
+    }
+  });
+
+  assert.deepEqual(reply.comment.image, {
+    name: 'reply.png',
+    type: 'image/png',
+    dataUrl: 'data:image/png;base64,AAAA',
+    sizeBytes: 4096,
+    width: 320,
+    height: 240,
+    thumbnail: {
+      name: 'rthumb.jpg',
+      type: 'image/jpeg',
+      dataUrl: 'data:image/jpeg;base64,AAA=',
+      sizeBytes: 2,
+      width: 81,
+      height: 60
+    }
+  });
+
+  const detail = await service.getThread(created.thread.id);
+  assert.deepEqual(detail.comments[0].image, reply.comment.image);
+});
+
 test('invalid image metadata falls back to safe values', async () => {
   const service = createForumService({
     store: createMemoryStore(),
