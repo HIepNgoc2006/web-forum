@@ -273,6 +273,86 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
     }, jwtSecret);
   });
 
+  it('lets a password-only admin enroll a passkey and sign in with it as a full second factor', async () => {
+    await withServer(async (baseUrl) => {
+      const decodeJwt = (token) =>
+        JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8'));
+
+      // 1. Admin signs in with password only (no 2FA yet → unverified token).
+      const loginRes = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      assert.strictEqual(loginRes.status, 200);
+      const adminToken = (await loginRes.json()).data.token;
+      assert.ok(adminToken);
+      assert.strictEqual(decodeJwt(adminToken).role, 'admin');
+      assert.strictEqual(decodeJwt(adminToken).isTwoFactorVerified, false);
+
+      // 2. The unverified admin token may enroll a passkey (like 2FA setup).
+      const optRes = await fetch(`${baseUrl}/api/account/passkeys/register-options`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' }
+      });
+      assert.strictEqual(optRes.status, 200);
+
+      const verifyRes = await fetch(`${baseUrl}/api/account/passkeys/register-verify`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${adminToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: 'mockCredentialID_123',
+          rawId: 'mockCredentialID_123',
+          type: 'public-key',
+          response: {
+            clientDataJSON: 'mockClientDataJSON',
+            attestationObject: 'mockAttestationObject',
+            transports: ['internal']
+          }
+        })
+      });
+      assert.strictEqual(verifyRes.status, 200);
+
+      // 3. Sign in with the passkey alone.
+      await fetch(`${baseUrl}/api/auth/webauthn/login-options`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin' })
+      });
+      const passkeyLoginRes = await fetch(`${baseUrl}/api/auth/webauthn/login-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'admin',
+          assertionResponse: {
+            id: 'mockCredentialID_123',
+            rawId: 'mockCredentialID_123',
+            type: 'public-key',
+            response: {
+              authenticatorData: 'mockAuthData',
+              clientDataJSON: 'mockClientDataJSON',
+              signature: 'mockSignature',
+              userHandle: 'mockUserHandle'
+            }
+          }
+        })
+      });
+      assert.strictEqual(passkeyLoginRes.status, 200);
+      const passkeyToken = (await passkeyLoginRes.json()).data.token;
+
+      // The passkey login token is admin-scoped AND counts as 2FA-verified.
+      const payload = decodeJwt(passkeyToken);
+      assert.strictEqual(payload.role, 'admin');
+      assert.strictEqual(payload.isTwoFactorVerified, true);
+
+      // 4. That token unlocks the admin queue.
+      const queueRes = await fetch(`${baseUrl}/api/admin/pending`, {
+        headers: { Authorization: `Bearer ${passkeyToken}` }
+      });
+      assert.strictEqual(queueRes.status, 200);
+    }, jwtSecret);
+  });
+
   it('does not reveal whether a username exists when requesting login options', async () => {
     await withServer(async (baseUrl) => {
       const loginOptRes = await fetch(`${baseUrl}/api/auth/webauthn/login-options`, {

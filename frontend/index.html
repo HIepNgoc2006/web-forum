@@ -690,8 +690,9 @@
             <span>Mật khẩu</span>
             <input id="adminPassword" type="password" autocomplete="current-password" />
           </label>
-          <div class="form-actions">
+          <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Đăng nhập</button>
+            <button id="adminLoginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>
           </div>
         </form>
         <form id="admin2FAVerifyForm" class="login-panel stack hidden">
@@ -731,6 +732,14 @@
             </div>
           </div>
         </div>
+        <section id="adminPasskeysPanel" class="login-panel stack hidden" aria-labelledby="adminPasskeysTitle">
+          <h2 id="adminPasskeysTitle">Thiết bị xác thực (Passkey)</h2>
+          <p class="muted">Đăng ký Passkey để đăng nhập quản trị bằng vân tay/khuôn mặt mà không cần mật khẩu hay mã 2FA.</p>
+          <div id="adminPasskeysList" class="account-private-grid"></div>
+          <div class="form-actions">
+            <button id="adminAddPasskeyButton" class="primary-button" type="button">Thêm Passkey mới</button>
+          </div>
+        </section>
         <div id="adminTools" class="admin-tools hidden">
           <div class="admin-tabs" aria-label="Chọn hàng đợi quản trị">
             <button class="admin-tab active" data-admin-tab="pending" type="button">AI chờ duyệt</button>

@@ -636,12 +636,21 @@ export function createHttpServer({
           origin: cleanOrigin,
           rpID
         });
-        ok(response, { account, token: accountToken(account, jwtSecret) });
+        // A passkey requires user verification (biometric/PIN), so it is a
+        // strong second factor on its own: issue a fully-verified token so an
+        // admin can sign in with a passkey alone (no separate TOTP step).
+        ok(response, { account, token: accountToken(account, jwtSecret, true) });
         return;
       }
 
       if (routePath.startsWith('/api/account')) {
-        const allowAdmin2FASetup = ['/api/account/2fa/setup', '/api/account/2fa/verify'].includes(routePath);
+        // Like 2FA setup, passkey management must be reachable by an admin who
+        // has only password-authenticated (isTwoFactorVerified === false), so a
+        // fresh admin can enroll a passkey before any TOTP is configured.
+        const allowAdmin2FASetup =
+          ['/api/account/2fa/setup', '/api/account/2fa/verify'].includes(routePath) ||
+          routePath === '/api/account/passkeys' ||
+          routePath.startsWith('/api/account/passkeys/');
         const accountSession = requireAccount(request, jwtSecret, service, { allowAdmin2FASetup });
 
         if (request.method === 'GET' && routePath === '/api/account/posts') {
@@ -855,14 +864,14 @@ export function createHttpServer({
 
       params = match(parts, ['api', 'posts', ':globalNumber', 'vote']);
       if (params && request.method === 'POST') {
+        const account = requireAccount(request, jwtSecret, service);
         const body = await readJson(request, 20_000);
         ok(
           response,
           await service.votePost({
             globalNumber: params.globalNumber,
             direction: body.direction,
-            ip,
-            posterToken: body.posterToken
+            accountId: account.sub
           })
         );
         return;

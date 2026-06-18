@@ -595,6 +595,10 @@ const els = {
   admin2FABackupCodes: document.querySelector('#admin2FABackupCodes'),
   admin2FASetupCode: document.querySelector('#admin2FASetupCode'),
   adminVerify2FASetupButton: document.querySelector('#adminVerify2FASetupButton'),
+  adminLoginPasskeyButton: document.querySelector('#adminLoginPasskeyButton'),
+  adminPasskeysPanel: document.querySelector('#adminPasskeysPanel'),
+  adminPasskeysList: document.querySelector('#adminPasskeysList'),
+  adminAddPasskeyButton: document.querySelector('#adminAddPasskeyButton'),
   logoutButton: document.querySelector('#logoutButton'),
   adminTools: document.querySelector('#adminTools'),
   adminBoardFilter: document.querySelector('#adminBoardFilter'),
@@ -1240,6 +1244,100 @@ async function loginWithPasskey() {
     setFormError(els.accountLoginError, `Đăng nhập Passkey thất bại: ${error.message}`);
   } finally {
     restoreButton();
+  }
+}
+
+async function loginAdminWithPasskey() {
+  const username = (els.adminUsername.value || '').trim();
+  if (!username) {
+    showToast('Vui lòng nhập tên tài khoản quản trị trước.');
+    els.adminUsername.focus();
+    return;
+  }
+  const restoreButton = setButtonLoading(els.adminLoginPasskeyButton, 'Đang xác thực...');
+  try {
+    const options = await api('/api/auth/webauthn/login-options', {
+      auth: 'none',
+      method: 'POST',
+      body: JSON.stringify({ username })
+    });
+
+    const assertionResponse = await startAuthentication(options);
+
+    const result = await api('/api/auth/webauthn/login-verify', {
+      auth: 'none',
+      method: 'POST',
+      body: JSON.stringify({ username, assertionResponse })
+    });
+
+    state.token = result.token;
+    localStorage.setItem('adminToken', state.token);
+    els.adminPassword.value = '';
+    showToast('Đăng nhập quản trị bằng Passkey thành công.');
+    await loadAdmin();
+  } catch (error) {
+    showToast(`Đăng nhập Passkey thất bại: ${error.message}`);
+  } finally {
+    restoreButton();
+  }
+}
+
+async function addAdminPasskey() {
+  try {
+    const options = await api('/api/account/passkeys/register-options', {
+      auth: 'admin',
+      method: 'POST'
+    });
+
+    const attestationResponse = await startRegistration(options);
+
+    await api('/api/account/passkeys/register-verify', {
+      auth: 'admin',
+      method: 'POST',
+      body: JSON.stringify(attestationResponse)
+    });
+
+    showToast('Đăng ký Passkey quản trị thành công!');
+    await renderAdminPasskeys();
+  } catch (error) {
+    showToast(`Lỗi đăng ký Passkey: ${error.message}`);
+  }
+}
+
+async function renderAdminPasskeys() {
+  if (!els.adminPasskeysPanel || !els.adminPasskeysList) {
+    return;
+  }
+  const loggedIn = Boolean(state.token);
+  els.adminPasskeysPanel.classList.toggle('hidden', !loggedIn);
+  if (!loggedIn) {
+    els.adminPasskeysList.innerHTML = '';
+    return;
+  }
+  try {
+    const passkeys = await api('/api/account/passkeys', { auth: 'admin' });
+    if (!passkeys.length) {
+      els.adminPasskeysList.innerHTML = '<p class="latest-empty">Chưa đăng ký thiết bị xác thực nào.</p>';
+      return;
+    }
+    els.adminPasskeysList.innerHTML = passkeys
+      .map((passkey) => {
+        const deviceType = passkey.credentialDeviceType === 'singleDevice' ? 'Thiết bị đơn (Vân tay/Khuôn mặt)' : 'Đa thiết bị (iCloud/Google Keychain)';
+        const date = new Date(passkey.createdAt).toLocaleString('vi-VN');
+        return `
+          <div class="watch-item">
+            <div class="watch-thread-link">
+              <span class="watch-board">Passkey</span>
+              <span class="watch-preview" style="display:inline-block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(passkey.id)}">ID: ${escapeHtml(passkey.id)}</span>
+              <span class="watch-stats">${escapeHtml(deviceType)} · Tạo lúc: ${escapeHtml(date)}</span>
+            </div>
+            <button class="link-button watch-remove" data-delete-admin-passkey="${escapeHtml(passkey.id)}" type="button">[Xóa]</button>
+          </div>
+        `;
+      })
+      .join('');
+  } catch (error) {
+    els.adminPasskeysList.innerHTML = `<p class="form-error">Lỗi khi tải Passkeys: ${escapeHtml(error.message)}</p>`;
   }
 }
 
@@ -3563,6 +3661,7 @@ async function loadAdmin() {
   els.admin2FASetupPanel?.classList.add('hidden');
   els.logoutButton.classList.toggle('hidden', !loggedIn);
   els.adminTools.classList.toggle('hidden', !loggedIn);
+  els.adminPasskeysPanel?.classList.add('hidden');
   if (!loggedIn) {
     els.pendingList.innerHTML = '';
     els.reportList.innerHTML = '';
@@ -3571,6 +3670,8 @@ async function loadAdmin() {
     els.moderationSection.classList.add('hidden');
     return;
   }
+
+  renderAdminPasskeys();
 
   try {
     const data = await api(adminEndpoint());
@@ -4628,6 +4729,18 @@ function bindEvents() {
       return;
     }
 
+    const adminLoginPasskeyBtn = event.target.closest('#adminLoginPasskeyButton');
+    if (adminLoginPasskeyBtn) {
+      await loginAdminWithPasskey();
+      return;
+    }
+
+    const adminAddPasskeyBtn = event.target.closest('#adminAddPasskeyButton');
+    if (adminAddPasskeyBtn) {
+      await addAdminPasskey();
+      return;
+    }
+
     const deletePasskeyBtn = event.target.closest('[data-delete-passkey]');
     if (deletePasskeyBtn) {
       const credentialId = deletePasskeyBtn.dataset.deletePasskey;
@@ -4640,6 +4753,25 @@ function bindEvents() {
           });
           showToast('Đã xóa Passkey.');
           await renderPasskeys();
+        } catch (error) {
+          showToast(`Lỗi khi xóa Passkey: ${error.message}`);
+        }
+      }
+      return;
+    }
+
+    const deleteAdminPasskeyBtn = event.target.closest('[data-delete-admin-passkey]');
+    if (deleteAdminPasskeyBtn) {
+      const credentialId = deleteAdminPasskeyBtn.dataset.deleteAdminPasskey;
+      const ok = window.confirm('Bạn chắc chắn muốn xóa thiết bị xác thực này?');
+      if (ok) {
+        try {
+          await api(`/api/account/passkeys/${encodeURIComponent(credentialId)}`, {
+            auth: 'admin',
+            method: 'DELETE'
+          });
+          showToast('Đã xóa Passkey.');
+          await renderAdminPasskeys();
         } catch (error) {
           showToast(`Lỗi khi xóa Passkey: ${error.message}`);
         }
@@ -4783,8 +4915,13 @@ function bindEvents() {
     if (voteButton) {
       const globalNumber = voteButton.dataset.voteTarget;
       const direction = voteButton.dataset.vote;
+      if (!state.accountToken) {
+        showToast('Vui lòng đăng nhập tài khoản để vote.');
+        return;
+      }
       try {
         const result = await api(`/api/posts/${globalNumber}/vote`, {
+          auth: 'account',
           method: 'POST',
           body: JSON.stringify({ direction, posterToken: state.posterToken })
         });
