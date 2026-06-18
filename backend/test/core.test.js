@@ -720,6 +720,70 @@ test('votePost toggles upvote/downvote on a comment without leaking voters', asy
   );
 });
 
+test('getThread sorts comments by best/top/new/controversial/old', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread sap xep binh luan',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  const makeComment = async (body, token) => {
+    const reply = await service.createComment({
+      threadId: created.thread.id,
+      body,
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.8',
+      posterToken: token
+    });
+    return reply.comment.globalNumber;
+  };
+
+  // Creation order (ascending global numbers): a, b, c.
+  const a = await makeComment('binh luan a', 'author-a');
+  const b = await makeComment('binh luan b', 'author-b');
+  const c = await makeComment('binh luan c', 'author-c');
+
+  const upvote = (target, token) =>
+    service.votePost({ globalNumber: target, direction: 'up', ip: '198.51.100.1', posterToken: token });
+  const downvote = (target, token) =>
+    service.votePost({ globalNumber: target, direction: 'down', ip: '198.51.100.2', posterToken: token });
+
+  // a: score 1, b: score 3, c: balanced 1/1 (controversial).
+  await upvote(a, 'r1');
+  await upvote(b, 'r1');
+  await upvote(b, 'r2');
+  await upvote(b, 'r3');
+  await upvote(c, 'r1');
+  await downvote(c, 'r2');
+
+  const order = (comments) => comments.map((comment) => comment.globalNumber);
+
+  const top = await service.getThread(created.thread.id, { commentsSort: 'top' });
+  assert.deepEqual(order(top.comments), [b, a, c]);
+
+  const newest = await service.getThread(created.thread.id, { commentsSort: 'new' });
+  assert.deepEqual(order(newest.comments), [c, b, a]);
+
+  const old = await service.getThread(created.thread.id, { commentsSort: 'old' });
+  assert.deepEqual(order(old.comments), [a, b, c]);
+
+  // Unknown / missing sort falls back to chronological (old).
+  const fallback = await service.getThread(created.thread.id, { commentsSort: 'bogus' });
+  assert.deepEqual(order(fallback.comments), [a, b, c]);
+  assert.equal(fallback.commentsSort, 'old');
+
+  // Controversial ranks the balanced 1/1 comment first.
+  const controversial = await service.getThread(created.thread.id, { commentsSort: 'controversial' });
+  assert.equal(controversial.comments[0].globalNumber, c);
+});
+
 test('thread image metadata is sanitized and returned with public thread data', async () => {
   const service = createForumService({
     store: createMemoryStore(),

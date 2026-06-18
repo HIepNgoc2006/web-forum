@@ -798,6 +798,7 @@ export function createHttpServer({
             paged,
             commentsPage: url.searchParams.get('commentsPage') || url.searchParams.get('page'),
             commentsPageSize: url.searchParams.get('commentsPageSize') || url.searchParams.get('pageSize'),
+            commentsSort: url.searchParams.get('commentsSort') || '',
             focusGlobalNumber: url.searchParams.get('focusGlobalNumber') || ''
           })
         );

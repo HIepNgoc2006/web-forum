@@ -1318,6 +1318,17 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   color: var(--dead);
 }
 
+.comment-sort {
+  clear: both;
+  margin: 6px 0;
+  font-size: 12px;
+  color: var(--dead);
+}
+
+.comment-sort select {
+  font-size: 12px;
+}
+
 .thread-meta {
   display: block;
   clear: both;

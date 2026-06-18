@@ -35,6 +35,7 @@ const state = {
   threadCommentPage: 1,
   threadCommentPageSize: 50,
   threadCommentPageMeta: null,
+  commentsSort: 'old',
   autoUpdate: true,
   autoCountdown: 7,
   autoTimer: null,
@@ -3103,6 +3104,25 @@ function voteControlHtml(post) {
   `;
 }
 
+const COMMENT_SORT_LABELS = [
+  ['best', 'tốt nhất'],
+  ['top', 'nhiều điểm'],
+  ['new', 'mới nhất'],
+  ['controversial', 'gây tranh cãi'],
+  ['old', 'cũ nhất']
+];
+
+function commentSortHtml(current = 'old') {
+  const options = COMMENT_SORT_LABELS.map(
+    ([value, label]) => `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`
+  ).join('');
+  return `
+    <div class="comment-sort">
+      <label>sắp xếp theo: <select data-comment-sort aria-label="Sắp xếp bình luận">${options}</select></label>
+    </div>
+  `;
+}
+
 function meta(post, options = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -3576,7 +3596,8 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   els.threadSummary.classList.add('hidden');
   const query = new URLSearchParams({
     commentsPage: String(state.threadCommentPage),
-    commentsPageSize: String(state.threadCommentPageSize)
+    commentsPageSize: String(state.threadCommentPageSize),
+    commentsSort: state.commentsSort
   });
   const requestedPost = focusPost || currentPermalinkPost();
   if (requestedPost) {
@@ -3590,6 +3611,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   state.threadCurrentMaxNumber = currentMaxNumber;
   state.threadCommentPageMeta = detail.commentPage || null;
   state.threadCommentPage = detail.commentPage?.page || state.threadCommentPage;
+  state.commentsSort = detail.commentPage?.sort || detail.commentsSort || state.commentsSort;
   writeThreadLastSeen(state.threadId, currentMaxNumber);
   syncWatchedThreadFromDetail(detail);
   state.boardSlug = detail.thread.boardSlug;
@@ -3634,6 +3656,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
       opPosterHash: detail.thread.posterHash,
       canReply
     })}
+    ${commentSortHtml(state.commentsSort)}
     <div class="comment-list">
       ${
         visibleComments.length
@@ -5324,6 +5347,13 @@ function bindEvents() {
     if (themeSelect) {
       applyTheme(themeSelect.value);
       persistAccountSettings({ silent: true });
+    }
+
+    const commentSort = event.target.closest('[data-comment-sort]');
+    if (commentSort) {
+      state.commentsSort = commentSort.value;
+      state.threadCommentPage = 1;
+      loadThread().catch((error) => showToast(error.message));
     }
   });
 

@@ -700,6 +700,63 @@ function publicVotes(post) {
   return { up, down, score: up - down };
 }
 
+const COMMENT_SORTS = new Set(['best', 'top', 'new', 'controversial', 'old']);
+
+function normalizeCommentSort(value) {
+  const sort = String(value || '').toLowerCase();
+  return COMMENT_SORTS.has(sort) ? sort : 'old';
+}
+
+// Wilson score lower bound (95% confidence) — Reddit's "best" ranking. Rewards
+// a high upvote ratio while discounting low-sample posts.
+function wilsonLowerBound(up, down) {
+  const n = up + down;
+  if (n <= 0) {
+    return 0;
+  }
+  const z = 1.96;
+  const phat = up / n;
+  return (phat + (z * z) / (2 * n) - z * Math.sqrt((phat * (1 - phat) + (z * z) / (4 * n)) / n)) / (1 + (z * z) / n);
+}
+
+// Reddit-style controversy: high total engagement with a balanced up/down split.
+function controversyScore(up, down) {
+  if (up <= 0 || down <= 0) {
+    return 0;
+  }
+  const magnitude = up + down;
+  const balance = up > down ? down / up : up / down;
+  return magnitude ** balance;
+}
+
+function sortComments(comments, sort) {
+  const list = [...comments];
+  const byNumberAsc = (left, right) => Number(left.globalNumber) - Number(right.globalNumber);
+  switch (sort) {
+    case 'new':
+      return list.sort((left, right) => Number(right.globalNumber) - Number(left.globalNumber));
+    case 'top':
+      return list.sort((left, right) => right.votes.score - left.votes.score || byNumberAsc(left, right));
+    case 'best':
+      return list.sort(
+        (left, right) =>
+          wilsonLowerBound(right.votes.up, right.votes.down) - wilsonLowerBound(left.votes.up, left.votes.down) ||
+          right.votes.score - left.votes.score ||
+          byNumberAsc(left, right)
+      );
+    case 'controversial':
+      return list.sort(
+        (left, right) =>
+          controversyScore(right.votes.up, right.votes.down) - controversyScore(left.votes.up, left.votes.down) ||
+          right.votes.up + right.votes.down - (left.votes.up + left.votes.down) ||
+          byNumberAsc(left, right)
+      );
+    case 'old':
+    default:
+      return list.sort(byNumberAsc);
+  }
+}
+
 function serializePoll(poll) {
   if (!poll?.options?.length) {
     return null;
@@ -2223,11 +2280,13 @@ export function createForumService({
         .sort((left, right) => left.globalNumber - right.globalNumber)
         .map((comment) => serializeComment(comment, thread));
       const withBacklinks = addBacklinks([serializedThread, ...serializedComments]);
-      const [threadWithBacklinks, ...commentsWithBacklinks] = withBacklinks;
+      const [threadWithBacklinks, ...chronologicalComments] = withBacklinks;
       const currentMaxGlobalNumber = withBacklinks.reduce(
         (maxNumber, post) => Math.max(maxNumber, Number(post.globalNumber) || 0),
         0
       );
+      const commentsSort = normalizeCommentSort(options.commentsSort);
+      const commentsWithBacklinks = sortComments(chronologicalComments, commentsSort);
       if (options.paged) {
         const firstPageOptions = paginationOptions({
           page: options.commentsPage || options.page,
@@ -2254,13 +2313,15 @@ export function createForumService({
             total: page.total,
             totalPages: page.totalPages,
             hasMore: page.hasMore,
-            currentMaxGlobalNumber
+            currentMaxGlobalNumber,
+            sort: commentsSort
           }
         };
       }
       return {
         thread: threadWithBacklinks,
-        comments: commentsWithBacklinks
+        comments: commentsWithBacklinks,
+        commentsSort
       };
     },
 
