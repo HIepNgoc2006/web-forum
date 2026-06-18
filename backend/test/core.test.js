@@ -682,8 +682,7 @@ test('votePost toggles upvote/downvote on a comment without leaking voters', asy
   const up = await service.votePost({
     globalNumber: target,
     direction: 'up',
-    ip: '203.0.113.9',
-    posterToken: 'reader-a'
+    accountId: 'reader-a'
   });
   assert.deepEqual(up.votes, { up: 1, down: 0, score: 1 });
   assert.equal(up.myVote, 'up');
@@ -693,30 +692,34 @@ test('votePost toggles upvote/downvote on a comment without leaking voters', asy
   assert.equal(detail.comments[0].votes.score, 1);
   assert.equal(JSON.stringify(detail.comments[0]).includes('voters'), false);
 
-  // Same voter, same direction -> toggle off.
+  // Same account, same direction -> toggle off.
   const off = await service.votePost({
     globalNumber: target,
     direction: 'up',
-    ip: '203.0.113.9',
-    posterToken: 'reader-a'
+    accountId: 'reader-a'
   });
   assert.deepEqual(off.votes, { up: 0, down: 0, score: 0 });
   assert.equal(off.myVote, null);
 
-  // Switch a voter from up to down keeps a single vote.
-  await service.votePost({ globalNumber: target, direction: 'up', ip: '203.0.113.9', posterToken: 'reader-a' });
+  // Switch an account from up to down keeps a single vote.
+  await service.votePost({ globalNumber: target, direction: 'up', accountId: 'reader-a' });
   const down = await service.votePost({
     globalNumber: target,
     direction: 'down',
-    ip: '203.0.113.9',
-    posterToken: 'reader-a'
+    accountId: 'reader-a'
   });
   assert.deepEqual(down.votes, { up: 0, down: 1, score: -1 });
   assert.equal(down.myVote, 'down');
 
   await assert.rejects(
-    () => service.votePost({ globalNumber: target, direction: 'sideways', ip: '203.0.113.9' }),
+    () => service.votePost({ globalNumber: target, direction: 'sideways', accountId: 'reader-a' }),
     /vote không hợp lệ/
+  );
+
+  // Anonymous (no account) cannot vote.
+  await assert.rejects(
+    () => service.votePost({ globalNumber: target, direction: 'up' }),
+    /đăng nhập tài khoản để vote/
   );
 });
 

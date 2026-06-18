@@ -2586,11 +2586,16 @@ export function createForumService({
       });
     },
 
-    async votePost({ globalNumber, direction, ip, posterToken } = {}) {
+    async votePost({ globalNumber, direction, accountId } = {}) {
       const dir = direction === 'up' || direction === 'down' ? direction : null;
       if (!dir) {
         const error = new Error('Lựa chọn vote không hợp lệ');
         error.statusCode = 400;
+        throw error;
+      }
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản để vote');
+        error.statusCode = 401;
         throw error;
       }
 
@@ -2603,12 +2608,13 @@ export function createForumService({
         }
 
         const post = found.post;
-        const fingerprint = createModerationFingerprint({ ip, posterToken });
+        // Key votes by account so each account votes once, regardless of IP.
+        const voterKey = `account:${accountId}`;
         post.voters ??= {};
-        if (post.voters[fingerprint] === dir) {
-          delete post.voters[fingerprint];
+        if (post.voters[voterKey] === dir) {
+          delete post.voters[voterKey];
         } else {
-          post.voters[fingerprint] = dir;
+          post.voters[voterKey] = dir;
         }
 
         let up = 0;
@@ -2621,7 +2627,7 @@ export function createForumService({
           }
         }
         post.votes = { up, down };
-        const myVote = post.voters[fingerprint] ?? null;
+        const myVote = post.voters[voterKey] ?? null;
 
         if (found.postType === 'thread') {
           realtime.publish('thread:updated', { thread: serializeThread(post, state.comments) });
