@@ -118,6 +118,58 @@ test('http api creates public thread and protects admin pending queue', async ()
   });
 });
 
+test('http capcode is granted to admins but denied to regular and anonymous posters', async () => {
+  await withServer(async (baseUrl) => {
+    // Anonymous poster requesting a capcode gets none.
+    const anon = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'Anon doi capcode', captchaToken: 'dev-pass', capcode: true })
+    });
+    const anonBody = await anon.json();
+    assert.equal(anon.status, 201);
+    assert.equal(anonBody.data.thread.capcode, null);
+
+    // Regular account requesting a capcode still gets none.
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'sinhvien_cap', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const registeredBody = await registered.json();
+    const userThread = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${registeredBody.data.token}`
+      },
+      body: JSON.stringify({ body: 'User doi capcode', captchaToken: 'dev-pass', capcode: true })
+    });
+    const userThreadBody = await userThread.json();
+    assert.equal(userThread.status, 201);
+    assert.equal(userThreadBody.data.thread.capcode, null);
+
+    // Verified admin gets the capcode stamped.
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const loginBody = await login.json();
+    const adminThread = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${loginBody.data.token}`
+      },
+      body: JSON.stringify({ body: 'Thong bao chinh thuc', captchaToken: 'dev-pass', capcode: true })
+    });
+    const adminThreadBody = await adminThread.json();
+    assert.equal(adminThread.status, 201);
+    assert.equal(adminThreadBody.data.thread.capcode, 'admin');
+  });
+});
+
 test('http admin boards support dynamic create update and public filtering', async () => {
   await withServer(async (baseUrl) => {
     const login = await fetch(`${baseUrl}/api/admin/login`, {

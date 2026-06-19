@@ -287,6 +287,10 @@
               <span>Ẩn ảnh</span>
               <label><input name="imageSpoiler" type="checkbox" /> Đánh dấu ảnh là spoiler</label>
             </label>
+            <label class="field-row checkbox-row capcode-option hidden" data-capcode-option>
+              <span>Capcode</span>
+              <label><input name="capcode" type="checkbox" data-capcode-input /> Đăng với chức danh quản trị</label>
+            </label>
             <label class="field-row">
               <span>Âm thanh → chữ</span>
               <input id="threadAudio" type="file" accept="audio/*" />
@@ -467,6 +471,10 @@
             <label class="field-row checkbox-row">
               <span>Ẩn ảnh</span>
               <label><input name="imageSpoiler" type="checkbox" /> Đánh dấu ảnh là spoiler</label>
+            </label>
+            <label class="field-row checkbox-row capcode-option hidden" data-capcode-option>
+              <span>Capcode</span>
+              <label><input name="capcode" type="checkbox" data-capcode-input /> Đăng với chức danh quản trị</label>
             </label>
             <label class="field-row">
               <span>Âm thanh → chữ</span>
@@ -926,6 +934,7 @@
           </label>
           <span id="quickReplyFileName">Chưa chọn tệp</span>
           <label class="quick-spoiler-toggle"><input name="imageSpoiler" type="checkbox" /> spoiler</label>
+          <label class="quick-spoiler-toggle capcode-option hidden" data-capcode-option><input name="capcode" type="checkbox" data-capcode-input /> capcode</label>
           <button class="quick-post-button" type="submit">Gửi</button>
         </div>
       </form>

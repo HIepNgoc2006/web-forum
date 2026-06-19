@@ -305,6 +305,13 @@ function parseDisplayNameWithTripcode(value = '') {
   };
 }
 
+// Capcodes let a verified privileged account stamp a post with its role. The
+// caller (http-app) resolves the role from the authenticated token; this guard
+// only allows the known privileged roles so a forged value cannot leak through.
+function normalizeCapcode(value) {
+  return value === 'admin' || value === 'moderator' ? value : null;
+}
+
 function normalizeAccountUsername(value = '') {
   return String(value ?? '')
     .normalize('NFKC')
@@ -917,6 +924,7 @@ function serializeThread(thread, comments) {
     ...stripPrivatePostFields(thread),
     displayName: publicDisplayName(thread.displayName),
     tripcode: thread.tripcode ?? null,
+    capcode: normalizeCapcode(thread.capcode),
     poll: serializePoll(thread.poll),
     isArchived: Boolean(thread.isArchived),
     archivedAt: thread.archivedAt ?? null,
@@ -938,6 +946,7 @@ function serializeComment(comment, thread = null) {
     ...stripPrivatePostFields(comment),
     displayName: publicDisplayName(comment.displayName),
     tripcode: comment.tripcode ?? null,
+    capcode: normalizeCapcode(comment.capcode),
     isOp: Boolean(thread?.opProofHash && comment.opProofHash && thread.opProofHash === comment.opProofHash),
     bodyLines: parsePostText(comment.body),
     votes: publicVotes(comment)
@@ -2317,6 +2326,7 @@ export function createForumService({
       displayName = '',
       options = '',
       deletePassword = '',
+      capcode = null,
       accountId
     }) {
       const state = await store.read();
@@ -2352,6 +2362,7 @@ export function createForumService({
           body: normalizedBody,
           displayName: normalizedDisplayName,
           tripcode,
+          capcode: normalizeCapcode(capcode),
           accountId,
           image: applyImageSpoiler(storedImage, safeImage),
           poll,
@@ -2462,7 +2473,7 @@ export function createForumService({
       };
     },
 
-    async createComment({ threadId, body, image, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '', accountId }) {
+    async createComment({ threadId, body, image, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '', capcode = null, accountId }) {
       await requireCaptcha(captchaToken, ip);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
@@ -2507,6 +2518,7 @@ export function createForumService({
           body: normalizedBody,
           displayName: normalizedDisplayName,
           tripcode,
+          capcode: normalizeCapcode(capcode),
           accountId,
           image: applyImageSpoiler(storedImage, safeImage),
           authorFingerprint,

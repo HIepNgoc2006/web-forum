@@ -175,6 +175,27 @@ function getOptionalAccount(request, jwtSecret, service) {
   return undefined;
 }
 
+// Resolves a verified capcode role for a post. The role is read from live
+// account state (not the token claim) so a revoked/demoted account cannot keep
+// stamping posts, and only the privileged roles are ever returned. Returns null
+// unless the poster explicitly requested a capcode AND is authorized.
+async function getOptionalCapcode(request, jwtSecret, service, requested) {
+  if (!requested) return null;
+  const header = request.headers.authorization ?? '';
+  const token = header.startsWith('Bearer ') ? header.slice(7) : '';
+  if (!token) return null;
+  try {
+    const payload = verifyJwt(token, jwtSecret);
+    if (service?.isSessionRevoked?.(token)) return null;
+    if (!payload.sub) return null;
+    const account = await service.getAccount(payload.sub);
+    if (account && (account.role === 'admin' || account.role === 'moderator')) {
+      return account.role;
+    }
+  } catch {}
+  return null;
+}
+
 function accountToken(account, jwtSecret, isTwoFactorVerified = null) {
   if (!jwtSecret) {
     const error = new Error('Chưa cấu hình JWT_SECRET cho tài khoản');
@@ -832,6 +853,7 @@ export function createHttpServer({
             ip,
             posterToken: body.posterToken,
             displayName: body.displayName,
+            capcode: await getOptionalCapcode(request, jwtSecret, service, body.capcode),
             accountId: getOptionalAccount(request, jwtSecret, service)
           }),
           201
@@ -887,6 +909,7 @@ export function createHttpServer({
             ip,
             posterToken: body.posterToken,
             displayName: body.displayName,
+            capcode: await getOptionalCapcode(request, jwtSecret, service, body.capcode),
             accountId: getOptionalAccount(request, jwtSecret, service)
           }),
           201

@@ -405,6 +405,22 @@ function myPosts() {
   return readLocalList(myPostsKey).filter((item) => item && typeof item === 'object');
 }
 
+// Cached set of the viewer's own post numbers, used to stamp "(You)" on their
+// posts and on quotes pointing at them. Rebuilt lazily and invalidated whenever
+// a new post is remembered.
+let myPostNumberCache = null;
+function myPostNumberSet() {
+  if (!myPostNumberCache) {
+    myPostNumberCache = new Set(myPosts().map((item) => Number(item.globalNumber)));
+  }
+  return myPostNumberCache;
+}
+
+function isMyPost(post) {
+  const number = Number(post?.globalNumber);
+  return Number.isFinite(number) && myPostNumberSet().has(number);
+}
+
 function rememberMyPost(post, type) {
   if (!post?.globalNumber) {
     return;
@@ -419,6 +435,7 @@ function rememberMyPost(post, type) {
     createdAt: post.createdAt || new Date().toISOString()
   });
   writeJsonLocal(myPostsKey, items.slice(0, 50));
+  myPostNumberCache = null;
 }
 
 function hiddenThreadIds() {
@@ -699,6 +716,8 @@ const els = {
   accountLoggedOut: document.querySelector('#accountLoggedOut'),
   accountDisplayOptions: document.querySelectorAll('[data-account-display-option]'),
   useAccountNameInputs: document.querySelectorAll('[data-use-account-name]'),
+  capcodeOptions: document.querySelectorAll('[data-capcode-option]'),
+  capcodeInputs: document.querySelectorAll('[data-capcode-input]'),
   toast: document.querySelector('#toast'),
   refPreview: document.querySelector('#refPreview'),
   quickReply: document.querySelector('#quickReply'),
@@ -1030,6 +1049,20 @@ function updateAccountDisplayOptions() {
   }
 }
 
+function isCapcodeEligible() {
+  return Boolean(state.accountToken) && ['admin', 'moderator'].includes(state.account?.role);
+}
+
+function updateCapcodeOptions() {
+  const eligible = isCapcodeEligible();
+  els.capcodeOptions.forEach((element) => element.classList.toggle('hidden', !eligible));
+  if (!eligible) {
+    els.capcodeInputs.forEach((input) => {
+      input.checked = false;
+    });
+  }
+}
+
 function decodeJwtPayload(token) {
   try {
     const part = String(token || '').split('.')[1];
@@ -1070,6 +1103,7 @@ function updateAccountNav() {
     els.accountSettingsLink.setAttribute('href', '#account');
   }
   updateAccountDisplayOptions();
+  updateCapcodeOptions();
 }
 
 function logoutAccount({ message = 'Đã đăng xuất tài khoản.' } = {}) {
@@ -3007,9 +3041,13 @@ function renderPostLines(lines, options = {}) {
       html = html.replace(/&gt;&gt;(\d+)/g, (_match, number) => {
         const refNumber = Number(number);
         const isOpReference = opNumber > 0 && refNumber === opNumber;
-        const className = isOpReference ? 'ref-link op-ref' : 'ref-link';
-        const marker = isOpReference ? ' <span class="op-ref-marker">(OP)</span>' : '';
-        return `<button class="${className}" data-ref="${number}" type="button">&gt;&gt;${number}${marker}</button>`;
+        const isYouReference = myPostNumberSet().has(refNumber);
+        const className = ['ref-link', isOpReference ? 'op-ref' : '', isYouReference ? 'you-ref' : '']
+          .filter(Boolean)
+          .join(' ');
+        const opMark = isOpReference ? ' <span class="op-ref-marker">(OP)</span>' : '';
+        const youMark = isYouReference ? ' <span class="you-ref-marker">(You)</span>' : '';
+        return `<button class="${className}" data-ref="${number}" type="button">&gt;&gt;${number}${opMark}${youMark}</button>`;
       });
       html = renderSpoilerText(html);
       return `<div class="post-line ${line.type === 'greentext' ? 'greentext' : ''}">${html || '&nbsp;'}</div>`;
@@ -3181,6 +3219,19 @@ function commentSortHtml(current = 'old') {
   `;
 }
 
+const CAPCODE_LABELS = {
+  admin: '## Quản trị viên',
+  moderator: '## Điều hành viên'
+};
+
+function capcodeBadgeHtml(post) {
+  const label = CAPCODE_LABELS[post?.capcode];
+  if (!label) {
+    return '';
+  }
+  return `<span class="capcode capcode-${post.capcode}" title="Chức danh đã xác minh">${label}</span>`;
+}
+
 function meta(post, options = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -3195,17 +3246,19 @@ function meta(post, options = {}) {
     Number(post.globalNumber) !== opNumber &&
     (post.isOp || (options.opPosterHash && post.posterHash === options.opPosterHash));
   const opMarker = isOpReply ? '<span class="op-post-marker">(OP)</span>' : '';
+  const youMarker = isMyPost(post) ? '<span class="you-marker" title="Bài của bạn">(You)</span>' : '';
   const posterIdentity = canReply
     ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
     : `<span class="hash">${escapeHtml(posterId(post))}</span>`;
   return `
     <div class="post-meta">
       ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
-      <span class="name">${escapeHtml(postDisplayName(post))}</span>${post.tripcode ? `<span class="tripcode" title="Tripcode">${escapeHtml(post.tripcode)}</span>` : ''}
+      <span class="name">${escapeHtml(postDisplayName(post))}</span>${post.tripcode ? `<span class="tripcode" title="Tripcode">${escapeHtml(post.tripcode)}</span>` : ''}${capcodeBadgeHtml(post)}
       <span class="date">${formatPostDate(post.createdAt)}</span>
       <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" title="Liên kết tới bài này">${post.globalNumber}</a></span>
       ${posterIdentity}
       ${opMarker}
+      ${youMarker}
       ${stickyLabelHtml(post)}
       <span class="status">${labels}</span>
       ${voteControlHtml(post)}
@@ -4027,6 +4080,12 @@ function withImageSpoiler(image, form) {
   return { ...image, spoiler: Boolean(form?.elements?.imageSpoiler?.checked) };
 }
 
+// Whether the poster opted to stamp this post with their staff capcode. Only
+// honored server-side for verified admin/moderator accounts.
+function capcodeValue(form) {
+  return isCapcodeEligible() && Boolean(form?.elements?.capcode?.checked);
+}
+
 async function submitThread(event) {
   event.preventDefault();
   const body = els.threadBody.value;
@@ -4054,6 +4113,7 @@ async function submitThread(event) {
       deletePassword: defaultDeletePassword(),
       captchaToken,
       posterToken: state.posterToken,
+      capcode: capcodeValue(els.threadForm),
       image: withImageSpoiler(state.selectedImage, els.threadForm)
     };
     const result = await api(`/api/boards/${state.boardSlug}/threads`, {
@@ -4074,6 +4134,9 @@ async function submitThread(event) {
     state.selectedImage = null;
     if (els.threadForm.elements.imageSpoiler) {
       els.threadForm.elements.imageSpoiler.checked = false;
+    }
+    if (els.threadForm.elements.capcode) {
+      els.threadForm.elements.capcode.checked = false;
     }
     els.imagePreview.classList.add('hidden');
     resetHcaptcha(els.threadCaptcha);
@@ -4127,6 +4190,12 @@ async function submitComment(event) {
     if (els.quickReplyForm?.elements?.imageSpoiler) {
       els.quickReplyForm.elements.imageSpoiler.checked = false;
     }
+    if (els.commentForm.elements.capcode) {
+      els.commentForm.elements.capcode.checked = false;
+    }
+    if (els.quickReplyForm?.elements?.capcode) {
+      els.quickReplyForm.elements.capcode.checked = false;
+    }
     els.commentImagePreview.innerHTML = '';
     els.commentImagePreview.classList.add('hidden');
     resetHcaptcha(els.commentCaptcha);
@@ -4154,7 +4223,8 @@ async function createComment(body, captchaToken) {
       posterToken: state.posterToken,
       displayName: displayNameValue(form),
       options: formValue(form, 'options'),
-      deletePassword: defaultDeletePassword()
+      deletePassword: defaultDeletePassword(),
+      capcode: capcodeValue(form)
     })
   });
 }

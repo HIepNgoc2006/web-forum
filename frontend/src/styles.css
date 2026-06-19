@@ -1442,6 +1442,35 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   font-weight: bold;
 }
 
+/* Verified staff capcode badge (## Quản trị viên / ## Điều hành viên). */
+.post-meta .capcode {
+  margin-left: 4px;
+  font-weight: bold;
+}
+
+.capcode-admin {
+  color: #af0a0f;
+}
+
+.capcode-moderator {
+  color: #117743;
+}
+
+/* "(You)" markers on the viewer's own posts and quotes pointing at them. */
+.you-marker {
+  margin-left: 4px;
+  color: #d00;
+  font-weight: bold;
+}
+
+.ref-link.you-ref {
+  color: #d00;
+}
+
+.you-ref-marker {
+  font-weight: bold;
+}
+
 .sticky-label {
   display: inline-block;
   margin-left: 4px;

@@ -803,6 +803,56 @@ test('tripcode is parsed from display name, name part is sanitized, and image sp
   );
 });
 
+test('capcode is stamped only for authorized roles and ignores forged values', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const adminThread = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thong bao tu quan tri',
+    capcode: 'admin',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    posterToken: 'staff-a'
+  });
+  const modReply = await service.createComment({
+    threadId: adminThread.thread.id,
+    body: 'Dieu hanh vien ghi chu',
+    capcode: 'moderator',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8',
+    posterToken: 'staff-b'
+  });
+  const forgedThread = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Co gang gia mao capcode',
+    capcode: 'owner',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9',
+    posterToken: 'troll-a'
+  });
+  const anonReply = await service.createComment({
+    threadId: adminThread.thread.id,
+    body: 'Reply binh thuong',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.10',
+    posterToken: 'anon-a'
+  });
+
+  assert.equal(adminThread.thread.capcode, 'admin');
+  assert.equal(modReply.comment.capcode, 'moderator');
+  assert.equal(forgedThread.thread.capcode, null);
+  assert.equal(anonReply.comment.capcode, null);
+
+  const detail = await service.getThread(adminThread.thread.id);
+  assert.equal(detail.thread.capcode, 'admin');
+  assert.equal(detail.comments.find((comment) => comment.capcode === 'moderator')?.capcode, 'moderator');
+});
+
 test('anonymous poll allows one vote per hashed fingerprint without exposing voters', async () => {
   const realtime = createEvents();
   const service = createForumService({
