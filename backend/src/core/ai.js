@@ -99,6 +99,27 @@ const AUDIO_MIME_TYPES = new Set([
 
 const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+// Wraps raw little-endian PCM (s16) in a minimal WAV container so browsers can play it
+// from an <audio> element. Gemini TTS returns bare PCM (audio/L16), not a playable file.
+function pcmToWav(pcm, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
+  const blockAlign = (channels * bitsPerSample) / 8;
+  const header = Buffer.alloc(44);
+  header.write('RIFF', 0);
+  header.writeUInt32LE(36 + pcm.length, 4);
+  header.write('WAVE', 8);
+  header.write('fmt ', 12);
+  header.writeUInt32LE(16, 16);
+  header.writeUInt16LE(1, 20);
+  header.writeUInt16LE(channels, 22);
+  header.writeUInt32LE(sampleRate, 24);
+  header.writeUInt32LE(sampleRate * blockAlign, 28);
+  header.writeUInt16LE(blockAlign, 32);
+  header.writeUInt16LE(bitsPerSample, 34);
+  header.write('data', 36);
+  header.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([header, pcm]);
+}
+
 // Strips an optional `data:<mime>;base64,` prefix and returns the raw base64 payload.
 function rawBase64(data = '') {
   const value = String(data);
@@ -338,26 +359,34 @@ ${redactSensitiveText(text)}
       return textFromResponse(data).trim();
     },
 
-    async speak(text, { voice, languageCode = 'vi-VN' } = {}) {
+    async speak(text, { voice } = {}) {
+      // Use Gemini's native TTS via the generativelanguage endpoint so the same AI Studio
+      // key works (Cloud Text-to-Speech is a separate, separately-authorized API).
       const apiKey = requireGoogleAiKey();
-      const endpoint = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
+      const model = process.env.GOOGLE_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          input: { text: redactSensitiveText(text) },
-          voice: { languageCode, ...(voice ? { name: voice } : {}) },
-          audioConfig: { audioEncoding: 'MP3' }
+          contents: [{ role: 'user', parts: [{ text: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}` }] }],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice || 'Kore' } } }
+          }
         })
       });
       if (!response.ok) {
         throw new Error(`Yêu cầu Google TTS thất bại: ${response.status}`);
       }
       const data = await response.json();
-      if (!data.audioContent) {
+      const inline = data.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
+      if (!inline?.data) {
         throw new Error('Google TTS không trả về audio.');
       }
-      return { data: data.audioContent, mimeType: 'audio/mpeg' };
+      const sampleRate = Number(/rate=(\d+)/.exec(inline.mimeType ?? '')?.[1]) || 24000;
+      const pcm = Buffer.from(inline.data, 'base64');
+      return { data: pcmToWav(pcm, sampleRate).toString('base64'), mimeType: 'audio/wav' };
     }
   };
 }
