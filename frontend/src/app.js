@@ -556,6 +556,10 @@ const els = {
   threadRewriteTone: document.querySelector('#threadRewriteTone'),
   threadAiRewriteLabel: document.querySelector('#threadAiRewriteLabel'),
   threadImage: document.querySelector('#threadImage'),
+  threadAudio: document.querySelector('#threadAudio'),
+  threadCaptionButton: document.querySelector('#threadCaptionButton'),
+  threadOcrButton: document.querySelector('#threadOcrButton'),
+  translateTarget: document.querySelector('#translateTarget'),
   threadCaptcha: document.querySelector('#threadCaptcha'),
   imagePreview: document.querySelector('#imagePreview'),
   refreshThreads: document.querySelector('#refreshThreads'),
@@ -578,6 +582,9 @@ const els = {
   commentPrivacyWarning: document.querySelector('#commentPrivacyWarning'),
   commentCaptcha: document.querySelector('#commentCaptcha'),
   commentImage: document.querySelector('#commentImage'),
+  commentAudio: document.querySelector('#commentAudio'),
+  commentCaptionButton: document.querySelector('#commentCaptionButton'),
+  commentOcrButton: document.querySelector('#commentOcrButton'),
   commentImagePreview: document.querySelector('#commentImagePreview'),
   suggestButton: document.querySelector('#suggestButton'),
   rewriteButton: document.querySelector('#rewriteButton'),
@@ -3183,6 +3190,8 @@ function meta(post, options = {}) {
       }
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
+      <button class="quote-button" data-translate-post="${post.globalNumber}" type="button">[Dịch]</button>
+      <button class="quote-button" data-tts-post="${post.globalNumber}" type="button">[Nghe]</button>
     </div>
   `;
 }
@@ -4308,6 +4317,138 @@ async function rewriteDraft(target) {
   }
 }
 
+// Reads the rendered text of a post body from the DOM so AI actions never need the raw payload.
+function postBodyText(globalNumber) {
+  const article = document.getElementById(`p${globalNumber}`);
+  const body = article?.querySelector('.post-body');
+  return body ? body.textContent.trim() : '';
+}
+
+async function translatePost(button) {
+  if (!state.aiConfigured) {
+    showToast(aiNotConfiguredMessage);
+    return;
+  }
+  const number = button.dataset.translatePost;
+  const text = postBodyText(number);
+  if (!text) {
+    showToast('Bài này không có nội dung để dịch.');
+    return;
+  }
+  const article = document.getElementById(`p${number}`);
+  const restore = setButtonLoading(button, '...');
+  try {
+    const targetLang = els.translateTarget ? els.translateTarget.value : 'en';
+    const result = await api('/api/ai/translate', {
+      method: 'POST',
+      body: JSON.stringify({ text, targetLang, posterToken: state.posterToken })
+    });
+    let box = article.querySelector('.post-translation');
+    if (!box) {
+      box = document.createElement('div');
+      box.className = 'post-translation';
+      article.querySelector('.post-body').after(box);
+    }
+    box.textContent = `[${result.targetLang}] ${result.text}`;
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    restore();
+  }
+}
+
+let aiAudioPlayer = null;
+
+async function speakPost(button) {
+  if (!state.aiConfigured) {
+    showToast(aiNotConfiguredMessage);
+    return;
+  }
+  const text = postBodyText(button.dataset.ttsPost);
+  if (!text) {
+    showToast('Bài này không có nội dung để đọc.');
+    return;
+  }
+  const restore = setButtonLoading(button, '...');
+  try {
+    const result = await api('/api/ai/speak', {
+      method: 'POST',
+      body: JSON.stringify({ text: text.slice(0, 2000), posterToken: state.posterToken })
+    });
+    if (aiAudioPlayer) {
+      aiAudioPlayer.pause();
+    }
+    aiAudioPlayer = new Audio(`data:${result.mimeType};base64,${result.audio}`);
+    await aiAudioPlayer.play();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    restore();
+  }
+}
+
+// Caption (describe/OCR) the image already attached to a composer, inserting the result into the draft.
+async function captionAttachedImage({ stateKey, textarea, mode = 'describe' } = {}) {
+  if (!state.aiConfigured) {
+    showToast(aiNotConfiguredMessage);
+    return;
+  }
+  const image = state[stateKey];
+  if (!image || !image.dataUrl) {
+    showToast('Chưa có ảnh đính kèm để AI mô tả.');
+    return;
+  }
+  try {
+    const result = await api('/api/ai/caption', {
+      method: 'POST',
+      body: JSON.stringify({ data: image.dataUrl, mimeType: image.type, mode, posterToken: state.posterToken })
+    });
+    if (!result.text) {
+      showToast(mode === 'ocr' ? 'Không tìm thấy chữ trong ảnh.' : 'AI chưa mô tả được ảnh.');
+      return;
+    }
+    const prefix = textarea.value.trim() ? `${textarea.value.trim()}\n` : '';
+    textarea.value = `${prefix}${result.text}`;
+    textarea.focus();
+    showToast('Đã chèn mô tả ảnh vào nháp. Kiểm tra trước khi gửi.');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+// Reads an audio File as base64 and transcribes it into the given draft textarea.
+async function transcribeAudioFile(file, textarea) {
+  if (!state.aiConfigured) {
+    showToast(aiNotConfiguredMessage);
+    return;
+  }
+  if (!file) {
+    return;
+  }
+  const dataUrl = await new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('Không đọc được tệp audio.'));
+    reader.readAsDataURL(file);
+  });
+  try {
+    const result = await api('/api/ai/transcribe', {
+      method: 'POST',
+      body: JSON.stringify({ data: dataUrl, mimeType: file.type, filename: file.name, posterToken: state.posterToken })
+    });
+    if (!result.text) {
+      showToast('Không nhận được nội dung từ audio.');
+      return;
+    }
+    const prefix = textarea.value.trim() ? `${textarea.value.trim()}\n` : '';
+    textarea.value = `${prefix}${result.text}`;
+    textarea.focus();
+    showToast('Đã chèn lời thoại vào nháp. Kiểm tra trước khi gửi.');
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function showReference(number, event) {
   const previewWidth = Math.min(360, window.innerWidth - 12);
   const left = clamp(event.clientX + 10, 6, window.innerWidth - previewWidth - 6);
@@ -4834,6 +4975,26 @@ function bindEvents() {
   els.suggestButton.addEventListener('click', loadSuggestions);
   els.threadRewriteButton.addEventListener('click', () => rewriteDraft('thread'));
   els.rewriteButton.addEventListener('click', () => rewriteDraft('comment'));
+  els.threadCaptionButton?.addEventListener('click', () =>
+    captionAttachedImage({ stateKey: 'selectedImage', textarea: els.threadBody, mode: 'describe' })
+  );
+  els.threadOcrButton?.addEventListener('click', () =>
+    captionAttachedImage({ stateKey: 'selectedImage', textarea: els.threadBody, mode: 'ocr' })
+  );
+  els.commentCaptionButton?.addEventListener('click', () =>
+    captionAttachedImage({ stateKey: 'commentImage', textarea: els.commentBody, mode: 'describe' })
+  );
+  els.commentOcrButton?.addEventListener('click', () =>
+    captionAttachedImage({ stateKey: 'commentImage', textarea: els.commentBody, mode: 'ocr' })
+  );
+  els.threadAudio?.addEventListener('change', async () => {
+    await transcribeAudioFile(els.threadAudio.files?.[0], els.threadBody);
+    els.threadAudio.value = '';
+  });
+  els.commentAudio?.addEventListener('change', async () => {
+    await transcribeAudioFile(els.commentAudio.files?.[0], els.commentBody);
+    els.commentAudio.value = '';
+  });
   els.threadImage.addEventListener(
     'change',
     handleImageInputChange(els.threadImage, { stateKey: 'selectedImage', preview: els.imagePreview })
@@ -5048,6 +5209,18 @@ function bindEvents() {
       addLocalSetItem(hiddenPostsKey, hidePostButton.dataset.hidePost);
       await loadThread().catch((error) => showToast(error.message));
       showToast('Đã ẩn bài trên trình duyệt này.');
+      return;
+    }
+
+    const translatePostButton = event.target.closest('[data-translate-post]');
+    if (translatePostButton) {
+      await translatePost(translatePostButton);
+      return;
+    }
+
+    const ttsPostButton = event.target.closest('[data-tts-post]');
+    if (ttsPostButton) {
+      await speakPost(ttsPostButton);
       return;
     }
 

@@ -222,8 +222,8 @@ function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
   if (method === 'POST' && parts[1] === 'threads' && ['summary', 'suggestions'].includes(parts[3])) {
     return { limiter: limiters.ai, key: `${ip}:ai:thread:${parts[2]}:${parts[3]}` };
   }
-  if (method === 'POST' && parts[1] === 'ai' && parts[2] === 'rewrite') {
-    return { limiter: limiters.ai, key: `${ip}:ai:rewrite` };
+  if (method === 'POST' && parts[1] === 'ai') {
+    return { limiter: limiters.ai, key: `${ip}:ai:${parts[2] ?? 'generic'}` };
   }
   if (method === 'GET' && parts[1] === 'search') {
     return { limiter: limiters.search, key: `${ip}:search:${pathname}` };
@@ -533,6 +533,50 @@ export function createHttpServer({
             posterToken: body.posterToken
           })
         });
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/ai/translate') {
+        const body = await readJson(request, 40_000);
+        ok(response, await service.translateDraft({
+          text: body.text ?? body.body,
+          targetLang: body.targetLang,
+          ip,
+          posterToken: body.posterToken
+        }));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/ai/transcribe') {
+        const body = await readJson(request, 18_000_000);
+        ok(response, await service.transcribeAudio({
+          audio: { data: body.data, mimeType: body.mimeType, filename: body.filename },
+          ip,
+          posterToken: body.posterToken
+        }));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/ai/caption') {
+        const body = await readJson(request, 12_000_000);
+        ok(response, await service.captionImage({
+          image: { data: body.data, mimeType: body.mimeType },
+          mode: body.mode,
+          ip,
+          posterToken: body.posterToken
+        }));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/ai/speak') {
+        const body = await readJson(request, 40_000);
+        ok(response, await service.speakText({
+          text: body.text ?? body.body,
+          voice: body.voice,
+          languageCode: body.languageCode,
+          ip,
+          posterToken: body.posterToken
+        }));
         return;
       }
 

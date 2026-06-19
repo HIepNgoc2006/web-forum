@@ -1150,6 +1150,10 @@ function consumeAiBudget(state, { kind, ip, posterToken, actor, createdAt }) {
     summary: 20,
     suggestion: 30,
     rewrite: 20,
+    translate: 40,
+    transcribe: 15,
+    caption: 30,
+    speak: 20,
     digest: Number(process.env.ADMIN_DIGEST_DAILY_LIMIT) || 5
   };
   const limit = limits[kind] ?? 10;
@@ -1164,6 +1168,23 @@ function consumeAiBudget(state, { kind, ip, posterToken, actor, createdAt }) {
     count: current.count + 1,
     updatedAt: createdAt
   };
+}
+
+// Validates an AI media payload ({ data: base64, mimeType }) and enforces a byte cap.
+// `maxBytes` is the decoded size limit; base64 inflates ~4/3 so we compare against the encoded length.
+function assertAiMedia(media, maxBytes, kind) {
+  if (!media || typeof media.data !== 'string' || !media.data) {
+    const error = new Error(`Thiếu dữ liệu ${kind === 'audio' ? 'audio' : 'ảnh'} để xử lý.`);
+    error.statusCode = 400;
+    throw error;
+  }
+  const base64 = media.data.includes(',') ? media.data.slice(media.data.indexOf(',') + 1) : media.data;
+  const approxBytes = Math.floor(base64.length * 0.75);
+  if (approxBytes > maxBytes) {
+    const error = new Error(`Tệp ${kind === 'audio' ? 'audio' : 'ảnh'} quá lớn.`);
+    error.statusCode = 413;
+    throw error;
+  }
 }
 
 function cacheSummary(state, key, fingerprint, producer, createdAt) {
@@ -1307,11 +1328,24 @@ export function createForumService({
     logger({ event, ...payload });
   }
 
-  async function mutate(callback) {
-    const state = await store.read();
-    const result = await callback(state);
-    await store.write(state);
-    return result;
+  // Serialize the whole read-modify-write so concurrent mutations cannot
+  // interleave. The store model is whole-state RMW and callbacks await slow
+  // work (AI moderation, image upload); without this, two in-flight posts read
+  // the same snapshot and the second write clobbers the first — the post
+  // returns 200 but the thread/comment silently vanishes (and global numbers
+  // collide). Queue is process-local; multi-instance deployments still need a
+  // shared lock (see store notes).
+  let mutateQueue = Promise.resolve();
+  function mutate(callback) {
+    const run = mutateQueue.then(async () => {
+      const state = await store.read();
+      const result = await callback(state);
+      await store.write(state);
+      return result;
+    });
+    // Keep the chain alive regardless of this mutation's outcome.
+    mutateQueue = run.then(() => undefined, () => undefined);
+    return run;
   }
 
   async function requireCaptcha(token, ip) {
@@ -3160,6 +3194,61 @@ export function createForumService({
         });
         logEvent('ai.rewrite', { actor });
         return ai.rewrite(normalizedBody, tone);
+      });
+    },
+
+    async translateDraft({ text, targetLang = 'vi', ip, posterToken, actor = 'public' } = {}) {
+      const normalizedText = normalizeBody(text);
+      if (!normalizedText) {
+        const error = new Error('Nội dung là bắt buộc');
+        error.statusCode = 400;
+        throw error;
+      }
+      const allowedLangs = new Set(['vi', 'en', 'ja', 'ko', 'zh', 'fr', 'es', 'de', 'th']);
+      const lang = allowedLangs.has(String(targetLang)) ? String(targetLang) : 'vi';
+      return mutate(async (state) => {
+        consumeAiBudget(state, { kind: 'translate', ip, posterToken, actor, createdAt: now().toISOString() });
+        logEvent('ai.translate', { actor, targetLang: lang });
+        return { text: await ai.translate(normalizedText, lang), targetLang: lang };
+      });
+    },
+
+    async transcribeAudio({ audio, ip, posterToken, actor = 'public' } = {}) {
+      assertAiMedia(audio, 12 * 1024 * 1024, 'audio');
+      return mutate(async (state) => {
+        consumeAiBudget(state, { kind: 'transcribe', ip, posterToken, actor, createdAt: now().toISOString() });
+        logEvent('ai.transcribe', { actor });
+        return { text: await ai.transcribe(audio) };
+      });
+    },
+
+    async captionImage({ image, mode = 'describe', ip, posterToken, actor = 'public' } = {}) {
+      assertAiMedia(image, 8 * 1024 * 1024, 'image');
+      const safeMode = mode === 'ocr' ? 'ocr' : 'describe';
+      return mutate(async (state) => {
+        consumeAiBudget(state, { kind: 'caption', ip, posterToken, actor, createdAt: now().toISOString() });
+        logEvent('ai.caption', { actor, mode: safeMode });
+        return { text: await ai.caption(image, safeMode), mode: safeMode };
+      });
+    },
+
+    async speakText({ text, voice, languageCode, ip, posterToken, actor = 'public' } = {}) {
+      const normalizedText = normalizeBody(text);
+      if (!normalizedText) {
+        const error = new Error('Nội dung là bắt buộc');
+        error.statusCode = 400;
+        throw error;
+      }
+      if (normalizedText.length > 2000) {
+        const error = new Error('Văn bản quá dài để chuyển thành giọng nói (tối đa 2000 ký tự).');
+        error.statusCode = 413;
+        throw error;
+      }
+      return mutate(async (state) => {
+        consumeAiBudget(state, { kind: 'speak', ip, posterToken, actor, createdAt: now().toISOString() });
+        logEvent('ai.speak', { actor });
+        const audio = await ai.speak(normalizedText, { voice, languageCode });
+        return { audio: audio.data, mimeType: audio.mimeType };
       });
     },
 

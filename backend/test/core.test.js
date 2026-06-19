@@ -39,6 +39,18 @@ const safeAi = {
   },
   async summarizeReports(reasons) {
     return `AI tong hop: ${reasons.join(', ')}`;
+  },
+  async translate(text, targetLang = 'vi') {
+    return `Da dich [${targetLang}]: ${text}`;
+  },
+  async transcribe(media) {
+    return `Da go bang: ${media.mimeType ?? 'audio'}`;
+  },
+  async caption(media, mode = 'describe') {
+    return `Da mo ta [${mode}]: ${media.mimeType ?? 'image'}`;
+  },
+  async speak(text) {
+    return { data: Buffer.from(`audio:${text}`).toString('base64'), mimeType: 'audio/mpeg' };
   }
 };
 
@@ -509,6 +521,114 @@ test('forum service does not send IP, captcha, poster token, or admin token to A
   assert.equal(capturedText.includes('admin-secret-token'), false);
 });
 
+test('createAiClient fallback rejects new media features without a key', async () => {
+  const originalKey = process.env.GOOGLE_AI_API_KEY;
+  const originalProvider = process.env.AI_PROVIDER;
+  delete process.env.GOOGLE_AI_API_KEY;
+  delete process.env.AI_PROVIDER;
+  try {
+    const ai = createAiClient();
+    await assert.rejects(() => ai.translate('xin chao', 'en'), /AI/);
+    await assert.rejects(() => ai.transcribe({ data: 'AAAA', mimeType: 'audio/mpeg' }), /AI/);
+    await assert.rejects(() => ai.caption({ data: 'AAAA', mimeType: 'image/png' }), /AI/);
+    await assert.rejects(() => ai.speak('xin chao'), /AI/);
+  } finally {
+    if (originalKey === undefined) delete process.env.GOOGLE_AI_API_KEY;
+    else process.env.GOOGLE_AI_API_KEY = originalKey;
+    if (originalProvider === undefined) delete process.env.AI_PROVIDER;
+    else process.env.AI_PROVIDER = originalProvider;
+  }
+});
+
+test('forum service translateDraft returns translation and enforces target language allowlist', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    now: () => new Date('2026-06-04T00:00:00.000Z')
+  });
+
+  const result = await service.translateDraft({ text: 'Xin chào', targetLang: 'en', ip: '203.0.113.5' });
+  assert.equal(result.targetLang, 'en');
+  assert.equal(result.text, 'Da dich [en]: Xin chào');
+
+  const fallback = await service.translateDraft({ text: 'Xin chào', targetLang: 'klingon', ip: '203.0.113.5' });
+  assert.equal(fallback.targetLang, 'vi');
+});
+
+test('forum service transcribeAudio and captionImage return AI text', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    now: () => new Date('2026-06-04T00:00:00.000Z')
+  });
+
+  const transcript = await service.transcribeAudio({
+    audio: { data: Buffer.from('hello').toString('base64'), mimeType: 'audio/mpeg' },
+    ip: '203.0.113.5'
+  });
+  assert.match(transcript.text, /Da go bang/);
+
+  const caption = await service.captionImage({
+    image: { data: Buffer.from('img').toString('base64'), mimeType: 'image/png' },
+    mode: 'ocr',
+    ip: '203.0.113.5'
+  });
+  assert.equal(caption.mode, 'ocr');
+  assert.match(caption.text, /Da mo ta \[ocr\]/);
+});
+
+test('forum service speakText returns base64 audio and rejects empty or oversized text', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    now: () => new Date('2026-06-04T00:00:00.000Z')
+  });
+
+  const result = await service.speakText({ text: 'Xin chào 36chan', ip: '203.0.113.5' });
+  assert.equal(result.mimeType, 'audio/mpeg');
+  assert.equal(Buffer.from(result.audio, 'base64').toString(), 'audio:Xin chào 36chan');
+
+  await assert.rejects(() => service.speakText({ text: '   ', ip: '203.0.113.5' }), /bắt buộc/);
+  await assert.rejects(
+    () => service.speakText({ text: 'a'.repeat(2001), ip: '203.0.113.5' }),
+    (error) => error.statusCode === 413
+  );
+});
+
+test('forum service rejects oversized AI media payloads', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    now: () => new Date('2026-06-04T00:00:00.000Z')
+  });
+
+  const huge = 'A'.repeat(20 * 1024 * 1024);
+  await assert.rejects(
+    () => service.transcribeAudio({ audio: { data: huge, mimeType: 'audio/mpeg' }, ip: '203.0.113.5' }),
+    (error) => error.statusCode === 413
+  );
+  await assert.rejects(
+    () => service.captionImage({ image: { data: '', mimeType: 'image/png' }, ip: '203.0.113.5' }),
+    (error) => error.statusCode === 400
+  );
+});
+
+test('forum service enforces a daily budget on AI translate requests', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    now: () => new Date('2026-06-04T00:00:00.000Z')
+  });
+
+  for (let i = 0; i < 40; i += 1) {
+    await service.translateDraft({ text: 'Xin chào', targetLang: 'en', ip: '203.0.113.9', posterToken: 'p' });
+  }
+  await assert.rejects(
+    () => service.translateDraft({ text: 'Xin chào', targetLang: 'en', ip: '203.0.113.9', posterToken: 'p' }),
+    (error) => error.statusCode === 429
+  );
+});
+
 test('createPosterHash is stable per poster in a thread/day but changes by poster token', () => {
   const first = createPosterHash({
     ip: '203.0.113.7',
@@ -753,10 +873,10 @@ test('getThread sorts comments by best/top/new/controversial/old', async () => {
   const b = await makeComment('binh luan b', 'author-b');
   const c = await makeComment('binh luan c', 'author-c');
 
-  const upvote = (target, token) =>
-    service.votePost({ globalNumber: target, direction: 'up', ip: '198.51.100.1', posterToken: token });
-  const downvote = (target, token) =>
-    service.votePost({ globalNumber: target, direction: 'down', ip: '198.51.100.2', posterToken: token });
+  const upvote = (target, account) =>
+    service.votePost({ globalNumber: target, direction: 'up', accountId: account });
+  const downvote = (target, account) =>
+    service.votePost({ globalNumber: target, direction: 'down', accountId: account });
 
   // a: score 1, b: score 3, c: balanced 1/1 (controversial).
   await upvote(a, 'r1');
@@ -2824,4 +2944,40 @@ test('a successful login resets the failed-attempt counter', async () => {
   }
   const account = await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' });
   assert.equal(account.username, 'reset_target');
+});
+
+test('concurrent thread creation never loses a post to interleaved writes', async () => {
+  // Moderation yields the event loop, the window where two read-modify-write
+  // mutations used to interleave and the later write clobbered the earlier one.
+  const slowAi = {
+    async moderate() {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { status: 'Safe', labels: [] };
+    }
+  };
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: slowAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const count = 10;
+  const results = await Promise.all(
+    Array.from({ length: count }, (_unused, i) =>
+      service.createThread({
+        boardSlug: 'hoc-tap',
+        body: `Thread dong thoi ${i}`,
+        captchaToken: 'dev-pass',
+        ip: '203.0.113.20',
+        posterToken: `browser-${i}`
+      })
+    )
+  );
+
+  const threads = await service.listThreads('hoc-tap');
+  assert.equal(threads.length, count, 'every concurrent thread must persist');
+
+  const globalNumbers = results.map((result) => result.thread.globalNumber).sort((a, b) => a - b);
+  assert.deepEqual(globalNumbers, Array.from({ length: count }, (_unused, i) => i + 1));
 });

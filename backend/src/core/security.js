@@ -326,6 +326,14 @@ export async function verifyHcaptcha(token, remoteIp) {
       }
     );
     request.on('error', () => resolve(false));
+    // Bound the call so a hung hCaptcha connection cannot block the
+    // post/login request indefinitely. On timeout, fail closed (treat as
+    // unverified) and tear down the socket.
+    request.setTimeout(10_000, () => {
+      console.warn('hcaptcha.verify.timeout');
+      request.destroy();
+      resolve(false);
+    });
     request.write(body);
     request.end();
   });

@@ -22,6 +22,18 @@ const safeAi = {
   },
   async rewrite(text) {
     return `Da sua: ${text}`;
+  },
+  async translate(text, targetLang = 'vi') {
+    return `Da dich [${targetLang}]: ${text}`;
+  },
+  async transcribe() {
+    return 'Loi thoai da go bang';
+  },
+  async caption(_media, mode = 'describe') {
+    return `Mo ta [${mode}]`;
+  },
+  async speak() {
+    return { data: Buffer.from('audio').toString('base64'), mimeType: 'audio/mpeg' };
   }
 };
 
@@ -482,6 +494,36 @@ test('http ai rewrite does not receive account private data', async () => {
     },
     { ai }
   );
+});
+
+test('http exposes translate, transcribe, caption and speak AI routes', async () => {
+  await withServer(async (baseUrl) => {
+    const json = (body) => ({ method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+
+    const translate = await fetch(`${baseUrl}/api/ai/translate`, json({ text: 'Xin chào', targetLang: 'en' }));
+    assert.equal(translate.status, 200);
+    assert.deepEqual(await translate.json(), { data: { text: 'Da dich [en]: Xin chào', targetLang: 'en' } });
+
+    const transcribe = await fetch(
+      `${baseUrl}/api/ai/transcribe`,
+      json({ data: Buffer.from('a').toString('base64'), mimeType: 'audio/mpeg' })
+    );
+    assert.equal(transcribe.status, 200);
+    assert.equal((await transcribe.json()).data.text, 'Loi thoai da go bang');
+
+    const caption = await fetch(
+      `${baseUrl}/api/ai/caption`,
+      json({ data: Buffer.from('a').toString('base64'), mimeType: 'image/png', mode: 'ocr' })
+    );
+    assert.equal(caption.status, 200);
+    assert.deepEqual(await caption.json(), { data: { text: 'Mo ta [ocr]', mode: 'ocr' } });
+
+    const speak = await fetch(`${baseUrl}/api/ai/speak`, json({ text: 'Xin chào' }));
+    assert.equal(speak.status, 200);
+    const speakBody = await speak.json();
+    assert.equal(speakBody.data.mimeType, 'audio/mpeg');
+    assert.equal(Buffer.from(speakBody.data.audio, 'base64').toString(), 'audio');
+  });
 });
 
 test('http account identity is not exposed on public posts', async () => {

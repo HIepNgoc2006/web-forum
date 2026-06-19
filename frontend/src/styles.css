@@ -1345,6 +1345,17 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   white-space: normal;
 }
 
+.post-translation {
+  margin: 6px 0 0;
+  padding: 6px 8px;
+  border-left: 3px solid var(--accent, #789922);
+  background: rgba(120, 153, 34, 0.08);
+  color: var(--text);
+  font-size: 0.95em;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 .post-line {
   min-height: 1.2em;
 }
