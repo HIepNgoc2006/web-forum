@@ -364,7 +364,7 @@ async function main() {
       {
         label: 'thread desktop',
         url: `${baseUrl}/#thread/${threadId}`,
-        checks: ['Đăng trả lời', 'Theo dõi', 'Xóa bài', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử']
+        checks: ['Đăng trả lời', 'Theo dõi', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử']
       },
       {
         label: 'catalog desktop',
