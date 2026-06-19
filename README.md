@@ -133,33 +133,7 @@ STORE_DRIVER=mongo
 MONGODB_URI=mongodb://mongo:27017/36chan
 ```
 
-Configure `HCAPTCHA_SITE_KEY` and `HCAPTCHA_SECRET` before using the compose stack as a real public deployment. Use `npm run dev` for local no-secret development.
-
-## Docker
-
-Build and run the production-like stack with MongoDB:
-
-```bash
-docker compose up --build
-```
-
-The compose stack serves the built Vite frontend and backend on `http://localhost:3000`, uses MongoDB via `STORE_DRIVER=mongo`, and stores local uploads in the `uploads` Docker volume.
-
-Set real secrets through your shell or a local compose `.env` before running a deploy-like environment:
-
-```bash
-ADMIN_USERNAME=admin
-ADMIN_PASSWORD=replace-with-long-password
-JWT_SECRET=replace-with-long-random-secret
-MODERATION_FINGERPRINT_SECRET=replace-with-long-random-secret
-POSTER_PROOF_SECRET=replace-with-long-random-secret
-HCAPTCHA_SITE_KEY=10000000-ffff-ffff-ffff-000000000001
-HCAPTCHA_SECRET=replace-with-hcaptcha-secret
-STORE_DRIVER=mongo
-MONGODB_URI=mongodb://mongo:27017/36chan
-```
-
-If `NODE_ENV=production` and `HCAPTCHA_SECRET` is empty, thread/comment posting is blocked by design. Use `npm run dev` for local no-secret development.
+Configure `HCAPTCHA_SITE_KEY` and `HCAPTCHA_SECRET` before using the compose stack as a real public deployment. If `NODE_ENV=production` and `HCAPTCHA_SECRET` is empty, thread/comment posting is blocked by design. Use `npm run dev` for local no-secret development.
 
 For S3-compatible image storage:
 
