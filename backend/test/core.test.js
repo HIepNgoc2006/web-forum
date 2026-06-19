@@ -17,6 +17,7 @@ import {
   createPosterHash,
   createPosterProofHash,
   createRateLimiter,
+  createTripcode,
   securityConfigStatus,
   signJwt,
   verifyHcaptcha,
@@ -653,6 +654,20 @@ test('createPosterHash is stable per poster in a thread/day but changes by poste
   assert.notEqual(first, otherPoster);
 });
 
+test('createTripcode: insecure trips are deterministic, secure trips differ and are salted', () => {
+  assert.equal(createTripcode(''), null);
+  assert.equal(createTripcode('#'), null);
+
+  const insecure = createTripcode('hunter2');
+  assert.equal(insecure, createTripcode('hunter2'));
+  assert.match(insecure, /^![A-Za-z0-9]{10}$/);
+  assert.notEqual(insecure, createTripcode('other-pass'));
+
+  const secure = createTripcode('#hunter2');
+  assert.match(secure, /^!![A-Za-z0-9]{11}$/);
+  assert.notEqual(secure, insecure);
+});
+
 test('safe thread is public, gets global number, and emits realtime event', async () => {
   const realtime = createEvents();
   const logs = [];
@@ -733,6 +748,56 @@ test('display name is optional per post and separated from anonymous identity', 
         captchaToken: 'dev-pass',
         ip: '203.0.113.10',
         posterToken: 'browser-d'
+      }),
+    /Tên hiển thị này không dùng được/
+  );
+});
+
+test('tripcode is parsed from display name, name part is sanitized, and image spoiler is preserved', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread co tripcode va anh spoiler',
+    displayName: 'Sinh vien#bi-mat',
+    image: { type: 'image/png', dataUrl: 'data:image/png;base64,aGVsbG8=', spoiler: true },
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    posterToken: 'browser-a'
+  });
+  const reply = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Reply khong tripcode',
+    displayName: 'Anonymous',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8',
+    posterToken: 'browser-b'
+  });
+  const detail = await service.getThread(created.thread.id);
+
+  assert.equal(created.thread.displayName, 'Sinh vien');
+  assert.equal(created.thread.tripcode, createTripcode('bi-mat'));
+  assert.match(created.thread.tripcode, /^![A-Za-z0-9]{10}$/);
+  assert.equal(created.thread.image.spoiler, true);
+  assert.equal(detail.thread.tripcode, created.thread.tripcode);
+  assert.equal(detail.thread.image.spoiler, true);
+  assert.equal(reply.comment.tripcode, null);
+
+  // Reserved-name rule still applies to the name part before the '#'.
+  await assert.rejects(
+    () =>
+      service.createThread({
+        boardSlug: 'hoc-tap',
+        body: 'Reserved name voi tripcode',
+        displayName: 'Moderator#secret',
+        captchaToken: 'dev-pass',
+        ip: '203.0.113.9',
+        posterToken: 'browser-c'
       }),
     /Tên hiển thị này không dùng được/
   );
@@ -943,6 +1008,7 @@ test('thread image metadata is sanitized and returned with public thread data', 
     name: 'tenanh.png',
     type: 'image/png',
     dataUrl: 'data:image/png;base64,AAAA',
+    spoiler: false,
     sizeBytes: 2048,
     width: 640,
     height: 20000,
@@ -1001,6 +1067,7 @@ test('comment image metadata is sanitized and returned with public comment data'
     name: 'reply.png',
     type: 'image/png',
     dataUrl: 'data:image/png;base64,AAAA',
+    spoiler: false,
     sizeBytes: 4096,
     width: 320,
     height: 240,

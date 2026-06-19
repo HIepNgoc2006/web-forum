@@ -10,7 +10,7 @@ import {
 } from './config.js';
 import { redactSensitiveText } from './ai.js';
 import { createInlineImageStorage } from './image-storage.js';
-import { createModerationFingerprint, createPosterHash, createPosterProofHash, verifyHcaptcha } from './security.js';
+import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.js';
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.js';
 import * as defaultTotp from './totp-service.js';
 import * as defaultWebAuthn from './webauthn-service.js';
@@ -285,6 +285,24 @@ function assertDisplayName(value = '') {
 
 function publicDisplayName(value = '') {
   return normalizeDisplayName(value) || ANONYMOUS_DISPLAY_NAME;
+}
+
+// Splits a raw display-name field into a sanitized name and an optional
+// tripcode. `name#secret` -> insecure trip, `name##secret` -> secure trip.
+// The reserved-name and length rules apply to the name part only; the secret
+// never reaches storage or the public surface.
+function parseDisplayNameWithTripcode(value = '') {
+  const raw = String(value ?? '');
+  const hashIndex = raw.indexOf('#');
+  if (hashIndex === -1) {
+    return { displayName: assertDisplayName(raw), tripcode: null };
+  }
+  const namePart = raw.slice(0, hashIndex);
+  const secret = raw.slice(hashIndex + 1);
+  return {
+    displayName: assertDisplayName(namePart),
+    tripcode: createTripcode(secret)
+  };
 }
 
 function normalizeAccountUsername(value = '') {
@@ -817,6 +835,7 @@ function validateImage(image) {
     name: sanitizeFileName(image.name),
     type,
     dataUrl,
+    spoiler: Boolean(image.spoiler),
     sizeBytes: sanitizePositiveInteger(image.sizeBytes, maxBytes) ?? dataUrlBytes(dataUrl)
   };
 
@@ -882,11 +901,22 @@ function validateImageThumbnail(thumbnail) {
   return safeThumbnail;
 }
 
+// Re-applies the spoiler flag onto the stored image. The image storage driver
+// returns its own object (local/S3 metadata) and may drop unknown fields, so
+// the poster's spoiler choice is carried over from the validated upload.
+function applyImageSpoiler(storedImage, safeImage) {
+  if (!storedImage) {
+    return storedImage;
+  }
+  return { ...storedImage, spoiler: Boolean(safeImage?.spoiler) };
+}
+
 function serializeThread(thread, comments) {
   const publicComments = comments.filter((comment) => comment.threadId === thread.id && publicPost(comment));
   return {
     ...stripPrivatePostFields(thread),
     displayName: publicDisplayName(thread.displayName),
+    tripcode: thread.tripcode ?? null,
     poll: serializePoll(thread.poll),
     isArchived: Boolean(thread.isArchived),
     archivedAt: thread.archivedAt ?? null,
@@ -907,6 +937,7 @@ function serializeComment(comment, thread = null) {
   return {
     ...stripPrivatePostFields(comment),
     displayName: publicDisplayName(comment.displayName),
+    tripcode: comment.tripcode ?? null,
     isOp: Boolean(thread?.opProofHash && comment.opProofHash && thread.opProofHash === comment.opProofHash),
     bodyLines: parsePostText(comment.body),
     votes: publicVotes(comment)
@@ -2306,7 +2337,7 @@ export function createForumService({
       const safeImage = validateImage(image);
       const poll = createPoll(pollOptions);
       const postingOptions = parsePostingOptions(options);
-      const normalizedDisplayName = assertDisplayName(displayName);
+      const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
       const createdAt = now().toISOString();
       assertEventBoardOpen(board, createdAt);
 
@@ -2320,8 +2351,9 @@ export function createForumService({
           boardSlug,
           body: normalizedBody,
           displayName: normalizedDisplayName,
+          tripcode,
           accountId,
-          image: storedImage,
+          image: applyImageSpoiler(storedImage, safeImage),
           poll,
           pollVotes: poll ? {} : undefined,
           authorFingerprint,
@@ -2441,7 +2473,7 @@ export function createForumService({
       const safeImage = validateImage(image);
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
-      const normalizedDisplayName = assertDisplayName(displayName);
+      const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
 
       return mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
@@ -2474,8 +2506,9 @@ export function createForumService({
           boardSlug: thread.boardSlug,
           body: normalizedBody,
           displayName: normalizedDisplayName,
+          tripcode,
           accountId,
-          image: storedImage,
+          image: applyImageSpoiler(storedImage, safeImage),
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),

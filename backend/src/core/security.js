@@ -48,6 +48,44 @@ export function createPosterProofHash({ threadId, posterToken = '' }) {
   return crypto.createHmac('sha256', secret).update(`${threadId}:${token}`).digest('hex');
 }
 
+// Classic imageboard tripcode. Takes the substring after the first `#` in a
+// display name. A leading second `#` (i.e. `name##secret`) selects a *secure*
+// tripcode salted with a server secret, so it cannot be reproduced off-site or
+// forged without the secret. Otherwise it is an *insecure* tripcode: a pure
+// function of the password (forgeable by design, matching 4chan semantics).
+// Returns null when there is no usable secret.
+export function createTripcode(secret = '') {
+  const password = String(secret ?? '').slice(0, 256);
+  if (!password) {
+    return null;
+  }
+  if (password.startsWith('#')) {
+    const securePart = password.slice(1);
+    if (!securePart) {
+      return null;
+    }
+    const tripSecret = secretOrDevFallback(
+      process.env.TRIPCODE_SECRET,
+      '36chan-dev-tripcode-secret',
+      'TRIPCODE_SECRET'
+    );
+    const digest = crypto
+      .createHmac('sha256', tripSecret)
+      .update(securePart)
+      .digest('base64')
+      .replace(/[+/=]/g, '')
+      .slice(0, 11);
+    return `!!${digest}`;
+  }
+  const digest = crypto
+    .createHash('sha256')
+    .update(password)
+    .digest('base64')
+    .replace(/[+/=]/g, '')
+    .slice(0, 10);
+  return `!${digest}`;
+}
+
 export function createModerationFingerprint({ ip, posterToken = '' }) {
   const secret = secretOrDevFallback(
     process.env.MODERATION_FINGERPRINT_SECRET,

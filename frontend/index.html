@@ -256,7 +256,7 @@
           <form id="threadForm" class="stack">
             <label class="field-row">
               <span>Tên hiển thị</span>
-              <input name="displayName" placeholder="Anonymous" maxlength="40" autocomplete="off" />
+              <input name="displayName" placeholder="Anonymous (dùng tên#mã để tạo tripcode)" maxlength="60" autocomplete="off" />
             </label>
             <label class="field-row checkbox-row account-display-option hidden" data-account-display-option>
               <span>Tài khoản</span>
@@ -282,6 +282,10 @@
             <label class="field-row">
               <span>Tệp</span>
               <input id="threadImage" type="file" accept="image/*" />
+            </label>
+            <label class="field-row checkbox-row">
+              <span>Ẩn ảnh</span>
+              <label><input name="imageSpoiler" type="checkbox" /> Đánh dấu ảnh là spoiler</label>
             </label>
             <label class="field-row">
               <span>Âm thanh → chữ</span>
@@ -432,7 +436,7 @@
           <form id="commentForm" class="stack">
             <label class="field-row">
               <span>Tên hiển thị</span>
-              <input name="displayName" placeholder="Anonymous" maxlength="40" autocomplete="off" />
+              <input name="displayName" placeholder="Anonymous (dùng tên#mã để tạo tripcode)" maxlength="60" autocomplete="off" />
             </label>
             <label class="field-row checkbox-row account-display-option hidden" data-account-display-option>
               <span>Tài khoản</span>
@@ -459,6 +463,10 @@
             <label class="field-row">
               <span>Tệp</span>
               <input id="commentImage" name="file" type="file" accept="image/*" />
+            </label>
+            <label class="field-row checkbox-row">
+              <span>Ẩn ảnh</span>
+              <label><input name="imageSpoiler" type="checkbox" /> Đánh dấu ảnh là spoiler</label>
             </label>
             <label class="field-row">
               <span>Âm thanh → chữ</span>
@@ -900,7 +908,7 @@
         <button id="quickReplyClose" type="button" aria-label="Đóng trả lời nhanh">X</button>
       </div>
       <form id="quickReplyForm" class="quick-reply-form">
-        <input id="quickReplyName" name="displayName" placeholder="Anonymous" maxlength="40" aria-label="Tên hiển thị" autocomplete="off" />
+        <input id="quickReplyName" name="displayName" placeholder="Anonymous (tên#mã = tripcode)" maxlength="60" aria-label="Tên hiển thị" autocomplete="off" />
         <label class="quick-account-display-option hidden" data-account-display-option>
           <input name="useAccountName" type="checkbox" data-use-account-name /> @username
         </label>
@@ -917,6 +925,7 @@
             <input id="quickReplyFile" type="file" accept="image/*" />
           </label>
           <span id="quickReplyFileName">Chưa chọn tệp</span>
+          <label class="quick-spoiler-toggle"><input name="imageSpoiler" type="checkbox" /> spoiler</label>
           <button class="quick-post-button" type="submit">Gửi</button>
         </div>
       </form>

@@ -1812,6 +1812,7 @@ function plainPreview(lines, fallback = '') {
     .replaceAll('&gt;', '>')
     .replaceAll('&lt;', '<')
     .replaceAll('&amp;', '&')
+    .replace(/\[\/?spoiler\]/gi, '')
     .trim();
   return text || fallback;
 }
@@ -2989,18 +2990,40 @@ async function loadHome() {
 
 function renderPostLines(lines, options = {}) {
   const opNumber = Number(options.opNumber || 0);
+  const knownBoards = new Set((state.boards || []).map((board) => board.slug));
   return lines
     .map((line) => {
-      const html = line.text.replace(/&gt;&gt;(\d+)/g, (_match, number) => {
+      // Cross-board refs (>>>/slug/ or >>>/slug/123) first, so the >>N pass
+      // below does not see the inner ">>" of a triple-arrow reference.
+      let html = line.text.replace(/&gt;&gt;&gt;\/([a-z0-9-]+)\/(\d+)?/g, (match, slug, number) => {
+        if (!knownBoards.has(slug)) {
+          return match;
+        }
+        if (number) {
+          return `<button class="ref-link cross-board" data-ref="${number}" type="button">&gt;&gt;&gt;/${slug}/${number}</button>`;
+        }
+        return `<a class="ref-link cross-board" href="#board/${slug}">&gt;&gt;&gt;/${slug}/</a>`;
+      });
+      html = html.replace(/&gt;&gt;(\d+)/g, (_match, number) => {
         const refNumber = Number(number);
         const isOpReference = opNumber > 0 && refNumber === opNumber;
         const className = isOpReference ? 'ref-link op-ref' : 'ref-link';
         const marker = isOpReference ? ' <span class="op-ref-marker">(OP)</span>' : '';
         return `<button class="${className}" data-ref="${number}" type="button">&gt;&gt;${number}${marker}</button>`;
       });
+      html = renderSpoilerText(html);
       return `<div class="post-line ${line.type === 'greentext' ? 'greentext' : ''}">${html || '&nbsp;'}</div>`;
     })
     .join('');
+}
+
+// Inline [spoiler]...[/spoiler] -> click-to-reveal span. Runs after ref
+// linkification so refs nested inside a spoiler still work once revealed.
+function renderSpoilerText(html) {
+  return String(html).replace(
+    /\[spoiler\]([\s\S]*?)\[\/spoiler\]/gi,
+    (_match, inner) => `<span class="spoiler-text" data-spoiler tabindex="0" title="Bấm để hiện">${inner}</span>`
+  );
 }
 
 function formatPostDate(value) {
@@ -3069,14 +3092,17 @@ function imageToggleHtml(image, className = 'post-image') {
   const name = escapeHtml(image?.name || 'tai-len');
   const thumbnailSrc = imageThumbnailSrc(image);
   const originalSrc = escapeHtml(imageOriginalSrc(image));
+  const spoiler = Boolean(image?.spoiler);
   const preview = thumbnailSrc
     ? `<img class="${className}" src="${escapeHtml(thumbnailSrc)}" alt="${name}" data-full-src="${originalSrc}">`
     : `<span class="${className} placeholder image-lazy-placeholder" data-full-src="${originalSrc}">Có tệp</span>`;
+  const spoilerLabel = spoiler ? '<span class="spoiler-image-label">Spoiler — bấm để hiện</span>' : '';
   return `
-    <div class="thread-thumb-wrap">
+    <div class="thread-thumb-wrap${spoiler ? ' spoiler-image' : ''}">
       <div class="file-text">${fileTextHtml(image)}</div>
-      <button class="image-toggle" data-image-toggle data-full-src="${originalSrc}" data-image-name="${name}" data-image-class="${className}" type="button" aria-expanded="false" aria-label="Phóng to ảnh ${name}">
+      <button class="image-toggle" data-image-toggle${spoiler ? ' data-spoiler-image' : ''} data-full-src="${originalSrc}" data-image-name="${name}" data-image-class="${className}" type="button" aria-expanded="false" aria-label="Phóng to ảnh ${name}">
         ${preview}
+        ${spoilerLabel}
       </button>
     </div>
   `;
@@ -3175,7 +3201,7 @@ function meta(post, options = {}) {
   return `
     <div class="post-meta">
       ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
-      <span class="name">${escapeHtml(postDisplayName(post))}</span>
+      <span class="name">${escapeHtml(postDisplayName(post))}</span>${post.tripcode ? `<span class="tripcode" title="Tripcode">${escapeHtml(post.tripcode)}</span>` : ''}
       <span class="date">${formatPostDate(post.createdAt)}</span>
       <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" title="Liên kết tới bài này">${post.globalNumber}</a></span>
       ${posterIdentity}
@@ -3993,6 +4019,14 @@ function hasOption(value, option) {
     .includes(option);
 }
 
+// Attaches the per-post "hide image (spoiler)" choice to the upload payload.
+function withImageSpoiler(image, form) {
+  if (!image) {
+    return image;
+  }
+  return { ...image, spoiler: Boolean(form?.elements?.imageSpoiler?.checked) };
+}
+
 async function submitThread(event) {
   event.preventDefault();
   const body = els.threadBody.value;
@@ -4020,7 +4054,7 @@ async function submitThread(event) {
       deletePassword: defaultDeletePassword(),
       captchaToken,
       posterToken: state.posterToken,
-      image: state.selectedImage
+      image: withImageSpoiler(state.selectedImage, els.threadForm)
     };
     const result = await api(`/api/boards/${state.boardSlug}/threads`, {
       auth: 'account',
@@ -4038,6 +4072,9 @@ async function submitThread(event) {
     }
     els.threadImage.value = '';
     state.selectedImage = null;
+    if (els.threadForm.elements.imageSpoiler) {
+      els.threadForm.elements.imageSpoiler.checked = false;
+    }
     els.imagePreview.classList.add('hidden');
     resetHcaptcha(els.threadCaptcha);
     closeThreadComposer();
@@ -4084,6 +4121,12 @@ async function submitComment(event) {
     }
     els.commentImage.value = '';
     state.commentImage = null;
+    if (els.commentForm.elements.imageSpoiler) {
+      els.commentForm.elements.imageSpoiler.checked = false;
+    }
+    if (els.quickReplyForm?.elements?.imageSpoiler) {
+      els.quickReplyForm.elements.imageSpoiler.checked = false;
+    }
     els.commentImagePreview.innerHTML = '';
     els.commentImagePreview.classList.add('hidden');
     resetHcaptcha(els.commentCaptcha);
@@ -4106,7 +4149,7 @@ async function createComment(body, captchaToken) {
     method: 'POST',
     body: JSON.stringify({
       body,
-      image,
+      image: withImageSpoiler(image, form),
       captchaToken,
       posterToken: state.posterToken,
       displayName: displayNameValue(form),
@@ -5011,6 +5054,12 @@ function bindEvents() {
   document.body.addEventListener('click', async (event) => {
     const imageToggle = event.target.closest('[data-image-toggle]');
     if (imageToggle) {
+      // A spoilered image reveals on its first click instead of zooming.
+      if (imageToggle.hasAttribute('data-spoiler-image') && !imageToggle.classList.contains('spoiler-revealed')) {
+        imageToggle.classList.add('spoiler-revealed');
+        imageToggle.closest('.thread-thumb-wrap')?.classList.remove('spoiler-image');
+        return;
+      }
       const expanded = imageToggle.classList.toggle('expanded');
       if (expanded) {
         loadFullImageForToggle(imageToggle);
@@ -5242,9 +5291,19 @@ function bindEvents() {
       return;
     }
 
+    const spoilerText = event.target.closest('.spoiler-text');
+    if (spoilerText && !spoilerText.classList.contains('revealed')) {
+      spoilerText.classList.add('revealed');
+      return;
+    }
+
     const ref = event.target.closest('.ref-link');
     if (ref) {
-      await showReference(ref.dataset.ref, event);
+      // Cross-board refs without a post number are plain anchors; let the
+      // browser navigate to the board instead of fetching a post preview.
+      if (ref.dataset.ref) {
+        await showReference(ref.dataset.ref, event);
+      }
       return;
     }
     if (!event.target.closest('.ref-preview')) {

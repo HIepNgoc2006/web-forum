@@ -1364,6 +1364,65 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   color: var(--quote);
 }
 
+.post-meta .tripcode {
+  margin-left: 2px;
+  color: var(--link);
+  font-weight: bold;
+  font-family: monospace;
+}
+
+.ref-link.cross-board {
+  font-weight: bold;
+}
+
+/* Inline text spoiler: black bar hiding text/links until clicked. */
+.spoiler-text {
+  background-color: #111;
+  color: #111;
+  border-radius: 2px;
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.spoiler-text:not(.revealed) * {
+  color: #111 !important;
+}
+
+.spoiler-text.revealed {
+  background-color: rgba(128, 128, 128, 0.18);
+  color: inherit;
+  cursor: auto;
+}
+
+/* Image spoiler: blurred thumbnail with a reveal label. */
+.thread-thumb-wrap.spoiler-image .post-image,
+.thread-thumb-wrap.spoiler-image .thumb {
+  filter: blur(18px);
+}
+
+.spoiler-image-label {
+  display: none;
+}
+
+.thread-thumb-wrap.spoiler-image .spoiler-image-label {
+  display: block;
+  position: absolute;
+  inset: 0;
+  margin: auto;
+  height: fit-content;
+  width: fit-content;
+  padding: 2px 8px;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 12px;
+  border-radius: 3px;
+  pointer-events: none;
+}
+
+.thread-thumb-wrap.spoiler-image .image-toggle {
+  position: relative;
+}
+
 .ref-link {
   min-height: 0;
   border: 0;
