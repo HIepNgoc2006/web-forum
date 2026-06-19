@@ -38,6 +38,17 @@ a vanilla Vite frontend.
 - **Deployment** — Docker/production stack, deployment health endpoint, and
   production deployment documentation.
 
+### Fixed
+
+- Google TTS now routes through Gemini native audio instead of Google Cloud
+  Text-to-Speech.
+- `.env` is loaded synchronously before static imports.
+- MongoDB custom-id/UUID persistence and an `E11000` board race on read/write.
+- Admin 2FA setup and `requires2FA` login flows.
+- CI is green end to end: workspace-root `npm ci`, a cross-platform lockfile
+  (all native `@rolldown` bindings), Node 22 for the e2e smoke, provisioned
+  Chrome, and a corrected browser-smoke assertion.
+
 ### Known Issues
 
 - This is an early `0.x` pre-release. APIs, configuration, and behavior may
