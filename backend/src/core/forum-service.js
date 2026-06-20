@@ -72,6 +72,8 @@ const PRIORITY_FILTERS = new Set(['high', 'medium', 'low']);
 const PRIORITY_SORTS = new Set(['priority', 'newest', 'oldest', 'confidence-desc', 'confidence-asc']);
 const PII_PRIORITY_LABELS = new Set(['PII Risk', 'PII']);
 const HIGH_RISK_REPORT_CATEGORIES = new Set(['PII', 'Illegal']);
+const PRIVILEGED_ACCOUNT_ROLES = new Set(['owner', 'admin', 'moderator', 'viewer']);
+const MANAGED_PRIVILEGED_ROLES = new Set(['owner', 'moderator', 'viewer']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -408,6 +410,35 @@ function assertAccountPassword(value = '', { username = '' } = {}) {
   return password;
 }
 
+function normalizeAccountRole(value = 'user') {
+  const role = String(value || 'user').toLowerCase();
+  if (role === 'admin') {
+    return 'owner';
+  }
+  if (role === 'owner' || role === 'moderator' || role === 'viewer') {
+    return role;
+  }
+  return 'user';
+}
+
+function normalizeManagedPrivilegedRole(value = '') {
+  const role = normalizeAccountRole(value);
+  if (!MANAGED_PRIVILEGED_ROLES.has(role)) {
+    const error = new Error('Vai trò quản trị không hợp lệ');
+    error.statusCode = 400;
+    throw error;
+  }
+  return role;
+}
+
+function isPrivilegedAccount(user = {}) {
+  return PRIVILEGED_ACCOUNT_ROLES.has(String(user.role || '').toLowerCase());
+}
+
+function activeOwnerCount(users = []) {
+  return users.filter((user) => normalizeAccountRole(user.role) === 'owner' && !user.disabled).length;
+}
+
 function accountPasswordHash(password) {
   const salt = crypto.randomBytes(16).toString('hex');
   const iterations = 120_000;
@@ -670,12 +701,27 @@ function serializeAccount(state, user = {}) {
   return {
     id: user.id,
     username: user.username,
-    role: user.role || 'user',
+    role: normalizeAccountRole(user.role),
+    disabled: Boolean(user.disabled),
     twoFactorEnabled: Boolean(user.twoFactorEnabled),
     hasRecoveryCode: Boolean(user.recoveryCodeHash),
     settings: normalizeAccountSettings(state, {}, user.settings),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
+  };
+}
+
+function serializePrivilegedAccount(state, user = {}) {
+  const account = serializeAccount(state, user);
+  return {
+    id: account.id,
+    username: account.username,
+    role: account.role,
+    disabled: account.disabled,
+    twoFactorEnabled: account.twoFactorEnabled,
+    hasRecoveryCode: account.hasRecoveryCode,
+    createdAt: account.createdAt,
+    updatedAt: account.updatedAt
   };
 }
 
@@ -1924,6 +1970,12 @@ export function createForumService({
         throw error;
       }
 
+      if (user.disabled) {
+        const error = new Error('Tài khoản đã bị vô hiệu hóa');
+        error.statusCode = 403;
+        throw error;
+      }
+
       if (user.failedLoginAttempts || user.lockedUntil) {
         user.failedLoginAttempts = 0;
         user.lockedUntil = null;
@@ -2092,19 +2144,99 @@ export function createForumService({
             id: crypto.randomUUID(),
             username: safeUsername,
             passwordHash: accountPasswordHash(password),
-            role: 'admin',
+            role: 'owner',
             settings: defaultAccountSettings(),
+            privateData: defaultAccountPrivateData(),
+            disabled: false,
             createdAt,
             updatedAt: createdAt
           };
           state.users.push(admin);
         } else {
           admin.passwordHash = accountPasswordHash(password);
-          admin.role = 'admin';
+          admin.role = 'owner';
+          admin.disabled = false;
+          admin.privateData = normalizeAccountPrivateData(admin.privateData);
           admin.updatedAt = now().toISOString();
         }
         return serializeAccount(state, admin);
       });
+    },
+
+    async listPrivilegedUsers() {
+      const state = await store.read();
+      return state.users
+        .filter(isPrivilegedAccount)
+        .map((user) => serializePrivilegedAccount(state, user))
+        .sort((left, right) => left.username.localeCompare(right.username));
+    },
+
+    async createPrivilegedUser({ username, password, role = 'viewer', disabled = false } = {}, { actor = 'admin' } = {}) {
+      const safeUsername = assertAccountUsername(username);
+      const safePassword = assertAccountPassword(password, { username: safeUsername });
+      const safeRole = normalizeManagedPrivilegedRole(role);
+      return mutate(async (state) => {
+        const existing = state.users.find((user) => normalizeAccountUsername(user.username) === safeUsername);
+        if (existing) {
+          const error = new Error('Tên tài khoản đã tồn tại');
+          error.statusCode = 409;
+          throw error;
+        }
+        const createdAt = now().toISOString();
+        const user = {
+          id: crypto.randomUUID(),
+          username: safeUsername,
+          passwordHash: accountPasswordHash(safePassword),
+          role: safeRole,
+          settings: defaultAccountSettings(),
+          privateData: defaultAccountPrivateData(),
+          disabled: Boolean(disabled),
+          createdAt,
+          updatedAt: createdAt
+        };
+        state.users.push(user);
+        logEvent('admin.user.create', { actor, username: safeUsername, role: safeRole, disabled: user.disabled });
+        return serializePrivilegedAccount(state, user);
+      });
+    },
+
+    async updatePrivilegedUser(userId, updates = {}, { actor = 'admin', actorId = '' } = {}) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user || !isPrivilegedAccount(user)) {
+          const error = new Error('Không tìm thấy tài khoản quản trị');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const currentRole = normalizeAccountRole(user.role);
+        const nextRole = updates.role === undefined ? currentRole : normalizeManagedPrivilegedRole(updates.role);
+        const nextDisabled = updates.disabled === undefined ? Boolean(user.disabled) : Boolean(updates.disabled);
+        if (user.id === actorId && (nextRole !== currentRole || nextDisabled)) {
+          const error = new Error('Không thể hạ quyền hoặc vô hiệu hóa chính tài khoản đang dùng');
+          error.statusCode = 409;
+          throw error;
+        }
+        if (currentRole === 'owner' && !user.disabled && (nextRole !== 'owner' || nextDisabled) && activeOwnerCount(state.users) <= 1) {
+          const error = new Error('Cần giữ lại ít nhất một owner đang hoạt động');
+          error.statusCode = 409;
+          throw error;
+        }
+
+        user.role = nextRole;
+        user.disabled = nextDisabled;
+        if (updates.password !== undefined && String(updates.password || '').trim()) {
+          const safePassword = assertAccountPassword(updates.password, { username: user.username });
+          user.passwordHash = accountPasswordHash(safePassword);
+        }
+        user.updatedAt = now().toISOString();
+        logEvent('admin.user.update', { actor, username: user.username, role: user.role, disabled: user.disabled });
+        return serializePrivilegedAccount(state, user);
+      });
+    },
+
+    async disablePrivilegedUser(userId, { actor = 'admin', actorId = '' } = {}) {
+      return this.updatePrivilegedUser(userId, { disabled: true }, { actor, actorId });
     },
 
     async generate2FASetup(userId) {

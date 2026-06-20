@@ -126,6 +126,184 @@ test('http api creates public thread and protects admin pending queue', async ()
   });
 });
 
+test('http admin roles gate privileged user and moderation permissions', async () => {
+  await withServer(
+    async (baseUrl) => {
+      const ownerLogin = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const ownerLoginBody = await ownerLogin.json();
+      const ownerHeaders = {
+        authorization: `Bearer ${ownerLoginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+
+      const moderator = await fetch(`${baseUrl}/api/admin/users`, {
+        method: 'POST',
+        headers: ownerHeaders,
+        body: JSON.stringify({ username: 'queue_mod', password: 'moderator-pass', role: 'moderator' })
+      });
+      const moderatorBody = await moderator.json();
+      const viewer = await fetch(`${baseUrl}/api/admin/users`, {
+        method: 'POST',
+        headers: ownerHeaders,
+        body: JSON.stringify({ username: 'queue_view', password: 'viewer-pass-1', role: 'viewer' })
+      });
+      const viewerBody = await viewer.json();
+      const users = await fetch(`${baseUrl}/api/admin/users`, {
+        headers: { authorization: ownerHeaders.authorization }
+      });
+      const usersBody = await users.json();
+      const serializedUsers = JSON.stringify(usersBody.data);
+
+      assert.equal(moderator.status, 201);
+      assert.equal(moderatorBody.data.role, 'moderator');
+      assert.equal(viewer.status, 201);
+      assert.equal(viewerBody.data.role, 'viewer');
+      assert.equal(users.status, 200);
+      assert.equal(usersBody.data.some((user) => user.username === 'queue_mod'), true);
+      assert.equal(serializedUsers.includes('passwordHash'), false);
+      assert.equal(serializedUsers.includes('privateData'), false);
+      assert.equal(serializedUsers.includes('passkeys'), false);
+
+      const pendingPost = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'Pending role test', captchaToken: 'dev-pass' })
+      });
+      const pendingPostBody = await pendingPost.json();
+
+      const moderatorLogin = await fetch(`${baseUrl}/api/account/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'queue_mod', password: 'moderator-pass', captchaToken: 'dev-pass' })
+      });
+      const moderatorLoginBody = await moderatorLogin.json();
+      const moderatorHeaders = {
+        authorization: `Bearer ${moderatorLoginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+      const viewerLogin = await fetch(`${baseUrl}/api/account/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'queue_view', password: 'viewer-pass-1', captchaToken: 'dev-pass' })
+      });
+      const viewerLoginBody = await viewerLogin.json();
+      const viewerHeaders = {
+        authorization: `Bearer ${viewerLoginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+
+      const moderatorPending = await fetch(`${baseUrl}/api/admin/pending`, {
+        headers: { authorization: moderatorHeaders.authorization }
+      });
+      const moderatorUsers = await fetch(`${baseUrl}/api/admin/users`, {
+        headers: { authorization: moderatorHeaders.authorization }
+      });
+      const moderatorBoardCreate = await fetch(`${baseUrl}/api/admin/boards`, {
+        method: 'POST',
+        headers: moderatorHeaders,
+        body: JSON.stringify({
+          slug: 'mod-board',
+          name: 'Mod Board',
+          category: 'Test',
+          description: 'Moderator should not create boards'
+        })
+      });
+      const viewerPending = await fetch(`${baseUrl}/api/admin/pending`, {
+        headers: { authorization: viewerHeaders.authorization }
+      });
+      const viewerApprove = await fetch(`${baseUrl}/api/admin/pending/${pendingPostBody.data.thread.id}/approve`, {
+        method: 'POST',
+        headers: viewerHeaders,
+        body: JSON.stringify({ reason: 'Viewer cannot approve' })
+      });
+
+      assert.equal(moderatorPending.status, 200);
+      assert.equal(moderatorUsers.status, 403);
+      assert.equal(moderatorBoardCreate.status, 403);
+      assert.equal(viewerPending.status, 200);
+      assert.equal(viewerApprove.status, 403);
+    },
+    { ai: flaggedAi }
+  );
+});
+
+test('http admin role demotion and disable affect existing tokens', async () => {
+  await withServer(
+    async (baseUrl) => {
+      const ownerLogin = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const ownerLoginBody = await ownerLogin.json();
+      const ownerHeaders = {
+        authorization: `Bearer ${ownerLoginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+      const created = await fetch(`${baseUrl}/api/admin/users`, {
+        method: 'POST',
+        headers: ownerHeaders,
+        body: JSON.stringify({ username: 'demote_mod', password: 'moderator-pass', role: 'moderator' })
+      });
+      const createdBody = await created.json();
+
+      const moderatorLogin = await fetch(`${baseUrl}/api/account/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'demote_mod', password: 'moderator-pass', captchaToken: 'dev-pass' })
+      });
+      const moderatorLoginBody = await moderatorLogin.json();
+      const moderatorHeaders = {
+        authorization: `Bearer ${moderatorLoginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+
+      const beforeDemotion = await fetch(`${baseUrl}/api/admin/board-digest`, {
+        method: 'POST',
+        headers: moderatorHeaders
+      });
+      const demoted = await fetch(`${baseUrl}/api/admin/users/${createdBody.data.id}`, {
+        method: 'PUT',
+        headers: ownerHeaders,
+        body: JSON.stringify({ role: 'viewer' })
+      });
+      const afterDemotionWrite = await fetch(`${baseUrl}/api/admin/board-digest`, {
+        method: 'POST',
+        headers: moderatorHeaders
+      });
+      const afterDemotionRead = await fetch(`${baseUrl}/api/admin/pending`, {
+        headers: { authorization: moderatorHeaders.authorization }
+      });
+      const disabled = await fetch(`${baseUrl}/api/admin/users/${createdBody.data.id}`, {
+        method: 'DELETE',
+        headers: ownerHeaders
+      });
+      const afterDisableRead = await fetch(`${baseUrl}/api/admin/pending`, {
+        headers: { authorization: moderatorHeaders.authorization }
+      });
+      const disabledLogin = await fetch(`${baseUrl}/api/account/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'demote_mod', password: 'moderator-pass', captchaToken: 'dev-pass' })
+      });
+
+      assert.equal(created.status, 201);
+      assert.equal(beforeDemotion.status, 200);
+      assert.equal(demoted.status, 200);
+      assert.equal(afterDemotionWrite.status, 403);
+      assert.equal(afterDemotionRead.status, 200);
+      assert.equal(disabled.status, 200);
+      assert.equal(afterDisableRead.status, 403);
+      assert.equal(disabledLogin.status, 403);
+    },
+    { ai: flaggedAi }
+  );
+});
+
 test('http static serving treats missing assets as 404 without 500 logging', async () => {
   const staticRoot = path.resolve('backend/test/tmp-static');
   const originalError = console.error;

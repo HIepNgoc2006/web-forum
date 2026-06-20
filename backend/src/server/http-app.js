@@ -34,6 +34,49 @@ const MIME_TYPES = new Map([
   ['.svg', 'image/svg+xml']
 ]);
 const MAX_MEDIA_PER_POST = 4;
+const PRIVILEGED_ACCOUNT_ROLES = new Set(['owner', 'admin', 'moderator', 'viewer']);
+
+function normalizeAdminRole(role = '') {
+  const value = String(role || '').toLowerCase();
+  return value === 'admin' ? 'owner' : value;
+}
+
+function adminPermissionsForRole(role = '') {
+  const normalized = normalizeAdminRole(role);
+  if (normalized === 'owner') {
+    return new Set(['admin:view', 'admin:moderate', 'admin:manage_boards', 'admin:manage_settings', 'admin:manage_users']);
+  }
+  if (normalized === 'moderator') {
+    return new Set(['admin:view', 'admin:moderate']);
+  }
+  if (normalized === 'viewer') {
+    return new Set(['admin:view']);
+  }
+  return new Set();
+}
+
+function adminPermissionForRequest(method, routePath, parts = []) {
+  if (routePath === '/api/admin/users' || match(parts, ['api', 'admin', 'users', ':id'])) {
+    return 'admin:manage_users';
+  }
+  if (method === 'PUT' && routePath === '/api/admin/moderation-settings') {
+    return 'admin:manage_settings';
+  }
+  if (routePath === '/api/admin/boards' && method !== 'GET') {
+    return 'admin:manage_boards';
+  }
+  if (match(parts, ['api', 'admin', 'boards', ':boardSlug']) && method !== 'GET') {
+    return 'admin:manage_boards';
+  }
+  if (method !== 'GET' && routePath !== '/api/admin/health' && routePath !== '/api/admin/analytics') {
+    return 'admin:moderate';
+  }
+  return 'admin:view';
+}
+
+function hasAdminPermission(role, permission) {
+  return adminPermissionsForRole(role).has(permission);
+}
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
@@ -111,7 +154,7 @@ function match(parts, pattern) {
   return params;
 }
 
-async function requireAdmin(request, jwtSecret, service) {
+async function requireAdmin(request, jwtSecret, service, { permission = 'admin:view' } = {}) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   let payload;
@@ -122,34 +165,42 @@ async function requireAdmin(request, jwtSecret, service) {
     error.statusCode = 401;
     throw error;
   }
-  if (payload.role !== 'admin') {
+  if (!PRIVILEGED_ACCOUNT_ROLES.has(String(payload.role || '').toLowerCase())) {
     const error = new Error('Không có quyền truy cập');
     error.statusCode = 401;
     throw error;
   }
-  if (payload.isTwoFactorVerified) {
-    return payload;
+  if (!service || !payload.sub) {
+    const error = new Error('Không có quyền truy cập');
+    error.statusCode = 401;
+    throw error;
   }
-  if (service && payload.sub) {
-    const user = await service.getAccount(payload.sub);
-    if (user.twoFactorEnabled) {
-      const error = new Error('Yêu cầu xác thực 2FA để tiếp tục');
-      error.statusCode = 401;
-      error.requires2FA = true;
-      throw error;
-    }
-    if (process.env.NODE_ENV === 'test') {
-      return payload;
-    }
+  const user = await service.getAccount(payload.sub);
+  const role = normalizeAdminRole(user.role);
+  if (user.disabled || !hasAdminPermission(role, permission)) {
+    const error = new Error('Không có quyền truy cập');
+    error.statusCode = 403;
+    throw error;
+  }
+  if (user.twoFactorEnabled && !payload.isTwoFactorVerified) {
+    const error = new Error('Yêu cầu xác thực 2FA để tiếp tục');
+    error.statusCode = 401;
+    error.requires2FA = true;
+    throw error;
+  }
+  if (!user.twoFactorEnabled && !payload.isTwoFactorVerified && process.env.NODE_ENV !== 'test') {
     const error = new Error('Yêu cầu cài đặt 2FA cho tài khoản quản trị');
     error.statusCode = 403;
     error.setupRequired = true;
     throw error;
   }
-  const error = new Error('Yêu cầu xác thực 2FA để tiếp tục');
-  error.statusCode = 401;
-  error.requires2FA = true;
-  throw error;
+  return {
+    ...payload,
+    sub: user.id,
+    username: user.username,
+    role,
+    permissions: [...adminPermissionsForRole(role)]
+  };
 }
 
 function requireAccount(request, jwtSecret, service, { allowAdmin2FASetup = false } = {}) {
@@ -157,13 +208,14 @@ function requireAccount(request, jwtSecret, service, { allowAdmin2FASetup = fals
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   try {
     const payload = verifyJwt(token, jwtSecret);
-    if (!['user', 'admin'].includes(payload.role) || !payload.sub) {
+    const role = normalizeAdminRole(payload.role);
+    if (!(payload.role === 'user' || PRIVILEGED_ACCOUNT_ROLES.has(String(payload.role || '').toLowerCase())) || !payload.sub) {
       throw new Error('Không có quyền truy cập');
     }
     if (service?.isSessionRevoked?.(token)) {
       throw new Error('Phiên đăng nhập đã bị thu hồi');
     }
-    if (payload.isTwoFactorVerified === false && !(allowAdmin2FASetup && payload.role === 'admin')) {
+    if (payload.isTwoFactorVerified === false && !(allowAdmin2FASetup && PRIVILEGED_ACCOUNT_ROLES.has(role))) {
       const error = new Error('Yêu cầu xác thực 2FA');
       error.statusCode = 401;
       throw error;
@@ -203,8 +255,13 @@ async function getOptionalCapcode(request, jwtSecret, service, requested) {
     if (service?.isSessionRevoked?.(token)) return null;
     if (!payload.sub) return null;
     const account = await service.getAccount(payload.sub);
-    if (account && (account.role === 'admin' || account.role === 'moderator')) {
-      return account.role;
+    if (account?.disabled) return null;
+    const role = normalizeAdminRole(account?.role);
+    if (role === 'owner') {
+      return 'admin';
+    }
+    if (role === 'moderator') {
+      return 'moderator';
     }
   } catch {}
   return null;
@@ -218,7 +275,7 @@ function accountToken(account, jwtSecret, isTwoFactorVerified = null) {
   }
   let verified = isTwoFactorVerified;
   if (verified === null) {
-    verified = account.role === 'admin' || account.role === 'moderator'
+    verified = PRIVILEGED_ACCOUNT_ROLES.has(String(account.role || '').toLowerCase())
       ? Boolean(account.twoFactorEnabled)
       : !account.twoFactorEnabled;
   }
@@ -1069,7 +1126,7 @@ export function createHttpServer({
           ok(response, {
             requires2FA: true,
             tempToken: signJwt(
-              { role: 'admin', username: adminUsername, sub: adminAccount.id, isTwoFactorVerified: false },
+              { role: adminAccount.role || 'owner', username: adminUsername, sub: adminAccount.id, isTwoFactorVerified: false },
               jwtSecret,
               { expiresInSeconds: 300 }
             )
@@ -1081,8 +1138,58 @@ export function createHttpServer({
       }
 
       if (routePath.startsWith('/api/admin')) {
-        const admin = await requireAdmin(request, jwtSecret, service);
+        const admin = await requireAdmin(request, jwtSecret, service, {
+          permission: adminPermissionForRequest(request.method, routePath, parts)
+        });
         const filters = adminFiltersFromSearch(url.searchParams);
+
+        if (request.method === 'GET' && routePath === '/api/admin/users') {
+          ok(response, await service.listPrivilegedUsers());
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/admin/users') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.createPrivilegedUser(
+              {
+                username: body.username,
+                password: body.password,
+                role: body.role,
+                disabled: body.disabled
+              },
+              { actor: admin.username ?? 'admin' }
+            ),
+            201
+          );
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'users', ':id']);
+        if (params && request.method === 'PUT') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.updatePrivilegedUser(
+              params.id,
+              {
+                role: body.role,
+                disabled: body.disabled,
+                password: body.password
+              },
+              { actor: admin.username ?? 'admin', actorId: admin.sub }
+            )
+          );
+          return;
+        }
+        if (params && request.method === 'DELETE') {
+          ok(
+            response,
+            await service.disablePrivilegedUser(params.id, { actor: admin.username ?? 'admin', actorId: admin.sub })
+          );
+          return;
+        }
 
         if (request.method === 'GET' && routePath === '/api/admin/analytics') {
           ok(response, await service.getAnalytics());

@@ -287,7 +287,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       assert.strictEqual(loginRes.status, 200);
       const adminToken = (await loginRes.json()).data.token;
       assert.ok(adminToken);
-      assert.strictEqual(decodeJwt(adminToken).role, 'admin');
+      assert.strictEqual(decodeJwt(adminToken).role, 'owner');
       assert.strictEqual(decodeJwt(adminToken).isTwoFactorVerified, false);
 
       // 2. The unverified admin token may enroll a passkey (like 2FA setup).
@@ -340,9 +340,9 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       assert.strictEqual(passkeyLoginRes.status, 200);
       const passkeyToken = (await passkeyLoginRes.json()).data.token;
 
-      // The passkey login token is admin-scoped AND counts as 2FA-verified.
+      // The passkey login token is owner-scoped AND counts as 2FA-verified.
       const payload = decodeJwt(passkeyToken);
-      assert.strictEqual(payload.role, 'admin');
+      assert.strictEqual(payload.role, 'owner');
       assert.strictEqual(payload.isTwoFactorVerified, true);
 
       // 4. That token unlocks the admin queue.

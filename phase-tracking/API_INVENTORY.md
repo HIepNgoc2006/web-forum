@@ -1,0 +1,172 @@
+# 36chan API Inventory
+
+Date: 2026-06-21
+
+Base path: same origin backend. Development frontend proxies `/api`, `/events`, and `/uploads`.
+
+Versioning: `/api/v1/...` is supported as an alias for current `/api/...` routes. Existing `/api/...` clients remain compatible.
+
+## Response shape
+
+Success:
+
+```json
+{ "data": {} }
+```
+
+Error:
+
+```json
+{ "error": { "message": "Thong diep loi" } }
+```
+
+HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
+
+## Public config and discovery
+
+| Method | Path | Purpose | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/config` | Lay boards, board groups, lifecycle, hCaptcha site key, max image bytes. | Public, khong can auth. Board items include sanitized `rules` and `banner` fields for public display; missing rules fall back to board `description`. |
+| GET | `/api/boards` | Lay danh sach board co dinh. | Source tu `backend/src/core/config.js`. |
+| GET | `/api/stats` | Lay thong ke server. | Includes post/file counts va current SSE clients. |
+| GET | `/api/health` | Health check van hanh. | Tra `status`, `store.type`, `store.configured`, `store.ready`, safe counts/model readiness, AI configured/model, image storage readiness, realtime client count/board counts, security readiness warnings; khong tra secret. |
+| GET | `/api/posts/latest?limit=10` | Lay bai moi nhat. | Limit clamp 1-20. Chi public active thread/comment. |
+| GET | `/api/boards/hot?limit=8` | Lay bang dang nong trong 24h. | Limit clamp 1-board count. Chi tinh active public threads/comments. |
+| GET | `/feeds/latest.json?limit=20` | JSON Feed bai moi nhat. | Public feed, khong auth, chi gom public active thread/comment. |
+| GET | `/feeds/latest.rss?limit=20` | RSS 2.0 bai moi nhat. | Public feed, escape XML, chi gom public active thread/comment. |
+
+## Public board and thread
+
+| Method | Path | Purpose | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/boards/:boardSlug/threads?page=&pageSize=&q=` | Lay active public threads cua board. | Sticky threads sort truoc thread thuong, sau do sort `bumpedAt` desc. Khong tra pending/deleted/archived. Neu co query paging/search thi tra `{ items, page, pageSize, total, totalPages, hasMore }`; neu khong co query thi tra array cu de tuong thich. |
+| POST | `/api/boards/:boardSlug/threads` | Tao thread moi. | Body: `body`, optional `displayName`, `image` + `image.thumbnail`, `pollOptions`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options` ho tro `noko`. Rate limited. |
+| GET | `/api/boards/:boardSlug/archive` | Lay archived public threads. | Sort `archivedAt` desc. |
+| POST | `/api/boards/:boardSlug/summary` | AI tom tat board. | Chi dung public content. Can Google AI key. Rate limit can tach rieng o phase sau. |
+| GET | `/api/threads/:threadId?commentsPage=&commentsPageSize=&focusGlobalNumber=` | Lay thread detail. | Tra OP public va comments public. Neu co query paging thi comments duoc phan trang va tra `commentPage`; `focusGlobalNumber` tu dong chon trang chua post permalink. |
+| POST | `/api/threads/:threadId/comments` | Tao comment. | Body: `body`, optional `displayName`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options=sage` se reply khong bump thread. Rate limited. |
+| POST | `/api/threads/:threadId/summary` | AI tom tat thread. | Chi dung public content. Can Google AI key. |
+| POST | `/api/threads/:threadId/suggestions` | AI goi y comment. | Khong luu suggestion neu user chua submit. Can Google AI key. |
+| GET | `/api/posts/:globalNumber` | Lookup post by global number. | Dung cho `>>ID` preview/permalink. Chi tra public post. |
+| POST | `/api/posts/:globalNumber` | Bao cao bai viet. | Body `{ "category": "Spam\|Toxic\|PII\|Fake News\|Illegal\|Other", "reason": "", "posterToken": "" }`; `category` khong hop le fallback `Other`; luu reporter hash, khong luu IP raw. |
+| DELETE | `/api/posts/:globalNumber` | User tu xoa bai/tap tin bang mat khau xoa. | Body `{ "password": "", "fileOnly": false }`; yeu cau `deletePassword` da duoc dat khi dang. |
+
+## Public uploaded files
+
+| Method | Path | Purpose | Notes |
+| --- | --- | --- | --- |
+| GET/HEAD | `/uploads/:fileName` | Serve image files saved by local disk storage. | File name only, path traversal blocked, cache immutable. Not used when `IMAGE_STORAGE_DRIVER=s3` returns absolute public URLs. |
+
+## Account
+
+Account is optional and private. These endpoints require `JWT_SECRET` for issuing/verifying user JWTs. Account identity is not attached to public thread/comment create payloads.
+
+| Method | Path | Purpose | Auth |
+| --- | --- | --- | --- |
+| POST | `/api/account/register` | Tao account user optional. Body `{ "username": "", "password": "" }`; username normalized lower-case, password hashed server-side. | Public endpoint, returns `{ account, token }`. |
+| POST | `/api/account/login` | Dang nhap account user optional. Body `{ "username": "", "password": "" }`. | Public endpoint, returns `{ account, token }`. |
+| POST | `/api/account/logout` | Thu hoi Bearer JWT hien tai bang in-memory revoked-token list. | Bearer JWT role `user`; returns `{ ok: true }`; token da logout bi tu choi tren account-private endpoints. |
+| GET | `/api/account/me` | Lay account private hien tai. | Bearer JWT role `user`. |
+| PUT | `/api/account/settings` | Luu account-private settings: `theme`, `homeBoard`, `syncDrafts`, legacy `emailNotifications`, `displayPreferences`, `notificationPreferences`, va `boardSubscriptions`. | Bearer JWT role `user`. |
+| GET | `/api/account/private-data` | Lay account-private watchlist, drafts, saved searches. | Bearer JWT role `user`; khong expose qua public post serializers. |
+| PUT | `/api/account/private-data` | Luu account-private `{ watchlist, drafts, savedSearches }` de dong bo giua thiet bi. | Bearer JWT role `user`; server normalize/gioi han so luong, draft body, preview/search text. |
+| DELETE | `/api/account/private-data?section=` | Xoa account-private data; `section` co the la `watchlist`, `drafts`, `savedSearches`, hoac bo trong de xoa tat ca. | Bearer JWT role `user`; dung cho clear controls. |
+
+## Admin
+
+Admin auth uses privileged account roles. `owner` can view/moderate/manage boards/manage moderation settings/manage privileged users; legacy stored `admin` roles are normalized to `owner`. `moderator` can view admin queues and run moderation actions. `viewer` can view admin queues, logs, health, analytics, boards, reports, and sanctions but cannot mutate them. Disabled privileged accounts are rejected by live permission checks even if an old JWT still exists. Admin JWTs still require 2FA setup/verification outside test mode.
+
+| Method | Path | Purpose | Auth |
+| --- | --- | --- | --- |
+| POST | `/api/admin/login` | Dang nhap admin env, nhan JWT owner. | Public endpoint, can env `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `JWT_SECRET`; creates/refreshes env admin as active `owner` for migration compatibility. |
+| GET | `/api/admin/users` | List privileged users. | Bearer JWT with `admin:manage_users` permission (`owner`). Returns id/username/role/disabled/2FA/recovery timestamps only; no password hash, private data, or passkeys. |
+| POST | `/api/admin/users` | Create privileged user. | `owner`; body `{ "username": "", "password": "", "role": "owner|moderator|viewer", "disabled": false }`. |
+| PUT | `/api/admin/users/:id` | Update privileged user role/status/password. | `owner`; body may include `{ "role": "owner|moderator|viewer", "disabled": true, "password": "" }`; cannot disable/demote self or the last active owner. |
+| DELETE | `/api/admin/users/:id` | Disable privileged user. | `owner`; same last-owner/self protections as update. |
+| GET | `/api/admin/pending?boardSlug=&label=&since=&priority=&confidence=&sort=` | Lay pending queue. | Permission `admin:view`; ho tro filter. `priority=high|medium|low`; `confidence` la nguong toi thieu 0..1 hoac 0..100; `sort=priority|newest|oldest|confidence-desc|confidence-asc`, default `priority`. Items include `moderationPriority` va `moderationConfidence` khi AI tra ve. |
+| GET | `/api/admin/moderation-settings` | Lay cau hinh moderation admin. | Permission `admin:view`; tra ve `moderationConfidenceThreshold` hien hanh. |
+| PUT | `/api/admin/moderation-settings` | Cap nhat cau hinh moderation admin. | Permission `admin:manage_settings` (`owner`); body `{ "moderationConfidenceThreshold": 0.8 }` hoac percent `80`; thieu confidence tren ket qua `Flagged` van vao queue. |
+| GET | `/api/admin/moderation-actions?limit=50&boardSlug=&label=&since=&action=&confidence=` | Lay audit log moderation gan nhat. | Permission `admin:view`; co the loc theo `confidence` toi thieu; khong chua IP/captcha/poster token raw. |
+| GET | `/api/admin/reports?limit=50&boardSlug=&since=&status=&category=&priority=&sort=` | Lay user reports gan nhat. | Permission `admin:view`; ho tro filter `category=Spam\|Toxic\|PII\|Fake News\|Illegal\|Other`, `priority=high|medium|low`; `sort=priority|newest|oldest`, default `priority`. Items include `moderationPriority`; reporter la hash, khong co IP raw. |
+| GET | `/api/admin/deleted?limit=50&boardSlug=&label=&since=` | Lay bai da xoa. | Permission `admin:view`. |
+| GET | `/api/admin/approved?limit=50&boardSlug=&label=&since=` | Lay lich su admin approve. | Permission `admin:view`. |
+| GET | `/api/admin/sanctions?limit=50&status=active&kind=&boardSlug=` | Lay danh sach cooldown/ban. | Permission `admin:view`; chi tra fingerprint preview, khong tra IP raw. |
+| GET | `/api/admin/posts/:globalNumber` | Lay chi tiet bai cho admin. | Permission `admin:view`; gom post, thread context, reports, actions. |
+| POST | `/api/admin/posts/:globalNumber/notes` | Them moderator note noi bo. | Permission `admin:moderate`; body `{ "note": "" }`. |
+| POST | `/api/admin/posts/:globalNumber/sanctions` | Tao cooldown/ban tu bai viet. | Permission `admin:moderate`; body `{ "kind": "cooldown|ban", "durationMinutes": 60, "reason": "" }`. |
+| DELETE | `/api/admin/sanctions/:id` | Go cooldown/ban dang hoat dong. | Permission `admin:moderate`; body optional `{ "reason": "" }`. |
+| POST | `/api/admin/threads/:threadId/archive` | Archive thread public. | Permission `admin:moderate`. |
+| POST | `/api/admin/threads/:threadId/sticky` | Ghim active public thread len dau board. | Permission `admin:moderate`; chi chap nhan thread public, khong pending/deleted/archived. |
+| DELETE | `/api/admin/threads/:threadId/sticky` | Go ghim active public thread. | Permission `admin:moderate`; chi chap nhan thread public, khong pending/deleted/archived. |
+| POST | `/api/admin/pending/bulk` | Bulk approve/delete pending posts. | Permission `admin:moderate`; body `{ "action": "approve|delete", "ids": [], "reason": "" }`. |
+| POST | `/api/admin/pending/:id/approve` | Approve pending thread/comment. | Permission `admin:moderate`; body optional `{ "reason": "" }`. |
+| DELETE | `/api/admin/pending/:id` | Delete pending thread/comment. | Permission `admin:moderate`; body optional `{ "reason": "" }`. |
+
+## Realtime events
+
+Endpoint: `GET /events?boardSlug=&threadId=`
+
+Transport: Server-Sent Events.
+
+| Event | Emitted when | Public safety rule |
+| --- | --- | --- |
+| `connected` | Client opens SSE connection. | Payload `{ "ok": true }`. |
+| `thread:created` | Safe thread created or pending thread approved. | Only public serialized thread. |
+| `comment:created` | Safe comment created or pending comment approved. | Only public serialized comment/thread. |
+| `thread:bumped` | Public comment bumps active thread. | No pending/deleted payload. |
+| `thread:updated` | Public thread metadata changes such as sticky or slow mode. | Only public serialized thread or null parent after safe update. |
+| `thread:archived` | Thread archived by lifecycle/admin. | Only public archived thread. |
+
+## Important data fields
+
+- `globalNumber`: monotonically increasing global post number.
+- `displayName`: optional public per-post label. Missing/empty values render as `Anonymous`; sanitized, length-limited to 40 characters, and rejected for reserved authority labels before public serialization. It is not account username or verified identity unless a logged-in user explicitly chooses to send their username as this per-post label. A `#` in the submitted value splits off a classic tripcode (see `tripcode`); the reserved-name and length rules apply to the name part only.
+- `tripcode`: optional classic imageboard tripcode derived from the part of `displayName` after the first `#`. `name#secret` yields an insecure (deterministic, forgeable) tripcode `!xxxxxxxxxx`; `name##secret` yields a secure tripcode `!!xxxxxxxxxxx` salted with `TRIPCODE_SECRET` (falls back to `JWT_SECRET`). The raw secret never reaches storage or the public API; only the derived code is serialized.
+- `image.spoiler`: boolean per-image spoiler flag. When true, board/catalog/thread views blur the thumbnail behind a reveal label until the viewer clicks it. Set from the post form's "Ẩn ảnh" checkbox; preserved across local/S3 storage.
+- `capcode`: optional verified staff role badge (`admin` or `moderator`, otherwise `null`). Requested per-post via the form's "Capcode" checkbox (`capcode: true` in the create body); the server only honors it after resolving the requester's role from live account state in `getOptionalCapcode` — anonymous and regular `user` posters always serialize as `null`, and forged role strings are dropped by `normalizeCapcode`. Rendered as `## Quản trị viên` / `## Điều hành viên`.
+- `posterHash`: hash of IP + daily salt + thread ID + poster token; raw IP is not exposed.
+- `isPending`: quarantined by AI moderation.
+- `isDeleted`: removed from public surface.
+- `moderationStatus`: `Safe` or `Flagged`.
+- `moderationLabels`: AI labels such as Toxic, Spam, Hate Speech, Fake News.
+- `moderationPriority`: admin-only derived object on pending/report rows: `{ score, level, reportCount, hasPiiRisk }`. Score is derived from open report count, moderation/report labels, and recency; it does not persist or expose raw IP/poster token data.
+- `bumpedAt`: sort key for active thread list.
+- `isSticky`, `stickiedAt`: public active thread sticky state; sticky threads sort above normal threads on board/catalog views. Pending/deleted/archived threads serialize as not sticky.
+- `isArchived`, `archivedAt`, `archivedReason`: lifecycle state.
+- `image.storage`, `image.storageKey`, `image.url`: original image metadata after migration/upload storage.
+- `image.thumbnail.storage`, `image.thumbnail.storageKey`, `image.thumbnail.url`: lightweight thumbnail metadata. Board/catalog/home thumbnails should use this URL; original `image.url` should load only when opening the file link or expanding the image.
+- `authorFingerprint`: private server-side hash for cooldown/ban enforcement; never returned by public API.
+- `backlinks`: public post numbers that reply/reference this post in the same thread. Same-thread `>>123` references count toward backlinks; cross-board `>>>/slug/123` references render as links but do not create backlinks.
+- Post body markup (rendered client-side from the stored, escaped body): greentext (`>` line prefix), `>>123` quote links, `>>>/slug/` and `>>>/slug/123` cross-board links (slug validated against known boards), and `[spoiler]...[/spoiler]` click-to-reveal inline text. No new server fields; the raw body is stored and HTML-escaped as before.
+- "(You)" own-post markers are client-side only (no server field): the frontend stamps `(You)` on posts whose `globalNumber` is in the local `myPosts` store and on `>>123` quotes pointing at them. The set is per-browser localStorage; the server never tracks post ownership.
+- `options`, `sage`, `noko`: classic posting options; `sage` suppresses bump on replies, `noko` is honored by frontend redirect behavior.
+- `deletePasswordHash`: stored private server-side only, never returned by public/admin serialization.
+
+## Board config public display contract
+
+Status: public board banner/rules display is implemented from fixed board config as a bridge toward dynamic board config.
+
+- `/api/config` board items may include `rules: string[]`.
+- `/api/config` board items include `banner: { text, imageUrl?, altText? }`.
+- Board rules/banner text is sanitized to plain text before public exposure and rendered with DOM text APIs on the frontend.
+- Missing or empty `rules` falls back to the board `description`, plus default safety rules where available.
+- `banner.imageUrl` is optional and only accepts same-origin absolute paths or HTTPS URLs; unsafe schemes are omitted.
+- Public board/thread pages must not render board config text as raw HTML.
+
+## Account/display-name contract
+
+Status: per-post `displayName` is implemented for public thread/comment create endpoints. Account register/login/logout/me/settings are implemented as private optional endpoints, including synced theme, display preferences, notification preferences, and board subscriptions. Account-private watchlist, drafts, and saved searches are implemented via `/api/account/private-data`. Appeal history and richer security/session management remain planned by `phase-tracking/ACCOUNT_UX_AND_ANONYMOUS_RULES.md`.
+
+- Thread/comment create endpoints accept optional `displayName`.
+- Missing or empty `displayName` must render as `Anonymous`.
+- Reserved display names `admin`, `administrator`, `moderator`, `mod`, and `system` are rejected after sanitization.
+- `displayName` is a public per-post label, not account username or verified identity.
+- Public post serializers may include sanitized `displayName`.
+- Public post serializers must never include `accountId`, `username`, `email`, session identifiers, linked local identity records, or admin/moderator role as author data.
+- Account-private watchlist, drafts, and saved searches use `/api/account/private-data`; future appeal history and security/session state must be added to this inventory when implemented.
+- AI payload tests must confirm account identity fields are absent.
+
+## Known gaps
+
+- S3-compatible production image storage is implemented behind `IMAGE_STORAGE_DRIVER=s3`; production rollout still needs bucket/CDN credentials and backup policy from `phase-tracking/RELEASE_CHECKLIST.md`.
+- Account-private watchlist, synced drafts, and saved searches are implemented. Appeal history and security/session management remain future work; product rules are defined in `phase-tracking/ACCOUNT_UX_AND_ANONYMOUS_RULES.md`.

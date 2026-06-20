@@ -1198,7 +1198,7 @@ function adminUsernameFromToken() {
     return '';
   }
   const payload = decodeJwtPayload(state.token);
-  return payload && payload.role === 'admin' ? payload.username || '' : '';
+  return payload && ['admin', 'owner', 'moderator', 'viewer'].includes(payload.role) ? payload.username || '' : '';
 }
 
 function updateAccountNav() {
@@ -2994,6 +2994,9 @@ function adminEndpoint() {
   if (state.adminTab === 'boards') {
     return '/api/admin/boards';
   }
+  if (state.adminTab === 'users') {
+    return '/api/admin/users';
+  }
   if (state.adminTab === 'audit') {
     return `/api/admin/moderation-actions${query ? `?limit=100&${query}` : '?limit=100'}`;
   }
@@ -3031,6 +3034,22 @@ function adminBoardPayload(root, { includeSlug = false } = {}) {
   };
   if (includeSlug) {
     payload.slug = root.querySelector('[data-admin-board-slug]')?.value || '';
+  }
+  return payload;
+}
+
+function adminUserPayload(root, { includeUsername = false } = {}) {
+  const payload = {
+    role: root.querySelector('[data-admin-user-role]')?.value || 'viewer',
+    disabled: Boolean(root.querySelector('[data-admin-user-disabled]')?.checked)
+  };
+  const password = root.querySelector('[data-admin-user-password]')?.value || '';
+  if (password) {
+    payload.password = password;
+  }
+  if (includeUsername) {
+    payload.username = root.querySelector('[data-admin-user-username]')?.value || '';
+    payload.password = password;
   }
   return payload;
 }
@@ -3091,6 +3110,74 @@ function adminBoardsHtml(boards) {
   `;
 }
 
+function adminRoleLabel(role = '') {
+  if (role === 'owner') return 'Owner';
+  if (role === 'moderator') return 'Moderator';
+  if (role === 'viewer') return 'Viewer';
+  return role || 'User';
+}
+
+function adminRoleOptions(selected = 'viewer') {
+  return ['owner', 'moderator', 'viewer']
+    .map((role) => `<option value="${role}" ${selected === role ? 'selected' : ''}>${adminRoleLabel(role)}</option>`)
+    .join('');
+}
+
+function adminUsersHtml(users = []) {
+  const rows = users
+    .map(
+      (user) => `
+        <tr data-admin-user-row="${escapeHtml(user.id)}">
+          <td><strong>@${escapeHtml(user.username)}</strong></td>
+          <td>
+            <select data-admin-user-role>
+              ${adminRoleOptions(user.role)}
+            </select>
+          </td>
+          <td>${user.twoFactorEnabled ? 'Đã bật' : 'Chưa bật'}</td>
+          <td><label><input data-admin-user-disabled type="checkbox" ${user.disabled ? 'checked' : ''} /> Vô hiệu hóa</label></td>
+          <td><input data-admin-user-password type="password" minlength="10" placeholder="Đổi mật khẩu" autocomplete="new-password" /></td>
+          <td class="admin-board-actions">
+            <button class="ghost-button" data-admin-user-save type="button">[Lưu]</button>
+            <button class="danger-button" data-admin-user-disable type="button" ${user.disabled ? 'disabled' : ''}>Tắt</button>
+          </td>
+        </tr>
+      `
+    )
+    .join('');
+
+  return `
+    <div class="admin-board-manager">
+      <section class="admin-board-create" data-admin-user-create-form>
+        <h2>Thêm tài khoản quản trị</h2>
+        <div class="admin-board-create-grid">
+          <label><span>Tên đăng nhập</span><input data-admin-user-username maxlength="32" autocomplete="username" /></label>
+          <label><span>Mật khẩu</span><input data-admin-user-password type="password" minlength="10" autocomplete="new-password" /></label>
+          <label><span>Vai trò</span><select data-admin-user-role>${adminRoleOptions('viewer')}</select></label>
+          <label><input data-admin-user-disabled type="checkbox" /> Tạo ở trạng thái tắt</label>
+          <button class="primary-button" data-admin-user-create type="button">Tạo tài khoản</button>
+        </div>
+      </section>
+      <div class="admin-board-table-wrap">
+        <table class="admin-board-table">
+          <thead>
+            <tr>
+              <th>Tài khoản</th>
+              <th>Vai trò</th>
+              <th>2FA</th>
+              <th>Trạng thái</th>
+              <th>Mật khẩu</th>
+              <th>Thao tác</th>
+            </tr>
+          </thead>
+          <tbody>${rows || '<tr><td colspan="6">Chưa có tài khoản quản trị.</td></tr>'}</tbody>
+        </table>
+      </div>
+      <p class="muted">Owner quản lý cấu hình và tài khoản. Moderator xử lý kiểm duyệt. Viewer chỉ xem hàng đợi và nhật ký.</p>
+    </div>
+  `;
+}
+
 function renderAdminItems(items) {
   state.adminItems = items;
   renderAdminTabs();
@@ -3104,6 +3191,8 @@ function renderAdminItems(items) {
     els.pendingList.innerHTML = `<div class="moderation-log">${sanctionsHtml(items)}</div>`;
   } else if (state.adminTab === 'boards') {
     els.pendingList.innerHTML = adminBoardsHtml(items);
+  } else if (state.adminTab === 'users') {
+    els.pendingList.innerHTML = adminUsersHtml(items);
   } else {
     els.pendingList.innerHTML = `<div class="moderation-log">${historyActionsHtml(items)}</div>`;
   }
@@ -5957,6 +6046,60 @@ function bindEvents() {
         await api(`/api/admin/boards/${encodeURIComponent(slug)}`, { method: 'DELETE' });
         showToast('Đã xóa board.');
         await refreshPublicBoards();
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminUserCreateButton = event.target.closest('[data-admin-user-create]');
+    if (adminUserCreateButton) {
+      const form = adminUserCreateButton.closest('[data-admin-user-create-form]');
+      try {
+        await api('/api/admin/users', {
+          method: 'POST',
+          body: JSON.stringify(adminUserPayload(form, { includeUsername: true }))
+        });
+        showToast('Đã tạo tài khoản quản trị.');
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminUserSaveButton = event.target.closest('[data-admin-user-save]');
+    if (adminUserSaveButton) {
+      const row = adminUserSaveButton.closest('[data-admin-user-row]');
+      const id = row?.dataset.adminUserRow;
+      if (!id) {
+        return;
+      }
+      try {
+        await api(`/api/admin/users/${encodeURIComponent(id)}`, {
+          method: 'PUT',
+          body: JSON.stringify(adminUserPayload(row))
+        });
+        showToast('Đã lưu tài khoản quản trị.');
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminUserDisableButton = event.target.closest('[data-admin-user-disable]');
+    if (adminUserDisableButton) {
+      const row = adminUserDisableButton.closest('[data-admin-user-row]');
+      const id = row?.dataset.adminUserRow;
+      const username = row?.querySelector('strong')?.textContent || 'tài khoản này';
+      if (!id || !window.confirm(`Vô hiệu hóa ${username}?`)) {
+        return;
+      }
+      try {
+        await api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        showToast('Đã vô hiệu hóa tài khoản quản trị.');
         await loadAdmin();
       } catch (error) {
         showToast(error.message);
