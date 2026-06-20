@@ -613,6 +613,48 @@ test('uploaded image safety labels can hold comments for moderation', async () =
   assert.deepEqual(reply.comment.moderationLabels, ['Graphic Content']);
 });
 
+test('upload moderation attempts any image MIME type accepted by uploads', async () => {
+  const imageModerationRequests = [];
+  const ocrRequests = [];
+  const ai = {
+    async moderate() {
+      return { status: 'Safe', labels: [] };
+    },
+    async moderateImage(media) {
+      imageModerationRequests.push(media);
+      return { status: 'Safe', labels: [] };
+    },
+    async caption(media, mode) {
+      ocrRequests.push({ media, mode });
+      return '';
+    }
+  };
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai,
+    realtime: createEvents(),
+    now: () => new Date('2026-06-10T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Anh AVIF',
+    image: {
+      type: 'image/avif',
+      dataUrl: `data:image/avif;base64,${Buffer.from('avif-image').toString('base64')}`
+    },
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.12'
+  });
+
+  assert.equal(created.status, 'published');
+  assert.equal(imageModerationRequests.length, 1);
+  assert.equal(imageModerationRequests[0].mimeType, 'image/avif');
+  assert.equal(ocrRequests.length, 1);
+  assert.equal(ocrRequests[0].media.mimeType, 'image/avif');
+  assert.equal(ocrRequests[0].mode, 'ocr');
+});
+
 test('createAiClient fallback rejects new media features without a key', async () => {
   const keys = [
     'AI_PROVIDER',
@@ -630,8 +672,8 @@ test('createAiClient fallback rejects new media features without a key', async (
     const ai = createAiClient();
     await assert.rejects(() => ai.translate('xin chao', 'en'), /AI/);
     await assert.rejects(() => ai.transcribe({ data: 'AAAA', mimeType: 'audio/mpeg' }), /AI/);
-    await assert.rejects(() => ai.caption({ data: 'AAAA', mimeType: 'image/png' }), /AI/);
-    await assert.rejects(() => ai.moderateImage({ data: 'AAAA', mimeType: 'image/png' }), /AI/);
+    await assert.rejects(() => ai.caption({ data: 'AAAA', mimeType: 'image/avif' }), /AI/);
+    await assert.rejects(() => ai.moderateImage({ data: 'AAAA', mimeType: 'image/avif' }), /AI/);
     await assert.rejects(() => ai.speak('xin chao'), /AI/);
   } finally {
     for (const key of keys) {
@@ -3183,6 +3225,11 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
     assert.equal(reportBody.messages[0].content.includes('Tổng hợp danh sách lý do báo cáo'), true);
     assert.equal(reportBody.messages[1].content.includes('report@example.com'), false);
     assert.equal(reportBody.messages[1].content.includes('0912345678'), false);
+
+    await ai.moderateImage({ data: 'AAAA', mimeType: 'image/avif' });
+    const imageModerationBody = JSON.parse(capturedRequests[3].options.body);
+    assert.equal(imageModerationBody.messages[0].content.includes('kiểm duyệt ảnh'), true);
+    assert.equal(imageModerationBody.messages[1].content[1].image_url.url, 'data:image/avif;base64,AAAA');
   } finally {
     global.fetch = originalFetch;
     for (const key of envKeys) {

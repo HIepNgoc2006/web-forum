@@ -3,10 +3,22 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 const IMAGE_EXTENSIONS = new Map([
+  ['image/apng', 'apng'],
+  ['image/avif', 'avif'],
+  ['image/bmp', 'bmp'],
   ['image/png', 'png'],
   ['image/jpeg', 'jpg'],
+  ['image/jpg', 'jpg'],
   ['image/gif', 'gif'],
+  ['image/heic', 'heic'],
+  ['image/heif', 'heif'],
+  ['image/jxl', 'jxl'],
+  ['image/svg+xml', 'svg'],
+  ['image/tiff', 'tiff'],
+  ['image/vnd.microsoft.icon', 'ico'],
   ['image/webp', 'webp'],
+  ['image/x-icon', 'ico'],
+  ['image/x-ms-bmp', 'bmp'],
   ['video/mp4', 'mp4'],
   ['video/webm', 'webm']
 ]);
@@ -33,7 +45,23 @@ function imageBytes(image) {
 }
 
 function imageExtension(image) {
-  return IMAGE_EXTENSIONS.get(image?.type) ?? 'img';
+  const type = String(image?.type ?? '').toLowerCase();
+  const knownExtension = IMAGE_EXTENSIONS.get(type);
+  if (knownExtension) {
+    return knownExtension;
+  }
+  if (!type.startsWith('image/')) {
+    return 'img';
+  }
+  const subtype = type.slice('image/'.length).split(';')[0];
+  const safeExtension = subtype
+    .replace(/^x-/, '')
+    .replace(/^vnd\./, '')
+    .replace(/\+xml$/, '')
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 32);
+  return safeExtension || 'img';
 }
 
 function sha256Hex(value) {

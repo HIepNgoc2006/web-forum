@@ -1131,9 +1131,9 @@ test('http api stores uploaded images on local disk and serves them from /upload
             body: 'Anh local disk',
             captchaToken: 'dev-pass',
             image: {
-              name: 'anh.png',
-              type: 'image/png',
-              dataUrl: 'data:image/png;base64,AAAA',
+              name: 'anh.avif',
+              type: 'image/avif',
+              dataUrl: 'data:image/avif;base64,AAAA',
               sizeBytes: 3,
               width: 1,
               height: 1,
@@ -1158,12 +1158,13 @@ test('http api stores uploaded images on local disk and serves them from /upload
         assert.equal(image.thumbnail.dataUrl, undefined);
         assert.equal(image.thumbnail.url.startsWith('/uploads/'), true);
         assert.equal(image.thumbnail.storageKey.includes('.thumb.'), true);
+        assert.equal(image.storageKey.endsWith('.avif'), true);
         assert.equal((await fs.readFile(path.join(uploadRoot, image.storageKey))).length, 3);
         assert.equal((await fs.readFile(path.join(uploadRoot, image.thumbnail.storageKey))).length, 2);
 
         const imageResponse = await fetch(`${baseUrl}${image.url}`);
         assert.equal(imageResponse.status, 200);
-        assert.equal(imageResponse.headers.get('content-type'), 'image/png');
+        assert.equal(imageResponse.headers.get('content-type'), 'image/avif');
         assert.equal((await imageResponse.arrayBuffer()).byteLength, 3);
 
         const thumbnailResponse = await fetch(`${baseUrl}${image.thumbnail.url}`);

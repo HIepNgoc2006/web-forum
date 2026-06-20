@@ -116,8 +116,6 @@ const AUDIO_MIME_TYPES = new Set([
   'audio/flac'
 ]);
 
-const IMAGE_MIME_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
-
 // Wraps raw little-endian PCM (s16) in a minimal WAV container so browsers can play it
 // from an <audio> element. Gemini TTS returns bare PCM (audio/L16), not a playable file.
 function pcmToWav(pcm, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
@@ -165,7 +163,7 @@ function assertImageMedia(media) {
     error.statusCode = 400;
     throw error;
   }
-  if (media.mimeType && !IMAGE_MIME_TYPES.has(media.mimeType)) {
+  if (media.mimeType && !String(media.mimeType).toLowerCase().startsWith('image/')) {
     const error = new Error('Định dạng ảnh không được hỗ trợ.');
     error.statusCode = 415;
     throw error;

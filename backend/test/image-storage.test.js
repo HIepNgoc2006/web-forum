@@ -104,6 +104,38 @@ describe('createS3ImageStorage', () => {
     assert.strictEqual(result.dataUrl, undefined);
   });
 
+  it('save uses specific extensions for common and unknown image MIME types', async () => {
+    const calls = [];
+    const mockFetch = async (url, options) => {
+      calls.push({ url: url.toString(), headers: options.headers });
+      return { ok: true, status: 200 };
+    };
+    let uuid = 0;
+    const storage = createS3ImageStorage({
+      ...validConfig,
+      fetchImpl: mockFetch,
+      randomUUID: () => `test-uuid-${uuid += 1}`
+    });
+    const cases = [
+      ['image/avif', '.avif'],
+      ['image/heic', '.heic'],
+      ['image/heif', '.heif'],
+      ['image/svg+xml', '.svg'],
+      ['image/vnd.custom-format', '.custom-format']
+    ];
+
+    for (const [type, extension] of cases) {
+      const result = await storage.save({
+        name: `image${extension}`,
+        type,
+        dataUrl: `data:${type};base64,AAAA`,
+        sizeBytes: 3
+      });
+      assert.strictEqual(result.storageKey.endsWith(extension), true);
+      assert.strictEqual(calls.at(-1).headers['content-type'], type);
+    }
+  });
+
   it('save with thumbnail uploads both files', async () => {
     const calls = [];
     const mockFetch = async (url, options) => {
