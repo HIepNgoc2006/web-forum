@@ -314,6 +314,7 @@ const aiNotConfiguredMessage =
   'Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.';
 const MAX_MEDIA_PER_POST = 4;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
+const SUPPORTED_THEMES = ['yotsuba-b', 'yotsuba', 'tomorrow', 'burichan'];
 
 function readWatchedThreads() {
   if (state.accountToken && state.accountPrivateData) {
@@ -580,9 +581,9 @@ async function toggleBoardSubscription(slug = state.boardSlug) {
 }
 
 function applyTheme(theme = state.theme) {
-  const safeTheme = ['yotsuba-b', 'yotsuba', 'tomorrow'].includes(theme) ? theme : 'yotsuba-b';
+  const safeTheme = SUPPORTED_THEMES.includes(theme) ? theme : 'yotsuba-b';
   state.theme = safeTheme;
-  document.body.classList.remove('theme-yotsuba-b', 'theme-yotsuba', 'theme-tomorrow');
+  document.body.classList.remove(...SUPPORTED_THEMES.map((item) => `theme-${item}`));
   document.body.classList.add(`theme-${safeTheme}`);
   localStorage.setItem(themeKey, safeTheme);
   document.querySelectorAll('[data-theme-select]').forEach((select) => {

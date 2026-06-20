@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import path from 'node:path';
@@ -215,6 +215,14 @@ function assertIncludes(html, checks, label) {
   }
 }
 
+function assertContrastPairs(pairs, label) {
+  for (const pair of pairs) {
+    if (!Number.isFinite(pair.ratio) || pair.ratio < 4.5) {
+      throw new Error(`${label} contrast check failed for ${pair.label}: ${pair.ratio}`);
+    }
+  }
+}
+
 async function createTarget(url) {
   const encodedUrl = encodeURIComponent(url);
   let response = await fetch(`http://127.0.0.1:${chromeDebugPort}/json/new?${encodedUrl}`, { method: 'PUT' });
@@ -240,6 +248,12 @@ async function smokePage(page) {
     await cdp.send('Runtime.enable');
     await cdp.send('Log.enable').catch(() => {});
 
+    if (page.theme) {
+      await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
+        source: `try { localStorage.setItem('theme', ${JSON.stringify(page.theme)}); } catch {}`
+      });
+    }
+
     if (page.width && page.height) {
       await cdp.send('Emulation.setDeviceMetricsOverride', {
         width: page.width,
@@ -252,6 +266,16 @@ async function smokePage(page) {
     }
 
     await cdp.send('Page.navigate', { url: page.url });
+    if (page.theme) {
+      await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          localStorage.setItem('theme', ${JSON.stringify(page.theme)});
+          ${page.loginAdmin ? '' : 'location.reload();'}
+          return true;
+        })()`,
+        returnByValue: true
+      });
+    }
     if (page.loginAdmin) {
       await cdp.send('Runtime.evaluate', {
         expression: `(async () => {
@@ -279,21 +303,83 @@ async function smokePage(page) {
       const result = await cdp.send('Runtime.evaluate', {
         expression: `(() => ({
           text: document.body ? document.body.innerText : '',
+          bodyClass: document.body ? document.body.className : '',
           innerWidth: window.innerWidth,
           scrollWidth: Math.max(document.body?.scrollWidth || 0, document.documentElement?.scrollWidth || 0)
         }))()`,
         returnByValue: true
       });
       snapshot = result.result?.value;
-      if (snapshot?.text && page.checks.every((check) => snapshot.text.includes(check))) {
+      const hasExpectedText = snapshot?.text && page.checks.every((check) => snapshot.text.includes(check));
+      const hasExpectedTheme = !page.theme || String(snapshot?.bodyClass || '').includes(`theme-${page.theme}`);
+      if (hasExpectedText && hasExpectedTheme) {
         break;
       }
       await sleep(250);
     }
 
     assertIncludes(snapshot?.text || '', page.checks, page.label);
+    if (page.theme && !String(snapshot?.bodyClass || '').includes(`theme-${page.theme}`)) {
+      throw new Error(`${page.label} did not apply theme-${page.theme}.`);
+    }
     if (page.width && snapshot.scrollWidth > snapshot.innerWidth) {
       throw new Error(`${page.label} has horizontal overflow: ${snapshot.scrollWidth} > ${snapshot.innerWidth}`);
+    }
+
+    if (page.contrastCheck) {
+      const contrast = await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const styles = getComputedStyle(document.body);
+          const resolveColor = (value) => {
+            const probe = document.createElement('span');
+            probe.style.color = value;
+            document.body.appendChild(probe);
+            const computed = getComputedStyle(probe).color;
+            probe.remove();
+            const match = computed.match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)/);
+            return match ? [Number(match[1]), Number(match[2]), Number(match[3])] : null;
+          };
+          const luminance = ([r, g, b]) => {
+            const channels = [r, g, b].map((channel) => {
+              const normalized = channel / 255;
+              return normalized <= 0.03928
+                ? normalized / 12.92
+                : ((normalized + 0.055) / 1.055) ** 2.4;
+            });
+            return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+          };
+          const ratio = (foreground, background) => {
+            const fg = resolveColor(foreground);
+            const bg = resolveColor(background);
+            if (!fg || !bg) {
+              return 0;
+            }
+            const lighter = Math.max(luminance(fg), luminance(bg));
+            const darker = Math.min(luminance(fg), luminance(bg));
+            return Number(((lighter + 0.05) / (darker + 0.05)).toFixed(2));
+          };
+          const variable = (name) => styles.getPropertyValue(name).trim();
+          return [
+            { label: 'text/page', ratio: ratio(variable('--text'), variable('--page')) },
+            { label: 'text/reply', ratio: ratio(variable('--text'), variable('--reply')) },
+            { label: 'link/page', ratio: ratio(variable('--link'), variable('--page')) },
+            { label: 'link/reply', ratio: ratio(variable('--link'), variable('--reply')) },
+            { label: 'header/page', ratio: ratio(variable('--header'), variable('--page')) },
+            { label: 'text/label', ratio: ratio(variable('--text'), variable('--label')) }
+          ];
+        })()`,
+        returnByValue: true
+      });
+      assertContrastPairs(contrast.result?.value || [], page.label);
+    }
+
+    if (page.screenshotPath) {
+      const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
+      const image = Buffer.from(screenshot.data || '', 'base64');
+      if (image.length < 1000) {
+        throw new Error(`${page.label} screenshot was unexpectedly small.`);
+      }
+      await writeFile(page.screenshotPath, image);
     }
 
     const runtimeErrors = cdp.events.filter((event) => event.method === 'Runtime.exceptionThrown');
@@ -318,6 +404,8 @@ async function main() {
   }
 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), '36chan-browser-smoke-'));
+  const screenshotRoot = path.join(tempRoot, 'screenshots');
+  await mkdir(screenshotRoot, { recursive: true });
   const userDataDir = path.join(tempRoot, 'chrome-profile');
   const server = spawnProcess(process.execPath, [path.join(repoRoot, 'backend/server.js')], {
     cwd: tempRoot,
@@ -354,21 +442,33 @@ async function main() {
       {
         label: 'home desktop',
         url: `${baseUrl}/#home`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-home-desktop.png'),
         checks: ['36chan là gì?', 'Bảng', 'Bài mới nhất', 'Chủ đề đang theo dõi', 'Bài của tôi', 'Bảng đang theo dõi', 'Thống Kê Máy Chủ']
       },
       {
         label: 'board desktop',
         url: `${baseUrl}/#board/confession`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-board-desktop.png'),
         checks: ['Tạo chủ đề mới', 'Danh mục', 'Kho lưu trữ', 'Bài kiểm thử browser smoke cho CI']
       },
       {
         label: 'thread desktop',
         url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-thread-desktop.png'),
         checks: ['Đăng trả lời', 'Theo dõi', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử']
       },
       {
         label: 'catalog desktop',
         url: `${baseUrl}/#catalog/confession`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-catalog-desktop.png'),
         checks: ['Danh mục', 'Sắp xếp theo:', 'Lọc:', 'Có ảnh', 'Bài kiểm thử browser smoke cho CI']
       },
       {
@@ -377,9 +477,20 @@ async function main() {
         checks: ['Hàng đợi kiểm duyệt', 'Tài khoản', 'Đăng nhập']
       },
       {
+        label: 'account desktop',
+        url: `${baseUrl}/#account`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-account-desktop.png'),
+        checks: ['Settings tài khoản', 'Giao diện', 'Bảng nhà', 'Bạn chưa đăng nhập tài khoản']
+      },
+      {
         label: 'admin dashboard desktop',
         url: `${baseUrl}/#admin`,
         loginAdmin: true,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-admin-desktop.png'),
         checks: ['AI chờ duyệt', 'Báo cáo', 'Đã duyệt', 'Nhật ký', 'Hàng đợi trống']
       },
       {
@@ -394,6 +505,9 @@ async function main() {
         url: `${baseUrl}/#thread/${threadId}`,
         width: 390,
         height: 844,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-thread-mobile.png'),
         checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI']
       }
     ];

@@ -248,7 +248,7 @@ describe('Account settings', () => {
     const service = createTestService();
     const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const updated = await service.updateAccountSettings(account.id, {
-      theme: 'tomorrow',
+      theme: 'burichan',
       displayPreferences: {
         compactThreads: true,
         hideThumbnails: true
@@ -260,7 +260,7 @@ describe('Account settings', () => {
       },
       boardSubscriptions: ['confession', 'hoc-tap', 'unknown-board', 'confession']
     });
-    assert.strictEqual(updated.settings.theme, 'tomorrow');
+    assert.strictEqual(updated.settings.theme, 'burichan');
     assert.deepStrictEqual(updated.settings.displayPreferences, {
       compactThreads: true,
       hideThumbnails: true

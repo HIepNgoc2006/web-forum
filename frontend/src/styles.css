@@ -2375,6 +2375,24 @@ body.theme-tomorrow.board-page .topbar {
   color: var(--text);
 }
 
+body.theme-burichan,
+body.theme-burichan.board-page {
+  --page: #f7f8ff;
+  --page-top: #dfe4ff;
+  --reply: #e4e7f8;
+  --reply-border: #9fa9d8;
+  --text: #2b2638;
+  --header: #8a2638;
+  --subject: #30397c;
+  --name: #0b6a3c;
+  --link: #27358f;
+  --quote: #4f7d1e;
+  --label: #cfd4f6;
+  --dead: #606479;
+  background: linear-gradient(to bottom, var(--page-top) 0, var(--page) 190px);
+  color: var(--text);
+}
+
 .board-page .topbar {
   border-bottom-color: #b7c5d9;
   background: #d6daf0;
@@ -3829,4 +3847,183 @@ body.theme-yotsuba.board-page .topbar {
   text-align: center;
   word-break: break-all;
   user-select: all;
+}
+
+body.theme-burichan .topbar,
+body.theme-burichan.board-page .topbar {
+  border-bottom-color: #9fa9d8;
+  background: #e4e7f8;
+  color: var(--text);
+}
+
+body.theme-burichan .portal-logo h1 {
+  color: #8a2638;
+  text-shadow: 1px 1px 0 #d8ddff;
+}
+
+body.theme-burichan .portal-box,
+body.theme-burichan .policy-box {
+  border-color: #6d759f;
+}
+
+body.theme-burichan .portal-box-title {
+  background: #38417f;
+  color: #fff;
+}
+
+body.theme-burichan .portal-box-title-light,
+body.theme-burichan .portal-board-box .portal-box-title-light,
+body.theme-burichan .policy-box h2 {
+  background: #d6daf4;
+  color: var(--text);
+}
+
+body.theme-burichan .portal-box-body,
+body.theme-burichan .latest-empty,
+body.theme-burichan .server-stats,
+body.theme-burichan .policy-box,
+body.theme-burichan .latest-post-item,
+body.theme-burichan .watch-item,
+body.theme-burichan .watch-thread-link,
+body.theme-burichan .hot-board-table {
+  color: #1f2333;
+}
+
+body.theme-burichan .portal-board-box,
+body.theme-burichan .portal-board-grid {
+  background: var(--page);
+}
+
+body.theme-burichan .home-board-search,
+body.theme-burichan .latest-post-item:nth-child(even),
+body.theme-burichan .watch-item:nth-child(even),
+body.theme-burichan .hot-board-table tbody tr:nth-child(even),
+body.theme-burichan .hot-board-table th,
+body.theme-burichan .poll-title,
+body.theme-burichan .analytics-table th,
+body.theme-burichan .analytics-badge {
+  background: var(--reply);
+  color: var(--text);
+}
+
+body.theme-burichan .home-board-search,
+body.theme-burichan .latest-post-item,
+body.theme-burichan .watch-item,
+body.theme-burichan .hot-board-table th,
+body.theme-burichan .hot-board-table td,
+body.theme-burichan .portal-footer-nav,
+body.theme-burichan .portal-footer-nav a {
+  border-color: var(--reply-border);
+}
+
+body.theme-burichan .home-board-search label,
+body.theme-burichan .hot-board-table th {
+  color: var(--text);
+}
+
+body.theme-burichan .portal-footer-nav a {
+  background: var(--page);
+}
+
+body.theme-burichan .board-row-icon {
+  border-color: #6d759f;
+  background: #9fa9d8;
+}
+
+body.theme-burichan.board-page .screen-head,
+body.theme-burichan.board-page .thread-page-title,
+body.theme-burichan.board-page .threads-panel,
+body.theme-burichan.board-page .thread-detail,
+body.theme-burichan .board-search-row,
+body.theme-burichan .board-toolbar-bottom,
+body.theme-burichan .thread-toolbar,
+body.theme-burichan .post-reply-toggle-row {
+  border-color: var(--reply-border);
+}
+
+body.theme-burichan.board-page .screen-head h1,
+body.theme-burichan .thread-page-title h1,
+body.theme-burichan.board-page .composer h2,
+body.theme-burichan.board-page .panel-title h2,
+body.theme-burichan .reply-panel-title h2 {
+  color: var(--header);
+}
+
+body.theme-burichan.board-page .muted,
+body.theme-burichan.board-page .thread-thumb-wrap,
+body.theme-burichan.board-page .post-actions,
+body.theme-burichan .thread-toolbar,
+body.theme-burichan .thread-toolbar a,
+body.theme-burichan .thread-toolbar button,
+body.theme-burichan .thread-toolbar label,
+body.theme-burichan .reply-notes,
+body.theme-burichan.board-page .file-text {
+  color: var(--text);
+}
+
+body.theme-burichan .board-search-row,
+body.theme-burichan .board-toolbar-bottom,
+body.theme-burichan .start-thread-row,
+body.theme-burichan .thread-toolbar,
+body.theme-burichan .post-reply-toggle-row,
+body.theme-burichan.board-page .board-rules,
+body.theme-burichan.board-page .ai-box,
+body.theme-burichan.board-page .suggestions,
+body.theme-burichan.board-page .post.comment,
+body.theme-burichan.board-page .pending-item,
+body.theme-burichan .admin-tools,
+body.theme-burichan .account-screen .login-panel {
+  background: var(--reply);
+  color: var(--text);
+}
+
+body.theme-burichan.board-page .composer,
+body.theme-burichan.board-page #commentForm {
+  --label: #cfd4f6;
+  --text: #2b2638;
+  border-color: var(--reply-border);
+  background: var(--reply);
+}
+
+body.theme-burichan.board-page .board-rules,
+body.theme-burichan.board-page .ai-box,
+body.theme-burichan.board-page .suggestions,
+body.theme-burichan .admin-tools,
+body.theme-burichan .account-screen .login-panel,
+body.theme-burichan .admin-tab,
+body.theme-burichan .health-card,
+body.theme-burichan .analytics-section,
+body.theme-burichan .recovery-code {
+  border-color: var(--reply-border);
+}
+
+body.theme-burichan.board-page .board-rules h2,
+body.theme-burichan .start-thread-button,
+body.theme-burichan .post-reply-toggle,
+body.theme-burichan.board-page .post-meta .subject {
+  color: var(--subject);
+}
+
+body.theme-burichan.board-page .post,
+body.theme-burichan.board-page .post-body,
+body.theme-burichan .admin-select-row {
+  color: #1f2333;
+}
+
+body.theme-burichan.board-page .post.comment::before,
+body.theme-burichan.board-page .pending-item::before {
+  color: #6d759f;
+}
+
+body.theme-burichan .admin-tab,
+body.theme-burichan .health-card,
+body.theme-burichan .analytics-section,
+body.theme-burichan .recovery-code {
+  background: #f7f8ff;
+  color: var(--text);
+}
+
+body.theme-burichan .admin-tab.active {
+  background: #cfd4f6;
+  color: #1f2333;
 }

@@ -401,7 +401,7 @@ test('http account api registers, logs in and saves private settings', async () 
       },
       body: JSON.stringify({
         settings: {
-          theme: 'tomorrow',
+          theme: 'burichan',
           homeBoard: 'hoc-tap',
           syncDrafts: false,
           emailNotifications: true,
@@ -420,7 +420,7 @@ test('http account api registers, logs in and saves private settings', async () 
     });
     const settingsBody = await settings.json();
     assert.equal(settings.status, 200);
-    assert.equal(settingsBody.data.settings.theme, 'tomorrow');
+    assert.equal(settingsBody.data.settings.theme, 'burichan');
     assert.equal(settingsBody.data.settings.homeBoard, 'hoc-tap');
     assert.equal(settingsBody.data.settings.syncDrafts, false);
     assert.equal(settingsBody.data.settings.emailNotifications, true);
@@ -440,7 +440,7 @@ test('http account api registers, logs in and saves private settings', async () 
     });
     const meBody = await me.json();
     assert.equal(me.status, 200);
-    assert.equal(meBody.data.settings.theme, 'tomorrow');
+    assert.equal(meBody.data.settings.theme, 'burichan');
     assert.deepEqual(meBody.data.settings.boardSubscriptions, ['confession', 'an-uong']);
 
     const logout = await fetch(`${baseUrl}/api/account/logout`, {
