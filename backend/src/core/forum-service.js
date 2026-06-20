@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_THUMBNAIL_BYTES,
   THREAD_LIFECYCLE,
   aiConfigStatus,
+  readModerationConfidenceThreshold,
   readPositiveInteger
 } from './config.js';
 import { redactSensitiveText } from './ai.js';
@@ -68,7 +69,7 @@ const MAX_MEDIA_PER_POST = 4;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 const REPORT_CATEGORIES = new Set(['Spam', 'Toxic', 'PII', 'Fake News', 'Illegal', 'Other']);
 const PRIORITY_FILTERS = new Set(['high', 'medium', 'low']);
-const PRIORITY_SORTS = new Set(['priority', 'newest', 'oldest']);
+const PRIORITY_SORTS = new Set(['priority', 'newest', 'oldest', 'confidence-desc', 'confidence-asc']);
 const PII_PRIORITY_LABELS = new Set(['PII Risk', 'PII']);
 const HIGH_RISK_REPORT_CATEGORIES = new Set(['PII', 'Illegal']);
 
@@ -842,6 +843,23 @@ function matchesPriorityFilter(item, filters = {}) {
 function compareAdminPriority(filters = {}) {
   const { sort } = normalizePriorityFilters(filters);
   return (left, right) => {
+    if (sort === 'confidence-desc' || sort === 'confidence-asc') {
+      const leftConfidence = Number(left.moderationConfidence);
+      const rightConfidence = Number(right.moderationConfidence);
+      const leftHasConfidence = Number.isFinite(leftConfidence);
+      const rightHasConfidence = Number.isFinite(rightConfidence);
+      if (leftHasConfidence !== rightHasConfidence) {
+        return leftHasConfidence ? -1 : 1;
+      }
+      if (leftHasConfidence && rightHasConfidence) {
+        const confidenceCompare =
+          sort === 'confidence-desc' ? rightConfidence - leftConfidence : leftConfidence - rightConfidence;
+        if (confidenceCompare !== 0) {
+          return confidenceCompare;
+        }
+      }
+      return String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''));
+    }
     if (sort === 'newest') {
       return String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''));
     }
@@ -1021,10 +1039,14 @@ function uniqueModerationLabels(results) {
 }
 
 function mergeModerationResults(...results) {
-  return {
+  const confidences = results
+    .map((result) => Number(result?.confidence))
+    .filter((confidence) => Number.isFinite(confidence));
+  const merged = {
     status: results.some((result) => result?.status === 'Flagged') ? 'Flagged' : 'Safe',
     labels: uniqueModerationLabels(results)
   };
+  return confidences.length ? { ...merged, confidence: Math.max(...confidences) } : merged;
 }
 
 async function moderateOcrText(ai, text) {
@@ -1343,6 +1365,7 @@ function recordModerationAction(state, { action, actor = 'system', postType, pos
     globalNumber: post.globalNumber,
     moderationStatus: post.moderationStatus,
     moderationLabels: post.moderationLabels ?? [],
+    ...(Number.isFinite(Number(post.moderationConfidence)) ? { moderationConfidence: Number(post.moderationConfidence) } : {}),
     createdAt
   });
 }
@@ -1393,6 +1416,16 @@ function matchesAdminFilters(item, filters = {}, dateField = 'createdAt') {
     return false;
   }
 
+  const hasConfidenceFilter = filters.confidence !== undefined && filters.confidence !== null && String(filters.confidence).trim() !== '';
+  const confidenceFilter = Number(filters.confidence);
+  if (hasConfidenceFilter && Number.isFinite(confidenceFilter)) {
+    const minimumConfidence = Math.min(1, Math.max(0, confidenceFilter > 1 ? confidenceFilter / 100 : confidenceFilter));
+    const itemConfidence = Number(item.moderationConfidence);
+    if (!Number.isFinite(itemConfidence) || itemConfidence < minimumConfidence) {
+      return false;
+    }
+  }
+
   return true;
 }
 
@@ -1409,6 +1442,22 @@ function serializeAdminPost(postType, post, state, priorityContext = {}) {
         reportCount: priorityContext.reportCounts?.get(Number(post.globalNumber)) ?? 0
       },
       priorityContext.referenceDate ?? new Date()
+    )
+  };
+}
+
+function shouldQueueModeration(moderation, threshold) {
+  if (moderation.status !== 'Flagged') {
+    return false;
+  }
+  const confidence = Number(moderation.confidence);
+  return !Number.isFinite(confidence) || confidence >= threshold;
+}
+
+function moderationSettingsForState(state, fallbackThreshold) {
+  return {
+    moderationConfidenceThreshold: readModerationConfidenceThreshold(
+      state.adminSettings?.moderationConfidenceThreshold ?? fallbackThreshold
     )
   };
 }
@@ -1601,7 +1650,8 @@ export function createForumService({
   logger = noopLogger,
   imageStorage = createInlineImageStorage(),
   totp = defaultTotp,
-  webauthn = defaultWebAuthn
+  webauthn = defaultWebAuthn,
+  moderationConfidenceThreshold = readModerationConfidenceThreshold()
 }) {
   // In-memory token blacklist for session revocation (logout).
   // Each entry maps jti/token → revokedAt timestamp string.
@@ -1730,6 +1780,34 @@ export function createForumService({
       };
     },
 
+    async getModerationSettings() {
+      const state = await store.read();
+      return moderationSettingsForState(state, moderationConfidenceThreshold);
+    },
+
+    async updateModerationSettings(settings = {}, { actor = 'admin' } = {}) {
+      return mutate(async (state) => {
+        const nextSettings = moderationSettingsForState(
+          {
+            adminSettings: {
+              ...state.adminSettings,
+              moderationConfidenceThreshold: settings.moderationConfidenceThreshold
+            }
+          },
+          moderationConfidenceThreshold
+        );
+        state.adminSettings = {
+          ...state.adminSettings,
+          ...nextSettings
+        };
+        logEvent('admin.moderation-settings.update', {
+          actor,
+          moderationConfidenceThreshold: nextSettings.moderationConfidenceThreshold
+        });
+        return nextSettings;
+      });
+    },
+
     async getHealth() {
       const [storeHealth, imageStorageHealth] = await Promise.all([
         readStoreHealth(store),
@@ -1740,7 +1818,10 @@ export function createForumService({
         status: ready ? 'ok' : 'degraded',
         checkedAt: now().toISOString(),
         store: storeHealth,
-        ai: aiConfigStatus(),
+        ai: {
+          ...aiConfigStatus(),
+          moderationConfidenceThreshold
+        },
         imageStorage: imageStorageHealth,
         realtime: realtime.metrics?.() ?? {
           clients: realtime.count?.() ?? 0,
@@ -1751,9 +1832,14 @@ export function createForumService({
 
     async getAdminHealth() {
       const health = await this.getHealth();
+      const moderationSettings = await this.getModerationSettings();
       const mem = process.memoryUsage();
       return {
         ...health,
+        ai: {
+          ...health.ai,
+          ...moderationSettings
+        },
         process: {
           nodeVersion: process.version,
           platform: process.platform,
@@ -2645,10 +2731,14 @@ export function createForumService({
           options: postingOptions.raw,
           sage: postingOptions.sage,
           noko: postingOptions.noko,
-          isPending: moderation.status === 'Flagged',
+          isPending: shouldQueueModeration(
+            moderation,
+            moderationSettingsForState(state, moderationConfidenceThreshold).moderationConfidenceThreshold
+          ),
           isDeleted: false,
           moderationStatus: moderation.status,
           moderationLabels: moderation.labels ?? [],
+          ...(Number.isFinite(Number(moderation.confidence)) ? { moderationConfidence: Number(moderation.confidence) } : {}),
           createdAt,
           bumpedAt: createdAt
         };
@@ -2667,6 +2757,7 @@ export function createForumService({
           globalNumber: thread.globalNumber,
           moderationStatus: thread.moderationStatus,
           moderationLabels: thread.moderationLabels,
+          moderationConfidence: thread.moderationConfidence,
           isPending: thread.isPending
         });
 
@@ -2817,10 +2908,14 @@ export function createForumService({
           options: postingOptions.raw,
           sage: postingOptions.sage,
           noko: postingOptions.noko,
-          isPending: moderation.status === 'Flagged',
+          isPending: shouldQueueModeration(
+            moderation,
+            moderationSettingsForState(state, moderationConfidenceThreshold).moderationConfidenceThreshold
+          ),
           isDeleted: false,
           moderationStatus: moderation.status,
           moderationLabels: moderation.labels ?? [],
+          ...(Number.isFinite(Number(moderation.confidence)) ? { moderationConfidence: Number(moderation.confidence) } : {}),
           createdAt
         };
         state.comments.push(comment);
@@ -2839,6 +2934,7 @@ export function createForumService({
           globalNumber: comment.globalNumber,
           moderationStatus: comment.moderationStatus,
           moderationLabels: comment.moderationLabels,
+          moderationConfidence: comment.moderationConfidence,
           isPending: comment.isPending
         });
         const slowModeRaised = raiseThreadSlowMode(thread, comment.moderationLabels, createdAt);

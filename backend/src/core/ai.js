@@ -3,17 +3,17 @@
 const MODERATION_SYSTEM_PROMPT = `
 Bạn là bộ lọc kiểm duyệt trước khi đăng của 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
 Nhiệm vụ: phân loại nội dung công khai theo mức an toàn, không đoán danh tính người viết, không yêu cầu IP, không dùng dữ liệu ngoài phần nội dung.
-Chỉ trả về JSON hợp lệ theo dạng: {"status":"Safe"|"Flagged","labels":["Toxic"|"Spam"|"Hate Speech"|"Fake News"|"PII Risk"]}.
+Chỉ trả về JSON hợp lệ theo dạng: {"status":"Safe"|"Flagged","labels":["Toxic"|"Spam"|"Hate Speech"|"Fake News"|"PII Risk"],"confidence":0.0-1.0}.
 Gắn Flagged khi nội dung có độc hại, spam, thù ghét, kích động bạo lực, quấy rối, lừa đảo, tin giả nguy hiểm, hoặc rủi ro lộ thông tin cá nhân.
-Nếu an toàn, trả labels rỗng.
+Nếu an toàn, trả labels rỗng. Nếu không ước lượng được độ tin cậy, bỏ qua trường confidence.
 `.trim();
 
 const IMAGE_MODERATION_SYSTEM_PROMPT = `
 Bạn là bộ lọc kiểm duyệt ảnh tải lên cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
 Nhiệm vụ: kiểm tra nội dung nhìn thấy trong ảnh và chữ trong ảnh (OCR), không đoán danh tính, không yêu cầu IP/token, không dùng dữ liệu ngoài ảnh.
-Chỉ trả về JSON hợp lệ theo dạng: {"status":"Safe"|"Flagged","labels":["Toxic"|"Spam"|"Hate Speech"|"Fake News"|"PII Risk"|"Graphic Content"|"Sexual Content"|"Violence"|"Self-Harm"]}.
+Chỉ trả về JSON hợp lệ theo dạng: {"status":"Safe"|"Flagged","labels":["Toxic"|"Spam"|"Hate Speech"|"Fake News"|"PII Risk"|"Graphic Content"|"Sexual Content"|"Violence"|"Self-Harm"],"confidence":0.0-1.0}.
 Gắn Flagged khi ảnh hoặc chữ trong ảnh có độc hại, spam, thù ghét, bạo lực, tự hại, nội dung tình dục không phù hợp, lừa đảo/tin giả nguy hiểm, hoặc rủi ro lộ thông tin cá nhân.
-Nếu an toàn, trả labels rỗng.
+Nếu an toàn, trả labels rỗng. Nếu không ước lượng được độ tin cậy, bỏ qua trường confidence.
 `.trim();
 
 const SUMMARY_SYSTEM_PROMPT = `
@@ -232,13 +232,25 @@ function extractJson(text) {
   return JSON.parse(match[0]);
 }
 
+function normalizeConfidence(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return undefined;
+  }
+  const normalized = parsed > 1 ? parsed / 100 : parsed;
+  return Math.min(1, Math.max(0, normalized));
+}
+
 function normalizeModerationResult(parsed = {}) {
   const labels = Array.isArray(parsed.labels)
     ? parsed.labels.map((label) => String(label ?? '').trim()).filter(Boolean)
     : [];
-  return parsed.status === 'Flagged'
-    ? { status: 'Flagged', labels }
-    : { status: 'Safe', labels: [] };
+  const confidence = normalizeConfidence(parsed.confidence ?? parsed.confidenceScore ?? parsed.score);
+  const result =
+    parsed.status === 'Flagged'
+      ? { status: 'Flagged', labels }
+      : { status: 'Safe', labels: [] };
+  return confidence === undefined ? result : { ...result, confidence };
 }
 
 function bulletize(text, limit = 5) {

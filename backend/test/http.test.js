@@ -1610,6 +1610,114 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
   );
 });
 
+test('http admin queue exposes and filters AI moderation confidence', async () => {
+  const results = [
+    { status: 'Flagged', labels: ['Spam'], confidence: 0.42 },
+    { status: 'Flagged', labels: ['Toxic'], confidence: 0.91 }
+  ];
+  await withServer(
+    async (baseUrl) => {
+      const low = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Low confidence pending',
+          captchaToken: 'dev-pass'
+        })
+      });
+      const lowBody = await low.json();
+      const high = await fetch(`${baseUrl}/api/boards/tam-su/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'High confidence pending',
+          captchaToken: 'dev-pass'
+        })
+      });
+      const highBody = await high.json();
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await login.json();
+      const headers = { authorization: `Bearer ${loginBody.data.token}` };
+
+      const pending = await fetch(`${baseUrl}/api/admin/pending?confidence=80&sort=confidence-desc`, { headers });
+      const pendingBody = await pending.json();
+      const actions = await fetch(`${baseUrl}/api/admin/moderation-actions?confidence=80`, { headers });
+      const actionsBody = await actions.json();
+
+      assert.equal(lowBody.data.thread.moderationConfidence, 0.42);
+      assert.equal(highBody.data.thread.moderationConfidence, 0.91);
+      assert.equal(pending.status, 200);
+      assert.deepEqual(pendingBody.data.map((post) => post.id), [highBody.data.thread.id]);
+      assert.equal(pendingBody.data[0].moderationConfidence, 0.91);
+      assert.equal(actions.status, 200);
+      assert.equal(actionsBody.data.length, 1);
+      assert.equal(actionsBody.data[0].moderationConfidence, 0.91);
+    },
+    {
+      ai: {
+        async moderate() {
+          return results.shift() ?? { status: 'Safe', labels: [] };
+        }
+      }
+    }
+  );
+});
+
+test('http admin moderation settings update confidence queue threshold', async () => {
+  await withServer(
+    async (baseUrl) => {
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await login.json();
+      const headers = {
+        authorization: `Bearer ${loginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+
+      const update = await fetch(`${baseUrl}/api/admin/moderation-settings`, {
+        method: 'PUT',
+        headers,
+        body: JSON.stringify({ moderationConfidenceThreshold: 80 })
+      });
+      const updateBody = await update.json();
+      const settings = await fetch(`${baseUrl}/api/admin/moderation-settings`, {
+        headers: { authorization: headers.authorization }
+      });
+      const settingsBody = await settings.json();
+      const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Low confidence should bypass queue',
+          captchaToken: 'dev-pass'
+        })
+      });
+      const createdBody = await created.json();
+
+      assert.equal(update.status, 200);
+      assert.equal(updateBody.data.moderationConfidenceThreshold, 0.8);
+      assert.equal(settings.status, 200);
+      assert.equal(settingsBody.data.moderationConfidenceThreshold, 0.8);
+      assert.equal(createdBody.data.status, 'published');
+      assert.equal(createdBody.data.thread.moderationConfidence, 0.4);
+    },
+    {
+      ai: {
+        async moderate() {
+          return { status: 'Flagged', labels: ['Spam'], confidence: 0.4 };
+        }
+      }
+    }
+  );
+});
+
 test('http admin sanctions temporarily block matching hashed posting fingerprint', async () => {
   await withServer(async (baseUrl) => {
     const posterToken = 'same-browser-token';
