@@ -106,6 +106,28 @@ function reportCategoryLabel(value) {
   return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
 }
 
+function moderationPriorityLabel(priority = {}) {
+  if (priority.level === 'high') {
+    return 'Cao';
+  }
+  if (priority.level === 'medium') {
+    return 'Trung bình';
+  }
+  return 'Thấp';
+}
+
+function moderationPriorityHtml(priority = {}) {
+  const level = ['high', 'medium', 'low'].includes(priority.level) ? priority.level : 'low';
+  const score = Number(priority.score || 0);
+  const reportCount = Number(priority.reportCount || 0);
+  const details = [
+    `Ưu tiên ${moderationPriorityLabel({ level })}: ${score}`,
+    reportCount > 0 ? `${reportCount} báo cáo` : '',
+    priority.hasPiiRisk ? 'PII' : ''
+  ].filter(Boolean);
+  return `<span class="priority-badge priority-${level}">${escapeHtml(details.join(' · '))}</span>`;
+}
+
 function showReportModal(globalNumber) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div');
@@ -702,6 +724,10 @@ const els = {
   adminReportCategoryFilterWrap: document.querySelector('#adminReportCategoryFilterWrap'),
   adminReportCategoryFilter: document.querySelector('#adminReportCategoryFilter'),
   adminTimeFilter: document.querySelector('#adminTimeFilter'),
+  adminPriorityFilterWrap: document.querySelector('#adminPriorityFilterWrap'),
+  adminPriorityFilter: document.querySelector('#adminPriorityFilter'),
+  adminPrioritySortWrap: document.querySelector('#adminPrioritySortWrap'),
+  adminPrioritySort: document.querySelector('#adminPrioritySort'),
   adminRefresh: document.querySelector('#adminRefresh'),
   adminExport: document.querySelector('#adminExport'),
   adminBulkBar: document.querySelector('#adminBulkBar'),
@@ -2468,6 +2494,7 @@ function reportsHtml(reports) {
         <tr>
           <th>Thời gian</th>
           <th>Bài</th>
+          <th>Ưu tiên</th>
           <th>Loại</th>
           <th>Lý do</th>
           <th>Người báo cáo</th>
@@ -2481,6 +2508,7 @@ function reportsHtml(reports) {
               <tr>
                 <td>${formatPostDate(report.createdAt)}</td>
                 <td>${escapeHtml(report.boardSlug)} / No.${report.globalNumber}</td>
+                <td>${moderationPriorityHtml(report.moderationPriority)}</td>
                 <td>${escapeHtml(reportCategoryLabel(report.category))}</td>
                 <td>${escapeHtml(report.reason || '-')}</td>
                 <td>${escapeHtml(posterId({ posterHash: report.reporterHash }))}</td>
@@ -2577,6 +2605,7 @@ function pendingPostsHtml(posts) {
             <span>No.${post.globalNumber}</span>
             <span>${escapeHtml(post.boardSlug)}</span>
             <span>AI:${escapeHtml(post.moderationLabels.map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus))}</span>
+            ${moderationPriorityHtml(post.moderationPriority)}
           </div>
           <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
           <div class="pending-actions">
@@ -2876,6 +2905,12 @@ function adminQueryString() {
     const since = new Date(Date.now() - (els.adminTimeFilter.value === '24h' ? 24 : 24 * 7) * 60 * 60 * 1000);
     params.set('since', since.toISOString());
   }
+  if ((state.adminTab === 'pending' || state.adminTab === 'reports') && els.adminPriorityFilter.value) {
+    params.set('priority', els.adminPriorityFilter.value);
+  }
+  if ((state.adminTab === 'pending' || state.adminTab === 'reports') && els.adminPrioritySort.value) {
+    params.set('sort', els.adminPrioritySort.value);
+  }
   return params.toString();
 }
 
@@ -2916,6 +2951,9 @@ function renderAdminTabs() {
   els.adminBulkBar.classList.toggle('hidden', state.adminTab !== 'pending');
   els.adminLabelFilter.closest('label')?.classList.toggle('hidden', state.adminTab === 'reports');
   els.adminReportCategoryFilterWrap.classList.toggle('hidden', state.adminTab !== 'reports');
+  const supportsPriority = state.adminTab === 'pending' || state.adminTab === 'reports';
+  els.adminPriorityFilterWrap.classList.toggle('hidden', !supportsPriority);
+  els.adminPrioritySortWrap.classList.toggle('hidden', !supportsPriority);
   els.reportSection.classList.toggle('hidden', true);
   els.moderationSection.classList.toggle('hidden', true);
 }
@@ -6108,7 +6146,7 @@ function bindEvents() {
       setAutoUpdate(autoUpdate.checked);
     }
 
-    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminReportCategoryFilter, #adminTimeFilter')) {
+    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminReportCategoryFilter, #adminTimeFilter, #adminPriorityFilter, #adminPrioritySort')) {
       loadAdmin().catch((error) => showToast(error.message));
     }
 

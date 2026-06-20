@@ -284,7 +284,9 @@ function adminFiltersFromSearch(searchParams) {
     since: searchParams.get('since') || '',
     status: searchParams.get('status') || '',
     action: searchParams.get('action') || '',
-    category: searchParams.get('category') || ''
+    category: searchParams.get('category') || '',
+    priority: searchParams.get('priority') || '',
+    sort: searchParams.get('sort') || ''
   };
 }
 
