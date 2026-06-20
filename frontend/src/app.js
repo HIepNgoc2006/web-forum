@@ -3049,10 +3049,22 @@ function renderPostLines(lines, options = {}) {
         const youMark = isYouReference ? ' <span class="you-ref-marker">(You)</span>' : '';
         return `<button class="${className}" data-ref="${number}" type="button">&gt;&gt;${number}${opMark}${youMark}</button>`;
       });
+      html = renderInlineMarkup(html);
       html = renderSpoilerText(html);
       return `<div class="post-line ${line.type === 'greentext' ? 'greentext' : ''}">${html || '&nbsp;'}</div>`;
     })
     .join('');
+}
+
+// Inline text markup on already-sanitized, ref-linked HTML. Bold is matched
+// before italic so the single-asterisk pass does not split `**`. The class
+// names emitted by the ref/spoiler passes contain no `*`/`~`, so generated
+// markup is never re-matched here.
+function renderInlineMarkup(html) {
+  return String(html)
+    .replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*([^\n*]+?)\*/g, '<em>$1</em>')
+    .replace(/~~([^\n~]+?)~~/g, '<del>$1</del>');
 }
 
 // Inline [spoiler]...[/spoiler] -> click-to-reveal span. Runs after ref
