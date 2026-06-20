@@ -1245,6 +1245,7 @@ function consumeAiBudget(state, { kind, ip, posterToken, actor, createdAt }) {
     transcribe: 15,
     caption: 30,
     speak: 20,
+    duplicateCheck: 40,
     digest: Number(process.env.ADMIN_DIGEST_DAILY_LIMIT) || 5
   };
   const limit = limits[kind] ?? 10;
@@ -3189,6 +3190,55 @@ export function createForumService({
         });
         return { ok: true };
       });
+    },
+
+    async checkDuplicateThread({ boardSlug, body, ip, posterToken, actor = 'public' } = {}) {
+      const normalizedBody = normalizeBody(body);
+      if (!normalizedBody) {
+        const error = new Error('Nội dung là bắt buộc');
+        error.statusCode = 400;
+        throw error;
+      }
+      const snapshot = await store.read();
+      if (!findBoard(snapshot, boardSlug, { publicOnly: true })) {
+        const error = new Error('Không tìm thấy bảng');
+        error.statusCode = 404;
+        throw error;
+      }
+      if (!aiConfigStatus().configured || typeof ai.checkDuplicateThread !== 'function') {
+        return { isDuplicate: false, matchedThreadId: null, reason: null };
+      }
+
+      const createdAt = now().toISOString();
+      const existingThreads = await mutate(async (state) => {
+        consumeAiBudget(state, { kind: 'duplicateCheck', ip, posterToken, actor, createdAt });
+        return state.threads
+          .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
+          .sort(compareBoardThreads)
+          .slice(0, 30)
+          .map((thread) => ({
+            id: thread.id,
+            globalNumber: thread.globalNumber,
+            body: redactSensitiveText(thread.body)
+          }));
+      });
+
+      if (!existingThreads.length) {
+        return { isDuplicate: false, matchedThreadId: null, reason: null };
+      }
+
+      try {
+        logEvent('ai.duplicate-check', { boardSlug, candidateCount: existingThreads.length });
+        const result = await ai.checkDuplicateThread(normalizedBody, existingThreads);
+        const matched = existingThreads.some((thread) => thread.id === result?.matchedThreadId);
+        return {
+          isDuplicate: Boolean(result?.isDuplicate && matched),
+          matchedThreadId: matched ? result.matchedThreadId : null,
+          reason: result?.isDuplicate && matched ? (result.reason ?? null) : null
+        };
+      } catch {
+        return { isDuplicate: false, matchedThreadId: null, reason: null };
+      }
     },
 
     async summarizeThread(threadId, { ip, posterToken, actor = 'public', sinceGlobalNumber = 0 } = {}) {

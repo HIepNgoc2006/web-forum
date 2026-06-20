@@ -56,6 +56,17 @@ Yêu cầu:
 - Trả về kết quả ngắn gọn trong vòng 1-2 câu hoặc gạch đầu dòng ngắn.
 `.trim();
 
+const DUPLICATE_CHECK_SYSTEM_PROMPT = `
+Bạn là trợ lý phát hiện chủ đề trùng lặp cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
+Nhiệm vụ:
+- So sánh bài viết mới với danh sách chủ đề công khai cũ cùng bảng.
+- Chỉ coi là trùng khi cùng một sự việc, câu chuyện, drama, hoặc lời thú nhận cụ thể một cách rõ rệt.
+- Không coi là trùng nếu chỉ giống cảm xúc chung, thể loại câu hỏi, hoặc bối cảnh sinh viên phổ biến.
+- Không đoán danh tính người viết, không suy luận thông tin cá nhân.
+Chỉ trả về JSON hợp lệ theo dạng:
+{"isDuplicate":true|false,"matchedThreadId":"id hoặc null","reason":"lý do ngắn bằng tiếng Việt hoặc null"}
+`.trim();
+
 const TRANSLATE_SYSTEM_PROMPT = `
 Bạn là trợ lý dịch thuật cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
 Nhiệm vụ: dịch văn bản người dùng sang ngôn ngữ đích được yêu cầu.
@@ -223,6 +234,33 @@ function bulletize(text, limit = 5) {
     .slice(0, limit);
 }
 
+function duplicatePrompt(newBody, existingThreads = []) {
+  const threadsText = existingThreads
+    .map((thread, index) => {
+      return [
+        `#${index + 1}`,
+        `Thread ID: ${thread.id}`,
+        `Nội dung: ${redactSensitiveText(thread.body)}`
+      ].join('\n');
+    })
+    .join('\n---\n');
+  return `
+New Thread Content:
+${redactSensitiveText(newBody)}
+
+Existing Threads:
+${threadsText}
+`.trim();
+}
+
+function normalizeDuplicateResult(parsed = {}) {
+  return {
+    isDuplicate: Boolean(parsed.isDuplicate),
+    matchedThreadId: parsed.matchedThreadId ? String(parsed.matchedThreadId) : null,
+    reason: parsed.reason ? String(parsed.reason).slice(0, 300) : null
+  };
+}
+
 // Google AI Provider
 function createGoogleProvider() {
   function requireGoogleAiKey() {
@@ -324,6 +362,14 @@ ${text}
       return result.trim();
     },
 
+    async checkDuplicateThread(newBody, existingThreads = []) {
+      if (!existingThreads.length) {
+        return { isDuplicate: false, matchedThreadId: null, reason: null };
+      }
+      const result = await generate(duplicatePrompt(newBody, existingThreads), DUPLICATE_CHECK_SYSTEM_PROMPT);
+      return normalizeDuplicateResult(extractJson(result));
+    },
+
     async translate(text, targetLang = 'vi') {
       const result = await generate(`
 Ngôn ngữ đích: ${targetLang}
@@ -414,6 +460,9 @@ function createOpenAiCompatibleProvider() {
         throw error;
       },
       async summarizeReports() {
+        throw error;
+      },
+      async checkDuplicateThread() {
         throw error;
       },
       async translate() {
@@ -514,6 +563,14 @@ Danh sách lý do báo cáo:
 ${text}
 `, REPORT_SUMMARY_SYSTEM_PROMPT);
       return result.trim();
+    },
+
+    async checkDuplicateThread(newBody, existingThreads = []) {
+      if (!existingThreads.length) {
+        return { isDuplicate: false, matchedThreadId: null, reason: null };
+      }
+      const result = await generate(duplicatePrompt(newBody, existingThreads), DUPLICATE_CHECK_SYSTEM_PROMPT);
+      return normalizeDuplicateResult(extractJson(result));
     },
 
     async translate(text, targetLang = 'vi') {
@@ -638,6 +695,9 @@ export function createAiClient() {
       const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
       error.statusCode = 503;
       throw error;
+    },
+    async checkDuplicateThread() {
+      return { isDuplicate: false, matchedThreadId: null, reason: null };
     },
     async translate() {
       throw notConfiguredError();
