@@ -17,6 +17,9 @@ const safeAi = {
   async summarize() {
     return ['Tom tat 1', 'Tom tat 2', 'Tom tat 3'];
   },
+  async summarizeReports() {
+    return 'Tom tat bao cao AI';
+  },
   async suggest() {
     return ['Goi y 1', 'Goi y 2'];
   },
@@ -44,6 +47,9 @@ const flaggedAi = {
   async summarize() {
     return [];
   },
+  async summarizeReports() {
+    return '';
+  },
   async suggest() {
     return [];
   }
@@ -57,6 +63,7 @@ async function withServer(
     now = () => new Date('2026-05-22T08:00:00.000Z'),
     imageStorage,
     uploadRoot = path.resolve('data/uploads-test'),
+    staticRoot,
     jwtSecret = 'secret'
   } = {}
 ) {
@@ -74,6 +81,7 @@ async function withServer(
     jwtSecret,
     adminUsername: 'admin',
     adminPassword: 'pass',
+    staticRoot,
     uploadRoot
   });
   server.listen(0);
@@ -116,6 +124,44 @@ test('http api creates public thread and protects admin pending queue', async ()
     assert.equal(login.status, 200);
     assert.equal(typeof loginBody.data.token, 'string');
   });
+});
+
+test('http static serving treats missing assets as 404 without 500 logging', async () => {
+  const staticRoot = path.resolve('backend/test/tmp-static');
+  const originalError = console.error;
+  const logs = [];
+  console.error = (...args) => {
+    logs.push(args);
+  };
+
+  try {
+    await fs.rm(staticRoot, { recursive: true, force: true });
+    await fs.mkdir(staticRoot, { recursive: true });
+    await fs.writeFile(path.join(staticRoot, 'index.html'), '<!doctype html><title>36chan</title>');
+
+    await withServer(
+      async (baseUrl) => {
+        const favicon = await fetch(`${baseUrl}/favicon.ico`);
+        const gitConfig = await fetch(`${baseUrl}/.git/config`);
+        const appRoute = await fetch(`${baseUrl}/admin/moderation`);
+        const appRouteBody = await appRoute.text();
+
+        assert.equal(favicon.status, 404);
+        assert.equal(gitConfig.status, 404);
+        assert.equal(appRoute.status, 200);
+        assert.equal(appRouteBody.includes('<title>36chan</title>'), true);
+      },
+      { staticRoot }
+    );
+
+    assert.equal(
+      logs.some((args) => String(args[0]).includes('HTTP 500 ERROR')),
+      false
+    );
+  } finally {
+    console.error = originalError;
+    await fs.rm(staticRoot, { recursive: true, force: true });
+  }
 });
 
 test('http capcode is granted to admins but denied to regular and anonymous posters', async () => {
@@ -1455,6 +1501,16 @@ test('http api stores user reports and exposes them to admin only', async () => 
     assert.equal(reportsBody.data[0].reason, 'Co thong tin rieng tu');
     assert.equal(reportsBody.data[0].globalNumber, createdBody.data.thread.globalNumber);
     assert.equal(serialized.includes('reporter-secret'), false);
+
+    const summary = await fetch(`${baseUrl}/api/admin/posts/${createdBody.data.thread.globalNumber}/reports/summary`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    const summaryBody = await summary.json();
+
+    assert.equal(summary.status, 200);
+    assert.equal(summaryBody.data.label, 'Nội dung do AI tổng hợp');
+    assert.equal(summaryBody.data.summary, 'Tom tat bao cao AI');
   });
 });
 
