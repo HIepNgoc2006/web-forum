@@ -6,7 +6,9 @@ const IMAGE_EXTENSIONS = new Map([
   ['image/png', 'png'],
   ['image/jpeg', 'jpg'],
   ['image/gif', 'gif'],
-  ['image/webp', 'webp']
+  ['image/webp', 'webp'],
+  ['video/mp4', 'mp4'],
+  ['video/webm', 'webm']
 ]);
 
 function trimTrailingSlash(value) {

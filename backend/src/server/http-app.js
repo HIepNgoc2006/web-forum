@@ -19,9 +19,12 @@ const MIME_TYPES = new Map([
   ['.jpg', 'image/jpeg'],
   ['.jpeg', 'image/jpeg'],
   ['.gif', 'image/gif'],
+  ['.mp4', 'video/mp4'],
+  ['.webm', 'video/webm'],
   ['.webp', 'image/webp'],
   ['.svg', 'image/svg+xml']
 ]);
+const MAX_MEDIA_PER_POST = 4;
 
 function sendJson(response, statusCode, payload) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
@@ -74,8 +77,9 @@ async function readJson(request, maxBytes = 1_600_000) {
 
 function imageUploadJsonLimit() {
   return (
-    readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES) +
-    readPositiveInteger(process.env.MAX_THUMBNAIL_BYTES, DEFAULT_MAX_THUMBNAIL_BYTES) +
+    (readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES) +
+      readPositiveInteger(process.env.MAX_THUMBNAIL_BYTES, DEFAULT_MAX_THUMBNAIL_BYTES)) *
+      MAX_MEDIA_PER_POST +
     80_000
   );
 }
@@ -847,6 +851,7 @@ export function createHttpServer({
             boardSlug: params.boardSlug,
             body: body.body,
             image: body.image,
+            images: body.images,
             pollOptions: body.pollOptions,
             options: body.options,
             deletePassword: body.deletePassword,
@@ -904,6 +909,7 @@ export function createHttpServer({
             threadId: params.threadId,
             body: body.body,
             image: body.image,
+            images: body.images,
             options: body.options,
             deletePassword: body.deletePassword,
             captchaToken: body.captchaToken,

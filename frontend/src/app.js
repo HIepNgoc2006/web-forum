@@ -21,9 +21,9 @@ const state = {
   accountPrivateData: null,
   accountPrivateSaveTimer: null,
   posterToken: getPosterToken(),
-  selectedImage: null,
-  commentImage: null,
-  quickReplyImage: null,
+  selectedImage: [],
+  commentImage: [],
+  quickReplyImage: [],
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,
@@ -208,6 +208,8 @@ const displayPreferencesKey = 'displayPreferences';
 const notificationPreferencesKey = 'notificationPreferences';
 const aiNotConfiguredMessage =
   'Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.';
+const MAX_MEDIA_PER_POST = 4;
+const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 
 function readWatchedThreads() {
   if (state.accountToken && state.accountPrivateData) {
@@ -1876,7 +1878,7 @@ function watchedThreadEntryFromDetail(detail, existing = {}, { markSeen = false 
   const board = state.boards.find((item) => item.slug === detail.thread.boardSlug);
   const posts = [detail.thread, ...(detail.comments || [])];
   const currentMaxNumber = detail.commentPage?.currentMaxGlobalNumber || maxThreadPostNumber(detail);
-  const fileCount = posts.filter((post) => post.image).length;
+  const fileCount = posts.reduce((total, post) => total + postMediaCount(post), 0);
   return {
     threadId: detail.thread.id,
     boardSlug: detail.thread.boardSlug,
@@ -2071,14 +2073,15 @@ function renderPopularThreads(threads) {
       const href = `#thread/${thread.id}`;
       const title = plainPreview(thread.bodyLines, board?.description).slice(0, 120);
       const initials = (board?.name || thread.boardSlug).slice(0, 2).toUpperCase();
-      const thumbnailSrc = imageThumbnailSrc(thread.image);
+      const firstMedia = mediaItemsFromPost(thread)[0];
+      const thumbnailSrc = mediaThumbnailSrc(firstMedia);
 
       return `
         <a class="popular-item" href="${href}">
           <strong>${board?.name || thread.boardSlug}</strong>
           ${
-            thread.image && thumbnailSrc
-              ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
+            firstMedia && thumbnailSrc
+              ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(firstMedia.name)}">`
               : `<span class="popular-placeholder">${initials}</span>`
           }
           <span>${title}${title.length >= 120 ? '...' : ''}</span>
@@ -2542,7 +2545,7 @@ function adminPostDetailHtml(detail) {
         ${post.type === 'thread' ? adminLockButtonHtml(post) : ''}
         <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
         <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
-        ${post.image ? `<button class="ghost-button" data-admin-delete-post="${post.globalNumber}" data-file-only="true" type="button">[Xóa tệp]</button>` : ''}
+        ${postMediaCount(post) ? `<button class="ghost-button" data-admin-delete-post="${post.globalNumber}" data-file-only="true" type="button">[Xóa tệp]</button>` : ''}
         <button class="danger-button" data-admin-delete-post="${post.globalNumber}" type="button">Xóa bài</button>
       </div>
       <h3>Báo cáo ${reports.length ? `<button class="ghost-button" data-admin-reports-summary="${post.globalNumber}" type="button">[Tóm tắt báo cáo AI]</button>` : ''}</h3>
@@ -3120,46 +3123,65 @@ function imageInfoText(image = {}) {
   return size;
 }
 
-function imageOriginalSrc(image = {}) {
+function mediaItemsFromPost(post = {}) {
+  return mediaList(post.images?.length ? post.images : post.image);
+}
+
+function postMediaCount(post = {}) {
+  return mediaItemsFromPost(post).length;
+}
+
+function mediaOriginalSrc(image = {}) {
   const value = image || {};
   return value.url || value.dataUrl || '';
 }
 
-function imageThumbnailSrc(image = {}, options = {}) {
+function mediaThumbnailSrc(image = {}, options = {}) {
   const value = image || {};
   const src = value.thumbnail?.url || value.thumbnail?.dataUrl || '';
-  return src || (options.fallbackOriginal ? imageOriginalSrc(value) : '');
+  return src || (options.fallbackOriginal ? mediaOriginalSrc(value) : '');
 }
 
 function fileTextHtml(image) {
   const name = escapeHtml(image?.name || 'tai-len');
-  const src = escapeHtml(imageOriginalSrc(image));
+  const src = escapeHtml(mediaOriginalSrc(image));
   const info = escapeHtml(imageInfoText(image));
   return `Tệp: <a href="${src}" target="_blank" rel="noopener">${name}</a> (${info})`;
 }
 
-function imageToggleHtml(image, className = 'post-image') {
+function mediaToggleHtml(image, className = 'post-image') {
   const name = escapeHtml(image?.name || 'tai-len');
-  const thumbnailSrc = imageThumbnailSrc(image);
-  const originalSrc = escapeHtml(imageOriginalSrc(image));
+  const thumbnailSrc = mediaThumbnailSrc(image);
+  const originalSrc = escapeHtml(mediaOriginalSrc(image));
   const spoiler = Boolean(image?.spoiler);
+  const isVideo = mediaKind(image) === 'video';
+  const mediaLabel = isVideo ? 'video' : 'ảnh';
   const preview = thumbnailSrc
     ? `<img class="${className}" src="${escapeHtml(thumbnailSrc)}" alt="${name}" data-full-src="${originalSrc}">`
-    : `<span class="${className} placeholder image-lazy-placeholder" data-full-src="${originalSrc}">Có tệp</span>`;
+    : `<span class="${className} placeholder image-lazy-placeholder" data-full-src="${originalSrc}">${isVideo ? 'Video' : 'Có tệp'}</span>`;
   const spoilerLabel = spoiler ? '<span class="spoiler-image-label">Spoiler — bấm để hiện</span>' : '';
+  const toggleAttributes = `class="image-toggle" data-image-toggle${spoiler ? ' data-spoiler-image' : ''} data-media-type="${
+    isVideo ? 'video' : 'image'
+  }" data-full-src="${originalSrc}" data-image-name="${name}" data-image-class="${className}" aria-expanded="false" aria-label="Phóng to ${mediaLabel} ${name}"`;
+  const toggleOpen = isVideo ? `<div ${toggleAttributes} role="button" tabindex="0">` : `<button ${toggleAttributes} type="button">`;
+  const toggleClose = isVideo ? '</div>' : '</button>';
   return `
     <div class="thread-thumb-wrap${spoiler ? ' spoiler-image' : ''}">
       <div class="file-text">${fileTextHtml(image)}</div>
-      <button class="image-toggle" data-image-toggle${spoiler ? ' data-spoiler-image' : ''} data-full-src="${originalSrc}" data-image-name="${name}" data-image-class="${className}" type="button" aria-expanded="false" aria-label="Phóng to ảnh ${name}">
+      ${toggleOpen}
         ${preview}
         ${spoilerLabel}
-      </button>
+      ${toggleClose}
     </div>
   `;
 }
 
 function imageHtml(post) {
-  return post.image ? imageToggleHtml(post.image) : '';
+  const images = mediaItemsFromPost(post);
+  if (!images.length) {
+    return '';
+  }
+  return `<div class="post-media-gallery">${images.map((image) => mediaToggleHtml(image)).join('')}</div>`;
 }
 
 function posterId(post) {
@@ -3321,7 +3343,7 @@ function postHtml(post, type = 'post', options = {}) {
 
 function threadToolbarHtml(detail, position) {
   const posts = [detail.thread, ...detail.comments];
-  const fileCount = posts.filter((post) => post.image).length;
+  const fileCount = posts.reduce((total, post) => total + postMediaCount(post), 0);
   const commentMeta = detail.commentPage;
   const canReply = !detail.thread.isArchived && !detail.thread.isLocked;
   const replyLink =
@@ -3493,18 +3515,20 @@ function threadMatchesSearch(thread, term) {
 function catalogThreadHtml(thread) {
   const title = plainPreview(thread.bodyLines, 'Chưa có nội dung').slice(0, 260);
   const stickyPrefix = thread.isSticky ? '[Ghim] ' : '';
-  const thumbnailSrc = imageThumbnailSrc(thread.image);
-  const image = thread.image && thumbnailSrc
-    ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(thread.image.name)}">`
-    : thread.image
-      ? '<span class="catalog-placeholder">Có tệp</span>'
+  const images = mediaItemsFromPost(thread);
+  const firstMedia = images[0];
+  const thumbnailSrc = mediaThumbnailSrc(firstMedia);
+  const image = firstMedia && thumbnailSrc
+    ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(firstMedia.name)}">`
+    : firstMedia
+      ? `<span class="catalog-placeholder">${mediaKind(firstMedia) === 'video' ? 'Video' : 'Có tệp'}</span>`
     : '<span class="catalog-placeholder">Không có tệp</span>';
 
   return `
     <a class="catalog-thread" href="#thread/${thread.id}">
       <span class="catalog-thumb">${image}</span>
       <strong>${escapeHtml(`${stickyPrefix}${title.slice(0, 70)}`)}${title.length >= 70 ? '...' : ''}</strong>
-      <span class="catalog-thread-stats">R: ${thread.replyCount} / I: ${thread.image ? 1 : 0} / No.${thread.globalNumber}</span>
+      <span class="catalog-thread-stats">R: ${thread.replyCount} / I: ${images.length} / No.${thread.globalNumber}</span>
       <p>${escapeHtml(title)}${title.length >= 260 ? '...' : ''}</p>
     </a>
   `;
@@ -3538,7 +3562,7 @@ function sortedCatalogThreads(threads) {
 
 function catalogThreadMatchesFilter(thread) {
   if (state.catalogFilter === 'image') {
-    return Boolean(thread.image);
+    return mediaItemsFromPost(thread).length > 0;
   }
   if (state.catalogFilter === 'poll') {
     return Boolean(thread.poll?.options?.length);
@@ -3656,8 +3680,8 @@ function renderBoardThreads(threads) {
         <div class="thread ${thread.isSticky ? 'thread-sticky' : ''}" id="p${thread.globalNumber}">
           <div class="thread-op">
           ${
-            thread.image
-              ? imageToggleHtml(thread.image, 'thumb')
+            mediaItemsFromPost(thread).length
+              ? `<div class="post-media-gallery">${mediaItemsFromPost(thread).map((image) => mediaToggleHtml(image, 'thumb')).join('')}</div>`
               : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
           }
             ${meta(thread, { replyAction: false })}
@@ -3909,12 +3933,31 @@ function route() {
   setupRealtime();
 }
 
+function isSupportedMediaFile(file) {
+  return Boolean(file?.type?.startsWith('image/') || SUPPORTED_VIDEO_TYPES.has(file?.type));
+}
+
+function mediaKind(media = {}) {
+  return String(media.type || '').startsWith('video/') ? 'video' : 'image';
+}
+
+function mediaList(value) {
+  if (Array.isArray(value)) {
+    return value.filter(Boolean);
+  }
+  return value ? [value] : [];
+}
+
 function fileToDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Không thể đọc ảnh'));
+    reader.onerror = () => reject(new Error('Không thể đọc tệp'));
     reader.onload = () => {
       const dataUrl = String(reader.result || '');
+      if (file.type.startsWith('video/')) {
+        resolve(videoFileMetadata(file, dataUrl));
+        return;
+      }
       const image = new Image();
       image.onload = () => {
         const selectedImage = {
@@ -3941,6 +3984,64 @@ function fileToDataUrl(file) {
       image.src = dataUrl;
     };
     reader.readAsDataURL(file);
+  });
+}
+
+function videoFileMetadata(file, dataUrl) {
+  return new Promise((resolve) => {
+    const video = document.createElement('video');
+    let settled = false;
+    const timeout = window.setTimeout(() => finish(), 2500);
+
+    const finish = (thumbnail = null) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timeout);
+      const selectedVideo = {
+        name: file.name,
+        type: file.type,
+        mediaType: 'video',
+        sizeBytes: file.size,
+        dataUrl
+      };
+      const width = Number(video.videoWidth || 0);
+      const height = Number(video.videoHeight || 0);
+      if (width > 0 && height > 0) {
+        selectedVideo.width = width;
+        selectedVideo.height = height;
+      }
+      if (thumbnail) {
+        selectedVideo.thumbnail = thumbnail;
+      }
+      video.removeAttribute('src');
+      video.load();
+      resolve(selectedVideo);
+    };
+
+    video.muted = true;
+    video.preload = 'metadata';
+    video.playsInline = true;
+    video.onerror = () => finish();
+    video.onloadedmetadata = () => {
+      if (!video.videoWidth || !video.videoHeight) {
+        finish();
+        return;
+      }
+      try {
+        video.currentTime = Math.min(Math.max(Number(video.duration || 0) * 0.1, 0), 1);
+      } catch {
+        finish();
+      }
+    };
+    video.onloadeddata = () => {
+      if (!settled && video.currentTime === 0) {
+        finish(createVideoThumbnail(video, file));
+      }
+    };
+    video.onseeked = () => finish(createVideoThumbnail(video, file));
+    video.src = dataUrl;
   });
 }
 
@@ -3981,6 +4082,43 @@ function createImageThumbnail(image, file) {
   };
 }
 
+function createVideoThumbnail(video, file) {
+  const width = Number(video.videoWidth || 0);
+  const height = Number(video.videoHeight || 0);
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    return null;
+  }
+
+  const maxEdge = 240;
+  const scale = Math.min(1, maxEdge / Math.max(width, height));
+  const thumbnailWidth = Math.max(1, Math.round(width * scale));
+  const thumbnailHeight = Math.max(1, Math.round(height * scale));
+  const canvas = document.createElement('canvas');
+  canvas.width = thumbnailWidth;
+  canvas.height = thumbnailHeight;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    return null;
+  }
+
+  context.drawImage(video, 0, 0, thumbnailWidth, thumbnailHeight);
+  const type = 'image/jpeg';
+  const dataUrl = canvas.toDataURL(type, 0.72);
+  if (!dataUrl.startsWith('data:image/')) {
+    return null;
+  }
+
+  const baseName = String(file.name || 'video').replace(/\.[^.]+$/, '');
+  return {
+    name: `${baseName}-poster.jpg`,
+    type,
+    dataUrl,
+    sizeBytes: dataUrlBytes(dataUrl),
+    width: thumbnailWidth,
+    height: thumbnailHeight
+  };
+}
+
 function pollHtml(poll, canVote = true) {
   if (!poll?.options?.length) {
     return '';
@@ -4009,9 +4147,18 @@ function pollHtml(poll, canVote = true) {
 }
 
 function imagePreviewHtml(image) {
+  if (Array.isArray(image)) {
+    return image.map((item) => imagePreviewHtml(item)).join('');
+  }
+  const thumbnailSrc = mediaThumbnailSrc(image, { fallbackOriginal: mediaKind(image) !== 'video' });
+  const preview = thumbnailSrc
+    ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(image.name)}">`
+    : `<span class="post-image placeholder image-lazy-placeholder">${mediaKind(image) === 'video' ? 'Video' : 'Có tệp'}</span>`;
   return `
-    <img src="${escapeHtml(imageOriginalSrc(image))}" alt="${escapeHtml(image.name)}">
-    <div class="file-text">${fileTextHtml(image)}</div>
+    <div class="image-preview-item">
+      ${preview}
+      <div class="file-text">${fileTextHtml(image)}</div>
+    </div>
   `;
 }
 
@@ -4020,7 +4167,7 @@ function imagePreviewHtml(image) {
 function handleImageInputChange(input, { stateKey, preview = null, fileNameEl = null }) {
   return async () => {
     const reset = () => {
-      state[stateKey] = null;
+      state[stateKey] = [];
       if (preview) {
         preview.innerHTML = '';
         preview.classList.add('hidden');
@@ -4029,25 +4176,31 @@ function handleImageInputChange(input, { stateKey, preview = null, fileNameEl = 
         fileNameEl.textContent = 'Chưa chọn tệp';
       }
     };
-    const file = input.files?.[0];
-    if (!file) {
+    const files = Array.from(input.files || []);
+    if (!files.length) {
       reset();
       return;
     }
-    if (!file.type.startsWith('image/')) {
-      showToast('Chỉ hỗ trợ ảnh.');
+    if (files.length > MAX_MEDIA_PER_POST) {
+      showToast(`Tối đa ${MAX_MEDIA_PER_POST} tệp mỗi bài viết.`);
+      input.value = '';
+      reset();
+      return;
+    }
+    if (files.some((file) => !isSupportedMediaFile(file))) {
+      showToast('Chỉ hỗ trợ ảnh, MP4 hoặc WebM.');
       input.value = '';
       reset();
       return;
     }
     try {
-      state[stateKey] = await fileToDataUrl(file);
+      state[stateKey] = await Promise.all(files.map((file) => fileToDataUrl(file)));
       if (preview) {
         preview.innerHTML = imagePreviewHtml(state[stateKey]);
         preview.classList.remove('hidden');
       }
       if (fileNameEl) {
-        fileNameEl.textContent = file.name;
+        fileNameEl.textContent = files.length === 1 ? files[0].name : `${files.length} tệp đã chọn`;
       }
     } catch (error) {
       showToast(error.message);
@@ -4086,10 +4239,7 @@ function hasOption(value, option) {
 
 // Attaches the per-post "hide image (spoiler)" choice to the upload payload.
 function withImageSpoiler(image, form) {
-  if (!image) {
-    return image;
-  }
-  return { ...image, spoiler: Boolean(form?.elements?.imageSpoiler?.checked) };
+  return mediaList(image).map((item) => ({ ...item, spoiler: Boolean(form?.elements?.imageSpoiler?.checked) }));
 }
 
 // Whether the poster opted to stamp this post with their staff capcode. Only
@@ -4126,7 +4276,7 @@ async function submitThread(event) {
       captchaToken,
       posterToken: state.posterToken,
       capcode: capcodeValue(els.threadForm),
-      image: withImageSpoiler(state.selectedImage, els.threadForm)
+      images: withImageSpoiler(state.selectedImage, els.threadForm)
     };
     const result = await api(`/api/boards/${state.boardSlug}/threads`, {
       auth: 'account',
@@ -4143,7 +4293,7 @@ async function submitThread(event) {
       els.threadAiRewriteLabel.classList.add('hidden');
     }
     els.threadImage.value = '';
-    state.selectedImage = null;
+    state.selectedImage = [];
     if (els.threadForm.elements.imageSpoiler) {
       els.threadForm.elements.imageSpoiler.checked = false;
     }
@@ -4195,7 +4345,7 @@ async function submitComment(event) {
       els.commentAiRewriteLabel.classList.add('hidden');
     }
     els.commentImage.value = '';
-    state.commentImage = null;
+    state.commentImage = [];
     if (els.commentForm.elements.imageSpoiler) {
       els.commentForm.elements.imageSpoiler.checked = false;
     }
@@ -4230,7 +4380,7 @@ async function createComment(body, captchaToken) {
     method: 'POST',
     body: JSON.stringify({
       body,
-      image: withImageSpoiler(image, form),
+      images: withImageSpoiler(image, form),
       captchaToken,
       posterToken: state.posterToken,
       displayName: displayNameValue(form),
@@ -4281,7 +4431,7 @@ function openQuickReply(number, event) {
   addQuoteToQuickReply(number);
   els.quickReplyCaptcha.value = state.hcaptchaSiteKey ? '' : els.commentCaptcha.value || 'dev-pass';
   els.quickReplyFile.value = '';
-  state.quickReplyImage = null;
+  state.quickReplyImage = [];
   els.quickReplyFileName.textContent = 'Chưa chọn tệp';
   if (wasHidden) {
     positionQuickReply(event);
@@ -4322,7 +4472,7 @@ async function submitQuickReply(event) {
     clearDisplayName(els.quickReplyForm);
     removeDraft(draftKey('quickReply', state.threadId));
     els.quickReplyFile.value = '';
-    state.quickReplyImage = null;
+    state.quickReplyImage = [];
     els.quickReplyFileName.textContent = 'Chưa chọn tệp';
     resetHcaptcha(els.quickReplyCaptcha);
     showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
@@ -4518,7 +4668,7 @@ async function captionAttachedImage({ stateKey, textarea, mode = 'describe' } = 
     showToast(aiNotConfiguredMessage);
     return;
   }
-  const image = state[stateKey];
+  const image = mediaList(state[stateKey]).find((item) => mediaKind(item) === 'image');
   if (!image || !image.dataUrl) {
     showToast('Chưa có ảnh đính kèm để AI mô tả.');
     return;
@@ -4976,9 +5126,25 @@ function handleKeyboardShortcut(event) {
   }
 }
 
-function loadFullImageForToggle(imageToggle) {
+function loadFullMediaForToggle(imageToggle) {
   const fullSrc = imageToggle.dataset.fullSrc;
   if (!fullSrc) {
+    return;
+  }
+
+  if (imageToggle.dataset.mediaType === 'video') {
+    let video = imageToggle.querySelector('video');
+    if (!video) {
+      video = document.createElement('video');
+      video.className = imageToggle.dataset.imageClass || 'post-image';
+      video.controls = true;
+      video.preload = 'metadata';
+      imageToggle.replaceChildren(video);
+    }
+    if (video.dataset.fullLoaded !== 'true') {
+      video.src = fullSrc;
+      video.dataset.fullLoaded = 'true';
+    }
     return;
   }
 
@@ -5132,10 +5298,21 @@ function bindEvents() {
     'change',
     handleImageInputChange(els.quickReplyFile, { stateKey: 'quickReplyImage', fileNameEl: els.quickReplyFileName })
   );
+  document.body.addEventListener('keydown', (event) => {
+    const mediaToggle = event.target.closest('[data-image-toggle][role="button"]');
+    if (!mediaToggle || (event.key !== 'Enter' && event.key !== ' ')) {
+      return;
+    }
+    event.preventDefault();
+    mediaToggle.click();
+  });
 
   document.body.addEventListener('click', async (event) => {
     const imageToggle = event.target.closest('[data-image-toggle]');
     if (imageToggle) {
+      if (imageToggle.classList.contains('expanded') && event.target.closest('video')) {
+        return;
+      }
       // A spoilered image reveals on its first click instead of zooming.
       if (imageToggle.hasAttribute('data-spoiler-image') && !imageToggle.classList.contains('spoiler-revealed')) {
         imageToggle.classList.add('spoiler-revealed');
@@ -5144,7 +5321,7 @@ function bindEvents() {
       }
       const expanded = imageToggle.classList.toggle('expanded');
       if (expanded) {
-        loadFullImageForToggle(imageToggle);
+        loadFullMediaForToggle(imageToggle);
       }
       imageToggle.closest('.thread-thumb-wrap')?.classList.toggle('image-expanded', expanded);
       imageToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
