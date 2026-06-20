@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
+import { parseCleanupArgs, readForumStateForCleanup } from '../scripts/cleanup-orphan-uploads.js';
 import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.js';
 import { cleanupOrphanUploads, collectReferencedUploadKeys } from '../src/core/upload-cleanup.js';
 
@@ -51,6 +52,84 @@ describe('collectReferencedUploadKeys', () => {
       'thread.png',
       'thread.thumb.jpg'
     ]);
+  });
+});
+
+describe('cleanup upload CLI state source', () => {
+  it('defaults production cleanup to the Mongo store source', () => {
+    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.js'], {
+      NODE_ENV: 'production',
+      IMAGE_STORAGE_DRIVER: 's3'
+    });
+
+    assert.strictEqual(args.storeDriver, 'mongo');
+    assert.strictEqual(args.imageStorageDriver, 's3');
+    assert.strictEqual(args.dryRun, true);
+  });
+
+  it('rejects conflicting dry-run and delete flags', () => {
+    assert.throws(
+      () => parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--dry-run', '--delete'], {}),
+      /either --dry-run or --delete/i
+    );
+  });
+
+  it('rejects production delete mode with a non-Mongo state source', () => {
+    assert.throws(
+      () => parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--store-driver', 'json', '--delete'], {
+        NODE_ENV: 'production'
+      }),
+      /production upload cleanup delete requires store_driver=mongo/i
+    );
+  });
+
+  it('reads Mongo state through the configured store and closes it', async () => {
+    const state = {
+      threads: [{ image: { storage: 's3', storageKey: 'uploads/keep.png' } }],
+      comments: []
+    };
+    let closed = false;
+    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--store-driver', 'mongo'], {});
+
+    const result = await readForumStateForCleanup(args, {
+      createJsonStoreImpl: () => {
+        throw new Error('json store must not be used for mongo cleanup');
+      },
+      createMongoStoreImpl: () => ({
+        async read() {
+          return state;
+        },
+        async close() {
+          closed = true;
+        }
+      })
+    });
+
+    assert.deepStrictEqual(result, state);
+    assert.strictEqual(closed, true);
+  });
+
+  it('uses the explicit JSON data path only for json store cleanup', async () => {
+    const root = await tempDir();
+    const forumPath = path.join(root, 'forum.json');
+    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--store-driver', 'json', '--data', forumPath], {});
+    let jsonPath = null;
+
+    await readForumStateForCleanup(args, {
+      createJsonStoreImpl: (filePath) => {
+        jsonPath = filePath;
+        return {
+          async read() {
+            return { threads: [], comments: [] };
+          }
+        };
+      },
+      createMongoStoreImpl: () => {
+        throw new Error('mongo store must not be used for json cleanup');
+      }
+    });
+
+    assert.strictEqual(jsonPath, forumPath);
   });
 });
 
