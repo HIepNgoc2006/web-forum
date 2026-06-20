@@ -867,6 +867,21 @@ export function createHttpServer({
         return;
       }
 
+      params = match(parts, ['api', 'boards', ':boardSlug', 'threads', 'check-duplicate']);
+      if (params && request.method === 'POST') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.checkDuplicateThread({
+            boardSlug: params.boardSlug,
+            body: body.body,
+            ip,
+            posterToken: body.posterToken
+          })
+        );
+        return;
+      }
+
       params = match(parts, ['api', 'boards', ':boardSlug', 'archive']);
       if (params && request.method === 'GET') {
         ok(response, await service.listArchivedThreads(params.boardSlug));

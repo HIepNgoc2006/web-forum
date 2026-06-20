@@ -4248,6 +4248,27 @@ function capcodeValue(form) {
   return isCapcodeEligible() && Boolean(form?.elements?.capcode?.checked);
 }
 
+async function confirmDuplicateThreadIfNeeded(body) {
+  try {
+    const result = await api(`/api/boards/${state.boardSlug}/threads/check-duplicate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        body,
+        posterToken: state.posterToken
+      })
+    });
+    if (!result?.isDuplicate) {
+      return true;
+    }
+    return window.confirm(
+      `Cảnh báo: bài viết này có vẻ trùng chủ đề với một chủ đề trước đó.\n\n${result.reason || 'AI phát hiện nội dung tương tự.'}\n\nBạn vẫn muốn đăng?`
+    );
+  } catch (error) {
+    console.warn('Bỏ qua lỗi kiểm tra trùng lặp:', error);
+    return true;
+  }
+}
+
 async function submitThread(event) {
   event.preventDefault();
   const body = els.threadBody.value;
@@ -4263,6 +4284,10 @@ async function submitThread(event) {
   const button = event.submitter;
   const restoreButton = setButtonLoading(button);
   try {
+    if (!(await confirmDuplicateThreadIfNeeded(body))) {
+      showToast('Đã dừng gửi để bạn chỉnh sửa nội dung.');
+      return;
+    }
     const options = formValue(els.threadForm, 'options');
     const payload = {
       body,
