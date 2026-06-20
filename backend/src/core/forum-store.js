@@ -12,6 +12,7 @@ export const EMPTY_STATE = {
   moderationActions: [],
   reports: [],
   sanctions: [],
+  adminSettings: {},
   aiUsage: {},
   aiSummaryCache: {}
 };
@@ -33,6 +34,7 @@ export function normalizeState(value = {}) {
     moderationActions: Array.isArray(cloned.moderationActions) ? cloned.moderationActions : [],
     reports: Array.isArray(cloned.reports) ? cloned.reports : [],
     sanctions: Array.isArray(cloned.sanctions) ? cloned.sanctions : [],
+    adminSettings: cloned.adminSettings && typeof cloned.adminSettings === 'object' ? cloned.adminSettings : {},
     aiUsage: cloned.aiUsage && typeof cloned.aiUsage === 'object' ? cloned.aiUsage : {},
     aiSummaryCache: cloned.aiSummaryCache && typeof cloned.aiSummaryCache === 'object' ? cloned.aiSummaryCache : {}
   };

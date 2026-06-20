@@ -1670,6 +1670,7 @@ body.display-compact .post-body {
 
 .admin-tabs,
 .admin-filters,
+.admin-settings-row,
 .admin-bulk,
 .admin-select-row {
   display: flex;
@@ -1694,17 +1695,21 @@ body.display-compact .post-body {
 }
 
 .admin-filters,
+.admin-settings-row,
 .admin-bulk {
   margin-top: 5px;
 }
 
-.admin-filters label {
+.admin-filters label,
+.admin-settings-row label {
   display: inline-flex;
   gap: 4px;
   align-items: center;
 }
 
-.admin-filters select {
+.admin-filters select,
+.admin-filters input,
+.admin-settings-row input {
   min-width: 110px;
   border: 1px solid var(--reply-border);
   background: #fff;
@@ -1745,6 +1750,11 @@ body.display-compact .post-body {
 
 .priority-medium {
   color: #6b4a00;
+}
+
+.priority-confidence {
+  border-color: #335c67;
+  color: #1f4e5f;
 }
 
 .health-dashboard {

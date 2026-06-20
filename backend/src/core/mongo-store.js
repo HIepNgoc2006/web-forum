@@ -27,7 +27,8 @@ const STATE_META_SCHEMA = new mongoose.Schema(
   {
     _id: { type: String, required: true },
     version: Number,
-    nextGlobalNumber: Number
+    nextGlobalNumber: Number,
+    adminSettings: mongoose.Schema.Types.Mixed
   },
   { versionKey: false }
 );
@@ -200,6 +201,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       return normalizeState({
         version: meta?.version ?? EMPTY_STATE.version,
         nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber,
+        adminSettings: meta?.adminSettings ?? EMPTY_STATE.adminSettings,
         boards: boards.map(plainDocument),
         users: users.map(plainDocument),
         threads: threads.map(plainDocument),
@@ -221,7 +223,8 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           {
             $set: {
               version: normalized.version,
-              nextGlobalNumber: normalized.nextGlobalNumber
+              nextGlobalNumber: normalized.nextGlobalNumber,
+              adminSettings: normalized.adminSettings
             }
           },
           { upsert: true }

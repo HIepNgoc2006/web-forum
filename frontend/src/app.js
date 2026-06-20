@@ -49,7 +49,8 @@ const state = {
   theme: localStorage.getItem('theme') || 'yotsuba-b',
   archiveThreads: [],
   adminTab: 'pending',
-  adminItems: []
+  adminItems: [],
+  moderationConfidenceThreshold: 0
 };
 
 const REASON_MACROS = {
@@ -126,6 +127,22 @@ function moderationPriorityHtml(priority = {}) {
     priority.hasPiiRisk ? 'PII' : ''
   ].filter(Boolean);
   return `<span class="priority-badge priority-${level}">${escapeHtml(details.join(' · '))}</span>`;
+}
+
+function moderationConfidenceText(value) {
+  const confidence = Number(value);
+  if (!Number.isFinite(confidence)) {
+    return 'Không có';
+  }
+  return `${Math.round(Math.min(1, Math.max(0, confidence)) * 100)}%`;
+}
+
+function moderationConfidenceHtml(value) {
+  const confidence = Number(value);
+  if (!Number.isFinite(confidence)) {
+    return '';
+  }
+  return `<span class="priority-badge priority-confidence">Tin cậy ${moderationConfidenceText(confidence)}</span>`;
 }
 
 function showReportModal(globalNumber) {
@@ -726,8 +743,12 @@ const els = {
   adminTimeFilter: document.querySelector('#adminTimeFilter'),
   adminPriorityFilterWrap: document.querySelector('#adminPriorityFilterWrap'),
   adminPriorityFilter: document.querySelector('#adminPriorityFilter'),
+  adminConfidenceFilterWrap: document.querySelector('#adminConfidenceFilterWrap'),
+  adminConfidenceFilter: document.querySelector('#adminConfidenceFilter'),
   adminPrioritySortWrap: document.querySelector('#adminPrioritySortWrap'),
   adminPrioritySort: document.querySelector('#adminPrioritySort'),
+  adminQueueThresholdInput: document.querySelector('#adminQueueThresholdInput'),
+  adminSaveModerationSettings: document.querySelector('#adminSaveModerationSettings'),
   adminRefresh: document.querySelector('#adminRefresh'),
   adminExport: document.querySelector('#adminExport'),
   adminBulkBar: document.querySelector('#adminBulkBar'),
@@ -2459,6 +2480,7 @@ function moderationActionsHtml(actions) {
           <th>Hành động</th>
           <th>Bài</th>
           <th>Nhãn</th>
+          <th>Tin cậy</th>
           <th>Lý do</th>
           <th>Người xử lý</th>
         </tr>
@@ -2472,6 +2494,7 @@ function moderationActionsHtml(actions) {
                 <td>${escapeHtml(moderationActionText(action.action))}</td>
                 <td>${escapeHtml(action.boardSlug)} / No.${action.globalNumber}</td>
                 <td>${escapeHtml((action.moderationLabels || []).map(moderationLabelText).join(', ') || moderationStatusText(action.moderationStatus))}</td>
+                <td>${escapeHtml(moderationConfidenceText(action.moderationConfidence))}</td>
                 <td>${escapeHtml(action.reason || '-')}</td>
                 <td>${escapeHtml(action.actor || '-')}</td>
               </tr>
@@ -2606,6 +2629,7 @@ function pendingPostsHtml(posts) {
             <span>${escapeHtml(post.boardSlug)}</span>
             <span>AI:${escapeHtml(post.moderationLabels.map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus))}</span>
             ${moderationPriorityHtml(post.moderationPriority)}
+            ${moderationConfidenceHtml(post.moderationConfidence)}
           </div>
           <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
           <div class="pending-actions">
@@ -2634,6 +2658,7 @@ function adminPostDetailHtml(detail) {
         <span>No.${post.globalNumber}</span>
         <span>${escapeHtml(post.boardSlug)}</span>
         <span>${escapeHtml((post.moderationLabels || []).map(moderationLabelText).join(', ') || moderationStatusText(post.moderationStatus))}</span>
+        ${moderationConfidenceHtml(post.moderationConfidence)}
       </div>
       ${detail.thread ? `<p class="muted">Ngữ cảnh thread: No.${detail.thread.globalNumber} · ${escapeHtml(detail.thread.boardSlug)}</p>` : ''}
       <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
@@ -2802,6 +2827,7 @@ function adminHealthHtml(health) {
     <tr><td>Provider</td><td><strong>${escapeHtml(health.ai.provider || 'unknown')}</strong></td></tr>
     <tr><td>Trạng thái</td><td>${healthStatusBadge(health.ai.configured, health.ai.configured ? 'Đã cấu hình' : 'Chưa cấu hình')}</td></tr>
     <tr><td>Model</td><td>${escapeHtml(health.ai.model || 'unknown')}</td></tr>
+    <tr><td>Ngưỡng hàng đợi</td><td>${escapeHtml(moderationConfidenceText(health.ai.moderationConfidenceThreshold))}</td></tr>
   ` : '<tr><td colspan="2" class="muted">Không có dữ liệu</td></tr>';
 
   const imageRows = health.imageStorage ? `
@@ -2890,6 +2916,38 @@ function renderAdminHealth(data) {
   }
 }
 
+function syncAdminModerationSettings(settings = {}) {
+  const threshold = Number(settings.moderationConfidenceThreshold ?? state.moderationConfidenceThreshold ?? 0);
+  state.moderationConfidenceThreshold = Number.isFinite(threshold) ? Math.min(1, Math.max(0, threshold)) : 0;
+  if (els.adminQueueThresholdInput) {
+    els.adminQueueThresholdInput.value = String(Math.round(state.moderationConfidenceThreshold * 100));
+  }
+}
+
+async function loadAdminModerationSettings() {
+  const settings = await api('/api/admin/moderation-settings');
+  syncAdminModerationSettings(settings);
+}
+
+async function saveAdminModerationSettings() {
+  const button = els.adminSaveModerationSettings;
+  const restore = button ? setButtonLoading(button, 'Đang lưu...') : () => {};
+  try {
+    const settings = await api('/api/admin/moderation-settings', {
+      method: 'PUT',
+      body: JSON.stringify({
+        moderationConfidenceThreshold: els.adminQueueThresholdInput?.value || 0
+      })
+    });
+    syncAdminModerationSettings(settings);
+    showToast('Đã lưu ngưỡng kiểm duyệt.');
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    restore();
+  }
+}
+
 function adminQueryString() {
   const params = new URLSearchParams();
   if (els.adminBoardFilter.value) {
@@ -2907,6 +2965,9 @@ function adminQueryString() {
   }
   if ((state.adminTab === 'pending' || state.adminTab === 'reports') && els.adminPriorityFilter.value) {
     params.set('priority', els.adminPriorityFilter.value);
+  }
+  if (state.adminTab === 'pending' && els.adminConfidenceFilter?.value) {
+    params.set('confidence', els.adminConfidenceFilter.value);
   }
   if ((state.adminTab === 'pending' || state.adminTab === 'reports') && els.adminPrioritySort.value) {
     params.set('sort', els.adminPrioritySort.value);
@@ -2954,6 +3015,7 @@ function renderAdminTabs() {
   const supportsPriority = state.adminTab === 'pending' || state.adminTab === 'reports';
   els.adminPriorityFilterWrap.classList.toggle('hidden', !supportsPriority);
   els.adminPrioritySortWrap.classList.toggle('hidden', !supportsPriority);
+  els.adminConfidenceFilterWrap?.classList.toggle('hidden', state.adminTab !== 'pending');
   els.reportSection.classList.toggle('hidden', true);
   els.moderationSection.classList.toggle('hidden', true);
 }
@@ -3055,7 +3117,7 @@ function csvEscape(value = '') {
 }
 
 function exportAdminCsv() {
-  const rows = [['tab', 'time', 'board', 'globalNumber', 'typeOrAction', 'reason']];
+  const rows = [['tab', 'time', 'board', 'globalNumber', 'typeOrAction', 'confidence', 'reason']];
   for (const item of state.adminItems) {
     rows.push([
       state.adminTab,
@@ -3063,6 +3125,7 @@ function exportAdminCsv() {
       item.boardSlug || '',
       item.globalNumber || item.sourceGlobalNumber || '',
       item.type || item.action || item.kind || '',
+      Number.isFinite(Number(item.moderationConfidence)) ? Number(item.moderationConfidence) : '',
       item.reason || item.deleteReason || ''
     ]);
   }
@@ -3962,6 +4025,7 @@ async function loadAdmin() {
   renderAdminPasskeys();
 
   try {
+    await loadAdminModerationSettings();
     const data = await api(adminEndpoint());
     if (state.adminTab === 'analytics') {
       renderAdminAnalytics(data);
@@ -5838,6 +5902,11 @@ function bindEvents() {
       return;
     }
 
+    if (event.target.closest('#adminSaveModerationSettings')) {
+      await saveAdminModerationSettings();
+      return;
+    }
+
     const adminBoardCreateButton = event.target.closest('[data-admin-board-create]');
     if (adminBoardCreateButton) {
       const form = adminBoardCreateButton.closest('[data-admin-board-create-form]');
@@ -6146,7 +6215,7 @@ function bindEvents() {
       setAutoUpdate(autoUpdate.checked);
     }
 
-    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminReportCategoryFilter, #adminTimeFilter, #adminPriorityFilter, #adminPrioritySort')) {
+    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminReportCategoryFilter, #adminTimeFilter, #adminPriorityFilter, #adminConfidenceFilter, #adminPrioritySort')) {
       loadAdmin().catch((error) => showToast(error.message));
     }
 
@@ -6309,6 +6378,8 @@ async function init() {
   state.boards = config.boards;
   state.boardGroups = config.boardGroups || [];
   state.aiConfigured = Boolean(config.ai?.configured);
+  state.moderationConfidenceThreshold = Number(config.ai?.moderationConfidenceThreshold || 0);
+  syncAdminModerationSettings({ moderationConfidenceThreshold: state.moderationConfidenceThreshold });
   state.hcaptchaSiteKey = config.hcaptchaSiteKey || '';
   await refreshPublicBoards({ fallbackBoards: config.boards });
   setupHcaptcha().catch((error) => showToast(error.message));

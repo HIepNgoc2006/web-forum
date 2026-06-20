@@ -909,16 +909,29 @@
                 <option value="low">Thấp</option>
               </select>
             </label>
+            <label id="adminConfidenceFilterWrap">
+              <span>Tin cậy tối thiểu</span>
+              <input id="adminConfidenceFilter" type="number" min="0" max="100" step="1" placeholder="%" />
+            </label>
             <label id="adminPrioritySortWrap">
               <span>Sắp xếp</span>
               <select id="adminPrioritySort">
                 <option value="priority">Ưu tiên trước</option>
+                <option value="confidence-desc">Tin cậy cao trước</option>
+                <option value="confidence-asc">Tin cậy thấp trước</option>
                 <option value="newest">Mới nhất</option>
                 <option value="oldest">Cũ nhất</option>
               </select>
             </label>
             <button id="adminRefresh" class="ghost-button" type="button">[Cập nhật]</button>
             <button id="adminExport" class="ghost-button" type="button">[Xuất CSV]</button>
+          </div>
+          <div class="admin-settings-row">
+            <label>
+              <span>Ngưỡng đưa vào hàng đợi</span>
+              <input id="adminQueueThresholdInput" type="number" min="0" max="100" step="1" />
+            </label>
+            <button id="adminSaveModerationSettings" class="ghost-button" type="button">[Lưu]</button>
           </div>
           <div id="adminBulkBar" class="admin-bulk hidden">
             <label><input id="adminSelectAll" type="checkbox" /> Chọn tất cả</label>

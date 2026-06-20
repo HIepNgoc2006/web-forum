@@ -137,6 +137,14 @@ export function readPositiveInteger(value, fallback) {
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : fallback;
 }
 
+export function readModerationConfidenceThreshold(value = process.env.AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) {
+    return 0;
+  }
+  return Math.min(1, Math.max(0, parsed > 1 ? parsed / 100 : parsed));
+}
+
 const bumpLimit = readPositiveInteger(process.env.THREAD_BUMP_LIMIT, 300);
 
 export const THREAD_LIFECYCLE = {
@@ -218,7 +226,8 @@ export function aiConfigStatus() {
     model:
       aiProvider === 'openai-compatible'
         ? process.env.OPENAI_COMPATIBLE_MODEL ?? 'gpt-4-turbo'
-        : process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash'
+        : process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash',
+    moderationConfidenceThreshold: readModerationConfidenceThreshold()
   };
 }
 

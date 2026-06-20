@@ -295,7 +295,8 @@ function adminFiltersFromSearch(searchParams) {
     action: searchParams.get('action') || '',
     category: searchParams.get('category') || '',
     priority: searchParams.get('priority') || '',
-    sort: searchParams.get('sort') || ''
+    sort: searchParams.get('sort') || '',
+    confidence: searchParams.get('confidence') || ''
   };
 }
 
@@ -1116,6 +1117,17 @@ export function createHttpServer({
 
         if (request.method === 'GET' && routePath === '/api/admin/pending') {
           ok(response, await service.listPending(filters));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/admin/moderation-settings') {
+          ok(response, await service.getModerationSettings());
+          return;
+        }
+
+        if (request.method === 'PUT' && routePath === '/api/admin/moderation-settings') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.updateModerationSettings(body, { actor: admin.username ?? 'admin' }));
           return;
         }
 

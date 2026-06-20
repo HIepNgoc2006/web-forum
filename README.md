@@ -58,6 +58,7 @@ Important runtime values:
 - `POSTER_PROOF_SECRET`: secret used to recognize OP follow-up replies from the same local poster token without exposing the token.
 - `HCAPTCHA_SITE_KEY`, `HCAPTCHA_SECRET`: enable hCaptcha on public posting. In production, posting fails unless `HCAPTCHA_SECRET` is configured.
 - `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable AI summary/suggestions and provider-backed moderation.
+- `AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD`: optional default queue threshold for provider confidence, default `0` to keep every `Flagged` AI result in the admin queue. Admins can override it from the moderation UI. Accepts `0..1` or `0..100`; flagged results without confidence are still queued.
 - `MAX_IMAGE_BYTES`: upload payload limit.
 - `IMAGE_STORAGE_DRIVER`: `local` by default, or `s3` for S3-compatible object storage.
 - `UPLOAD_ROOT`: local disk folder for uploaded images, served as `/uploads/*` when `IMAGE_STORAGE_DRIVER=local`.
@@ -89,7 +90,7 @@ For production readiness and Docker/deployment health checks, `GET /api/health` 
 | `sanctions` | Temporary cooldown/ban records keyed by hashed posting fingerprint. | `{ fingerprint, expiresAt }`; `createdAt`. |
 | `aiUsage` | Key/value counters for daily AI budget guards. | `_id` key. |
 | `aiSummaryCache` | Key/value cache for generated thread summaries. | `_id` key. |
-| `stateMeta` | Global metadata such as schema `version` and `nextGlobalNumber`. | `_id` key, currently `global`. |
+| `stateMeta` | Global metadata such as schema `version`, `nextGlobalNumber`, and admin moderation settings. | `_id` key, currently `global`. |
 
 The Mongo store reads collections into the same normalized state shape used by the JSON fallback (`users`, `threads`, `comments`, `moderationActions`, `reports`, `sanctions`, `aiUsage`, `aiSummaryCache`, and `nextGlobalNumber`). Writes currently normalize the full state and replace the mutable collections in a serialized queue, which keeps JSON and Mongo behavior aligned for the current single-process service design.
 
@@ -182,6 +183,7 @@ erDiagram
     string id PK
     string boardSlug FK
     number globalNumber
+    number moderationConfidence
     string displayName
     string authorFingerprint
     string posterHash
@@ -249,6 +251,7 @@ erDiagram
     number globalNumber
     string boardSlug
     string actor
+    number moderationConfidence
     datetime createdAt
   }
 

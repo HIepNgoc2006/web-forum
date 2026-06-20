@@ -78,7 +78,7 @@ function createEvents() {
 }
 
 async function loadConfigWithEnv(env) {
-  const keys = ['MAX_ACTIVE_THREADS_PER_BOARD', 'THREAD_BUMP_LIMIT', 'THREAD_REPLY_LIMIT'];
+  const keys = ['MAX_ACTIVE_THREADS_PER_BOARD', 'THREAD_BUMP_LIMIT', 'THREAD_REPLY_LIMIT', 'AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD'];
   const original = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
 
   for (const key of keys) {
@@ -256,6 +256,14 @@ test('thread lifecycle config raises reply limit to at least bump limit', async 
   assert.equal(THREAD_LIFECYCLE.maxActiveThreadsPerBoard, 25);
   assert.equal(THREAD_LIFECYCLE.bumpLimit, 600);
   assert.equal(THREAD_LIFECYCLE.replyLimit, 600);
+});
+
+test('moderation confidence threshold config defaults safely and clamps values', async () => {
+  const { readModerationConfidenceThreshold } = await loadConfigWithEnv({});
+
+  assert.equal(readModerationConfidenceThreshold('invalid'), 0);
+  assert.equal(readModerationConfidenceThreshold('80'), 0.8);
+  assert.equal(readModerationConfidenceThreshold('200'), 1);
 });
 
 test('parsePostText marks greentext lines and post references', () => {
@@ -1826,6 +1834,7 @@ test('admin pending queue prioritizes report count PII risk and recency without 
         isDeleted: false,
         moderationStatus: 'Flagged',
         moderationLabels: ['Spam'],
+        moderationConfidence: 0.91,
         createdAt: '2026-05-22T07:45:00.000Z',
         updatedAt: '2026-05-22T07:45:00.000Z'
       },
@@ -1841,6 +1850,7 @@ test('admin pending queue prioritizes report count PII risk and recency without 
         isDeleted: false,
         moderationStatus: 'Flagged',
         moderationLabels: ['PII Risk'],
+        moderationConfidence: 0.55,
         createdAt: '2026-05-20T08:00:00.000Z',
         updatedAt: '2026-05-20T08:00:00.000Z',
         posterToken: 'never-return-this'
@@ -1900,6 +1910,8 @@ test('admin pending queue prioritizes report count PII risk and recency without 
   const pending = await service.listPending();
   const highPriority = await service.listPending({ priority: 'high' });
   const newest = await service.listPending({ sort: 'newest' });
+  const confident = await service.listPending({ confidence: '80', sort: 'confidence-desc' });
+  const confidenceAscending = await service.listPending({ sort: 'confidence-asc' });
   const serialized = JSON.stringify(pending);
 
   assert.deepEqual(pending.map((post) => post.globalNumber), [1, 2, 3]);
@@ -1908,7 +1920,107 @@ test('admin pending queue prioritizes report count PII risk and recency without 
   assert.equal(pending[1].moderationPriority.hasPiiRisk, true);
   assert.deepEqual(highPriority.map((post) => post.globalNumber), [1, 2]);
   assert.deepEqual(newest.map((post) => post.globalNumber), [1, 2, 3]);
+  assert.deepEqual(confident.map((post) => post.globalNumber), [1]);
+  assert.deepEqual(confidenceAscending.map((post) => post.globalNumber), [2, 1, 3]);
+  assert.equal(pending[0].moderationConfidence, 0.91);
   assert.equal(serialized.includes('never-return-this'), false);
+});
+
+test('AI moderation confidence persists to posts and moderation actions', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: {
+      async moderate() {
+        return { status: 'Flagged', labels: ['Spam'], confidence: 0.84 };
+      }
+    },
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'spam co do tin cay',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9'
+  });
+  const pending = await service.listPending({ confidence: '80' });
+  const actions = await service.listModerationActions(10, { confidence: '80' });
+
+  assert.equal(created.status, 'pending');
+  assert.equal(created.thread.moderationConfidence, 0.84);
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].moderationConfidence, 0.84);
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].moderationConfidence, 0.84);
+});
+
+test('AI moderation confidence threshold only bypasses low-confidence flagged results', async () => {
+  const lowConfidenceService = createForumService({
+    store: createMemoryStore(),
+    ai: {
+      async moderate() {
+        return { status: 'Flagged', labels: ['Spam'], confidence: 0.4 };
+      }
+    },
+    realtime: createEvents(),
+    moderationConfidenceThreshold: 0.8,
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const lowConfidence = await lowConfidenceService.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'flagged low confidence',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9'
+  });
+
+  const fallbackService = createForumService({
+    store: createMemoryStore(),
+    ai: flaggedAi,
+    realtime: createEvents(),
+    moderationConfidenceThreshold: 0.8,
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const fallback = await fallbackService.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'flagged no confidence',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.10'
+  });
+
+  assert.equal(lowConfidence.status, 'published');
+  assert.equal(lowConfidence.thread.moderationStatus, 'Flagged');
+  assert.equal(lowConfidence.thread.moderationConfidence, 0.4);
+  assert.equal(fallback.status, 'pending');
+  assert.equal(fallback.thread.moderationConfidence, undefined);
+});
+
+test('admin moderation settings update the queue confidence threshold', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: {
+      async moderate() {
+        return { status: 'Flagged', labels: ['Spam'], confidence: 0.4 };
+      }
+    },
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const settings = await service.updateModerationSettings({ moderationConfidenceThreshold: 80 }, { actor: 'admin' });
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'low confidence after admin threshold',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.11'
+  });
+  const persistedSettings = await service.getModerationSettings();
+
+  assert.equal(settings.moderationConfidenceThreshold, 0.8);
+  assert.equal(persistedSettings.moderationConfidenceThreshold, 0.8);
+  assert.equal(created.status, 'published');
 });
 
 test('admin reports include priority metadata and support priority filtering', async () => {
@@ -3191,7 +3303,7 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
           choices: [
             {
               message: {
-                content: '{"status":"Safe","labels":[]}'
+                content: '{"status":"Safe","labels":[],"confidence":0.72}'
               }
             }
           ]
@@ -3204,7 +3316,7 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
     const ai = createAiClient();
     const result = await ai.moderate('nội dung an toàn');
 
-    assert.deepEqual(result, { status: 'Safe', labels: [] });
+    assert.deepEqual(result, { status: 'Safe', labels: [], confidence: 0.72 });
     assert.equal(capturedRequests[0].url, 'https://api.openai-test.com/v1/chat/completions');
     assert.equal(capturedRequests[0].options.headers.authorization, 'Bearer openai-test-key');
     assert.equal(capturedRequests[0].options.headers['content-type'], 'application/json');
