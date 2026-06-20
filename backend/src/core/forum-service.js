@@ -6,6 +6,7 @@ import {
   DEFAULT_MAX_THUMBNAIL_BYTES,
   THREAD_LIFECYCLE,
   aiConfigStatus,
+  normalizeRetentionPolicy,
   readModerationConfidenceThreshold,
   readPositiveInteger
 } from './config.js';
@@ -115,6 +116,10 @@ function archivedPublicThread(thread) {
   return publicPost(thread) && thread.isArchived;
 }
 
+function boardRetentionPolicy(board, defaults = THREAD_LIFECYCLE) {
+  return normalizeRetentionPolicy(board?.retentionPolicy, defaults);
+}
+
 function publicReplyCount(state, threadId) {
   return state.comments.filter((comment) => comment.threadId === threadId && publicPost(comment)).length;
 }
@@ -136,7 +141,7 @@ function publicBoard(board = {}) {
   return Boolean(board?.slug) && !board.isHidden && !board.isArchived;
 }
 
-function serializeBoard(board = {}, { admin = false } = {}) {
+function serializeBoard(board = {}, { admin = false, retentionDefaults = THREAD_LIFECYCLE } = {}) {
   const serialized = {
     slug: board.slug,
     path: board.path || `/${board.slug}/`,
@@ -144,7 +149,8 @@ function serializeBoard(board = {}, { admin = false } = {}) {
     category: board.category,
     description: board.description,
     temporary: Boolean(board.temporary),
-    eventEndsAt: board.eventEndsAt ?? null
+    eventEndsAt: board.eventEndsAt ?? null,
+    retentionPolicy: boardRetentionPolicy(board, retentionDefaults)
   };
   if (admin) {
     serialized.isHidden = Boolean(board.isHidden);
@@ -189,6 +195,10 @@ function normalizeBoardInput({ slug, name, category, description, isHidden, isAr
   if (typeof isHidden === 'boolean') board.isHidden = isHidden;
   if (typeof isArchived === 'boolean') board.isArchived = isArchived;
   return board;
+}
+
+function retentionPolicyInput(value) {
+  return value && typeof value === 'object' ? value : {};
 }
 
 function assertEventBoardOpen(board, at) {
@@ -1757,11 +1767,13 @@ export function createForumService({
   }
 
   function enforceBoardThreadCap(state, boardSlug, archivedAt) {
+    const board = findBoard(state, boardSlug);
+    const retentionPolicy = boardRetentionPolicy(board, lifecycle);
     const activeThreads = state.threads
       .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
       .sort((left, right) => left.bumpedAt.localeCompare(right.bumpedAt));
 
-    while (activeThreads.length > lifecycle.maxActiveThreadsPerBoard) {
+    while (activeThreads.length > retentionPolicy.maxActiveThreadsPerBoard) {
       const thread = activeThreads.shift();
       archiveThreadRecord(thread, 'board-limit', archivedAt);
       realtime.publish('thread:archived', { thread: serializeThread(thread, state.comments) });
@@ -1788,12 +1800,12 @@ export function createForumService({
   return {
     async listBoards() {
       const state = await store.read();
-      return state.boards.filter(publicBoard).map((board) => serializeBoard(board));
+      return state.boards.filter(publicBoard).map((board) => serializeBoard(board, { retentionDefaults: lifecycle }));
     },
 
     async listAdminBoards() {
       const state = await store.read();
-      return state.boards.map((board) => serializeBoard(board, { admin: true }));
+      return state.boards.map((board) => serializeBoard(board, { admin: true, retentionDefaults: lifecycle }));
     },
 
     async getStats() {
@@ -2699,7 +2711,7 @@ export function createForumService({
     async listArchivedThreads(boardSlug) {
       const state = await store.read();
       const board = findBoard(state, boardSlug);
-      if (!board || board.isHidden) {
+      if (!board || board.isHidden || !boardRetentionPolicy(board, lifecycle).publicArchive) {
         const error = new Error('Không tìm thấy bảng');
         error.statusCode = 404;
         throw error;
@@ -3009,8 +3021,9 @@ export function createForumService({
         assertEventBoardOpen(findBoard(state, thread.boardSlug), createdAt);
         enforceThreadSlowMode(state, thread, { authorFingerprint, createdAt });
 
+        const retentionPolicy = boardRetentionPolicy(findBoard(state, thread.boardSlug), lifecycle);
         const repliesBeforeCreate = publicReplyCount(state, threadId);
-        if (repliesBeforeCreate >= lifecycle.replyLimit) {
+        if (repliesBeforeCreate >= retentionPolicy.replyLimit) {
           const error = new Error('Chủ đề đã đạt giới hạn phản hồi');
           error.statusCode = 409;
           throw error;
@@ -3073,7 +3086,7 @@ export function createForumService({
 
         if (!comment.isPending) {
           realtime.publish('comment:created', { threadId, comment: serializeComment(comment, thread) });
-          if (!postingOptions.sage && repliesBeforeCreate < lifecycle.bumpLimit) {
+          if (!postingOptions.sage && repliesBeforeCreate < retentionPolicy.bumpLimit) {
             thread.bumpedAt = createdAt;
             realtime.publish('thread:bumped', { thread: serializeThread(thread, state.comments) });
           }
@@ -3996,7 +4009,7 @@ export function createForumService({
       };
     },
 
-    async createBoard({ slug, name, category, description, isHidden, isArchived } = {}, { actor } = {}) {
+    async createBoard({ slug, name, category, description, isHidden, isArchived, retentionPolicy } = {}, { actor } = {}) {
       const input = normalizeBoardInput({ slug, name, category, description, isHidden, isArchived });
       return mutate(async (state) => {
         if (state.boards.find((b) => b.slug === input.slug)) {
@@ -4007,15 +4020,16 @@ export function createForumService({
         const board = {
           ...input,
           isHidden: Boolean(input.isHidden),
-          isArchived: Boolean(input.isArchived)
+          isArchived: Boolean(input.isArchived),
+          retentionPolicy: normalizeRetentionPolicy(retentionPolicyInput(retentionPolicy), lifecycle)
         };
         state.boards.push(board);
         logEvent('board.created', { slug: board.slug, actor });
-        return { board: serializeBoard(board, { admin: true }) };
+        return { board: serializeBoard(board, { admin: true, retentionDefaults: lifecycle }) };
       });
     },
 
-    async updateBoard(slug, { name, category, description, isHidden, isArchived } = {}, { actor } = {}) {
+    async updateBoard(slug, { name, category, description, isHidden, isArchived, retentionPolicy } = {}, { actor } = {}) {
       const safeSlug = String(slug ?? '').trim().toLowerCase();
       if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
         const error = new Error('Slug board không hợp lệ');
@@ -4034,9 +4048,18 @@ export function createForumService({
           throw error;
         }
         Object.assign(board, updates);
+        if (retentionPolicy !== undefined) {
+          board.retentionPolicy = normalizeRetentionPolicy(
+            {
+              ...boardRetentionPolicy(board, lifecycle),
+              ...retentionPolicyInput(retentionPolicy)
+            },
+            lifecycle
+          );
+        }
 
         logEvent('board.updated', { slug: safeSlug, actor });
-        return { board: serializeBoard(board, { admin: true }) };
+        return { board: serializeBoard(board, { admin: true, retentionDefaults: lifecycle }) };
       });
     },
 
@@ -4069,7 +4092,7 @@ export function createForumService({
 
         const [board] = state.boards.splice(index, 1);
         logEvent('board.deleted', { slug: safeSlug, actor });
-        return { board: serializeBoard(board, { admin: true }) };
+        return { board: serializeBoard(board, { admin: true, retentionDefaults: lifecycle }) };
       });
     },
 

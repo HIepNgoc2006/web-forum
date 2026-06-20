@@ -3707,7 +3707,7 @@ body.theme-yotsuba.board-page .topbar {
 
 .admin-board-table {
   width: 100%;
-  min-width: 840px;
+  min-width: 1040px;
   border-collapse: collapse;
   background: var(--reply);
   font-size: 12px;
@@ -3732,6 +3732,21 @@ body.theme-yotsuba.board-page .topbar {
 
 .admin-board-flags {
   white-space: nowrap;
+}
+
+.admin-board-retention {
+  min-width: 150px;
+}
+
+.admin-board-retention label {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 4px;
+}
+
+.admin-board-retention label:last-child {
+  display: block;
+  margin-bottom: 0;
 }
 
 .admin-board-flags label,

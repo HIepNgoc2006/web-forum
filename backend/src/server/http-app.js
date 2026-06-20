@@ -1254,7 +1254,8 @@ export function createHttpServer({
                 category: body.category,
                 description: body.description,
                 isHidden: body.isHidden,
-                isArchived: body.isArchived
+                isArchived: body.isArchived,
+                retentionPolicy: body.retentionPolicy
               },
               { actor: admin.username ?? 'admin' }
             ),
@@ -1275,7 +1276,8 @@ export function createHttpServer({
                 category: body.category,
                 description: body.description,
                 isHidden: body.isHidden,
-                isArchived: body.isArchived
+                isArchived: body.isArchived,
+                retentionPolicy: body.retentionPolicy
               },
               { actor: admin.username ?? 'admin' }
             )

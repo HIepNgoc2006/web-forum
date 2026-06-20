@@ -26,8 +26,8 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 
 | Method | Path | Purpose | Notes |
 | --- | --- | --- | --- |
-| GET | `/api/config` | Lay boards, board groups, lifecycle, hCaptcha site key, max image bytes. | Public, khong can auth. Board items include sanitized `rules` and `banner` fields for public display; missing rules fall back to board `description`. |
-| GET | `/api/boards` | Lay danh sach board co dinh. | Source tu `backend/src/core/config.js`. |
+| GET | `/api/config` | Lay boards, board groups, lifecycle, hCaptcha site key, max image bytes. | Public, khong can auth. Board items include sanitized `rules`, `banner`, and effective `retentionPolicy` fields for public display; missing rules fall back to board `description`. |
+| GET | `/api/boards` | Lay danh sach board public. | Source tu state store; excludes hidden/archived boards. Board items include effective `retentionPolicy`. |
 | GET | `/api/stats` | Lay thong ke server. | Includes post/file counts va current SSE clients. |
 | GET | `/api/health` | Health check van hanh. | Tra `status`, `store.type`, `store.configured`, `store.ready`, safe counts/model readiness, AI configured/model, image storage readiness, realtime client count/board counts, security readiness warnings; khong tra secret. |
 | GET | `/api/posts/latest?limit=10` | Lay bai moi nhat. | Limit clamp 1-20. Chi public active thread/comment. |
@@ -41,7 +41,7 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 | --- | --- | --- | --- |
 | GET | `/api/boards/:boardSlug/threads?page=&pageSize=&q=` | Lay active public threads cua board. | Sticky threads sort truoc thread thuong, sau do sort `bumpedAt` desc. Khong tra pending/deleted/archived. Neu co query paging/search thi tra `{ items, page, pageSize, total, totalPages, hasMore }`; neu khong co query thi tra array cu de tuong thich. |
 | POST | `/api/boards/:boardSlug/threads` | Tao thread moi. | Body: `body`, optional `displayName`, `image` + `image.thumbnail`, `pollOptions`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options` ho tro `noko`. Rate limited. |
-| GET | `/api/boards/:boardSlug/archive` | Lay archived public threads. | Sort `archivedAt` desc. |
+| GET | `/api/boards/:boardSlug/archive` | Lay archived public threads. | Sort `archivedAt` desc. Returns 404 when board is hidden or `retentionPolicy.publicArchive` is false. |
 | POST | `/api/boards/:boardSlug/summary` | AI tom tat board. | Chi dung public content. Can Google AI key. Rate limit can tach rieng o phase sau. |
 | GET | `/api/threads/:threadId?commentsPage=&commentsPageSize=&focusGlobalNumber=` | Lay thread detail. | Tra OP public va comments public. Neu co query paging thi comments duoc phan trang va tra `commentPage`; `focusGlobalNumber` tu dong chon trang chua post permalink. |
 | POST | `/api/threads/:threadId/comments` | Tao comment. | Body: `body`, optional `displayName`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options=sage` se reply khong bump thread. Rate limited. |
@@ -83,6 +83,10 @@ Admin auth uses privileged account roles. `owner` can view/moderate/manage board
 | POST | `/api/admin/users` | Create privileged user. | `owner`; body `{ "username": "", "password": "", "role": "owner|moderator|viewer", "disabled": false }`. |
 | PUT | `/api/admin/users/:id` | Update privileged user role/status/password. | `owner`; body may include `{ "role": "owner|moderator|viewer", "disabled": true, "password": "" }`; cannot disable/demote self or the last active owner. |
 | DELETE | `/api/admin/users/:id` | Disable privileged user. | `owner`; same last-owner/self protections as update. |
+| GET | `/api/admin/boards` | List all boards for admin editing. | Permission `admin:view`; returns hidden/archived flags and effective `retentionPolicy`. |
+| POST | `/api/admin/boards` | Create dynamic board. | Permission `admin:manage_boards` (`owner`); body includes `slug`, `name`, `category`, `description`, optional flags, optional `retentionPolicy`. |
+| PUT | `/api/admin/boards/:boardSlug` | Update board config. | Permission `admin:manage_boards` (`owner`); body may include text fields, flags, and partial `retentionPolicy`. |
+| DELETE | `/api/admin/boards/:boardSlug` | Delete empty board. | Permission `admin:manage_boards` (`owner`); boards with content/reports/sanctions must be hidden or archived instead. |
 | GET | `/api/admin/pending?boardSlug=&label=&since=&priority=&confidence=&sort=` | Lay pending queue. | Permission `admin:view`; ho tro filter. `priority=high|medium|low`; `confidence` la nguong toi thieu 0..1 hoac 0..100; `sort=priority|newest|oldest|confidence-desc|confidence-asc`, default `priority`. Items include `moderationPriority` va `moderationConfidence` khi AI tra ve. |
 | GET | `/api/admin/moderation-settings` | Lay cau hinh moderation admin. | Permission `admin:view`; tra ve `moderationConfidenceThreshold` hien hanh. |
 | PUT | `/api/admin/moderation-settings` | Cap nhat cau hinh moderation admin. | Permission `admin:manage_settings` (`owner`); body `{ "moderationConfidenceThreshold": 0.8 }` hoac percent `80`; thieu confidence tren ket qua `Flagged` van vao queue. |
@@ -148,6 +152,8 @@ Status: public board banner/rules display is implemented from fixed board config
 
 - `/api/config` board items may include `rules: string[]`.
 - `/api/config` board items include `banner: { text, imageUrl?, altText? }`.
+- Public/admin board serializers include effective `retentionPolicy: { maxActiveThreadsPerBoard, bumpLimit, replyLimit, publicArchive }`.
+- `retentionPolicy.maxActiveThreadsPerBoard` controls board-limit auto archive; `bumpLimit` controls when replies stop bumping; `replyLimit` controls max public replies; `publicArchive=false` hides `/api/boards/:boardSlug/archive`.
 - Board rules/banner text is sanitized to plain text before public exposure and rendered with DOM text APIs on the frontend.
 - Missing or empty `rules` falls back to the board `description`, plus default safety rules where available.
 - `banner.imageUrl` is optional and only accepts same-origin absolute paths or HTTPS URLs; unsafe schemes are omitted.

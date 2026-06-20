@@ -122,6 +122,8 @@ test('publicConfig exposes grouped fixed boards for the home portal', () => {
   assert.equal(confession.rules[0], confession.description);
   assert.equal(confession.banner.text.includes(confession.name.toLowerCase()), true);
   assert.equal(Object.hasOwn(confession.banner, 'imageUrl'), false);
+  assert.equal(confession.retentionPolicy.publicArchive, true);
+  assert.equal(typeof confession.retentionPolicy.maxActiveThreadsPerBoard, 'number');
   assert.equal(deadlineWeek.temporary, true);
   assert.equal(deadlineWeek.category, 'Sự kiện tạm thời');
   assert.equal(config.boardGroups.some((group) => group.name === 'Sự kiện tạm thời'), true);
@@ -2282,6 +2284,51 @@ test('board active thread cap archives oldest bumped thread', async () => {
   assert.deepEqual(archive.map((thread) => thread.id), [first.thread.id]);
   assert.equal(archive[0].archivedReason, 'board-limit');
   assert.equal(realtime.events.some((item) => item.event === 'thread:archived'), true);
+});
+
+test('board retention policy overrides active thread cap', async () => {
+  const realtime = createEvents();
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime,
+    now: (() => {
+      const dates = [
+        new Date('2026-05-22T08:00:00.000Z'),
+        new Date('2026-05-22T08:01:00.000Z')
+      ];
+      return () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z');
+    })(),
+    lifecycle: { maxActiveThreadsPerBoard: 150, bumpLimit: 300, replyLimit: 500 }
+  });
+  await service.updateBoard('hoc-tap', {
+    retentionPolicy: {
+      maxActiveThreadsPerBoard: 1,
+      bumpLimit: 300,
+      replyLimit: 500,
+      publicArchive: true
+    }
+  }, { actor: 'admin' });
+
+  const first = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread bi policy archive',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  const second = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread con lai',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8'
+  });
+
+  const active = await service.listThreads('hoc-tap');
+  const archive = await service.listArchivedThreads('hoc-tap');
+
+  assert.deepEqual(active.map((thread) => thread.id), [second.thread.id]);
+  assert.deepEqual(archive.map((thread) => thread.id), [first.thread.id]);
+  assert.equal(archive[0].archivedReason, 'board-limit');
 });
 
 test('bump limit allows replies but stops bumping after threshold', async () => {
