@@ -67,6 +67,10 @@ const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 const REPORT_CATEGORIES = new Set(['Spam', 'Toxic', 'PII', 'Fake News', 'Illegal', 'Other']);
+const PRIORITY_FILTERS = new Set(['high', 'medium', 'low']);
+const PRIORITY_SORTS = new Set(['priority', 'newest', 'oldest']);
+const PII_PRIORITY_LABELS = new Set(['PII Risk', 'PII']);
+const HIGH_RISK_REPORT_CATEGORIES = new Set(['PII', 'Illegal']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -81,6 +85,10 @@ function stripPrivatePostFields(post) {
     voters: _voters,
     stickiedBy: _stickiedBy,
     accountId: _accountId,
+    ip: _ip,
+    posterToken: _posterToken,
+    captchaToken: _captchaToken,
+    adminToken: _adminToken,
     ...publicFields
   } = post;
   if (publicFields.body) {
@@ -761,6 +769,93 @@ function normalizeReportCategory(value) {
   return REPORT_CATEGORIES.has(normalized) ? normalized : 'Other';
 }
 
+function openReportCountsByGlobalNumber(reports = []) {
+  const counts = new Map();
+  for (const report of reports) {
+    if (report.status && report.status !== 'open') {
+      continue;
+    }
+    const key = Number(report.globalNumber);
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function recencyPriority(createdAt, referenceDate) {
+  const createdMs = new Date(createdAt).getTime();
+  const referenceMs = referenceDate instanceof Date ? referenceDate.getTime() : new Date(referenceDate).getTime();
+  if (!Number.isFinite(createdMs) || !Number.isFinite(referenceMs)) {
+    return 0;
+  }
+  const ageHours = Math.max(0, (referenceMs - createdMs) / (60 * 60 * 1000));
+  if (ageHours <= 1) return 20;
+  if (ageHours <= 24) return 14;
+  if (ageHours <= 72) return 8;
+  if (ageHours <= 168) return 3;
+  return 0;
+}
+
+function moderationPriorityLevel(score) {
+  if (score >= 50) return 'high';
+  if (score >= 25) return 'medium';
+  return 'low';
+}
+
+function moderationPriorityDetails({ createdAt, labels = [], moderationStatus = '', category = '', reportCount = 0 }, referenceDate) {
+  const normalizedLabels = labels.filter(Boolean);
+  let labelScore = 0;
+  if (normalizedLabels.some((label) => PII_PRIORITY_LABELS.has(label)) || HIGH_RISK_REPORT_CATEGORIES.has(category)) {
+    labelScore = 50;
+  } else if (normalizedLabels.some((label) => label === 'Hate Speech' || label === 'Toxic') || category === 'Toxic') {
+    labelScore = 25;
+  } else if (normalizedLabels.some((label) => label === 'Spam' || label === 'Fake News') || category === 'Spam' || category === 'Fake News') {
+    labelScore = 15;
+  } else if (moderationStatus === 'Flagged') {
+    labelScore = 10;
+  }
+
+  const cappedReportCount = Math.min(5, Math.max(0, Number(reportCount) || 0));
+  const reportScore = cappedReportCount <= 1 ? cappedReportCount * 10 : cappedReportCount * 20;
+  const score = reportScore + labelScore + recencyPriority(createdAt, referenceDate);
+  return {
+    score,
+    level: moderationPriorityLevel(score),
+    reportCount: Math.max(0, Number(reportCount) || 0),
+    hasPiiRisk: normalizedLabels.some((label) => PII_PRIORITY_LABELS.has(label)) || category === 'PII'
+  };
+}
+
+function normalizePriorityFilters(filters = {}) {
+  const priority = String(filters.priority || '').toLowerCase();
+  const sort = String(filters.sort || '').toLowerCase();
+  return {
+    priority: PRIORITY_FILTERS.has(priority) ? priority : '',
+    sort: PRIORITY_SORTS.has(sort) ? sort : 'priority'
+  };
+}
+
+function matchesPriorityFilter(item, filters = {}) {
+  const { priority } = normalizePriorityFilters(filters);
+  return !priority || item.moderationPriority?.level === priority;
+}
+
+function compareAdminPriority(filters = {}) {
+  const { sort } = normalizePriorityFilters(filters);
+  return (left, right) => {
+    if (sort === 'newest') {
+      return String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''));
+    }
+    if (sort === 'oldest') {
+      return String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? ''));
+    }
+    const priorityCompare = (right.moderationPriority?.score ?? 0) - (left.moderationPriority?.score ?? 0);
+    if (priorityCompare !== 0) {
+      return priorityCompare;
+    }
+    return String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''));
+  };
+}
+
 // Wilson score lower bound (95% confidence) — Reddit's "best" ranking. Rewards
 // a high upvote ratio while discounting low-sample posts.
 function wilsonLowerBound(up, down) {
@@ -1224,11 +1319,38 @@ function matchesAdminFilters(item, filters = {}, dateField = 'createdAt') {
   return true;
 }
 
-function serializeAdminPost(postType, post, state) {
+function serializeAdminPost(postType, post, state, priorityContext = {}) {
   const parent = postType === 'comment' ? state.threads.find((thread) => thread.id === post.threadId) : null;
   return {
     type: postType,
-    ...(postType === 'thread' ? serializeThread(post, state.comments) : serializeComment(post, parent))
+    ...(postType === 'thread' ? serializeThread(post, state.comments) : serializeComment(post, parent)),
+    moderationPriority: moderationPriorityDetails(
+      {
+        createdAt: post.createdAt,
+        labels: post.moderationLabels ?? [],
+        moderationStatus: post.moderationStatus,
+        reportCount: priorityContext.reportCounts?.get(Number(post.globalNumber)) ?? 0
+      },
+      priorityContext.referenceDate ?? new Date()
+    )
+  };
+}
+
+function serializeAdminReport(report, state, priorityContext = {}) {
+  const found = findAnyPostByGlobalNumber(state, report.globalNumber);
+  const post = found?.post;
+  return {
+    ...report,
+    moderationPriority: moderationPriorityDetails(
+      {
+        createdAt: report.createdAt,
+        labels: post?.moderationLabels ?? [],
+        moderationStatus: post?.moderationStatus ?? '',
+        category: report.category,
+        reportCount: priorityContext.reportCounts?.get(Number(report.globalNumber)) ?? 0
+      },
+      priorityContext.referenceDate ?? new Date()
+    )
   };
 }
 
@@ -2241,11 +2363,17 @@ export function createForumService({
     async listReports(limit = 50, filters = {}) {
       const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const priorityContext = {
+        reportCounts: openReportCountsByGlobalNumber(state.reports),
+        referenceDate: now()
+      };
       return [...state.reports]
         .filter((report) => !filters.status || report.status === filters.status)
         .filter((report) => !filters.category || normalizeReportCategory(report.category) === filters.category)
         .filter((report) => matchesAdminFilters(report, filters, 'createdAt'))
-        .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+        .map((report) => serializeAdminReport(report, state, priorityContext))
+        .filter((report) => matchesPriorityFilter(report, filters))
+        .sort(compareAdminPriority(filters))
         .slice(0, safeLimit);
     },
 
@@ -2847,15 +2975,21 @@ export function createForumService({
 
     async listPending(filters = {}) {
       const state = await store.read();
+      const priorityContext = {
+        reportCounts: openReportCountsByGlobalNumber(state.reports),
+        referenceDate: now()
+      };
       const threads = state.threads
         .filter((thread) => thread.isPending && !thread.isDeleted)
         .filter((thread) => matchesAdminFilters(thread, filters, 'createdAt'))
-        .map((thread) => serializeAdminPost('thread', thread, state));
+        .map((thread) => serializeAdminPost('thread', thread, state, priorityContext));
       const comments = state.comments
         .filter((comment) => comment.isPending && !comment.isDeleted)
         .filter((comment) => matchesAdminFilters(comment, filters, 'createdAt'))
-        .map((comment) => serializeAdminPost('comment', comment, state));
-      return [...threads, ...comments].sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+        .map((comment) => serializeAdminPost('comment', comment, state, priorityContext));
+      return [...threads, ...comments]
+        .filter((item) => matchesPriorityFilter(item, filters))
+        .sort(compareAdminPriority(filters));
     },
 
     async listDeleted(limit = 50, filters = {}) {

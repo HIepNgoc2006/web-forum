@@ -1729,6 +1729,24 @@ body.display-compact .post-body {
   margin-top: 6px;
 }
 
+.priority-badge {
+  border: 1px solid var(--reply-border);
+  padding: 1px 4px;
+  background: #f7f0ea;
+  color: #000;
+  white-space: nowrap;
+}
+
+.priority-high {
+  border-color: #800;
+  color: #800;
+  font-weight: 700;
+}
+
+.priority-medium {
+  color: #6b4a00;
+}
+
 .health-dashboard {
   max-width: 980px;
   margin: 8px auto;

@@ -1617,6 +1617,191 @@ test('user reports store a reporter hash without raw IP or poster token', async 
   assert.equal(serialized.includes('reporter-secret'), false);
 });
 
+test('admin pending queue prioritizes report count PII risk and recency without private data', async () => {
+  const store = createMemoryStore({
+    version: 1,
+    nextGlobalNumber: 4,
+    threads: [
+      {
+        id: 'pending-spam',
+        boardSlug: 'tam-su',
+        body: 'Spam pending',
+        image: null,
+        images: [],
+        globalNumber: 1,
+        posterHash: 'ID:SPAM001',
+        isPending: true,
+        isDeleted: false,
+        moderationStatus: 'Flagged',
+        moderationLabels: ['Spam'],
+        createdAt: '2026-05-22T07:45:00.000Z',
+        updatedAt: '2026-05-22T07:45:00.000Z'
+      },
+      {
+        id: 'pending-pii',
+        boardSlug: 'tam-su',
+        body: 'PII pending',
+        image: null,
+        images: [],
+        globalNumber: 2,
+        posterHash: 'ID:PII0001',
+        isPending: true,
+        isDeleted: false,
+        moderationStatus: 'Flagged',
+        moderationLabels: ['PII Risk'],
+        createdAt: '2026-05-20T08:00:00.000Z',
+        updatedAt: '2026-05-20T08:00:00.000Z',
+        posterToken: 'never-return-this'
+      },
+      {
+        id: 'pending-old',
+        boardSlug: 'tam-su',
+        body: 'Old pending',
+        image: null,
+        images: [],
+        globalNumber: 3,
+        posterHash: 'ID:OLD0001',
+        isPending: true,
+        isDeleted: false,
+        moderationStatus: 'Flagged',
+        moderationLabels: ['Spam'],
+        createdAt: '2026-05-19T08:00:00.000Z',
+        updatedAt: '2026-05-19T08:00:00.000Z'
+      }
+    ],
+    reports: [
+      {
+        id: 'report-1',
+        postType: 'thread',
+        postId: 'pending-spam',
+        threadId: 'pending-spam',
+        boardSlug: 'tam-su',
+        globalNumber: 1,
+        category: 'Spam',
+        reason: 'spam',
+        reporterHash: 'ID:REPORT1',
+        status: 'open',
+        createdAt: '2026-05-22T07:50:00.000Z'
+      },
+      {
+        id: 'report-2',
+        postType: 'thread',
+        postId: 'pending-spam',
+        threadId: 'pending-spam',
+        boardSlug: 'tam-su',
+        globalNumber: 1,
+        category: 'Spam',
+        reason: 'spam again',
+        reporterHash: 'ID:REPORT2',
+        status: 'open',
+        createdAt: '2026-05-22T07:55:00.000Z'
+      }
+    ]
+  });
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const pending = await service.listPending();
+  const highPriority = await service.listPending({ priority: 'high' });
+  const newest = await service.listPending({ sort: 'newest' });
+  const serialized = JSON.stringify(pending);
+
+  assert.deepEqual(pending.map((post) => post.globalNumber), [1, 2, 3]);
+  assert.equal(pending[0].moderationPriority.reportCount, 2);
+  assert.equal(pending[0].moderationPriority.level, 'high');
+  assert.equal(pending[1].moderationPriority.hasPiiRisk, true);
+  assert.deepEqual(highPriority.map((post) => post.globalNumber), [1, 2]);
+  assert.deepEqual(newest.map((post) => post.globalNumber), [1, 2, 3]);
+  assert.equal(serialized.includes('never-return-this'), false);
+});
+
+test('admin reports include priority metadata and support priority filtering', async () => {
+  const store = createMemoryStore({
+    version: 1,
+    nextGlobalNumber: 3,
+    threads: [
+      {
+        id: 'thread-pii',
+        boardSlug: 'tam-su',
+        body: 'Public PII report target',
+        image: null,
+        images: [],
+        globalNumber: 1,
+        posterHash: 'ID:PIIPOST',
+        isPending: false,
+        isDeleted: false,
+        moderationStatus: 'Safe',
+        moderationLabels: ['PII Risk'],
+        createdAt: '2026-05-22T07:00:00.000Z',
+        updatedAt: '2026-05-22T07:00:00.000Z'
+      },
+      {
+        id: 'thread-spam',
+        boardSlug: 'tam-su',
+        body: 'Public spam report target',
+        image: null,
+        images: [],
+        globalNumber: 2,
+        posterHash: 'ID:SPAMPOST',
+        isPending: false,
+        isDeleted: false,
+        moderationStatus: 'Safe',
+        moderationLabels: [],
+        createdAt: '2026-05-22T07:00:00.000Z',
+        updatedAt: '2026-05-22T07:00:00.000Z'
+      }
+    ],
+    reports: [
+      {
+        id: 'report-pii',
+        postType: 'thread',
+        postId: 'thread-pii',
+        threadId: 'thread-pii',
+        boardSlug: 'tam-su',
+        globalNumber: 1,
+        category: 'PII',
+        reason: 'phone number',
+        reporterHash: 'ID:REPORT1',
+        status: 'open',
+        createdAt: '2026-05-22T07:10:00.000Z'
+      },
+      {
+        id: 'report-spam',
+        postType: 'thread',
+        postId: 'thread-spam',
+        threadId: 'thread-spam',
+        boardSlug: 'tam-su',
+        globalNumber: 2,
+        category: 'Spam',
+        reason: 'spam',
+        reporterHash: 'ID:REPORT2',
+        status: 'open',
+        createdAt: '2026-05-22T07:55:00.000Z'
+      }
+    ]
+  });
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const reports = await service.listReports(10);
+  const highPriority = await service.listReports(10, { priority: 'high' });
+  const newest = await service.listReports(10, { sort: 'newest' });
+
+  assert.deepEqual(reports.map((report) => report.globalNumber), [1, 2]);
+  assert.equal(reports[0].moderationPriority.hasPiiRisk, true);
+  assert.equal(reports[0].moderationPriority.level, 'high');
+  assert.deepEqual(highPriority.map((report) => report.globalNumber), [1]);
+  assert.deepEqual(newest.map((report) => report.globalNumber), [2, 1]);
+});
+
 test('archived threads are hidden from board list and visible in archive list', async () => {
   const realtime = createEvents();
   const service = createForumService({
