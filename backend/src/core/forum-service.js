@@ -66,6 +66,7 @@ const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptio
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
+const REPORT_CATEGORIES = new Set(['Spam', 'Toxic', 'PII', 'Fake News', 'Illegal', 'Other']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -753,6 +754,11 @@ const COMMENT_SORTS = new Set(['best', 'top', 'new', 'controversial', 'old']);
 function normalizeCommentSort(value) {
   const sort = String(value || '').toLowerCase();
   return COMMENT_SORTS.has(sort) ? sort : 'old';
+}
+
+function normalizeReportCategory(value) {
+  const normalized = String(value || '').trim();
+  return REPORT_CATEGORIES.has(normalized) ? normalized : 'Other';
 }
 
 // Wilson score lower bound (95% confidence) — Reddit's "best" ranking. Rewards
@@ -2237,6 +2243,7 @@ export function createForumService({
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
       return [...state.reports]
         .filter((report) => !filters.status || report.status === filters.status)
+        .filter((report) => !filters.category || normalizeReportCategory(report.category) === filters.category)
         .filter((report) => matchesAdminFilters(report, filters, 'createdAt'))
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
         .slice(0, safeLimit);
@@ -2691,13 +2698,14 @@ export function createForumService({
       throw error;
     },
 
-    async reportPost({ globalNumber, reason, ip, posterToken }) {
+    async reportPost({ globalNumber, reason, category, ip, posterToken }) {
       const safeReason = sanitizeReason(reason);
       if (!safeReason) {
         const error = new Error('Lý do báo cáo là bắt buộc');
         error.statusCode = 400;
         throw error;
       }
+      const safeCategory = normalizeReportCategory(category);
 
       return mutate(async (state) => {
         const found = findPublicPostByGlobalNumber(state, globalNumber);
@@ -2715,6 +2723,7 @@ export function createForumService({
           threadId: found.postType === 'thread' ? found.post.id : found.post.threadId,
           boardSlug: found.post.boardSlug,
           globalNumber: found.post.globalNumber,
+          category: safeCategory,
           reason: safeReason,
           reporterHash: createPosterHash({
             ip,
@@ -2729,7 +2738,8 @@ export function createForumService({
         logEvent('report.create', {
           boardSlug: report.boardSlug,
           globalNumber: report.globalNumber,
-          postType: report.postType
+          postType: report.postType,
+          category: report.category
         });
         return report;
       });

@@ -93,6 +93,71 @@ const REASON_MACROS = {
   ]
 };
 
+const REPORT_CATEGORIES = [
+  { value: 'Spam', label: 'Spam' },
+  { value: 'Toxic', label: 'Độc hại' },
+  { value: 'PII', label: 'Thông tin cá nhân' },
+  { value: 'Fake News', label: 'Tin giả' },
+  { value: 'Illegal', label: 'Bất hợp pháp' },
+  { value: 'Other', label: 'Khác' }
+];
+
+function reportCategoryLabel(value) {
+  return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
+}
+
+function showReportModal(globalNumber) {
+  return new Promise((resolve) => {
+    const overlay = document.createElement('div');
+    overlay.className = 'reason-modal-overlay';
+    overlay.innerHTML = `
+      <div class="reason-modal">
+        <div class="reason-modal-title">Báo cáo No.${escapeHtml(globalNumber)}</div>
+        <label class="reason-modal-label" for="reportCategorySelect">Loại báo cáo:</label>
+        <select class="reason-macro-select" id="reportCategorySelect">
+          ${REPORT_CATEGORIES.map((category) => `<option value="${category.value}">${category.label}</option>`).join('')}
+        </select>
+        <label class="reason-modal-label" for="reportReasonTextarea">Lý do:</label>
+        <textarea class="reason-textarea" id="reportReasonTextarea" rows="3" placeholder="Mô tả ngắn vấn đề..."></textarea>
+        <div class="reason-modal-actions">
+          <button class="primary-button" id="reportConfirmBtn" type="button">Gửi báo cáo</button>
+          <button class="ghost-button" id="reportCancelBtn" type="button">Hủy</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const select = overlay.querySelector('#reportCategorySelect');
+    const textarea = overlay.querySelector('#reportReasonTextarea');
+    const confirmBtn = overlay.querySelector('#reportConfirmBtn');
+    const cancelBtn = overlay.querySelector('#reportCancelBtn');
+
+    function cleanup() {
+      overlay.remove();
+    }
+
+    confirmBtn.addEventListener('click', () => {
+      const reason = textarea.value.trim();
+      cleanup();
+      resolve(reason ? { category: select.value, reason } : null);
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      cleanup();
+      resolve(null);
+    });
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        cleanup();
+        resolve(null);
+      }
+    });
+
+    textarea.focus();
+  });
+}
+
 function showReasonModal(title, context) {
   return new Promise((resolve) => {
     const macros = REASON_MACROS[context] || REASON_MACROS.approve;
@@ -634,6 +699,8 @@ const els = {
   adminTools: document.querySelector('#adminTools'),
   adminBoardFilter: document.querySelector('#adminBoardFilter'),
   adminLabelFilter: document.querySelector('#adminLabelFilter'),
+  adminReportCategoryFilterWrap: document.querySelector('#adminReportCategoryFilterWrap'),
+  adminReportCategoryFilter: document.querySelector('#adminReportCategoryFilter'),
   adminTimeFilter: document.querySelector('#adminTimeFilter'),
   adminRefresh: document.querySelector('#adminRefresh'),
   adminExport: document.querySelector('#adminExport'),
@@ -2401,6 +2468,7 @@ function reportsHtml(reports) {
         <tr>
           <th>Thời gian</th>
           <th>Bài</th>
+          <th>Loại</th>
           <th>Lý do</th>
           <th>Người báo cáo</th>
           <th></th>
@@ -2413,6 +2481,7 @@ function reportsHtml(reports) {
               <tr>
                 <td>${formatPostDate(report.createdAt)}</td>
                 <td>${escapeHtml(report.boardSlug)} / No.${report.globalNumber}</td>
+                <td>${escapeHtml(reportCategoryLabel(report.category))}</td>
                 <td>${escapeHtml(report.reason || '-')}</td>
                 <td>${escapeHtml(posterId({ posterHash: report.reporterHash }))}</td>
                 <td><button class="ghost-button" data-admin-detail="${report.globalNumber}" type="button">[Chi tiết]</button></td>
@@ -2797,8 +2866,11 @@ function adminQueryString() {
   if (els.adminBoardFilter.value) {
     params.set('boardSlug', els.adminBoardFilter.value);
   }
-  if (els.adminLabelFilter.value) {
+  if (state.adminTab !== 'reports' && els.adminLabelFilter.value) {
     params.set('label', els.adminLabelFilter.value);
+  }
+  if (state.adminTab === 'reports' && els.adminReportCategoryFilter.value) {
+    params.set('category', els.adminReportCategoryFilter.value);
   }
   if (els.adminTimeFilter.value) {
     const since = new Date(Date.now() - (els.adminTimeFilter.value === '24h' ? 24 : 24 * 7) * 60 * 60 * 1000);
@@ -2842,6 +2914,8 @@ function renderAdminTabs() {
     button.classList.toggle('active', button.dataset.adminTab === state.adminTab);
   });
   els.adminBulkBar.classList.toggle('hidden', state.adminTab !== 'pending');
+  els.adminLabelFilter.closest('label')?.classList.toggle('hidden', state.adminTab === 'reports');
+  els.adminReportCategoryFilterWrap.classList.toggle('hidden', state.adminTab !== 'reports');
   els.reportSection.classList.toggle('hidden', true);
   els.moderationSection.classList.toggle('hidden', true);
 }
@@ -5640,14 +5714,14 @@ function bindEvents() {
 
     const reportButton = event.target.closest('[data-report]');
     if (reportButton) {
-      const reason = window.prompt(`Lý do báo cáo No.${reportButton.dataset.report}:`, '');
-      if (!reason) {
+      const report = await showReportModal(reportButton.dataset.report);
+      if (!report) {
         return;
       }
       try {
         await api(`/api/posts/${reportButton.dataset.report}`, {
           method: 'POST',
-          body: JSON.stringify({ reason, posterToken: state.posterToken })
+          body: JSON.stringify({ ...report, posterToken: state.posterToken })
         });
         showToast('Đã gửi báo cáo.');
       } catch (error) {
@@ -5981,7 +6055,7 @@ function bindEvents() {
       setAutoUpdate(autoUpdate.checked);
     }
 
-    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminTimeFilter')) {
+    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminReportCategoryFilter, #adminTimeFilter')) {
       loadAdmin().catch((error) => showToast(error.message));
     }
 

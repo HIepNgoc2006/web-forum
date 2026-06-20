@@ -283,7 +283,8 @@ function adminFiltersFromSearch(searchParams) {
     label: searchParams.get('label') || '',
     since: searchParams.get('since') || '',
     status: searchParams.get('status') || '',
-    action: searchParams.get('action') || ''
+    action: searchParams.get('action') || '',
+    category: searchParams.get('category') || ''
   };
 }
 
@@ -1015,6 +1016,7 @@ export function createHttpServer({
           await service.reportPost({
             globalNumber: params.globalNumber,
             reason: body.reason,
+            category: body.category,
             ip,
             posterToken: body.posterToken
           }),

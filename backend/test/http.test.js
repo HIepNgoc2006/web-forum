@@ -1403,11 +1403,36 @@ test('http api stores user reports and exposes them to admin only', async () => 
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        category: 'PII',
         reason: 'Co thong tin rieng tu',
         posterToken: 'reporter-secret'
       })
     });
     assert.equal(report.status, 201);
+    const reportBody = await report.json();
+    assert.equal(reportBody.data.category, 'PII');
+
+    const second = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Bai spam can report',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const secondBody = await second.json();
+    const fallbackReport = await fetch(`${baseUrl}/api/posts/${secondBody.data.thread.globalNumber}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        category: 'Unknown',
+        reason: 'Khac',
+        posterToken: 'reporter-secret-2'
+      })
+    });
+    assert.equal(fallbackReport.status, 201);
+    const fallbackReportBody = await fallbackReport.json();
+    assert.equal(fallbackReportBody.data.category, 'Other');
 
     const unauthorized = await fetch(`${baseUrl}/api/admin/reports`);
     assert.equal(unauthorized.status, 401);
@@ -1418,13 +1443,15 @@ test('http api stores user reports and exposes them to admin only', async () => 
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
     const loginBody = await login.json();
-    const reports = await fetch(`${baseUrl}/api/admin/reports`, {
+    const reports = await fetch(`${baseUrl}/api/admin/reports?category=PII`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
     const reportsBody = await reports.json();
     const serialized = JSON.stringify(reportsBody.data);
 
     assert.equal(reports.status, 200);
+    assert.equal(reportsBody.data.length, 1);
+    assert.equal(reportsBody.data[0].category, 'PII');
     assert.equal(reportsBody.data[0].reason, 'Co thong tin rieng tu');
     assert.equal(reportsBody.data[0].globalNumber, createdBody.data.thread.globalNumber);
     assert.equal(serialized.includes('reporter-secret'), false);
