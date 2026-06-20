@@ -372,9 +372,10 @@ async function serveStatic(request, response, staticRoot) {
 
   const url = new URL(request.url, 'http://localhost');
   const requestedPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
-  const candidate = path.normalize(path.join(staticRoot, requestedPath));
-  const safeRoot = path.normalize(staticRoot);
-  if (!candidate.startsWith(safeRoot)) {
+  const safeRoot = path.resolve(staticRoot);
+  const candidate = path.resolve(safeRoot, `.${requestedPath}`);
+  const relativePath = path.relative(safeRoot, candidate);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
     return false;
   }
 
@@ -394,15 +395,29 @@ async function serveStatic(request, response, staticRoot) {
     }
     return true;
   } catch (error) {
-    console.error('HTTP 500 ERROR:', error);
-    if (!url.pathname.startsWith('/api') && !url.pathname.startsWith('/events') && !url.pathname.startsWith('/uploads')) {
-      const indexPath = path.join(staticRoot, 'index.html');
-      response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-      response.end(await fs.readFile(indexPath));
-      return true;
+    if (error.code === 'ENOENT' || error.code === 'ENOTDIR') {
+      if (shouldServeSpaFallback(url.pathname)) {
+        const indexPath = path.join(staticRoot, 'index.html');
+        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
+        response.end(await fs.readFile(indexPath));
+        return true;
+      }
+      return false;
     }
+    throw error;
+  }
+}
+
+function shouldServeSpaFallback(pathname) {
+  if (pathname.startsWith('/api') || pathname.startsWith('/events') || pathname.startsWith('/uploads')) {
     return false;
   }
+  const segments = pathname.split('/').filter(Boolean);
+  if (segments.some((segment) => segment.startsWith('.'))) {
+    return false;
+  }
+  const basename = segments.at(-1) ?? '';
+  return !path.extname(basename);
 }
 
 async function serveUploadedFile(request, response, uploadRoot) {
