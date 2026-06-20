@@ -2599,6 +2599,22 @@ body.theme-yotsuba.board-page .topbar {
   margin-left: 86px;
 }
 
+.board-page .composer-templates {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  align-items: center;
+  margin: 2px 0 4px 86px;
+  color: #34345c;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.board-page .composer-templates > span {
+  color: #800000;
+  font-weight: bold;
+}
+
 .board-page .privacy-warning {
   margin-left: 86px;
   border-color: #000;

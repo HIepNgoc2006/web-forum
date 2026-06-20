@@ -108,6 +108,24 @@ const REPORT_CATEGORIES = [
   { value: 'Other', label: 'Khác' }
 ];
 
+const THREAD_TEMPLATES = [
+  {
+    key: 'study',
+    label: 'Học tập',
+    body: 'Mình muốn chia sẻ chuyện học tập:\n- Môn hoặc bối cảnh liên quan: ...\n- Điều đang vướng: ...\n- Mình đã thử: ...\nMong mọi người góp ý theo hướng tôn trọng và không nêu tên thật.'
+  },
+  {
+    key: 'relationship',
+    label: 'Tình cảm',
+    body: 'Mình muốn kể một chuyện tình cảm ẩn danh:\n- Bối cảnh chung: ...\n- Điều mình đang phân vân: ...\n- Mình cần lời khuyên về: ...\nMong mọi người góp ý nhẹ nhàng, không đoán danh tính.'
+  },
+  {
+    key: 'feedback',
+    label: 'Góp ý',
+    body: 'Mình muốn góp ý:\n- Vấn đề: ...\n- Ảnh hưởng: ...\n- Gợi ý cải thiện: ...\nMình viết để xây dựng, không nhắm vào cá nhân cụ thể.'
+  }
+];
+
 function reportCategoryLabel(value) {
   return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
 }
@@ -511,6 +529,62 @@ function removeDraft(key) {
     state.accountPrivateData.drafts = (state.accountPrivateData.drafts || []).filter((item) => item.key !== key);
     scheduleAccountPrivateDataSave();
   }
+}
+
+function writeTextareaValue(textarea, value) {
+  textarea.value = value;
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function insertThreadTemplate(key) {
+  const template = THREAD_TEMPLATES.find((item) => item.key === key);
+  if (!template) {
+    return;
+  }
+  const value = els.threadBody.value;
+  const canReplaceSelection =
+    document.activeElement === els.threadBody &&
+    Number.isFinite(els.threadBody.selectionStart) &&
+    els.threadBody.selectionStart !== els.threadBody.selectionEnd;
+  let nextValue = template.body;
+  let cursorStart = template.body.length;
+  if (canReplaceSelection) {
+    const start = els.threadBody.selectionStart;
+    const end = els.threadBody.selectionEnd;
+    nextValue = `${value.slice(0, start)}${template.body}${value.slice(end)}`;
+    cursorStart = start + template.body.length;
+  } else if (value.trim()) {
+    const spacer = value.endsWith('\n') ? '\n' : '\n\n';
+    nextValue = `${value}${spacer}${template.body}`;
+    cursorStart = nextValue.length;
+  }
+  els.threadBody.dataset.threadTemplateKey = template.key;
+  writeTextareaValue(els.threadBody, nextValue);
+  els.threadBody.setSelectionRange(cursorStart, cursorStart);
+  els.threadBody.focus();
+  showToast(`Đã chèn mẫu ${template.label}. Bạn có thể sửa trước khi gửi.`);
+}
+
+function dismissThreadTemplate() {
+  const key = els.threadBody.dataset.threadTemplateKey;
+  const template = THREAD_TEMPLATES.find((item) => item.key === key);
+  if (!template) {
+    els.threadBody.focus();
+    return;
+  }
+  const value = els.threadBody.value;
+  if (value === template.body) {
+    writeTextareaValue(els.threadBody, '');
+  } else if (value.includes(template.body)) {
+    writeTextareaValue(els.threadBody, value.replace(template.body, '').replace(/\n{3,}/g, '\n\n').trimStart());
+  } else {
+    showToast('Mẫu đã được sửa; xóa phần không cần trong ô bình luận.');
+    els.threadBody.focus();
+    return;
+  }
+  delete els.threadBody.dataset.threadTemplateKey;
+  els.threadBody.focus();
+  showToast('Đã bỏ mẫu khỏi nháp.');
 }
 
 function myPosts() {
@@ -5735,6 +5809,18 @@ function bindEvents() {
     const boardRefreshButton = event.target.closest('[data-board-refresh]');
     if (boardRefreshButton) {
       await loadBoard().catch((error) => showToast(error.message));
+      return;
+    }
+
+    const threadTemplateButton = event.target.closest('[data-thread-template]');
+    if (threadTemplateButton) {
+      insertThreadTemplate(threadTemplateButton.dataset.threadTemplate);
+      return;
+    }
+
+    const threadTemplateDismissButton = event.target.closest('[data-thread-template-dismiss]');
+    if (threadTemplateDismissButton) {
+      dismissThreadTemplate();
       return;
     }
 

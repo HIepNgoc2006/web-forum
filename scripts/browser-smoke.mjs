@@ -373,6 +373,10 @@ async function smokePage(page) {
       assertContrastPairs(contrast.result?.value || [], page.label);
     }
 
+    if (page.interaction) {
+      await page.interaction(cdp);
+    }
+
     if (page.screenshotPath) {
       const screenshot = await cdp.send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       const image = Buffer.from(screenshot.data || '', 'base64');
@@ -453,7 +457,44 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-board-desktop.png'),
-        checks: ['Tạo chủ đề mới', 'Danh mục', 'Kho lưu trữ', 'Bài kiểm thử browser smoke cho CI']
+        checks: ['Tạo chủ đề mới', 'Danh mục', 'Kho lưu trữ', 'Bài kiểm thử browser smoke cho CI'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              document.querySelector('#startThreadButton')?.click();
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              document.querySelector('[data-thread-template="study"]')?.click();
+              const body = document.querySelector('#threadBody');
+              body.value += '\\nSố điện thoại 0912345678';
+              body.dispatchEvent(new Event('input', { bubbles: true }));
+              const draft = localStorage.getItem('draft:thread:confession') || '';
+              const warning = document.querySelector('#threadPrivacyWarning');
+              const listText = document.querySelector('#threadList')?.innerText || '';
+              return {
+                value: body.value,
+                draft,
+                warningText: warning?.textContent || '',
+                warningHidden: warning?.classList.contains('hidden') ?? true,
+                postedAutomatically: listText.includes('Mình muốn chia sẻ chuyện học tập')
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          if (!payload.value.includes('Mình muốn chia sẻ chuyện học tập') || !payload.value.includes('Số điện thoại 0912345678')) {
+            throw new Error('board desktop did not insert and edit the confession template.');
+          }
+          if (payload.draft !== payload.value) {
+            throw new Error('board desktop did not autosave the edited template draft.');
+          }
+          if (payload.warningHidden || !payload.warningText.includes('số điện thoại')) {
+            throw new Error('board desktop did not rescan privacy risk after template insertion.');
+          }
+          if (payload.postedAutomatically) {
+            throw new Error('board desktop template insertion posted automatically.');
+          }
+        }
       },
       {
         label: 'thread desktop',
