@@ -8,6 +8,14 @@ Gắn Flagged khi nội dung có độc hại, spam, thù ghét, kích động b
 Nếu an toàn, trả labels rỗng.
 `.trim();
 
+const IMAGE_MODERATION_SYSTEM_PROMPT = `
+Bạn là bộ lọc kiểm duyệt ảnh tải lên cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
+Nhiệm vụ: kiểm tra nội dung nhìn thấy trong ảnh và chữ trong ảnh (OCR), không đoán danh tính, không yêu cầu IP/token, không dùng dữ liệu ngoài ảnh.
+Chỉ trả về JSON hợp lệ theo dạng: {"status":"Safe"|"Flagged","labels":["Toxic"|"Spam"|"Hate Speech"|"Fake News"|"PII Risk"|"Graphic Content"|"Sexual Content"|"Violence"|"Self-Harm"]}.
+Gắn Flagged khi ảnh hoặc chữ trong ảnh có độc hại, spam, thù ghét, bạo lực, tự hại, nội dung tình dục không phù hợp, lừa đảo/tin giả nguy hiểm, hoặc rủi ro lộ thông tin cá nhân.
+Nếu an toàn, trả labels rỗng.
+`.trim();
+
 const SUMMARY_SYSTEM_PROMPT = `
 Bạn là trợ lý tóm tắt cho 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
 Tóm tắt chỉ từ các bài viết công khai đã được ẩn danh hóa.
@@ -226,6 +234,15 @@ function extractJson(text) {
   return JSON.parse(match[0]);
 }
 
+function normalizeModerationResult(parsed = {}) {
+  const labels = Array.isArray(parsed.labels)
+    ? parsed.labels.map((label) => String(label ?? '').trim()).filter(Boolean)
+    : [];
+  return parsed.status === 'Flagged'
+    ? { status: 'Flagged', labels }
+    : { status: 'Safe', labels: [] };
+}
+
 function bulletize(text, limit = 5) {
   return text
     .split('\n')
@@ -310,13 +327,26 @@ function createGoogleProvider() {
 Nội dung:
 ${redactSensitiveText(text)}
 `, MODERATION_SYSTEM_PROMPT);
-        const parsed = extractJson(result);
-        const labels = Array.isArray(parsed.labels) ? parsed.labels : [];
-        return parsed.status === 'Flagged'
-          ? { status: 'Flagged', labels }
-          : { status: 'Safe', labels: [] };
+        return normalizeModerationResult(extractJson(result));
       } catch {
         return heuristicModeration(text);
+      }
+    },
+
+    async moderateImage(media) {
+      assertImageMedia(media);
+      try {
+        const data = await generateContent(
+          [
+            { inlineData: { mimeType: media.mimeType ?? 'image/png', data: rawBase64(media.data) } },
+            { text: 'Kiểm duyệt ảnh tải lên này, bao gồm chữ nhìn thấy trong ảnh.' }
+          ],
+          IMAGE_MODERATION_SYSTEM_PROMPT,
+          { generationConfig: { temperature: 0 } }
+        );
+        return normalizeModerationResult(extractJson(textFromResponse(data)));
+      } catch {
+        return { status: 'Safe', labels: [] };
       }
     },
 
@@ -450,6 +480,9 @@ function createOpenAiCompatibleProvider() {
       async moderate() {
         throw error;
       },
+      async moderateImage() {
+        throw error;
+      },
       async summarize() {
         throw error;
       },
@@ -513,13 +546,42 @@ function createOpenAiCompatibleProvider() {
 Nội dung:
 ${redactSensitiveText(text)}
 `, MODERATION_SYSTEM_PROMPT);
-        const parsed = extractJson(result);
-        const labels = Array.isArray(parsed.labels) ? parsed.labels : [];
-        return parsed.status === 'Flagged'
-          ? { status: 'Flagged', labels }
-          : { status: 'Safe', labels: [] };
+        return normalizeModerationResult(extractJson(result));
       } catch {
         return heuristicModeration(text);
+      }
+    },
+
+    async moderateImage(media) {
+      assertImageMedia(media);
+      const visionModel = process.env.OPENAI_VISION_MODEL || model;
+      const dataUrl = `data:${media.mimeType ?? 'image/png'};base64,${rawBase64(media.data)}`;
+      try {
+        const response = await fetch(`${baseUrl}/chat/completions`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+          body: JSON.stringify({
+            model: visionModel,
+            messages: [
+              { role: 'system', content: IMAGE_MODERATION_SYSTEM_PROMPT },
+              {
+                role: 'user',
+                content: [
+                  { type: 'text', text: 'Kiểm duyệt ảnh tải lên này, bao gồm chữ nhìn thấy trong ảnh.' },
+                  { type: 'image_url', image_url: { url: dataUrl } }
+                ]
+              }
+            ],
+            temperature: 0
+          })
+        });
+        if (!response.ok) {
+          throw new Error(`Yêu cầu kiểm duyệt ảnh thất bại: ${response.status}`);
+        }
+        const data = await response.json();
+        return normalizeModerationResult(extractJson(String(data.choices?.[0]?.message?.content ?? '')));
+      } catch {
+        return { status: 'Safe', labels: [] };
       }
     },
 
@@ -675,6 +737,9 @@ export function createAiClient() {
   return {
     async moderate(text) {
       return heuristicModeration(text);
+    },
+    async moderateImage() {
+      throw notConfiguredError();
     },
     async summarize() {
       const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');

@@ -522,22 +522,172 @@ test('forum service does not send IP, captcha, poster token, or admin token to A
   assert.equal(capturedText.includes('admin-secret-token'), false);
 });
 
+test('uploaded image OCR moderation flags PII without sending raw OCR secrets', async () => {
+  const moderateCalls = [];
+  let captionRequest = null;
+  const ai = {
+    async moderate(text) {
+      moderateCalls.push(text);
+      return { status: 'Safe', labels: [] };
+    },
+    async caption(media, mode) {
+      captionRequest = { media, mode };
+      return 'Email me@example.com, sdt 0901234567';
+    }
+  };
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai,
+    realtime: createEvents(),
+    now: () => new Date('2026-06-10T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Bai viet co anh dinh kem',
+    image: {
+      name: 'secret.png',
+      type: 'image/png',
+      dataUrl: `data:image/png;base64,${Buffer.from('image-bytes').toString('base64')}`,
+      spoiler: true
+    },
+    captchaToken: 'captcha-secret-token',
+    ip: '203.0.113.77',
+    posterToken: 'poster-secret-token'
+  });
+
+  assert.equal(created.status, 'pending');
+  assert.equal(created.thread.isPending, true);
+  assert.deepEqual(created.thread.moderationLabels, ['PII Risk']);
+  assert.deepEqual(Object.keys(captionRequest.media).sort(), ['data', 'mimeType']);
+  assert.equal(captionRequest.mode, 'ocr');
+  assert.equal(captionRequest.media.mimeType, 'image/png');
+  assert.equal(moderateCalls[0], 'Bai viet co anh dinh kem');
+  assert.equal(moderateCalls[1].includes('me@example.com'), false);
+  assert.equal(moderateCalls[1].includes('0901234567'), false);
+  assert.equal(moderateCalls[1].includes('[email da an]'), true);
+  assert.equal(moderateCalls[1].includes('[so dien thoai da an]'), true);
+  assert.equal(JSON.stringify({ moderateCalls, captionRequest }).includes('203.0.113.77'), false);
+  assert.equal(JSON.stringify({ moderateCalls, captionRequest }).includes('captcha-secret-token'), false);
+  assert.equal(JSON.stringify({ moderateCalls, captionRequest }).includes('poster-secret-token'), false);
+});
+
+test('uploaded image safety labels can hold comments for moderation', async () => {
+  const ai = {
+    async moderate() {
+      return { status: 'Safe', labels: [] };
+    },
+    async moderateImage() {
+      return { status: 'Flagged', labels: ['Graphic Content'] };
+    },
+    async caption() {
+      return '';
+    }
+  };
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai,
+    realtime: createEvents(),
+    now: () => new Date('2026-06-10T08:00:00.000Z')
+  });
+  const thread = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread an toan',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.10'
+  });
+
+  const reply = await service.createComment({
+    threadId: thread.thread.id,
+    body: 'Tra loi co anh',
+    image: {
+      type: 'image/jpeg',
+      dataUrl: `data:image/jpeg;base64,${Buffer.from('unsafe-image').toString('base64')}`
+    },
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.11'
+  });
+
+  assert.equal(reply.status, 'pending');
+  assert.equal(reply.comment.isPending, true);
+  assert.deepEqual(reply.comment.moderationLabels, ['Graphic Content']);
+});
+
 test('createAiClient fallback rejects new media features without a key', async () => {
-  const originalKey = process.env.GOOGLE_AI_API_KEY;
-  const originalProvider = process.env.AI_PROVIDER;
-  delete process.env.GOOGLE_AI_API_KEY;
-  delete process.env.AI_PROVIDER;
+  const keys = [
+    'AI_PROVIDER',
+    'GOOGLE_AI_API_KEY',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL'
+  ];
+  const originalEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) {
+    delete process.env[key];
+  }
   try {
     const ai = createAiClient();
     await assert.rejects(() => ai.translate('xin chao', 'en'), /AI/);
     await assert.rejects(() => ai.transcribe({ data: 'AAAA', mimeType: 'audio/mpeg' }), /AI/);
     await assert.rejects(() => ai.caption({ data: 'AAAA', mimeType: 'image/png' }), /AI/);
+    await assert.rejects(() => ai.moderateImage({ data: 'AAAA', mimeType: 'image/png' }), /AI/);
     await assert.rejects(() => ai.speak('xin chao'), /AI/);
   } finally {
-    if (originalKey === undefined) delete process.env.GOOGLE_AI_API_KEY;
-    else process.env.GOOGLE_AI_API_KEY = originalKey;
-    if (originalProvider === undefined) delete process.env.AI_PROVIDER;
-    else process.env.AI_PROVIDER = originalProvider;
+    for (const key of keys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
+test('upload moderation degrades safely when image AI is not configured', async () => {
+  const keys = [
+    'AI_PROVIDER',
+    'GOOGLE_AI_API_KEY',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL'
+  ];
+  const originalEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  for (const key of keys) {
+    delete process.env[key];
+  }
+
+  try {
+    const service = createForumService({
+      store: createMemoryStore(),
+      ai: createAiClient(),
+      realtime: createEvents(),
+      now: () => new Date('2026-06-10T08:00:00.000Z')
+    });
+
+    const created = await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Noi dung an toan',
+      image: {
+        type: 'image/png',
+        dataUrl: `data:image/png;base64,${Buffer.from('image').toString('base64')}`
+      },
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.12'
+    });
+
+    assert.equal(created.status, 'published');
+    assert.equal(created.thread.isPending, false);
+    assert.deepEqual(created.thread.moderationLabels, []);
+  } finally {
+    for (const key of keys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
   }
 });
 

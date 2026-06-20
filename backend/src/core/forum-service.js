@@ -997,6 +997,83 @@ function validateMediaList({ image, images } = {}) {
   return rawItems.map((item) => validateMedia(item)).filter(Boolean);
 }
 
+function imageMediaForAi(media) {
+  if (!media?.type?.startsWith('image/') || !media.dataUrl) {
+    return null;
+  }
+  return {
+    data: media.dataUrl,
+    mimeType: media.type
+  };
+}
+
+function uniqueModerationLabels(results) {
+  const labels = new Set();
+  for (const result of results) {
+    for (const label of result?.labels ?? []) {
+      const safeLabel = String(label ?? '').trim();
+      if (safeLabel) {
+        labels.add(safeLabel);
+      }
+    }
+  }
+  return [...labels];
+}
+
+function mergeModerationResults(...results) {
+  return {
+    status: results.some((result) => result?.status === 'Flagged') ? 'Flagged' : 'Safe',
+    labels: uniqueModerationLabels(results)
+  };
+}
+
+async function moderateOcrText(ai, text) {
+  const ocrText = String(text ?? '').trim();
+  if (!ocrText || typeof ai.moderate !== 'function') {
+    return { status: 'Safe', labels: [] };
+  }
+
+  const redactedText = redactSensitiveText(ocrText);
+  const localPrivacyResult =
+    redactedText === ocrText ? { status: 'Safe', labels: [] } : { status: 'Flagged', labels: ['PII Risk'] };
+  const aiResult = await ai.moderate(redactedText);
+  return mergeModerationResults(localPrivacyResult, aiResult);
+}
+
+async function scanImageForModeration(ai, media) {
+  const image = imageMediaForAi(media);
+  if (!image) {
+    return { status: 'Safe', labels: [] };
+  }
+
+  const results = [];
+  if (typeof ai.moderateImage === 'function') {
+    try {
+      results.push(await ai.moderateImage(image));
+    } catch {
+      // Image AI is optional for upload moderation; text moderation still runs.
+    }
+  }
+
+  if (typeof ai.caption === 'function') {
+    try {
+      results.push(await moderateOcrText(ai, await ai.caption(image, 'ocr')));
+    } catch {
+      // Missing vision/OCR support must not block otherwise valid uploads.
+    }
+  }
+
+  return mergeModerationResults(...results);
+}
+
+async function scanUploadsForModeration(ai, safeMedia) {
+  const results = [];
+  for (const media of safeMedia) {
+    results.push(await scanImageForModeration(ai, media));
+  }
+  return mergeModerationResults(...results);
+}
+
 function validateImageThumbnail(thumbnail) {
   if (!thumbnail) {
     return null;
@@ -2542,7 +2619,10 @@ export function createForumService({
 
       return mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
-        const moderation = await ai.moderate(normalizedBody);
+        const moderation = mergeModerationResults(
+          await ai.moderate(normalizedBody),
+          await scanUploadsForModeration(ai, safeImages)
+        );
         const id = crypto.randomUUID();
         const storedImages = await saveMediaList(imageStorage, safeImages);
         const thread = {
@@ -2712,7 +2792,10 @@ export function createForumService({
           error.statusCode = 409;
           throw error;
         }
-        const moderation = await ai.moderate(normalizedBody);
+        const moderation = mergeModerationResults(
+          await ai.moderate(normalizedBody),
+          await scanUploadsForModeration(ai, safeImages)
+        );
         const storedImages = await saveMediaList(imageStorage, safeImages);
 
         const comment = {
