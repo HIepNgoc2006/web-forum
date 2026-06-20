@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { BOARDS } from './config.js';
+import { BOARDS, normalizeRetentionPolicy } from './config.js';
 
 export const EMPTY_STATE = {
   version: 1,
@@ -27,7 +27,15 @@ export function normalizeState(value = {}) {
   return {
     ...EMPTY_STATE,
     ...cloned,
-    boards,
+    boards: boards.map((board) => {
+      if (!Object.hasOwn(board, 'retentionPolicy')) {
+        return board;
+      }
+      return {
+        ...board,
+        retentionPolicy: normalizeRetentionPolicy(board.retentionPolicy)
+      };
+    }),
     users: Array.isArray(cloned.users) ? cloned.users : [],
     threads: Array.isArray(cloned.threads) ? cloned.threads : [],
     comments: Array.isArray(cloned.comments) ? cloned.comments : [],

@@ -153,6 +153,17 @@ export const THREAD_LIFECYCLE = {
   replyLimit: Math.max(readPositiveInteger(process.env.THREAD_REPLY_LIMIT, 500), bumpLimit)
 };
 
+export function normalizeRetentionPolicy(value = {}, defaults = THREAD_LIFECYCLE) {
+  const policy = value && typeof value === 'object' ? value : {};
+  const normalized = {
+    maxActiveThreadsPerBoard: readPositiveInteger(policy.maxActiveThreadsPerBoard, defaults.maxActiveThreadsPerBoard),
+    bumpLimit: readPositiveInteger(policy.bumpLimit, defaults.bumpLimit),
+    replyLimit: readPositiveInteger(policy.replyLimit, defaults.replyLimit),
+    publicArchive: typeof policy.publicArchive === 'boolean' ? policy.publicArchive : true
+  };
+  return normalized;
+}
+
 export function getBoard(slug) {
   return BOARDS.find((board) => board.slug === slug);
 }
@@ -199,6 +210,7 @@ export function publicBoardConfig(board) {
     category: sanitizePlainText(board.category, 'Khác', 80),
     description,
     rules: sanitizeBoardRules(board, description),
+    retentionPolicy: normalizeRetentionPolicy(board.retentionPolicy),
     banner: {
       text: bannerText,
       ...(bannerImageUrl ? { imageUrl: bannerImageUrl, altText: bannerAltText } : {})

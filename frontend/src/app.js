@@ -50,7 +50,12 @@ const state = {
   archiveThreads: [],
   adminTab: 'pending',
   adminItems: [],
-  moderationConfidenceThreshold: 0
+  moderationConfidenceThreshold: 0,
+  lifecycle: {
+    maxActiveThreadsPerBoard: 150,
+    bumpLimit: 300,
+    replyLimit: 500
+  }
 };
 
 const REASON_MACROS = {
@@ -3025,12 +3030,19 @@ function renderAdminTabs() {
 }
 
 function adminBoardPayload(root, { includeSlug = false } = {}) {
+  const retentionPolicy = {
+    maxActiveThreadsPerBoard: root.querySelector('[data-admin-board-retention-max]')?.value || '',
+    bumpLimit: root.querySelector('[data-admin-board-retention-bump]')?.value || '',
+    replyLimit: root.querySelector('[data-admin-board-retention-reply]')?.value || '',
+    publicArchive: Boolean(root.querySelector('[data-admin-board-retention-public-archive]')?.checked)
+  };
   const payload = {
     name: root.querySelector('[data-admin-board-name]')?.value || '',
     category: root.querySelector('[data-admin-board-category]')?.value || '',
     description: root.querySelector('[data-admin-board-description]')?.value || '',
     isHidden: Boolean(root.querySelector('[data-admin-board-hidden]')?.checked),
-    isArchived: Boolean(root.querySelector('[data-admin-board-archived]')?.checked)
+    isArchived: Boolean(root.querySelector('[data-admin-board-archived]')?.checked),
+    retentionPolicy
   };
   if (includeSlug) {
     payload.slug = root.querySelector('[data-admin-board-slug]')?.value || '';
@@ -3055,14 +3067,22 @@ function adminUserPayload(root, { includeUsername = false } = {}) {
 }
 
 function adminBoardsHtml(boards) {
+  const lifecycle = state.lifecycle || {};
   const rows = boards
-    .map(
-      (board) => `
+    .map((board) => {
+      const retentionPolicy = board.retentionPolicy || {};
+      return `
         <tr data-admin-board-row="${escapeHtml(board.slug)}">
           <td><code>/${escapeHtml(board.slug)}/</code></td>
           <td><input data-admin-board-name value="${escapeHtml(board.name)}" maxlength="80" /></td>
           <td><input data-admin-board-category value="${escapeHtml(board.category)}" maxlength="80" /></td>
           <td><input data-admin-board-description value="${escapeHtml(board.description)}" maxlength="240" /></td>
+          <td class="admin-board-retention">
+            <label><span>Active</span><input data-admin-board-retention-max type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.maxActiveThreadsPerBoard ?? '')}" /></label>
+            <label><span>Bump</span><input data-admin-board-retention-bump type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.bumpLimit ?? '')}" /></label>
+            <label><span>Reply</span><input data-admin-board-retention-reply type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.replyLimit ?? '')}" /></label>
+            <label><input data-admin-board-retention-public-archive type="checkbox" ${retentionPolicy.publicArchive === false ? '' : 'checked'} /> Public archive</label>
+          </td>
           <td class="admin-board-flags">
             <label><input data-admin-board-hidden type="checkbox" ${board.isHidden ? 'checked' : ''} /> Ẩn</label>
             <label><input data-admin-board-archived type="checkbox" ${board.isArchived ? 'checked' : ''} /> Lưu trữ</label>
@@ -3072,8 +3092,8 @@ function adminBoardsHtml(boards) {
             <button class="danger-button" data-admin-board-delete type="button">Xóa</button>
           </td>
         </tr>
-      `
-    )
+      `;
+    })
     .join('');
 
   return `
@@ -3085,8 +3105,12 @@ function adminBoardsHtml(boards) {
           <label><span>Tên</span><input data-admin-board-name placeholder="Ăn uống" maxlength="80" /></label>
           <label><span>Danh mục</span><input data-admin-board-category placeholder="Đời sống" maxlength="80" /></label>
           <label><span>Mô tả</span><input data-admin-board-description placeholder="Chia sẻ quán ăn, căn tin, deal sinh viên" maxlength="240" /></label>
+          <label><span>Active cap</span><input data-admin-board-retention-max type="number" min="1" step="1" value="${escapeHtml(lifecycle.maxActiveThreadsPerBoard ?? 150)}" /></label>
+          <label><span>Bump limit</span><input data-admin-board-retention-bump type="number" min="1" step="1" value="${escapeHtml(lifecycle.bumpLimit ?? 300)}" /></label>
+          <label><span>Reply limit</span><input data-admin-board-retention-reply type="number" min="1" step="1" value="${escapeHtml(lifecycle.replyLimit ?? 500)}" /></label>
           <label><input data-admin-board-hidden type="checkbox" /> Ẩn khỏi public</label>
           <label><input data-admin-board-archived type="checkbox" /> Lưu trữ</label>
+          <label><input data-admin-board-retention-public-archive type="checkbox" checked /> Public archive</label>
           <button class="primary-button" data-admin-board-create type="button">Tạo bảng</button>
         </div>
       </section>
@@ -3098,11 +3122,12 @@ function adminBoardsHtml(boards) {
               <th>Tên</th>
               <th>Danh mục</th>
               <th>Mô tả</th>
+              <th>Retention</th>
               <th>Trạng thái</th>
               <th>Thao tác</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="6">Chưa có board.</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="7">Chưa có board.</td></tr>'}</tbody>
         </table>
       </div>
       <p class="muted">Xóa chỉ áp dụng cho board rỗng. Board đã có nội dung nên dùng Ẩn hoặc Lưu trữ.</p>
@@ -3921,6 +3946,10 @@ async function loadArchive() {
   els.archiveDescription.textContent = board.description;
   els.archiveReturnTop.href = `#board/${board.slug}`;
   els.archiveReturnBottom.href = `#board/${board.slug}`;
+  if (board.retentionPolicy?.publicArchive === false) {
+    els.archiveList.innerHTML = '<p class="muted">Kho lưu trữ không công khai.</p>';
+    return;
+  }
 
   const threads = await api(`/api/boards/${board.slug}/archive`);
   state.archiveThreads = threads;
@@ -3982,6 +4011,9 @@ async function loadBoard() {
   els.boardArchiveLink.href = `#archive/${board.slug}`;
   els.boardCatalogLinkBottom.href = `#catalog/${board.slug}`;
   els.boardArchiveLinkBottom.href = `#archive/${board.slug}`;
+  const publicArchive = board.retentionPolicy?.publicArchive !== false;
+  els.boardArchiveLink.classList.toggle('hidden', !publicArchive);
+  els.boardArchiveLinkBottom.classList.toggle('hidden', !publicArchive);
   els.boardSearchInput.value = state.boardSearchTerm;
   els.boardSummary.classList.add('hidden');
   const shouldOpenComposer = new URLSearchParams(window.location.hash.split('?')[1] || '').get('new') === '1';
@@ -6521,6 +6553,7 @@ async function init() {
   const config = await api('/api/config');
   state.boards = config.boards;
   state.boardGroups = config.boardGroups || [];
+  state.lifecycle = config.lifecycle || state.lifecycle;
   state.aiConfigured = Boolean(config.ai?.configured);
   state.moderationConfidenceThreshold = Number(config.ai?.moderationConfidenceThreshold || 0);
   syncAdminModerationSettings({ moderationConfidenceThreshold: state.moderationConfidenceThreshold });

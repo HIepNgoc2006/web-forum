@@ -415,13 +415,23 @@ test('http admin boards support dynamic create update and public filtering', asy
         name: 'Tin lab',
         category: 'Truong hoc',
         description: 'Thong bao phong lab',
-        isHidden: true
+        isHidden: true,
+        retentionPolicy: {
+          maxActiveThreadsPerBoard: 25,
+          bumpLimit: 50,
+          replyLimit: 75,
+          publicArchive: false
+        }
       })
     });
     const createdBody = await created.json();
     assert.equal(created.status, 201);
     assert.equal(createdBody.data.board.slug, 'lab-news');
     assert.equal(createdBody.data.board.isHidden, true);
+    assert.equal(createdBody.data.board.retentionPolicy.maxActiveThreadsPerBoard, 25);
+    assert.equal(createdBody.data.board.retentionPolicy.bumpLimit, 50);
+    assert.equal(createdBody.data.board.retentionPolicy.replyLimit, 75);
+    assert.equal(createdBody.data.board.retentionPolicy.publicArchive, false);
 
     const publicBoardsBefore = await fetch(`${baseUrl}/api/boards`);
     const publicBoardsBeforeBody = await publicBoardsBefore.json();
@@ -433,13 +443,26 @@ test('http admin boards support dynamic create update and public filtering', asy
     const adminBoardsBody = await adminBoards.json();
     assert.equal(adminBoards.status, 200);
     assert.equal(adminBoardsBody.data.some((board) => board.slug === 'lab-news' && board.isHidden), true);
+    assert.equal(
+      adminBoardsBody.data.find((board) => board.slug === 'lab-news')?.retentionPolicy.publicArchive,
+      false
+    );
 
     const shown = await fetch(`${baseUrl}/api/admin/boards/lab-news`, {
       method: 'PUT',
       headers,
-      body: JSON.stringify({ isHidden: false })
+      body: JSON.stringify({
+        isHidden: false,
+        retentionPolicy: {
+          maxActiveThreadsPerBoard: 30,
+          publicArchive: true
+        }
+      })
     });
+    const shownBody = await shown.json();
     assert.equal(shown.status, 200);
+    assert.equal(shownBody.data.board.retentionPolicy.maxActiveThreadsPerBoard, 30);
+    assert.equal(shownBody.data.board.retentionPolicy.publicArchive, true);
 
     const publicBoardsAfter = await fetch(`${baseUrl}/api/boards`);
     const publicBoardsAfterBody = await publicBoardsAfter.json();
@@ -2097,5 +2120,46 @@ test('http api exposes board archive and admin manual archive', async () => {
     assert.equal(archiveBody.data.length, 1);
     assert.equal(archiveBody.data[0].id, createdBody.data.thread.id);
     assert.equal(archiveBody.data[0].archivedReason, 'manual');
+
+    const adminHeaders = {
+      authorization: `Bearer ${loginBody.data.token}`,
+      'content-type': 'application/json'
+    };
+    const privateBoard = await fetch(`${baseUrl}/api/admin/boards`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        slug: 'private-archive',
+        name: 'Private archive',
+        category: 'Test',
+        description: 'Archive is not public',
+        retentionPolicy: {
+          maxActiveThreadsPerBoard: 150,
+          bumpLimit: 300,
+          replyLimit: 500,
+          publicArchive: false
+        }
+      })
+    });
+    assert.equal(privateBoard.status, 201);
+    const privateThread = await fetch(`${baseUrl}/api/boards/private-archive/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Public board with private archive',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const privateThreadBody = await privateThread.json();
+    assert.equal(privateThread.status, 201);
+
+    const archivePrivateThread = await fetch(`${baseUrl}/api/admin/threads/${privateThreadBody.data.thread.id}/archive`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    assert.equal(archivePrivateThread.status, 200);
+
+    const privateArchive = await fetch(`${baseUrl}/api/boards/private-archive/archive`);
+    assert.equal(privateArchive.status, 404);
   });
 });
