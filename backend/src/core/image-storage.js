@@ -31,12 +31,29 @@ function trimSlashes(value) {
   return String(value ?? '').replace(/^\/+|\/+$/g, '');
 }
 
+function normalizeStorageKey(value) {
+  return String(value ?? '').replace(/\\/g, '/').replace(/^\/+/g, '');
+}
+
 function encodePathSegment(value) {
   return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
 function encodeKey(key) {
   return key.split('/').map(encodePathSegment).join('/');
+}
+
+function canonicalQueryString(url) {
+  return [...url.searchParams.entries()]
+    .map(([key, value]) => [encodePathSegment(key), encodePathSegment(value)])
+    .sort(([leftKey, leftValue], [rightKey, rightValue]) => {
+      if (leftKey === rightKey) {
+        return leftValue.localeCompare(rightValue);
+      }
+      return leftKey.localeCompare(rightKey);
+    })
+    .map(([key, value]) => `${key}=${value}`)
+    .join('&');
 }
 
 function imageBytes(image) {
@@ -66,6 +83,45 @@ function imageExtension(image) {
 
 function sha256Hex(value) {
   return crypto.createHash('sha256').update(value).digest('hex');
+}
+
+function assertSafeLocalKey(root, key) {
+  const normalizedKey = normalizeStorageKey(key);
+  if (!normalizedKey || path.isAbsolute(normalizedKey) || normalizedKey.split('/').includes('..')) {
+    throw new Error('Unsafe local upload key');
+  }
+
+  const resolvedRoot = path.resolve(root);
+  const resolvedPath = path.resolve(resolvedRoot, normalizedKey);
+  if (resolvedPath !== resolvedRoot && !resolvedPath.startsWith(`${resolvedRoot}${path.sep}`)) {
+    throw new Error('Unsafe local upload key');
+  }
+  return { normalizedKey, resolvedPath };
+}
+
+async function listLocalFiles(root, directory = root) {
+  let entries = [];
+  try {
+    entries = await fs.readdir(directory, { withFileTypes: true });
+  } catch (error) {
+    if (error?.code === 'ENOENT') {
+      return [];
+    }
+    throw error;
+  }
+
+  const files = [];
+  for (const entry of entries) {
+    const fullPath = path.join(directory, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...await listLocalFiles(root, fullPath));
+      continue;
+    }
+    if (entry.isFile()) {
+      files.push(path.relative(root, fullPath).replace(/\\/g, '/'));
+    }
+  }
+  return files;
 }
 
 function stripImageData(image) {
@@ -103,7 +159,7 @@ function s3AuthorizationHeader({ method, url, headers, payloadHash, accessKeyId,
   const canonicalRequest = [
     method,
     url.pathname,
-    url.searchParams.toString(),
+    canonicalQueryString(url),
     canonicalHeaders,
     signedHeaders.join(';'),
     payloadHash
@@ -133,6 +189,8 @@ export function createInlineImageStorage() {
 }
 
 export function createLocalImageStorage({ root = path.resolve('data/uploads'), publicPath = '/uploads' } = {}) {
+  const resolvedRoot = path.resolve(root);
+
   async function save(image) {
     if (!image) {
       return null;
@@ -142,8 +200,8 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
     const extension = imageExtension(image);
     const bytes = imageBytes(image);
     const fileName = `${id}.${extension}`;
-    await fs.mkdir(root, { recursive: true });
-    await fs.writeFile(path.join(root, fileName), bytes);
+    await fs.mkdir(resolvedRoot, { recursive: true });
+    await fs.writeFile(path.join(resolvedRoot, fileName), bytes);
 
     const saved = {
       ...stripImageData(image),
@@ -156,9 +214,9 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
       const thumbnailExtension = imageExtension(image.thumbnail);
       const thumbnailFileName = `${id}.thumb.${thumbnailExtension}`;
       try {
-        await fs.writeFile(path.join(root, thumbnailFileName), imageBytes(image.thumbnail));
+        await fs.writeFile(path.join(resolvedRoot, thumbnailFileName), imageBytes(image.thumbnail));
       } catch (error) {
-        await fs.rm(path.join(root, fileName), { force: true }).catch(() => undefined);
+        await fs.rm(path.join(resolvedRoot, fileName), { force: true }).catch(() => undefined);
         throw error;
       }
       saved.thumbnail = {
@@ -172,9 +230,19 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
     return saved;
   }
 
+  async function listKeys() {
+    await fs.mkdir(resolvedRoot, { recursive: true });
+    return listLocalFiles(resolvedRoot);
+  }
+
+  async function deleteKey(key) {
+    const { resolvedPath } = assertSafeLocalKey(resolvedRoot, key);
+    await fs.rm(resolvedPath, { force: false });
+  }
+
   async function health() {
-    await fs.mkdir(root, { recursive: true });
-    await fs.access(root);
+    await fs.mkdir(resolvedRoot, { recursive: true });
+    await fs.access(resolvedRoot);
     return {
       type: 'local-disk',
       configured: true
@@ -183,9 +251,11 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
 
   return {
     type: 'local-disk',
-    root,
+    root: resolvedRoot,
     publicPath,
     save,
+    listKeys,
+    deleteKey,
     health
   };
 }
@@ -222,6 +292,10 @@ export function createS3ImageStorage({
 
   function requestUrlFor(key) {
     return new URL(`${normalizedEndpoint}/${encodePathSegment(bucket)}/${encodeKey(key)}`);
+  }
+
+  function bucketUrl() {
+    return new URL(`${normalizedEndpoint}/${encodePathSegment(bucket)}`);
   }
 
   function publicUrlFor(key) {
@@ -266,6 +340,93 @@ export function createS3ImageStorage({
     });
     if (!response.ok) {
       const error = new Error(`Không thể lưu ảnh lên S3-compatible storage (${response.status})`);
+      error.statusCode = 502;
+      throw error;
+    }
+  }
+
+  async function signedRequest(method, url) {
+    const payloadHash = sha256Hex('');
+    const signingDate = now();
+    const signingHeaders = {
+      host: url.host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzTimestamp(signingDate)
+    };
+    const authorization = s3AuthorizationHeader({
+      method,
+      url,
+      headers: signingHeaders,
+      payloadHash,
+      accessKeyId,
+      secretAccessKey,
+      region,
+      date: signingDate
+    });
+    return fetchImpl(url, {
+      method,
+      headers: {
+        'x-amz-content-sha256': signingHeaders['x-amz-content-sha256'],
+        'x-amz-date': signingHeaders['x-amz-date'],
+        authorization: authorization.value
+      }
+    });
+  }
+
+  function decodeXmlEntity(value) {
+    return value
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, '&');
+  }
+
+  async function listKeys() {
+    const keys = [];
+    let continuationToken = null;
+
+    do {
+      const url = bucketUrl();
+      url.searchParams.set('list-type', '2');
+      if (normalizedPrefix) {
+        url.searchParams.set('prefix', normalizedPrefix.endsWith('/') ? normalizedPrefix : `${normalizedPrefix}/`);
+      }
+      if (continuationToken) {
+        url.searchParams.set('continuation-token', continuationToken);
+      }
+
+      const response = await signedRequest('GET', url);
+      if (!response.ok) {
+        const error = new Error(`Không thể liệt kê upload S3 (${response.status})`);
+        error.statusCode = 502;
+        throw error;
+      }
+
+      const body = await response.text();
+      for (const match of body.matchAll(/<Key>([\s\S]*?)<\/Key>/g)) {
+        keys.push(decodeXmlEntity(match[1]));
+      }
+      const truncated = /<IsTruncated>\s*true\s*<\/IsTruncated>/i.test(body);
+      const tokenMatch = body.match(/<NextContinuationToken>([\s\S]*?)<\/NextContinuationToken>/);
+      continuationToken = truncated && tokenMatch ? decodeXmlEntity(tokenMatch[1]) : null;
+    } while (continuationToken);
+
+    return keys;
+  }
+
+  async function deleteKey(key) {
+    const normalizedKey = normalizeStorageKey(key);
+    if (!normalizedKey) {
+      throw new Error('Unsafe S3 upload key');
+    }
+    if (normalizedPrefix && normalizedKey !== normalizedPrefix && !normalizedKey.startsWith(`${normalizedPrefix}/`)) {
+      throw new Error('S3 upload key is outside configured prefix');
+    }
+
+    const response = await signedRequest('DELETE', requestUrlFor(normalizedKey));
+    if (!response.ok && response.status !== 404) {
+      const error = new Error(`Không thể xóa upload S3 (${response.status})`);
       error.statusCode = 502;
       throw error;
     }
@@ -355,7 +516,10 @@ export function createS3ImageStorage({
     bucket,
     region,
     endpoint: normalizedEndpoint,
+    keyPrefix: normalizedPrefix,
     save,
+    listKeys,
+    deleteKey,
     health
   };
 }
