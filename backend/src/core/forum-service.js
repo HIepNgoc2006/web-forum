@@ -64,6 +64,8 @@ const MAX_ACCOUNT_DRAFT_LENGTH = 12_000;
 const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails'];
 const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions'];
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const MAX_MEDIA_PER_POST = 4;
+const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -84,6 +86,13 @@ function stripPrivatePostFields(post) {
     publicFields.body = sanitizeText(publicFields.body);
   }
   return publicFields;
+}
+
+function mediaItems(post) {
+  if (Array.isArray(post?.images)) {
+    return post.images.filter(Boolean);
+  }
+  return post?.image ? [post.image] : [];
 }
 
 function activePublicThread(thread) {
@@ -812,55 +821,79 @@ function serializePoll(poll) {
   };
 }
 
-function validateImage(image) {
-  if (!image) {
+function supportedMediaType(type) {
+  return type.startsWith('image/') || SUPPORTED_VIDEO_TYPES.has(type);
+}
+
+function assertPostBodySize(value) {
+  if (String(value ?? '').length <= 5000) {
+    return;
+  }
+  const error = new Error('Dữ liệu gửi lên quá lớn');
+  error.statusCode = 413;
+  throw error;
+}
+
+function validateMedia(media) {
+  if (!media) {
     return null;
   }
 
-  const type = String(image.type ?? '').toLowerCase();
-  if (!type.startsWith('image/')) {
-    const error = new Error('Chỉ hỗ trợ tải ảnh lên');
+  const type = String(media.type ?? '').toLowerCase();
+  if (!supportedMediaType(type)) {
+    const error = new Error('Chỉ hỗ trợ tải ảnh hoặc video lên');
     error.statusCode = 415;
     throw error;
   }
 
-  const dataUrl = image.dataUrl ?? '';
-  if (!dataUrl.startsWith('data:image/')) {
-    const error = new Error('Dữ liệu ảnh không hợp lệ');
+  const dataUrl = media.dataUrl ?? '';
+  const dataPrefix = type.startsWith('video/') ? 'data:video/' : 'data:image/';
+  if (!dataUrl.startsWith(dataPrefix)) {
+    const error = new Error('Dữ liệu tệp không hợp lệ');
     error.statusCode = 400;
     throw error;
   }
 
   const maxBytes = readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES);
   if (Buffer.byteLength(dataUrl) > maxBytes) {
-    const error = new Error('Ảnh quá lớn');
+    const error = new Error(type.startsWith('image/') ? 'Ảnh quá lớn' : 'Video quá lớn');
     error.statusCode = 413;
     throw error;
   }
 
-  const safeImage = {
-    name: sanitizeFileName(image.name),
+  const safeMedia = {
+    name: sanitizeFileName(media.name),
     type,
     dataUrl,
-    spoiler: Boolean(image.spoiler),
-    sizeBytes: sanitizePositiveInteger(image.sizeBytes, maxBytes) ?? dataUrlBytes(dataUrl)
+    spoiler: Boolean(media.spoiler),
+    sizeBytes: sanitizePositiveInteger(media.sizeBytes, maxBytes) ?? dataUrlBytes(dataUrl)
   };
 
-  const width = sanitizePositiveInteger(image.width, 20_000);
-  const height = sanitizePositiveInteger(image.height, 20_000);
+  const width = sanitizePositiveInteger(media.width, 20_000);
+  const height = sanitizePositiveInteger(media.height, 20_000);
   if (width) {
-    safeImage.width = width;
+    safeMedia.width = width;
   }
   if (height) {
-    safeImage.height = height;
+    safeMedia.height = height;
   }
 
-  const thumbnail = validateImageThumbnail(image.thumbnail);
+  const thumbnail = validateImageThumbnail(media.thumbnail);
   if (thumbnail) {
-    safeImage.thumbnail = thumbnail;
+    safeMedia.thumbnail = thumbnail;
   }
 
-  return safeImage;
+  return safeMedia;
+}
+
+function validateMediaList({ image, images } = {}) {
+  const rawItems = Array.isArray(images) ? images : image ? [image] : [];
+  if (rawItems.length > MAX_MEDIA_PER_POST) {
+    const error = new Error(`Tối đa ${MAX_MEDIA_PER_POST} tệp mỗi bài viết`);
+    error.statusCode = 400;
+    throw error;
+  }
+  return rawItems.map((item) => validateMedia(item)).filter(Boolean);
 }
 
 function validateImageThumbnail(thumbnail) {
@@ -911,17 +944,32 @@ function validateImageThumbnail(thumbnail) {
 // Re-applies the spoiler flag onto the stored image. The image storage driver
 // returns its own object (local/S3 metadata) and may drop unknown fields, so
 // the poster's spoiler choice is carried over from the validated upload.
-function applyImageSpoiler(storedImage, safeImage) {
-  if (!storedImage) {
-    return storedImage;
+function applyMediaSpoiler(storedMedia, safeMedia) {
+  if (!storedMedia) {
+    return storedMedia;
   }
-  return { ...storedImage, spoiler: Boolean(safeImage?.spoiler) };
+  return { ...storedMedia, spoiler: Boolean(safeMedia?.spoiler) };
+}
+
+function applyMediaSpoilers(storedMedia, safeMedia) {
+  return storedMedia.map((item, index) => applyMediaSpoiler(item, safeMedia[index]));
+}
+
+async function saveMediaList(imageStorage, safeMedia) {
+  const stored = [];
+  for (const media of safeMedia) {
+    stored.push(await imageStorage.save(media));
+  }
+  return applyMediaSpoilers(stored.filter(Boolean), safeMedia);
 }
 
 function serializeThread(thread, comments) {
   const publicComments = comments.filter((comment) => comment.threadId === thread.id && publicPost(comment));
+  const images = mediaItems(thread);
   return {
     ...stripPrivatePostFields(thread),
+    image: images[0] ?? null,
+    images,
     displayName: publicDisplayName(thread.displayName),
     tripcode: thread.tripcode ?? null,
     capcode: normalizeCapcode(thread.capcode),
@@ -942,8 +990,11 @@ function serializeThread(thread, comments) {
 }
 
 function serializeComment(comment, thread = null) {
+  const images = mediaItems(comment);
   return {
     ...stripPrivatePostFields(comment),
+    image: images[0] ?? null,
+    images,
     displayName: publicDisplayName(comment.displayName),
     tripcode: comment.tripcode ?? null,
     capcode: normalizeCapcode(comment.capcode),
@@ -1450,7 +1501,7 @@ export function createForumService({
       const publicPosts = [...publicThreads, ...publicComments];
       const activeBoards = new Set(publicThreads.map((thread) => thread.boardSlug));
       const publicBoards = state.boards.filter(publicBoard);
-      const files = publicPosts.map((post) => post.image).filter(Boolean);
+      const files = publicPosts.flatMap((post) => mediaItems(post));
       const nowMs = now().getTime();
       const oneHourAgo = nowMs - 60 * 60 * 1000;
       const oneDayAgo = nowMs - 24 * 60 * 60 * 1000;
@@ -2319,6 +2370,7 @@ export function createForumService({
       boardSlug,
       body,
       image,
+      images,
       pollOptions,
       captchaToken,
       ip,
@@ -2338,13 +2390,14 @@ export function createForumService({
       }
 
       await requireCaptcha(captchaToken, ip);
+      assertPostBodySize(body);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
         const error = new Error('Nội dung là bắt buộc');
         error.statusCode = 400;
         throw error;
       }
-      const safeImage = validateImage(image);
+      const safeImages = validateMediaList({ image, images });
       const poll = createPoll(pollOptions);
       const postingOptions = parsePostingOptions(options);
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
@@ -2355,7 +2408,7 @@ export function createForumService({
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
         const moderation = await ai.moderate(normalizedBody);
         const id = crypto.randomUUID();
-        const storedImage = safeImage ? await imageStorage.save(safeImage) : null;
+        const storedImages = await saveMediaList(imageStorage, safeImages);
         const thread = {
           id,
           boardSlug,
@@ -2364,7 +2417,8 @@ export function createForumService({
           tripcode,
           capcode: normalizeCapcode(capcode),
           accountId,
-          image: applyImageSpoiler(storedImage, safeImage),
+          image: storedImages[0] ?? null,
+          images: storedImages,
           poll,
           pollVotes: poll ? {} : undefined,
           authorFingerprint,
@@ -2473,15 +2527,29 @@ export function createForumService({
       };
     },
 
-    async createComment({ threadId, body, image, captchaToken, ip, posterToken, displayName = '', options = '', deletePassword = '', capcode = null, accountId }) {
+    async createComment({
+      threadId,
+      body,
+      image,
+      images,
+      captchaToken,
+      ip,
+      posterToken,
+      displayName = '',
+      options = '',
+      deletePassword = '',
+      capcode = null,
+      accountId
+    }) {
       await requireCaptcha(captchaToken, ip);
+      assertPostBodySize(body);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
         const error = new Error('Nội dung là bắt buộc');
         error.statusCode = 400;
         throw error;
       }
-      const safeImage = validateImage(image);
+      const safeImages = validateMediaList({ image, images });
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
@@ -2509,7 +2577,7 @@ export function createForumService({
           throw error;
         }
         const moderation = await ai.moderate(normalizedBody);
-        const storedImage = safeImage ? await imageStorage.save(safeImage) : null;
+        const storedImages = await saveMediaList(imageStorage, safeImages);
 
         const comment = {
           id: crypto.randomUUID(),
@@ -2520,7 +2588,8 @@ export function createForumService({
           tripcode,
           capcode: normalizeCapcode(capcode),
           accountId,
-          image: applyImageSpoiler(storedImage, safeImage),
+          image: storedImages[0] ?? null,
+          images: storedImages,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),
@@ -2733,12 +2802,13 @@ export function createForumService({
 
         const deletedAt = now().toISOString();
         if (fileOnly) {
-          if (!found.post.image) {
+          if (mediaItems(found.post).length === 0) {
             const error = new Error('Bài viết không có tệp để xóa');
             error.statusCode = 400;
             throw error;
           }
           found.post.image = null;
+          found.post.images = [];
           found.post.fileDeletedAt = deletedAt;
         } else {
           found.post.isDeleted = true;
@@ -2843,12 +2913,13 @@ export function createForumService({
         const deletedAt = now().toISOString();
         const safeReason = sanitizeReason(reason);
         if (fileOnly) {
-          if (!found.post.image) {
+          if (mediaItems(found.post).length === 0) {
             const error = new Error('Bài viết không có tệp để xóa');
             error.statusCode = 400;
             throw error;
           }
           found.post.image = null;
+          found.post.images = [];
           found.post.fileDeletedAt = deletedAt;
         } else {
           found.post.isDeleted = true;

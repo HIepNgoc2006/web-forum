@@ -1072,6 +1072,8 @@ test('thread image metadata is sanitized and returned with public thread data', 
     }
   });
   assert.deepEqual(listed[0].image, created.thread.image);
+  assert.deepEqual(created.thread.images, [created.thread.image]);
+  assert.deepEqual(listed[0].images, [created.thread.image]);
 });
 
 test('comment image metadata is sanitized and returned with public comment data', async () => {
@@ -1133,6 +1135,51 @@ test('comment image metadata is sanitized and returned with public comment data'
 
   const detail = await service.getThread(created.thread.id);
   assert.deepEqual(detail.comments[0].image, reply.comment.image);
+  assert.deepEqual(reply.comment.images, [reply.comment.image]);
+  assert.deepEqual(detail.comments[0].images, [reply.comment.image]);
+});
+
+test('thread supports multiple media attachments while keeping image compatibility alias', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Gallery post',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    images: [
+      {
+        name: 'one.png',
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,AAAA',
+        sizeBytes: 3
+      },
+      {
+        name: 'clip.webm',
+        type: 'video/webm',
+        dataUrl: 'data:video/webm;base64,BBBB',
+        sizeBytes: 3,
+        thumbnail: {
+          name: 'clip-poster.jpg',
+          type: 'image/jpeg',
+          dataUrl: 'data:image/jpeg;base64,AAA=',
+          sizeBytes: 2
+        }
+      }
+    ]
+  });
+  const detail = await service.getThread(created.thread.id);
+
+  assert.equal(created.thread.images.length, 2);
+  assert.deepEqual(created.thread.image, created.thread.images[0]);
+  assert.equal(created.thread.images[1].type, 'video/webm');
+  assert.equal(created.thread.images[1].thumbnail.type, 'image/jpeg');
+  assert.deepEqual(detail.thread.images, created.thread.images);
 });
 
 test('invalid image metadata falls back to safe values', async () => {
@@ -1392,6 +1439,7 @@ test('migrateInlineImages moves inline image data to local upload files', async 
     assert.equal(image.storage, 'local');
     assert.equal(image.url.startsWith('/uploads/'), true);
     assert.equal(Object.hasOwn(image, 'dataUrl'), false);
+    assert.deepEqual(migrated.threads[0].images, [image]);
     assert.equal((await fs.readFile(path.join(uploadRoot, image.storageKey))).length, 3);
   } finally {
     await fs.rm(testRoot, { recursive: true, force: true });

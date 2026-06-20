@@ -12,6 +12,13 @@ function isInlineImage(image) {
   );
 }
 
+function postImages(item) {
+  if (Array.isArray(item.images) && item.images.length) {
+    return item.images;
+  }
+  return item.image ? [item.image] : [];
+}
+
 function backupPathFor(forumPath, now = new Date()) {
   const stamp = now.toISOString().replace(/[:.]/g, '-');
   return `${forumPath}.backup-${stamp}`;
@@ -42,29 +49,40 @@ export async function migrateInlineImages({
     }
 
     for (const item of state[collection]) {
-      if (!item.image) {
+      const images = postImages(item);
+      if (!images.length) {
         continue;
       }
 
-      result.scanned += 1;
-      if (!isInlineImage(item.image)) {
-        result.skipped += 1;
-        continue;
-      }
+      result.scanned += images.length;
+      const nextImages = [];
+      let itemMigrated = false;
 
-      const base64 = item.image.dataUrl.split(',')[1] || '';
-      const byteLength = Buffer.from(base64, 'base64').length;
+      for (const image of images) {
+        if (!isInlineImage(image)) {
+          result.skipped += 1;
+          nextImages.push(image);
+          continue;
+        }
 
-      if (dryRun) {
+        const base64 = image.dataUrl.split(',')[1] || '';
+        const byteLength = Buffer.from(base64, 'base64').length;
         result.bytesWritten += byteLength;
         result.migrated += 1;
-        continue;
+        itemMigrated = true;
+
+        if (dryRun) {
+          nextImages.push(image);
+          continue;
+        }
+
+        nextImages.push(await storage.save(image));
       }
 
-      const saved = await storage.save(item.image);
-      result.bytesWritten += byteLength;
-      item.image = saved;
-      result.migrated += 1;
+      if (!dryRun && itemMigrated) {
+        item.images = nextImages;
+        item.image = nextImages[0] ?? null;
+      }
     }
   }
 

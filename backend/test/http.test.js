@@ -1143,6 +1143,63 @@ test('http api stores uploaded images on local disk and serves them from /upload
   }
 });
 
+test('http api stores uploaded video media on local disk and serves it from /uploads', async () => {
+  const dataRoot = path.resolve('data');
+  await fs.mkdir(dataRoot, { recursive: true });
+  const uploadRoot = await fs.mkdtemp(path.join(dataRoot, 'uploads-test-'));
+  try {
+    await withServer(
+      async (baseUrl) => {
+        const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: 'Video local disk',
+            captchaToken: 'dev-pass',
+            images: [
+              {
+                name: 'clip.webm',
+                type: 'video/webm',
+                dataUrl: 'data:video/webm;base64,AAAA',
+                sizeBytes: 3,
+                thumbnail: {
+                  name: 'clip-poster.jpg',
+                  type: 'image/jpeg',
+                  dataUrl: 'data:image/jpeg;base64,AAA=',
+                  sizeBytes: 2,
+                  width: 1,
+                  height: 1
+                }
+              }
+            ]
+          })
+        });
+        const createdBody = await created.json();
+        const video = createdBody.data.thread.images[0];
+
+        assert.equal(created.status, 201);
+        assert.equal(createdBody.data.thread.image.storageKey, video.storageKey);
+        assert.equal(video.storage, 'local');
+        assert.equal(video.dataUrl, undefined);
+        assert.equal(video.url.endsWith('.webm'), true);
+        assert.equal(video.thumbnail.url.endsWith('.thumb.jpg'), true);
+        assert.equal((await fs.readFile(path.join(uploadRoot, video.storageKey))).length, 3);
+
+        const videoResponse = await fetch(`${baseUrl}${video.url}`);
+        assert.equal(videoResponse.status, 200);
+        assert.equal(videoResponse.headers.get('content-type'), 'video/webm');
+        assert.equal((await videoResponse.arrayBuffer()).byteLength, 3);
+      },
+      {
+        uploadRoot,
+        imageStorage: createLocalImageStorage({ root: uploadRoot })
+      }
+    );
+  } finally {
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
+});
+
 test('http api exposes latest public posts for homepage', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/an-uong/threads`, {
