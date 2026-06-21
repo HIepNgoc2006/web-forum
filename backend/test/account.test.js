@@ -256,7 +256,8 @@ describe('Account settings', () => {
       notificationPreferences: {
         email: true,
         watchedThreads: false,
-        boardSubscriptions: true
+        boardSubscriptions: true,
+        browserWatchedThreads: true
       },
       boardSubscriptions: ['confession', 'hoc-tap', 'unknown-board', 'confession']
     });
@@ -268,7 +269,8 @@ describe('Account settings', () => {
     assert.deepStrictEqual(updated.settings.notificationPreferences, {
       email: true,
       watchedThreads: false,
-      boardSubscriptions: true
+      boardSubscriptions: true,
+      browserWatchedThreads: true
     });
     assert.deepStrictEqual(updated.settings.boardSubscriptions, ['confession', 'hoc-tap']);
     assert.strictEqual(updated.settings.emailNotifications, true);

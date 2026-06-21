@@ -502,7 +502,76 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-thread-desktop.png'),
-        checks: ['Đăng trả lời', 'Theo dõi', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử']
+        checks: ['Đăng trả lời', 'Theo dõi', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const threadId = ${JSON.stringify(threadId)};
+              const notifications = [];
+              class FakeNotification {
+                static permission = 'granted';
+                constructor(title, options = {}) {
+                  notifications.push({ title, options });
+                }
+                close() {}
+              }
+              Object.defineProperty(window, 'Notification', { configurable: true, value: FakeNotification });
+              localStorage.setItem('notificationPreferences', JSON.stringify({
+                email: false,
+                watchedThreads: true,
+                boardSubscriptions: false,
+                browserWatchedThreads: true
+              }));
+              const watchButton = document.querySelector('[data-toggle-watch]');
+              if (!watchButton) {
+                throw new Error('watch button missing');
+              }
+              watchButton.click();
+              const deadline = Date.now() + 3000;
+              while (!localStorage.getItem('watchedThreads')?.includes(threadId) && Date.now() < deadline) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              const response = await fetch('/api/threads/' + encodeURIComponent(threadId) + '/comments', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  body: 'browser notification smoke',
+                  captchaToken: 'dev-pass',
+                  posterToken: 'ci-poster-notify'
+                })
+              });
+              if (!response.ok) {
+                throw new Error('notification smoke comment failed: ' + response.status);
+              }
+              const notificationDeadline = Date.now() + 3000;
+              while (notifications.length === 0 && Date.now() < notificationDeadline) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              const watched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
+              return {
+                count: notifications.length,
+                first: notifications[0] || null,
+                watched,
+                preferences: JSON.parse(localStorage.getItem('notificationPreferences') || '{}')
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          if (payload.count !== 1) {
+            throw new Error(`thread desktop expected one browser notification, got ${payload.count || 0}.`);
+          }
+          if (!payload.first?.options?.body?.includes('browser notification smoke')) {
+            throw new Error('thread desktop browser notification did not include the new comment preview.');
+          }
+          if (!payload.preferences.browserWatchedThreads) {
+            throw new Error('thread desktop did not persist browser notification opt-in.');
+          }
+          if (!Number.isFinite(Number(payload.watched.maxNumber))) {
+            throw new Error('thread desktop did not keep watched thread metadata.');
+          }
+        }
       },
       {
         label: 'catalog desktop',
@@ -523,7 +592,49 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-account-desktop.png'),
-        checks: ['Settings tài khoản', 'Giao diện', 'Bảng nhà', 'Bạn chưa đăng nhập tài khoản']
+        checks: ['Settings tài khoản', 'Giao diện', 'Bảng nhà', 'Browser: thread đang theo dõi', 'Bạn chưa đăng nhập tài khoản'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              let requestCount = 0;
+              class FakeNotification {
+                static permission = 'default';
+                static async requestPermission() {
+                  requestCount += 1;
+                  FakeNotification.permission = 'denied';
+                  return 'denied';
+                }
+              }
+              Object.defineProperty(window, 'Notification', { configurable: true, value: FakeNotification });
+              const browserCheckbox = document.querySelector('#accountBrowserNotifyWatchedThreads');
+              browserCheckbox.checked = true;
+              document.querySelector('#accountSettingsForm').requestSubmit();
+              const deadline = Date.now() + 3000;
+              while (requestCount === 0 && Date.now() < deadline) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              return {
+                requestCount,
+                checked: browserCheckbox.checked,
+                status: document.querySelector('#accountBrowserNotificationsStatus')?.textContent || '',
+                preferences: JSON.parse(localStorage.getItem('notificationPreferences') || '{}')
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          if (payload.requestCount !== 1) {
+            throw new Error(`account desktop expected one browser permission request, got ${payload.requestCount || 0}.`);
+          }
+          if (payload.preferences.browserWatchedThreads) {
+            throw new Error('account desktop persisted browser notifications after denied permission.');
+          }
+          if (!payload.status.includes('chặn') && !payload.status.includes('Tắt')) {
+            throw new Error('account desktop did not show denied browser notification status.');
+          }
+        }
       },
       {
         label: 'admin dashboard desktop',

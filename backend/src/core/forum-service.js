@@ -64,7 +64,7 @@ const MAX_ACCOUNT_DRAFTS = 40;
 const MAX_ACCOUNT_SAVED_SEARCHES = 50;
 const MAX_ACCOUNT_DRAFT_LENGTH = 12_000;
 const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails'];
-const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions'];
+const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions', 'browserWatchedThreads'];
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
@@ -500,7 +500,8 @@ function defaultAccountSettings() {
     notificationPreferences: {
       email: false,
       watchedThreads: true,
-      boardSubscriptions: false
+      boardSubscriptions: false,
+      browserWatchedThreads: false
     },
     boardSubscriptions: []
   };

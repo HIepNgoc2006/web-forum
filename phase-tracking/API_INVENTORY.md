@@ -67,7 +67,7 @@ Account is optional and private. These endpoints require `JWT_SECRET` for issuin
 | POST | `/api/account/login` | Dang nhap account user optional. Body `{ "username": "", "password": "" }`. | Public endpoint, returns `{ account, token }`. |
 | POST | `/api/account/logout` | Thu hoi Bearer JWT hien tai bang in-memory revoked-token list. | Bearer JWT role `user`; returns `{ ok: true }`; token da logout bi tu choi tren account-private endpoints. |
 | GET | `/api/account/me` | Lay account private hien tai. | Bearer JWT role `user`. |
-| PUT | `/api/account/settings` | Luu account-private settings: `theme`, `homeBoard`, `syncDrafts`, legacy `emailNotifications`, `displayPreferences`, `notificationPreferences`, va `boardSubscriptions`. | Bearer JWT role `user`. |
+| PUT | `/api/account/settings` | Luu account-private settings: `theme`, `homeBoard`, `syncDrafts`, legacy `emailNotifications`, `displayPreferences`, `notificationPreferences` (`email`, `watchedThreads`, `boardSubscriptions`, `browserWatchedThreads`), va `boardSubscriptions`. | Bearer JWT role `user`. |
 | GET | `/api/account/private-data` | Lay account-private watchlist, drafts, saved searches. | Bearer JWT role `user`; khong expose qua public post serializers. |
 | PUT | `/api/account/private-data` | Luu account-private `{ watchlist, drafts, savedSearches }` de dong bo giua thiet bi. | Bearer JWT role `user`; server normalize/gioi han so luong, draft body, preview/search text. |
 | DELETE | `/api/account/private-data?section=` | Xoa account-private data; `section` co the la `watchlist`, `drafts`, `savedSearches`, hoac bo trong de xoa tat ca. | Bearer JWT role `user`; dung cho clear controls. |

@@ -41,6 +41,7 @@ const state = {
   autoTimer: null,
   realtimeSource: null,
   realtimeContextKey: '',
+  browserNotificationIds: new Set(),
   boardThreads: [],
   catalogThreads: [],
   catalogSort: 'bump',
@@ -407,7 +408,8 @@ function localNotificationPreferences() {
   return {
     email: Boolean(value.email),
     watchedThreads: value.watchedThreads !== false,
-    boardSubscriptions: Boolean(value.boardSubscriptions)
+    boardSubscriptions: Boolean(value.boardSubscriptions),
+    browserWatchedThreads: Boolean(value.browserWatchedThreads)
   };
 }
 
@@ -415,7 +417,8 @@ function writeLocalNotificationPreferences(preferences = {}) {
   const safe = {
     email: Boolean(preferences.email),
     watchedThreads: preferences.watchedThreads !== false,
-    boardSubscriptions: Boolean(preferences.boardSubscriptions)
+    boardSubscriptions: Boolean(preferences.boardSubscriptions),
+    browserWatchedThreads: Boolean(preferences.browserWatchedThreads)
   };
   writeJsonLocal(notificationPreferencesKey, safe);
   return safe;
@@ -694,7 +697,78 @@ function applyNotificationPreferences(preferences = localNotificationPreferences
   if (els?.accountNotifyBoardSubscriptions) {
     els.accountNotifyBoardSubscriptions.checked = safe.boardSubscriptions;
   }
+  syncBrowserNotificationControls(safe);
   return safe;
+}
+
+function browserNotificationsSupported() {
+  return typeof window !== 'undefined' && typeof window.Notification !== 'undefined';
+}
+
+function browserNotificationPermission() {
+  if (!browserNotificationsSupported()) {
+    return 'unsupported';
+  }
+  return window.Notification.permission || 'default';
+}
+
+function syncBrowserNotificationControls(preferences = localNotificationPreferences()) {
+  if (!els?.accountBrowserNotifyWatchedThreads) {
+    return;
+  }
+  const supported = browserNotificationsSupported();
+  const permission = browserNotificationPermission();
+  els.accountBrowserNotifyWatchedThreads.checked = Boolean(preferences.browserWatchedThreads);
+  els.accountBrowserNotifyWatchedThreads.disabled = !supported;
+  if (!els.accountBrowserNotificationsStatus) {
+    return;
+  }
+  if (!supported) {
+    els.accountBrowserNotificationsStatus.textContent = 'Trình duyệt này không hỗ trợ browser notifications.';
+  } else if (permission === 'denied') {
+    els.accountBrowserNotificationsStatus.textContent = 'Trình duyệt đang chặn browser notifications cho trang này.';
+  } else if (permission === 'granted' && preferences.browserWatchedThreads) {
+    els.accountBrowserNotificationsStatus.textContent = 'Browser notifications cho thread đang theo dõi đang bật.';
+  } else if (permission === 'granted') {
+    els.accountBrowserNotificationsStatus.textContent = 'Đã cấp quyền browser notification; tùy chọn đang tắt.';
+  } else if (preferences.browserWatchedThreads) {
+    els.accountBrowserNotificationsStatus.textContent = 'Cần cấp quyền browser notification khi lưu settings.';
+  } else {
+    els.accountBrowserNotificationsStatus.textContent = 'Tắt browser notifications cho thread đang theo dõi.';
+  }
+}
+
+async function resolveBrowserWatchedThreadPreference(requested) {
+  if (!requested) {
+    return false;
+  }
+  if (!browserNotificationsSupported()) {
+    showToast('Trình duyệt này không hỗ trợ browser notifications.');
+    return false;
+  }
+  const permission = browserNotificationPermission();
+  if (permission === 'granted') {
+    return true;
+  }
+  if (permission === 'denied') {
+    showToast('Browser notifications đang bị chặn trong trình duyệt.');
+    return false;
+  }
+  if (typeof window.Notification.requestPermission !== 'function') {
+    showToast('Không thể xin quyền browser notification trên trình duyệt này.');
+    return false;
+  }
+  try {
+    const result = await window.Notification.requestPermission();
+    if (result === 'granted') {
+      return true;
+    }
+    showToast(result === 'denied' ? 'Browser notifications đã bị từ chối.' : 'Chưa cấp quyền browser notification.');
+    return false;
+  } catch {
+    showToast('Không thể xin quyền browser notification.');
+    return false;
+  }
 }
 
 const els = {
@@ -890,6 +964,8 @@ const els = {
   accountEmailNotifications: document.querySelector('#accountEmailNotifications'),
   accountNotifyWatchedThreads: document.querySelector('#accountNotifyWatchedThreads'),
   accountNotifyBoardSubscriptions: document.querySelector('#accountNotifyBoardSubscriptions'),
+  accountBrowserNotifyWatchedThreads: document.querySelector('#accountBrowserNotifyWatchedThreads'),
+  accountBrowserNotificationsStatus: document.querySelector('#accountBrowserNotificationsStatus'),
   accountBoardSubscriptions: document.querySelector('#accountBoardSubscriptions'),
   accountSettingsLogout: document.querySelector('#accountSettingsLogout'),
   accountPrivateDataPanel: document.querySelector('#accountPrivateDataPanel'),
@@ -1342,6 +1418,7 @@ function fillAccountSettings(account = state.account) {
   els.accountEmailNotifications.checked = Boolean(notificationPreferences.email ?? settings.emailNotifications);
   els.accountNotifyWatchedThreads.checked = notificationPreferences.watchedThreads !== false;
   els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
+  syncBrowserNotificationControls(notificationPreferences);
   syncAccountBoardSubscriptionOptions(settings);
   renderAccountPrivateData();
   render2FAState();
@@ -5378,10 +5455,12 @@ async function submitAccountSettings(event) {
     compactThreads: els.accountCompactThreads.checked,
     hideThumbnails: els.accountHideThumbnails.checked
   });
+  const browserWatchedThreads = await resolveBrowserWatchedThreadPreference(els.accountBrowserNotifyWatchedThreads.checked);
   const notificationPreferences = writeLocalNotificationPreferences({
     email: els.accountEmailNotifications.checked,
     watchedThreads: els.accountNotifyWatchedThreads.checked,
-    boardSubscriptions: els.accountNotifyBoardSubscriptions.checked
+    boardSubscriptions: els.accountNotifyBoardSubscriptions.checked,
+    browserWatchedThreads
   });
   const boardSubscriptions = [...els.accountBoardSubscriptions.querySelectorAll('[data-account-board-subscription]:checked')].map(
     (input) => input.value
@@ -5429,6 +5508,74 @@ async function submitAccountSettings(event) {
   }
 }
 
+function parseRealtimePayload(event) {
+  try {
+    const payload = JSON.parse(event?.data || '{}');
+    return payload && typeof payload === 'object' ? payload : {};
+  } catch {
+    return {};
+  }
+}
+
+function rememberBrowserNotificationId(id) {
+  state.browserNotificationIds.add(id);
+  if (state.browserNotificationIds.size <= 100) {
+    return;
+  }
+  const oldest = state.browserNotificationIds.values().next().value;
+  if (oldest) {
+    state.browserNotificationIds.delete(oldest);
+  }
+}
+
+function notifyWatchedThreadPost(payload = {}) {
+  const preferences = localNotificationPreferences();
+  if (!preferences.browserWatchedThreads || !browserNotificationsSupported() || browserNotificationPermission() !== 'granted') {
+    return;
+  }
+  const comment = payload.comment && typeof payload.comment === 'object' ? payload.comment : {};
+  const threadId = String(payload.threadId || comment.threadId || '');
+  if (!threadId) {
+    return;
+  }
+  const watchedThreads = readWatchedThreads();
+  const watched = watchedThreads[threadId];
+  if (!watched) {
+    return;
+  }
+  const globalNumber = Number(comment.globalNumber || 0);
+  if (Number.isFinite(globalNumber) && globalNumber <= Number(watched.lastSeen || 0)) {
+    return;
+  }
+  const notificationId = `${threadId}:${comment.id || comment.globalNumber || comment.createdAt || Date.now()}`;
+  if (state.browserNotificationIds.has(notificationId)) {
+    return;
+  }
+  rememberBrowserNotificationId(notificationId);
+
+  watchedThreads[threadId] = {
+    ...watched,
+    maxNumber: Math.max(Number(watched.maxNumber || 0), globalNumber || 0),
+    replyCount: Math.max(Number(watched.replyCount || 0), Number(watched.replyCount || 0) + 1),
+    updatedAt: comment.createdAt || new Date().toISOString()
+  };
+  writeWatchedThreads(watchedThreads);
+
+  const boardLabel = watched.boardPath || (watched.boardSlug ? `/${watched.boardSlug}/` : '36chan');
+  const title = `${boardLabel} No.${watched.globalNumber || '?'}`;
+  const body = plainPreview(comment.bodyLines || [], 'Có bài mới trong thread đang theo dõi.').slice(0, 140);
+  const notification = new window.Notification(title, {
+    body,
+    tag: `watched-thread-${threadId}`,
+    data: { threadId, globalNumber }
+  });
+  notification.onclick = () => {
+    window.focus();
+    window.location.hash = `#thread/${encodeURIComponent(threadId)}${globalNumber ? `?p=${encodeURIComponent(globalNumber)}` : ''}`;
+    notification.close?.();
+  };
+}
+
 function setupRealtime() {
   const context = new URLSearchParams();
   if ((window.location.hash || '').startsWith('#board/') || (window.location.hash || '').startsWith('#thread/')) {
@@ -5458,7 +5605,10 @@ function setupRealtime() {
     els.socketStatus.classList.remove('live');
   };
   for (const eventName of ['thread:created', 'thread:bumped', 'thread:updated', 'comment:created', 'comment:updated', 'thread:archived']) {
-    source.addEventListener(eventName, () => {
+    source.addEventListener(eventName, (event) => {
+      if (eventName === 'comment:created') {
+        notifyWatchedThreadPost(parseRealtimePayload(event));
+      }
       const hash = window.location.hash || '#home';
       if (hash.startsWith('#home') || hash === '') {
         loadHome().catch(() => {});

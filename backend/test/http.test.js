@@ -613,7 +613,8 @@ test('http account api registers, logs in and saves private settings', async () 
           notificationPreferences: {
             email: true,
             watchedThreads: false,
-            boardSubscriptions: true
+            boardSubscriptions: true,
+            browserWatchedThreads: true
           },
           boardSubscriptions: ['confession', 'an-uong', 'not-a-board']
         }
@@ -632,7 +633,8 @@ test('http account api registers, logs in and saves private settings', async () 
     assert.deepEqual(settingsBody.data.settings.notificationPreferences, {
       email: true,
       watchedThreads: false,
-      boardSubscriptions: true
+      boardSubscriptions: true,
+      browserWatchedThreads: true
     });
     assert.deepEqual(settingsBody.data.settings.boardSubscriptions, ['confession', 'an-uong']);
 
