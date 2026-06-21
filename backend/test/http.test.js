@@ -1540,6 +1540,20 @@ test('http api exposes hot boards for homepage discovery', async () => {
     assert.equal(hotBody.data[0].postCountLast24h, 2);
     assert.equal(hotBody.data[0].threadCountLast24h, 1);
     assert.equal(hotBody.data[0].replyCountLast24h, 1);
+
+    const jsonFeed = await fetch(`${baseUrl}/feeds/hot-boards.json?limit=3`);
+    const jsonFeedBody = await jsonFeed.json();
+    assert.equal(jsonFeed.status, 200);
+    assert.equal(jsonFeedBody.title, '36chan - Bảng đang nóng');
+    assert.equal(jsonFeedBody.items[0].id, 'hoc-tap');
+    assert.equal(jsonFeedBody.items[0].content_text.includes('2 bài trong 24h'), true);
+
+    const rssFeed = await fetch(`${baseUrl}/feeds/hot-boards.rss?limit=3`);
+    const rssFeedBody = await rssFeed.text();
+    assert.equal(rssFeed.status, 200);
+    assert.equal(rssFeed.headers.get('content-type')?.includes('application/rss+xml'), true);
+    assert.equal(rssFeedBody.includes('<title>36chan - Bảng đang nóng</title>'), true);
+    assert.equal(rssFeedBody.includes('/hoc-tap/ Học tập'), true);
   });
 });
 
@@ -2087,7 +2101,7 @@ test('http api exposes board archive and admin manual archive', async () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        body: 'Can archive',
+        body: 'Can archive <xml> & feed',
         captchaToken: 'dev-pass'
       })
     });
@@ -2122,6 +2136,20 @@ test('http api exposes board archive and admin manual archive', async () => {
     assert.equal(archiveBody.data.length, 1);
     assert.equal(archiveBody.data[0].id, createdBody.data.thread.id);
     assert.equal(archiveBody.data[0].archivedReason, 'manual');
+
+    const archiveJsonFeed = await fetch(`${baseUrl}/feeds/boards/hoc-tap/archive.json?limit=3`);
+    const archiveJsonFeedBody = await archiveJsonFeed.json();
+    assert.equal(archiveJsonFeed.status, 200);
+    assert.equal(archiveJsonFeedBody.title, '36chan - Lưu trữ /hoc-tap/');
+    assert.equal(archiveJsonFeedBody.items.length, 1);
+    assert.equal(archiveJsonFeedBody.items[0].content_text, 'Can archive <xml> & feed');
+    assert.equal('posterHash' in archiveJsonFeedBody.items[0], false);
+
+    const archiveRssFeed = await fetch(`${baseUrl}/feeds/boards/hoc-tap/archive.rss?limit=3`);
+    const archiveRssFeedBody = await archiveRssFeed.text();
+    assert.equal(archiveRssFeed.status, 200);
+    assert.equal(archiveRssFeed.headers.get('content-type')?.includes('application/rss+xml'), true);
+    assert.equal(archiveRssFeedBody.includes('Can archive &lt;xml&gt; &amp; feed'), true);
 
     const adminHeaders = {
       authorization: `Bearer ${loginBody.data.token}`,
@@ -2163,5 +2191,9 @@ test('http api exposes board archive and admin manual archive', async () => {
 
     const privateArchive = await fetch(`${baseUrl}/api/boards/private-archive/archive`);
     assert.equal(privateArchive.status, 404);
+    const privateArchiveJsonFeed = await fetch(`${baseUrl}/feeds/boards/private-archive/archive.json`);
+    const privateArchiveRssFeed = await fetch(`${baseUrl}/feeds/boards/private-archive/archive.rss`);
+    assert.equal(privateArchiveJsonFeed.status, 404);
+    assert.equal(privateArchiveRssFeed.status, 404);
   });
 });

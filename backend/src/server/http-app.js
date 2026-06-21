@@ -387,38 +387,42 @@ function absoluteUrl(request, pathName) {
   return `${protocol}://${host}${pathName}`;
 }
 
-function jsonFeed(request, posts = []) {
+function feedLimit(value, fallback = 20, max = 50) {
+  return Math.max(1, Math.min(Number(value) || fallback, max));
+}
+
+function postFeedItem(request, post) {
+  const threadId = post.threadId || post.id;
+  const url = absoluteUrl(request, `/#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`);
   return {
-    version: 'https://jsonfeed.org/version/1.1',
-    title: '36chan - Bài mới nhất',
-    home_page_url: absoluteUrl(request, '/'),
-    feed_url: absoluteUrl(request, '/feeds/latest.json'),
-    items: posts.map((post) => {
-      const threadId = post.threadId || post.id;
-      const url = absoluteUrl(request, `/#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`);
-      return {
-        id: String(post.globalNumber),
-        url,
-        title: `No.${post.globalNumber} /${post.boardSlug}/`,
-        content_text: postPreview(post),
-        date_published: post.createdAt
-      };
-    })
+    id: String(post.globalNumber),
+    url,
+    title: `No.${post.globalNumber} /${post.boardSlug}/`,
+    content_text: postPreview(post),
+    date_published: post.createdAt
   };
 }
 
-function rssFeed(request, posts = []) {
-  const items = posts
-    .map((post) => {
-      const threadId = post.threadId || post.id;
-      const url = absoluteUrl(request, `/#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`);
+function jsonFeed({ request, title, feedPath, items }) {
+  return {
+    version: 'https://jsonfeed.org/version/1.1',
+    title,
+    home_page_url: absoluteUrl(request, '/'),
+    feed_url: absoluteUrl(request, feedPath),
+    items
+  };
+}
+
+function rssFeed({ request, title, description, items }) {
+  const renderedItems = items
+    .map((item) => {
       return `
         <item>
-          <title>${escapeXml(`No.${post.globalNumber} /${post.boardSlug}/`)}</title>
-          <link>${escapeXml(url)}</link>
-          <guid isPermaLink="true">${escapeXml(url)}</guid>
-          <pubDate>${new Date(post.createdAt).toUTCString()}</pubDate>
-          <description>${escapeXml(postPreview(post))}</description>
+          <title>${escapeXml(item.title)}</title>
+          <link>${escapeXml(item.url)}</link>
+          <guid isPermaLink="true">${escapeXml(item.url)}</guid>
+          <pubDate>${new Date(item.date_published).toUTCString()}</pubDate>
+          <description>${escapeXml(item.content_text)}</description>
         </item>
       `;
     })
@@ -426,12 +430,104 @@ function rssFeed(request, posts = []) {
   return `<?xml version="1.0" encoding="UTF-8"?>
 <rss version="2.0">
   <channel>
-    <title>36chan - Bài mới nhất</title>
+    <title>${escapeXml(title)}</title>
     <link>${escapeXml(absoluteUrl(request, '/'))}</link>
-    <description>Bài công khai mới nhất trên 36chan</description>
-    ${items}
+    <description>${escapeXml(description)}</description>
+    ${renderedItems}
   </channel>
 </rss>`;
+}
+
+function latestPostJsonFeed(request, posts = []) {
+  return jsonFeed({
+    request,
+    title: '36chan - Bài mới nhất',
+    feedPath: '/feeds/latest.json',
+    items: posts.map((post) => postFeedItem(request, post))
+  });
+}
+
+function latestPostRssFeed(request, posts = []) {
+  return rssFeed({
+    request,
+    title: '36chan - Bài mới nhất',
+    description: 'Bài công khai mới nhất trên 36chan',
+    items: posts.map((post) => postFeedItem(request, post))
+  });
+}
+
+function hotBoardFeedItem(request, board = {}) {
+  const url = absoluteUrl(request, `/#board/${encodeURIComponent(board.boardSlug)}`);
+  const postCount = Number(board.postCountLast24h || 0);
+  const threadCount = Number(board.threadCountLast24h || 0);
+  const replyCount = Number(board.replyCountLast24h || 0);
+  return {
+    id: board.boardSlug,
+    url,
+    title: `/${board.boardSlug}/ ${board.boardName || board.boardSlug}`,
+    content_text: `${postCount} bài trong 24h (${threadCount} chủ đề, ${replyCount} phản hồi). ${board.boardDescription || ''}`.trim(),
+    date_published: board.latestActivityAt || new Date(0).toISOString()
+  };
+}
+
+function withHotBoardDetails(hotBoards = [], boards = []) {
+  const boardBySlug = new Map(boards.map((board) => [board.slug, board]));
+  return hotBoards.map((hotBoard) => {
+    const board = boardBySlug.get(hotBoard.boardSlug) ?? {};
+    return {
+      ...hotBoard,
+      boardName: board.name,
+      boardCategory: board.category,
+      boardDescription: board.description
+    };
+  });
+}
+
+function hotBoardsJsonFeed(request, boards = []) {
+  return jsonFeed({
+    request,
+    title: '36chan - Bảng đang nóng',
+    feedPath: '/feeds/hot-boards.json',
+    items: boards.map((board) => hotBoardFeedItem(request, board))
+  });
+}
+
+function hotBoardsRssFeed(request, boards = []) {
+  return rssFeed({
+    request,
+    title: '36chan - Bảng đang nóng',
+    description: 'Bảng công khai có hoạt động nhiều nhất trong 24 giờ qua',
+    items: boards.map((board) => hotBoardFeedItem(request, board))
+  });
+}
+
+function archivedThreadFeedItem(request, thread = {}) {
+  const url = absoluteUrl(request, `/#thread/${encodeURIComponent(thread.id)}?p=${encodeURIComponent(thread.globalNumber)}`);
+  return {
+    id: String(thread.globalNumber),
+    url,
+    title: `Lưu trữ No.${thread.globalNumber} /${thread.boardSlug}/`,
+    content_text: postPreview(thread),
+    date_published: thread.archivedAt || thread.createdAt
+  };
+}
+
+function archiveJsonFeed(request, boardSlug, threads = []) {
+  return jsonFeed({
+    request,
+    title: `36chan - Lưu trữ /${boardSlug}/`,
+    feedPath: `/feeds/boards/${encodeURIComponent(boardSlug)}/archive.json`,
+    items: threads.map((thread) => archivedThreadFeedItem(request, thread))
+  });
+}
+
+function archiveRssFeed(request, boardSlug, threads = []) {
+  return rssFeed({
+    request,
+    title: `36chan - Lưu trữ /${boardSlug}/`,
+    description: `Chủ đề công khai đã lưu trữ từ /${boardSlug}/`,
+    items: threads.map((thread) => archivedThreadFeedItem(request, thread))
+  });
 }
 
 async function serveStatic(request, response, staticRoot) {
@@ -610,7 +706,7 @@ export function createHttpServer({
       }
 
       if (request.method === 'GET' && routePath === '/feeds/latest.json') {
-        sendJson(response, 200, jsonFeed(request, await service.listLatestPosts(url.searchParams.get('limit') ?? 20)));
+        sendJson(response, 200, latestPostJsonFeed(request, await service.listLatestPosts(url.searchParams.get('limit') ?? 20)));
         return;
       }
 
@@ -618,7 +714,24 @@ export function createHttpServer({
         sendText(
           response,
           200,
-          rssFeed(request, await service.listLatestPosts(url.searchParams.get('limit') ?? 20)),
+          latestPostRssFeed(request, await service.listLatestPosts(url.searchParams.get('limit') ?? 20)),
+          'application/rss+xml; charset=utf-8'
+        );
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/feeds/hot-boards.json') {
+        const hotBoards = await service.listHotBoards(url.searchParams.get('limit') ?? 8);
+        sendJson(response, 200, hotBoardsJsonFeed(request, withHotBoardDetails(hotBoards, await service.listBoards())));
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/feeds/hot-boards.rss') {
+        const hotBoards = await service.listHotBoards(url.searchParams.get('limit') ?? 8);
+        sendText(
+          response,
+          200,
+          hotBoardsRssFeed(request, withHotBoardDetails(hotBoards, await service.listBoards())),
           'application/rss+xml; charset=utf-8'
         );
         return;
@@ -970,6 +1083,31 @@ export function createHttpServer({
       params = match(parts, ['api', 'boards', ':boardSlug', 'archive']);
       if (params && request.method === 'GET') {
         ok(response, await service.listArchivedThreads(params.boardSlug));
+        return;
+      }
+
+      params = match(parts, ['feeds', 'boards', ':boardSlug', 'archive.json']);
+      if (params && request.method === 'GET') {
+        const threads = (await service.listArchivedThreads(params.boardSlug)).slice(
+          0,
+          feedLimit(url.searchParams.get('limit'))
+        );
+        sendJson(response, 200, archiveJsonFeed(request, params.boardSlug, threads));
+        return;
+      }
+
+      params = match(parts, ['feeds', 'boards', ':boardSlug', 'archive.rss']);
+      if (params && request.method === 'GET') {
+        const threads = (await service.listArchivedThreads(params.boardSlug)).slice(
+          0,
+          feedLimit(url.searchParams.get('limit'))
+        );
+        sendText(
+          response,
+          200,
+          archiveRssFeed(request, params.boardSlug, threads),
+          'application/rss+xml; charset=utf-8'
+        );
         return;
       }
 

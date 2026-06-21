@@ -1,0 +1,159 @@
+openapi: 3.1.0
+info:
+  title: 36chan Public Feed Endpoints
+  version: 2026-06-21
+  description: Focused OpenAPI supplement for public JSON Feed and RSS endpoints.
+servers:
+  - url: /
+paths:
+  /feeds/latest.json:
+    get:
+      summary: Latest public posts JSON Feed
+      parameters:
+        - $ref: '#/components/parameters/FeedLimit20'
+      responses:
+        '200':
+          description: JSON Feed containing latest active public threads/comments.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonFeed'
+  /feeds/latest.rss:
+    get:
+      summary: Latest public posts RSS feed
+      parameters:
+        - $ref: '#/components/parameters/FeedLimit20'
+      responses:
+        '200':
+          description: RSS 2.0 feed containing latest active public threads/comments.
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+  /feeds/hot-boards.json:
+    get:
+      summary: Hot public boards JSON Feed
+      parameters:
+        - $ref: '#/components/parameters/FeedLimit8'
+      responses:
+        '200':
+          description: JSON Feed containing public boards with activity in the last 24 hours.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonFeed'
+  /feeds/hot-boards.rss:
+    get:
+      summary: Hot public boards RSS feed
+      parameters:
+        - $ref: '#/components/parameters/FeedLimit8'
+      responses:
+        '200':
+          description: RSS 2.0 feed containing public boards with activity in the last 24 hours.
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+  /feeds/boards/{boardSlug}/archive.json:
+    get:
+      summary: Archived public board threads JSON Feed
+      parameters:
+        - $ref: '#/components/parameters/BoardSlug'
+        - $ref: '#/components/parameters/FeedLimit20'
+      responses:
+        '200':
+          description: JSON Feed containing archived public threads for a board.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonFeed'
+        '404':
+          description: Board is missing, hidden, or does not expose a public archive.
+  /feeds/boards/{boardSlug}/archive.rss:
+    get:
+      summary: Archived public board threads RSS feed
+      parameters:
+        - $ref: '#/components/parameters/BoardSlug'
+        - $ref: '#/components/parameters/FeedLimit20'
+      responses:
+        '200':
+          description: RSS 2.0 feed containing archived public threads for a board.
+          content:
+            application/rss+xml:
+              schema:
+                type: string
+        '404':
+          description: Board is missing, hidden, or does not expose a public archive.
+components:
+  parameters:
+    BoardSlug:
+      name: boardSlug
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[a-z0-9-]+$'
+    FeedLimit8:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        default: 8
+      description: Clamped by the server to public board count.
+    FeedLimit20:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 50
+        default: 20
+  schemas:
+    JsonFeed:
+      type: object
+      required:
+        - version
+        - title
+        - home_page_url
+        - feed_url
+        - items
+      properties:
+        version:
+          type: string
+          const: https://jsonfeed.org/version/1.1
+        title:
+          type: string
+        home_page_url:
+          type: string
+          format: uri
+        feed_url:
+          type: string
+          format: uri
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/JsonFeedItem'
+    JsonFeedItem:
+      type: object
+      required:
+        - id
+        - url
+        - title
+        - content_text
+        - date_published
+      properties:
+        id:
+          type: string
+        url:
+          type: string
+          format: uri
+        title:
+          type: string
+        content_text:
+          type: string
+        date_published:
+          type: string
+          format: date-time

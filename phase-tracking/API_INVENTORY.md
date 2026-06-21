@@ -34,6 +34,8 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 | GET | `/api/boards/hot?limit=8` | Lay bang dang nong trong 24h. | Limit clamp 1-board count. Chi tinh active public threads/comments. |
 | GET | `/feeds/latest.json?limit=20` | JSON Feed bai moi nhat. | Public feed, khong auth, chi gom public active thread/comment. |
 | GET | `/feeds/latest.rss?limit=20` | RSS 2.0 bai moi nhat. | Public feed, escape XML, chi gom public active thread/comment. |
+| GET | `/feeds/hot-boards.json?limit=8` | JSON Feed bang dang nong. | Public feed, khong auth, chi gom board public co active public thread/comment trong 24h. |
+| GET | `/feeds/hot-boards.rss?limit=8` | RSS 2.0 bang dang nong. | Public feed, escape XML, chi gom board public co active public thread/comment trong 24h. |
 
 ## Public board and thread
 
@@ -42,6 +44,8 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 | GET | `/api/boards/:boardSlug/threads?page=&pageSize=&q=` | Lay active public threads cua board. | Sticky threads sort truoc thread thuong, sau do sort `bumpedAt` desc. Khong tra pending/deleted/archived. Neu co query paging/search thi tra `{ items, page, pageSize, total, totalPages, hasMore }`; neu khong co query thi tra array cu de tuong thich. |
 | POST | `/api/boards/:boardSlug/threads` | Tao thread moi. | Body: `body`, optional `displayName`, `image` + `image.thumbnail`, `pollOptions`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options` ho tro `noko`. Rate limited. |
 | GET | `/api/boards/:boardSlug/archive` | Lay archived public threads. | Sort `archivedAt` desc. Returns 404 when board is hidden or `retentionPolicy.publicArchive` is false. |
+| GET | `/feeds/boards/:boardSlug/archive.json?limit=20` | JSON Feed archived public threads cua board. | Public feed, limit clamp 1-50, returns 404 when board hidden or `retentionPolicy.publicArchive` is false. |
+| GET | `/feeds/boards/:boardSlug/archive.rss?limit=20` | RSS 2.0 archived public threads cua board. | Public feed, escape XML, returns 404 when board hidden or `retentionPolicy.publicArchive` is false. |
 | POST | `/api/boards/:boardSlug/summary` | AI tom tat board. | Chi dung public content. Can Google AI key. Rate limit can tach rieng o phase sau. |
 | GET | `/api/threads/:threadId?commentsPage=&commentsPageSize=&focusGlobalNumber=` | Lay thread detail. | Tra OP public va comments public. Neu co query paging thi comments duoc phan trang va tra `commentPage`; `focusGlobalNumber` tu dong chon trang chua post permalink. |
 | POST | `/api/threads/:threadId/comments` | Tao comment. | Body: `body`, optional `displayName`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options=sage` se reply khong bump thread. Rate limited. |
