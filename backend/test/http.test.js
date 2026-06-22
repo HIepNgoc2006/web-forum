@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
-import { once } from 'node:events';
+import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs/promises';
+import https from 'node:https';
 import path from 'node:path';
 import { test } from 'node:test';
 
@@ -95,6 +96,62 @@ async function withServer(
   }
 }
 
+async function withEnv(overrides, callback) {
+  const original = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
+  for (const [key, value] of Object.entries(overrides)) {
+    if (value === undefined) {
+      delete process.env[key];
+    } else {
+      process.env[key] = value;
+    }
+  }
+
+  try {
+    return await callback();
+  } finally {
+    for (const [key, value] of Object.entries(original)) {
+      if (value === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = value;
+      }
+    }
+  }
+}
+
+async function withFakeHcaptcha(responses, callback) {
+  const queue = [...responses];
+  const calls = [];
+  const originalRequest = https.request;
+
+  https.request = (options, onResponse) => {
+    const request = new EventEmitter();
+    let body = '';
+    request.write = (chunk) => {
+      body += chunk;
+    };
+    request.setTimeout = () => request;
+    request.destroy = () => {};
+    request.end = () => {
+      calls.push({ options, body });
+      const response = new EventEmitter();
+      const payload = queue.length > 0 ? queue.shift() : { success: false };
+      process.nextTick(() => {
+        onResponse(response);
+        response.emit('data', JSON.stringify(payload));
+        response.emit('end');
+      });
+    };
+    return request;
+  };
+
+  try {
+    return await callback(calls);
+  } finally {
+    https.request = originalRequest;
+  }
+}
+
 test('http api creates public thread and protects admin pending queue', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
@@ -123,6 +180,144 @@ test('http api creates public thread and protects admin pending queue', async ()
     const loginBody = await login.json();
     assert.equal(login.status, 200);
     assert.equal(typeof loginBody.data.token, 'string');
+  });
+});
+
+test('http hCaptcha enabled rejects missing captcha token for thread and comment creation', async () => {
+  await withEnv({ HCAPTCHA_SECRET: 'hcaptcha-test-secret', NODE_ENV: 'test' }, async () => {
+    await withFakeHcaptcha([{ success: true }], async (captchaCalls) => {
+      await withServer(async (baseUrl) => {
+        const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: 'Thread hop le de kiem captcha thieu',
+            captchaToken: 'valid-hcaptcha-token'
+          })
+        });
+        const createdBody = await created.json();
+        assert.equal(created.status, 201);
+
+        const missingThreadCaptcha = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ body: 'Khong co captcha' })
+        });
+        const missingThreadBody = await missingThreadCaptcha.json();
+
+        const missingCommentCaptcha = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ body: 'Binh luan khong co captcha' })
+        });
+        const missingCommentBody = await missingCommentCaptcha.json();
+
+        assert.equal(missingThreadCaptcha.status, 403);
+        assert.equal(missingThreadBody.error.message, 'Xác minh hCaptcha thất bại');
+        assert.equal(missingCommentCaptcha.status, 403);
+        assert.equal(missingCommentBody.error.message, 'Xác minh hCaptcha thất bại');
+        assert.equal(captchaCalls.length, 1);
+      });
+    });
+  });
+});
+
+test('http hCaptcha enabled normalizes invalid captcha failures without real network calls', async () => {
+  await withEnv({ HCAPTCHA_SECRET: 'hcaptcha-test-secret', NODE_ENV: 'test' }, async () => {
+    await withFakeHcaptcha(
+      [
+        { success: false, 'error-codes': ['invalid-input-response'] },
+        { success: true },
+        { success: false, 'error-codes': ['invalid-or-already-seen-response'] }
+      ],
+      async (captchaCalls) => {
+        await withServer(async (baseUrl) => {
+          const invalidThread = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              body: 'Captcha sai tren thread',
+              captchaToken: 'invalid-thread-token'
+            })
+          });
+          const invalidThreadBody = await invalidThread.json();
+
+          const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              body: 'Thread hop le de kiem comment',
+              captchaToken: 'valid-comment-setup-token'
+            })
+          });
+          const createdBody = await created.json();
+
+          const invalidComment = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({
+              body: 'Captcha sai tren comment',
+              captchaToken: 'invalid-comment-token'
+            })
+          });
+          const invalidCommentBody = await invalidComment.json();
+
+          assert.equal(invalidThread.status, 403);
+          assert.equal(invalidThreadBody.error.message, 'Xác minh hCaptcha thất bại');
+          assert.equal(created.status, 201);
+          assert.equal(invalidComment.status, 403);
+          assert.equal(invalidCommentBody.error.message, 'Xác minh hCaptcha thất bại');
+          assert.equal(captchaCalls.length, 3);
+          assert.equal(captchaCalls.every((call) => call.options.hostname === 'api.hcaptcha.com'), true);
+          assert.equal(captchaCalls[0].body.includes('response=invalid-thread-token'), true);
+          assert.equal(captchaCalls[2].body.includes('response=invalid-comment-token'), true);
+        });
+      }
+    );
+  });
+});
+
+test('http dev-pass captcha bypass works in test mode and is rejected in production', async () => {
+  await withEnv({ HCAPTCHA_SECRET: undefined, NODE_ENV: 'test' }, async () => {
+    await withServer(async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Dev pass duoc dung trong test',
+          captchaToken: 'dev-pass'
+        })
+      });
+      const createdBody = await created.json();
+      assert.equal(created.status, 201);
+
+      await withEnv({ HCAPTCHA_SECRET: undefined, NODE_ENV: 'production' }, async () => {
+        const productionThread = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: 'Dev pass bi chan trong production',
+            captchaToken: 'dev-pass'
+          })
+        });
+        const productionThreadBody = await productionThread.json();
+
+        const productionComment = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: 'Comment dev pass bi chan trong production',
+            captchaToken: 'dev-pass'
+          })
+        });
+        const productionCommentBody = await productionComment.json();
+
+        assert.equal(productionThread.status, 403);
+        assert.equal(productionThreadBody.error.message, 'Xác minh hCaptcha thất bại');
+        assert.equal(productionComment.status, 403);
+        assert.equal(productionCommentBody.error.message, 'Xác minh hCaptcha thất bại');
+      });
+    });
   });
 });
 
