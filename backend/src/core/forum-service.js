@@ -80,6 +80,18 @@ function publicPost(post) {
   return !post.isPending && !post.isDeleted;
 }
 
+function publicThread(state, thread) {
+  return Boolean(thread && publicPost(thread) && findBoard(state, thread.boardSlug, { publicOnly: true }));
+}
+
+function publicComment(state, comment) {
+  if (!publicPost(comment)) {
+    return false;
+  }
+  const thread = state.threads.find((item) => item.id === comment.threadId);
+  return publicThread(state, thread);
+}
+
 function stripPrivatePostFields(post) {
   const {
     authorFingerprint: _authorFingerprint,
@@ -1435,12 +1447,12 @@ function recordModerationAction(state, { action, actor = 'system', postType, pos
 
 function findPublicPostByGlobalNumber(state, globalNumber) {
   const number = Number(globalNumber);
-  const thread = state.threads.find((item) => item.globalNumber === number && publicPost(item));
+  const thread = state.threads.find((item) => item.globalNumber === number && publicThread(state, item));
   if (thread) {
     return { postType: 'thread', post: thread };
   }
 
-  const comment = state.comments.find((item) => item.globalNumber === number && publicPost(item));
+  const comment = state.comments.find((item) => item.globalNumber === number && publicComment(state, item));
   if (comment) {
     return { postType: 'comment', post: comment };
   }
@@ -1824,8 +1836,8 @@ export function createForumService({
 
     async getStats() {
       const state = await store.read();
-      const publicThreads = state.threads.filter(publicPost);
-      const publicComments = state.comments.filter(publicPost);
+      const publicThreads = state.threads.filter((thread) => publicThread(state, thread));
+      const publicComments = state.comments.filter((comment) => publicComment(state, comment));
       const publicPosts = [...publicThreads, ...publicComments];
       const activeBoards = new Set(publicThreads.map((thread) => thread.boardSlug));
       const publicBoards = state.boards.filter(publicBoard);
@@ -2564,9 +2576,13 @@ export function createForumService({
     async listLatestPosts(limit = 10) {
       const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 20));
-      const publicThreadIds = new Set(state.threads.filter(activePublicThread).map((thread) => thread.id));
+      const publicThreadIds = new Set(
+        state.threads
+          .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+          .map((thread) => thread.id)
+      );
       const threads = state.threads
-        .filter(activePublicThread)
+        .filter((thread) => publicThread(state, thread) && !thread.isArchived)
         .map((thread) => ({
           type: 'thread',
           threadId: thread.id,
@@ -2588,7 +2604,11 @@ export function createForumService({
       const safeLimit = Math.max(1, Math.min(Number(limit) || 8, publicBoards.length || 1));
       const oneDayAgo = now().getTime() - 24 * 60 * 60 * 1000;
       const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
-      const activeThreadIds = new Set(state.threads.filter(activePublicThread).map((thread) => thread.id));
+      const activeThreadIds = new Set(
+        state.threads
+          .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+          .map((thread) => thread.id)
+      );
       const metrics = new Map(
         publicBoards.map((board) => [
           board.slug,
@@ -2603,7 +2623,7 @@ export function createForumService({
       );
 
       for (const thread of state.threads) {
-        if (activePublicThread(thread) && inLast24h(thread)) {
+        if (publicThread(state, thread) && !thread.isArchived && inLast24h(thread)) {
           incrementHotBoardMetric(metrics, thread.boardSlug, 'thread', thread.createdAt);
         }
       }
@@ -2630,10 +2650,14 @@ export function createForumService({
       const safeLimit = Math.max(1, Math.min(Number(limit) || 12, 24));
       const oneDayAgo = now().getTime() - 24 * 60 * 60 * 1000;
       const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
-      const activeThreadIds = new Set(state.threads.filter(activePublicThread).map((thread) => thread.id));
+      const activeThreadIds = new Set(
+        state.threads
+          .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+          .map((thread) => thread.id)
+      );
       const metrics = new Map();
       const publicPosts = [
-        ...state.threads.filter((thread) => activePublicThread(thread) && inLast24h(thread)),
+        ...state.threads.filter((thread) => publicThread(state, thread) && !thread.isArchived && inLast24h(thread)),
         ...state.comments.filter((comment) => publicPost(comment) && activeThreadIds.has(comment.threadId) && inLast24h(comment))
       ];
 
@@ -2949,7 +2973,7 @@ export function createForumService({
 
     async getThread(threadId, options = {}) {
       const state = await store.read();
-      const thread = state.threads.find((item) => item.id === threadId && publicPost(item));
+      const thread = state.threads.find((item) => item.id === threadId && publicThread(state, item));
       if (!thread) {
         const error = new Error('Không tìm thấy chủ đề');
         error.statusCode = 404;
@@ -3045,7 +3069,7 @@ export function createForumService({
 
       return mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
-        const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
+        const thread = state.threads.find((item) => item.id === threadId && publicThread(state, item) && !item.isArchived);
         if (!thread) {
           const error = new Error('Không tìm thấy chủ đề');
           error.statusCode = 404;
@@ -3159,7 +3183,7 @@ export function createForumService({
     async votePoll(threadId, { optionId, ip, posterToken } = {}) {
       const selectedOptionId = String(optionId ?? '');
       return mutate(async (state) => {
-        const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
+        const thread = state.threads.find((item) => item.id === threadId && publicThread(state, item) && !item.isArchived);
         if (!thread?.poll) {
           const error = new Error('Không tìm thấy thăm dò');
           error.statusCode = 404;
