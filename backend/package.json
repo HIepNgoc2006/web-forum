@@ -11,6 +11,8 @@
     "check": "node --check server.js",
     "migrate:images": "node scripts/migrate-inline-images.js",
     "cleanup:uploads": "node scripts/cleanup-orphan-uploads.js",
+    "backup:run": "node scripts/backup-scheduler.js run",
+    "backup:schedule": "node scripts/backup-scheduler.js schedule",
     "seed:export": "node scripts/seed-data.js export",
     "seed:import": "node scripts/seed-data.js import",
     "seed:restore": "node scripts/seed-data.js restore"

@@ -5,6 +5,7 @@ import './realtime.test.js';
 import './account.test.js';
 import './image-storage.test.js';
 import './upload-cleanup.test.js';
+import './backup-scheduler.test.js';
 import './seed-data.test.js';
 import './totp.test.js';
 import './webauthn.test.js';

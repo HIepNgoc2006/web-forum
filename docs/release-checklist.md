@@ -41,6 +41,8 @@ Mark each item before merging the release branch into `main`.
 
 - [ ] Demo/staging seed data dry-run and import flow reviewed using
       `docs/seed-data.md`.
+- [ ] Backup scheduler dry-run/write behavior reviewed using
+      `docs/backup-scheduler.md`.
 - [ ] `rtk npm test` passes.
 - [ ] `rtk npm run check` passes (backend syntax + frontend ESLint).
 - [ ] `rtk npm run build` succeeds.

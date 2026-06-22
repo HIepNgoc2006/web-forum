@@ -19,6 +19,8 @@
     "release:verify": "npm test && npm run check && npm run build && npm run test:e2e",
     "migrate:images": "npm --prefix backend run migrate:images --",
     "cleanup:uploads": "npm --prefix backend run cleanup:uploads --",
+    "backup:run": "npm --prefix backend run backup:run --",
+    "backup:schedule": "npm --prefix backend run backup:schedule --",
     "seed:export": "npm --prefix backend run seed:export --",
     "seed:import": "npm --prefix backend run seed:import --",
     "seed:restore": "npm --prefix backend run seed:restore --"
