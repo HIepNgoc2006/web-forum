@@ -62,6 +62,7 @@ const PRODUCTION_MODEL_READINESS = {
   comments: true,
   users: true,
   reports: true,
+  appeals: true,
   moderationLogs: true
 };
 
@@ -127,6 +128,16 @@ export function createMongoModels(connection) {
       flexibleSchema([{ fields: { createdAt: -1 } }, { fields: { status: 1, boardSlug: 1 } }]),
       'reports'
     ),
+    Appeal: model(
+      'Appeal',
+      flexibleSchema([
+        { fields: { id: 1 }, options: { unique: true } },
+        { fields: { tokenHash: 1 }, options: { unique: true } },
+        { fields: { status: 1, submittedAt: -1 } },
+        { fields: { globalNumber: 1 } }
+      ]),
+      'appeals'
+    ),
     Sanction: model(
       'Sanction',
       flexibleSchema([{ fields: { fingerprint: 1, expiresAt: 1 } }, { fields: { createdAt: -1 } }]),
@@ -177,7 +188,8 @@ export async function appendMongoPostCreate(models, {
   thread = null,
   comment = null,
   updatedThreads = [],
-  moderationActions = []
+  moderationActions = [],
+  appeals = []
 } = {}) {
   const normalized = normalizeState(state);
   const threadsToInsert = thread ? [thread] : [];
@@ -188,6 +200,7 @@ export async function appendMongoPostCreate(models, {
   await insertDocuments(models.Thread, threadsToInsert);
   await insertDocuments(models.Comment, commentsToInsert);
   await insertDocuments(models.ModerationAction, moderationActions);
+  await insertDocuments(models.Appeal, appeals);
   await updateDocumentsById(models.Thread, threadsToUpdate);
   await models.StateMeta.updateOne(
     { _id: 'global' },
@@ -241,7 +254,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
 
     async read() {
       const models = await getModels();
-      const [meta, boards, users, threads, comments, moderationActions, reports, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
+      const [meta, boards, users, threads, comments, moderationActions, reports, appeals, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
         models.StateMeta.findById('global').lean(),
         models.Board.find({}).lean(),
         models.User.find({}).lean(),
@@ -249,6 +262,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
         models.Comment.find({}).lean(),
         models.ModerationAction.find({}).lean(),
         models.Report.find({}).lean(),
+        models.Appeal.find({}).lean(),
         models.Sanction.find({}).lean(),
         models.AiUsage.find({}).lean(),
         models.AiSummaryCache.find({}).lean()
@@ -264,6 +278,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
         comments: comments.map(plainDocument),
         moderationActions: moderationActions.map(plainDocument),
         reports: reports.map(plainDocument),
+        appeals: appeals.map(plainDocument),
         sanctions: sanctions.map(plainDocument),
         aiUsage: keyValuesToObject(aiUsage),
         aiSummaryCache: keyValuesToObject(aiSummaryCache)
@@ -291,6 +306,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
         await replaceCollection(models.Comment, normalized.comments);
         await replaceCollection(models.ModerationAction, normalized.moderationActions);
         await replaceCollection(models.Report, normalized.reports);
+        await replaceCollection(models.Appeal, normalized.appeals);
         await replaceCollection(models.Sanction, normalized.sanctions);
         await replaceCollection(models.AiUsage, objectToKeyValues(normalized.aiUsage));
         await replaceCollection(models.AiSummaryCache, objectToKeyValues(normalized.aiSummaryCache));
@@ -312,12 +328,13 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       try {
         const models = await getModels();
         await ensureBoards(models);
-        const [boards, threads, comments, users, reports, sanctions, moderationActions, meta] = await Promise.all([
+        const [boards, threads, comments, users, reports, appeals, sanctions, moderationActions, meta] = await Promise.all([
           models.Board.countDocuments(),
           models.Thread.countDocuments(),
           models.Comment.countDocuments(),
           models.User.countDocuments(),
           models.Report.countDocuments(),
+          models.Appeal.countDocuments(),
           models.Sanction.countDocuments(),
           models.ModerationAction.countDocuments(),
           models.StateMeta.findById('global').lean()
@@ -333,6 +350,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           comments,
           users,
           reports,
+          appeals,
           sanctions,
           moderationActions,
           nextGlobalNumber: meta?.nextGlobalNumber ?? EMPTY_STATE.nextGlobalNumber

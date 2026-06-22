@@ -181,6 +181,7 @@ test('mongo store declares production persistence models without opening a conne
       [
         'AiSummaryCache',
         'AiUsage',
+        'Appeal',
         'Board',
         'Comment',
         'ModerationAction',
@@ -197,6 +198,7 @@ test('mongo store declares production persistence models without opening a conne
     assert.equal(models.User.collection.name, 'users');
     assert.equal(models.ModerationAction.collection.name, 'moderationActions');
     assert.equal(models.Report.collection.name, 'reports');
+    assert.equal(models.Appeal.collection.name, 'appeals');
     assert.equal(models.User.schema.indexes().some(([fields]) => fields.username === 1), true);
   } finally {
     await connection.destroy();
@@ -1908,6 +1910,50 @@ test('admin delete rejects an unknown post number', async () => {
   );
 });
 
+test('published posts can use creation-time appeal token after admin deletion', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: (() => {
+      const dates = [
+        new Date('2026-05-22T08:00:00.000Z'),
+        new Date('2026-05-22T08:01:00.000Z'),
+        new Date('2026-05-22T08:02:00.000Z')
+      ];
+      return () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z');
+    })()
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Bai ban dau duoc cong khai',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9'
+  });
+  assert.equal(created.status, 'published');
+  assert.equal(typeof created.appealToken, 'string');
+
+  await assert.rejects(
+    () => service.submitAppeal({ token: created.appealToken, reason: 'Chua bi xoa' }),
+    (error) => error.statusCode === 409
+  );
+
+  await service.adminDeletePost(created.thread.globalNumber, {
+    reason: 'xoa de test khang nghi',
+    actor: 'pengu1'
+  });
+  const appeal = await service.submitAppeal({
+    token: created.appealToken,
+    reason: 'Xin khoi phuc bai da xoa',
+    ip: '198.51.100.7'
+  });
+
+  assert.equal(appeal.status, 'open');
+  assert.equal(appeal.globalNumber, created.thread.globalNumber);
+  assert.equal(appeal.reason, 'Xin khoi phuc bai da xoa');
+});
+
 test('user reports store a reporter hash without raw IP or poster token', async () => {
   const service = createForumService({
     store: createMemoryStore(),
@@ -1938,6 +1984,95 @@ test('user reports store a reporter hash without raw IP or poster token', async 
   assert.equal(typeof reports[0].reporterHash, 'string');
   assert.equal(serialized.includes('198.51.100.5'), false);
   assert.equal(serialized.includes('reporter-secret'), false);
+});
+
+test('pending moderation issues anonymous appeal tokens without storing raw token or identity', async () => {
+  const store = createMemoryStore();
+  const service = createForumService({
+    store,
+    ai: flaggedAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Bai bi AI giu lai',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9',
+    posterToken: 'poster-appeal-secret'
+  });
+  assert.equal(created.status, 'pending');
+  assert.equal(typeof created.appealToken, 'string');
+  assert.ok(created.appealToken.length >= 20);
+
+  const stateAfterCreate = await store.read();
+  const serializedCreateState = JSON.stringify(stateAfterCreate);
+  assert.equal(stateAfterCreate.appeals.length, 1);
+  assert.equal(stateAfterCreate.appeals[0].status, 'issued');
+  assert.equal(serializedCreateState.includes(created.appealToken), false);
+  assert.equal(serializedCreateState.includes('203.0.113.9'), false);
+  assert.equal(serializedCreateState.includes('poster-appeal-secret'), false);
+
+  const submitted = await service.submitAppeal({
+    token: created.appealToken,
+    reason: 'Xin xem lai vi noi dung khong phai spam',
+    ip: '198.51.100.7',
+    posterToken: 'appeal-submit-secret'
+  });
+  const serializedAppeal = JSON.stringify(submitted);
+
+  assert.equal(submitted.status, 'open');
+  assert.equal(submitted.globalNumber, created.thread.globalNumber);
+  assert.equal(submitted.reason, 'Xin xem lai vi noi dung khong phai spam');
+  assert.equal(serializedAppeal.includes(created.appealToken), false);
+  assert.equal(serializedAppeal.includes('198.51.100.7'), false);
+  assert.equal(serializedAppeal.includes('appeal-submit-secret'), false);
+});
+
+test('admin resolves anonymous appeals with audit history', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: flaggedAi,
+    realtime: createEvents(),
+    now: (() => {
+      const dates = [
+        new Date('2026-05-22T08:00:00.000Z'),
+        new Date('2026-05-22T08:01:00.000Z'),
+        new Date('2026-05-22T08:02:00.000Z')
+      ];
+      return () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z');
+    })()
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Bai cho khang nghi',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9'
+  });
+  const submitted = await service.submitAppeal({
+    token: created.appealToken,
+    reason: 'Can xem lai quyet dinh',
+    ip: '198.51.100.7'
+  });
+
+  const resolved = await service.resolveAppeal(submitted.id, {
+    status: 'accepted',
+    reason: 'Dong y xem lai',
+    actor: 'pengu1'
+  });
+  const appeals = await service.listAppeals(10);
+  const actions = await service.listModerationActions(10);
+
+  assert.equal(resolved.status, 'accepted');
+  assert.equal(resolved.resolvedBy, 'pengu1');
+  assert.equal(resolved.history.at(-1).action, 'accepted');
+  assert.equal(appeals.length, 1);
+  assert.equal(appeals[0].status, 'accepted');
+  assert.equal(actions[0].action, 'admin:appeal-accept');
+  assert.equal(actions[0].reason, 'Dong y xem lai');
+  assert.equal(actions[0].globalNumber, created.thread.globalNumber);
 });
 
 test('admin pending queue prioritizes report count PII risk and recency without private data', async () => {

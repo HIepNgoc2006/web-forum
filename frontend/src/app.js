@@ -2702,6 +2702,56 @@ function reportsHtml(reports) {
   `;
 }
 
+function appealStatusLabel(status = '') {
+  if (status === 'open') return 'Đang mở';
+  if (status === 'accepted') return 'Đã chấp nhận';
+  if (status === 'rejected') return 'Đã từ chối';
+  return status || '-';
+}
+
+function appealsHtml(appeals) {
+  if (!appeals.length) {
+    return '<p class="muted">Chưa có kháng nghị nào.</p>';
+  }
+
+  return `
+    <table class="moderation-log-table">
+      <thead>
+        <tr>
+          <th>Gửi lúc</th>
+          <th>Bài</th>
+          <th>Trạng thái</th>
+          <th>Lý do</th>
+          <th>Dấu vết</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        ${appeals
+          .map(
+            (appeal) => `
+              <tr>
+                <td>${formatPostDate(appeal.submittedAt || appeal.createdAt)}</td>
+                <td>${escapeHtml(appeal.boardSlug)} / No.${appeal.globalNumber}</td>
+                <td>${escapeHtml(appealStatusLabel(appeal.status))}</td>
+                <td>${escapeHtml(appeal.reason || '-')}</td>
+                <td>${escapeHtml(appeal.reporterHashPreview || '-')}</td>
+                <td>
+                  <button class="ghost-button" data-admin-detail="${appeal.globalNumber}" type="button">[Chi tiết]</button>
+                  ${appeal.status === 'open' ? `
+                    <button class="primary-button" data-admin-resolve-appeal="${appeal.id}" data-status="accepted" type="button">Chấp nhận</button>
+                    <button class="danger-button" data-admin-resolve-appeal="${appeal.id}" data-status="rejected" type="button">Từ chối</button>
+                  ` : ''}
+                </td>
+              </tr>
+            `
+          )
+          .join('')}
+      </tbody>
+    </table>
+  `;
+}
+
 function deletedPostsHtml(posts) {
   if (!posts.length) {
     return '<p class="muted">Chưa có bài đã xóa.</p>';
@@ -2807,6 +2857,7 @@ function adminPostDetailHtml(detail) {
   const post = detail.post;
   const actions = detail.actions || [];
   const reports = detail.reports || [];
+  const appeals = detail.appeals || [];
   const sanctions = detail.sanctions || [];
   return `
     <div class="admin-detail">
@@ -2831,6 +2882,8 @@ function adminPostDetailHtml(detail) {
       <h3>Báo cáo ${reports.length ? `<button class="ghost-button" data-admin-reports-summary="${post.globalNumber}" type="button">[Tóm tắt báo cáo AI]</button>` : ''}</h3>
       <div id="adminReportsSummaryBox-${post.globalNumber}" class="admin-reports-summary-box hidden"></div>
       ${reports.length ? reportsHtml(reports) : '<p class="muted">Không có báo cáo.</p>'}
+      <h3>Kháng nghị</h3>
+      ${appeals.length ? appealsHtml(appeals) : '<p class="muted">Không có kháng nghị.</p>'}
       <h3>Làm chậm/Tạm khóa</h3>
       ${sanctions.length ? sanctionsHtml(sanctions) : '<p class="muted">Không có lệnh làm chậm/tạm khóa.</p>'}
       <h3>Nhật ký</h3>
@@ -3138,6 +3191,9 @@ function adminEndpoint() {
   if (state.adminTab === 'reports') {
     return `/api/admin/reports${query ? `?limit=100&${query}` : '?limit=100'}`;
   }
+  if (state.adminTab === 'appeals') {
+    return `/api/admin/appeals${query ? `?limit=100&${query}` : '?limit=100'}`;
+  }
   if (state.adminTab === 'approved') {
     return `/api/admin/approved${query ? `?limit=100&${query}` : '?limit=100'}`;
   }
@@ -3170,7 +3226,7 @@ function renderAdminTabs() {
     button.classList.toggle('active', button.dataset.adminTab === state.adminTab);
   });
   els.adminBulkBar.classList.toggle('hidden', state.adminTab !== 'pending');
-  els.adminLabelFilter.closest('label')?.classList.toggle('hidden', state.adminTab === 'reports');
+  els.adminLabelFilter.closest('label')?.classList.toggle('hidden', state.adminTab === 'reports' || state.adminTab === 'appeals');
   els.adminReportCategoryFilterWrap.classList.toggle('hidden', state.adminTab !== 'reports');
   const supportsPriority = state.adminTab === 'pending' || state.adminTab === 'reports';
   els.adminPriorityFilterWrap.classList.toggle('hidden', !supportsPriority);
@@ -3367,6 +3423,8 @@ function renderAdminItems(items) {
     els.pendingList.innerHTML = pendingPostsHtml(items);
   } else if (state.adminTab === 'reports') {
     els.pendingList.innerHTML = `<div class="moderation-log">${reportsHtml(items)}</div>`;
+  } else if (state.adminTab === 'appeals') {
+    els.pendingList.innerHTML = `<div class="moderation-log">${appealsHtml(items)}</div>`;
   } else if (state.adminTab === 'deleted') {
     els.pendingList.innerHTML = deletedPostsHtml(items);
   } else if (state.adminTab === 'sanctions') {
@@ -3409,6 +3467,14 @@ function exportAdminCsv() {
   link.download = `36chan-admin-${state.adminTab}.csv`;
   link.click();
   URL.revokeObjectURL(url);
+}
+
+function postSubmitToast(result, publishedMessage, pendingMessage) {
+  const baseMessage = result.status === 'pending' ? pendingMessage : publishedMessage;
+  if (result.appealToken) {
+    return `${baseMessage} Mã kháng nghị: ${result.appealToken}`;
+  }
+  return baseMessage;
 }
 
 function syncAdminBoardFilter() {
@@ -4783,7 +4849,7 @@ async function submitThread(event) {
     els.imagePreview.classList.add('hidden');
     resetHcaptcha(els.threadCaptcha);
     closeThreadComposer();
-    showToast(result.status === 'pending' ? 'Đã vào hàng đợi chờ quản trị viên duyệt.' : 'Chủ đề đã công khai.');
+    showToast(postSubmitToast(result, 'Chủ đề đã công khai.', 'Đã vào hàng đợi chờ quản trị viên duyệt.'));
     if (hasOption(options, 'noko') && result.thread?.id) {
       window.location.hash = `#thread/${result.thread.id}`;
     } else {
@@ -4841,7 +4907,7 @@ async function submitComment(event) {
     els.commentImagePreview.innerHTML = '';
     els.commentImagePreview.classList.add('hidden');
     resetHcaptcha(els.commentCaptcha);
-    showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
+    showToast(postSubmitToast(result, 'Đã gửi.', 'Bình luận đang chờ duyệt.'));
     closeReplyComposer();
     await loadThread();
   } catch (error) {
@@ -4955,7 +5021,7 @@ async function submitQuickReply(event) {
     state.quickReplyImage = [];
     els.quickReplyFileName.textContent = 'Chưa chọn tệp';
     resetHcaptcha(els.quickReplyCaptcha);
-    showToast(result.status === 'pending' ? 'Bình luận đang chờ duyệt.' : 'Đã gửi.');
+    showToast(postSubmitToast(result, 'Đã gửi.', 'Bình luận đang chờ duyệt.'));
     closeQuickReply();
     await loadThread();
   } catch (error) {
@@ -6397,6 +6463,29 @@ function bindEvents() {
 
     if (event.target.closest('#adminBulkDelete')) {
       await bulkModerate('delete');
+      return;
+    }
+
+    const appealResolveButton = event.target.closest('[data-admin-resolve-appeal]');
+    if (appealResolveButton) {
+      const status = appealResolveButton.dataset.status === 'accepted' ? 'accepted' : 'rejected';
+      const reason = await showReasonModal(
+        status === 'accepted' ? 'Lý do chấp nhận kháng nghị:' : 'Lý do từ chối kháng nghị:',
+        status === 'accepted' ? 'appeal-accept' : 'appeal-reject'
+      );
+      if (reason === null) {
+        return;
+      }
+      try {
+        await api(`/api/admin/appeals/${encodeURIComponent(appealResolveButton.dataset.adminResolveAppeal)}/resolve`, {
+          method: 'POST',
+          body: JSON.stringify({ status, reason })
+        });
+        showToast(status === 'accepted' ? 'Đã chấp nhận kháng nghị.' : 'Đã từ chối kháng nghị.');
+        await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
       return;
     }
 

@@ -69,6 +69,7 @@ const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 const REPORT_CATEGORIES = new Set(['Spam', 'Toxic', 'PII', 'Fake News', 'Illegal', 'Other']);
+const APPEAL_RESOLUTION_STATUSES = new Set(['accepted', 'rejected']);
 const PRIORITY_FILTERS = new Set(['high', 'medium', 'low']);
 const PRIORITY_SORTS = new Set(['priority', 'newest', 'oldest', 'confidence-desc', 'confidence-asc']);
 const PII_PRIORITY_LABELS = new Set(['PII Risk', 'PII']);
@@ -1338,6 +1339,22 @@ function sanitizeReason(reason) {
   return normalizeBody(reason ?? '').slice(0, 240);
 }
 
+function sanitizeAppealReason(reason) {
+  return normalizeBody(reason ?? '').slice(0, 2000);
+}
+
+function normalizeAppealToken(token = '') {
+  return String(token ?? '').trim().slice(0, 160);
+}
+
+function createAppealToken() {
+  return crypto.randomBytes(24).toString('base64url');
+}
+
+function appealTokenHash(token) {
+  return crypto.createHash('sha256').update(normalizeAppealToken(token)).digest('hex');
+}
+
 function sanitizeDurationMinutes(value, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) {
@@ -1445,6 +1462,35 @@ function recordModerationAction(state, { action, actor = 'system', postType, pos
   return entry;
 }
 
+function issueAppealToken(state, { postType, post, createdAt }) {
+  let token = createAppealToken();
+  let tokenHash = appealTokenHash(token);
+  while (state.appeals.some((appeal) => appeal.tokenHash === tokenHash)) {
+    token = createAppealToken();
+    tokenHash = appealTokenHash(token);
+  }
+  const appeal = {
+    id: crypto.randomUUID(),
+    tokenHash,
+    postType,
+    postId: post.id,
+    threadId: postType === 'thread' ? post.id : post.threadId,
+    boardSlug: post.boardSlug,
+    globalNumber: post.globalNumber,
+    status: 'issued',
+    createdAt,
+    history: [
+      {
+        action: 'issued',
+        actor: 'system',
+        createdAt
+      }
+    ]
+  };
+  state.appeals.push(appeal);
+  return { token, appeal };
+}
+
 function findPublicPostByGlobalNumber(state, globalNumber) {
   const number = Number(globalNumber);
   const thread = state.threads.find((item) => item.globalNumber === number && publicThread(state, item));
@@ -1518,6 +1564,36 @@ function serializeAdminPost(postType, post, state, priorityContext = {}) {
       },
       priorityContext.referenceDate ?? new Date()
     )
+  };
+}
+
+function serializeAppeal(appeal, state) {
+  const found = findAnyPostByGlobalNumber(state, appeal.globalNumber);
+  const post = found ? serializeAdminPost(found.postType, found.post, state) : null;
+  return {
+    id: appeal.id,
+    status: appeal.status,
+    postType: appeal.postType,
+    postId: appeal.postId,
+    threadId: appeal.threadId,
+    boardSlug: appeal.boardSlug,
+    globalNumber: appeal.globalNumber,
+    reason: appeal.reason ?? '',
+    resolutionReason: appeal.resolutionReason ?? '',
+    resolvedBy: appeal.resolvedBy ?? null,
+    createdAt: appeal.createdAt,
+    submittedAt: appeal.submittedAt ?? null,
+    resolvedAt: appeal.resolvedAt ?? null,
+    reporterHashPreview: appeal.reporterHash ? fingerprintPreview(appeal.reporterHash) : null,
+    history: Array.isArray(appeal.history)
+      ? appeal.history.map((entry) => ({
+          action: entry.action,
+          actor: entry.actor,
+          reason: entry.reason ?? '',
+          createdAt: entry.createdAt
+        }))
+      : [],
+    post
   };
 }
 
@@ -1647,6 +1723,7 @@ function stateCounts(state) {
     comments: state.comments.length,
     users: Array.isArray(state.users) ? state.users.length : 0,
     reports: state.reports.length,
+    appeals: state.appeals.length,
     sanctions: state.sanctions.length,
     moderationActions: state.moderationActions.length,
     nextGlobalNumber: state.nextGlobalNumber
@@ -2887,7 +2964,8 @@ export function createForumService({
       const postCreateDelta = {
         thread: null,
         updatedThreads: [],
-        moderationActions: []
+        moderationActions: [],
+        appeals: []
       };
 
       return mutate(async (state) => {
@@ -2949,12 +3027,20 @@ export function createForumService({
           isPending: thread.isPending
         });
 
+        const issuedAppeal = issueAppealToken(state, { postType: 'thread', post: thread, createdAt });
+        const appealToken = issuedAppeal.token;
+        postCreateDelta.appeals.push(issuedAppeal.appeal);
+
         if (!thread.isPending) {
           postCreateDelta.updatedThreads.push(...enforceBoardThreadCap(state, boardSlug, createdAt));
           realtime.publish('thread:created', { thread: serializeThread(thread, state.comments) });
         }
 
-        return { status: thread.isPending ? 'pending' : 'published', thread: serializeThread(thread, state.comments) };
+        return {
+          status: thread.isPending ? 'pending' : 'published',
+          thread: serializeThread(thread, state.comments),
+          appealToken
+        };
       }, {
         write: async (state) => {
           if (typeof store.appendPostCreate !== 'function') {
@@ -2965,7 +3051,8 @@ export function createForumService({
             state,
             thread: postCreateDelta.thread,
             updatedThreads: uniqueById(postCreateDelta.updatedThreads),
-            moderationActions: postCreateDelta.moderationActions
+            moderationActions: postCreateDelta.moderationActions,
+            appeals: postCreateDelta.appeals
           });
         }
       });
@@ -3064,7 +3151,8 @@ export function createForumService({
       const postCreateDelta = {
         comment: null,
         updatedThreads: [],
-        moderationActions: []
+        moderationActions: [],
+        appeals: []
       };
 
       return mutate(async (state) => {
@@ -3146,6 +3234,9 @@ export function createForumService({
           isPending: comment.isPending
         });
         const slowModeRaised = raiseThreadSlowMode(thread, comment.moderationLabels, createdAt);
+        const issuedAppeal = issueAppealToken(state, { postType: 'comment', post: comment, createdAt });
+        const appealToken = issuedAppeal.token;
+        postCreateDelta.appeals.push(issuedAppeal.appeal);
 
         if (!comment.isPending) {
           realtime.publish('comment:created', { threadId, comment: serializeComment(comment, thread) });
@@ -3162,7 +3253,8 @@ export function createForumService({
 
         return {
           status: comment.isPending ? 'pending' : 'published',
-          comment: serializeComment(comment, thread)
+          comment: serializeComment(comment, thread),
+          appealToken
         };
       }, {
         write: async (state) => {
@@ -3174,7 +3266,8 @@ export function createForumService({
             state,
             comment: postCreateDelta.comment,
             updatedThreads: uniqueById(postCreateDelta.updatedThreads),
-            moderationActions: postCreateDelta.moderationActions
+            moderationActions: postCreateDelta.moderationActions,
+            appeals: postCreateDelta.appeals
           });
         }
       });
@@ -3272,6 +3365,60 @@ export function createForumService({
           category: report.category
         });
         return report;
+      });
+    },
+
+    async submitAppeal({ token, reason, ip, posterToken } = {}) {
+      const safeToken = normalizeAppealToken(token);
+      const safeReason = sanitizeAppealReason(reason);
+      if (!safeToken || !safeReason) {
+        const error = new Error('Mã kháng nghị và lý do là bắt buộc');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        const appeal = state.appeals.find((item) => item.tokenHash === appealTokenHash(safeToken));
+        if (!appeal) {
+          const error = new Error('Mã kháng nghị không hợp lệ');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (appeal.status !== 'issued') {
+          const error = new Error('Mã kháng nghị đã được sử dụng');
+          error.statusCode = 409;
+          throw error;
+        }
+        const found = findAnyPostByGlobalNumber(state, appeal.globalNumber);
+        if (!found || (!found.post.isPending && !found.post.isDeleted)) {
+          const error = new Error('Bài viết này không còn đủ điều kiện kháng nghị');
+          error.statusCode = 409;
+          throw error;
+        }
+
+        const submittedAt = now().toISOString();
+        appeal.status = 'open';
+        appeal.reason = safeReason;
+        appeal.submittedAt = submittedAt;
+        appeal.reporterHash = createPosterHash({
+          ip,
+          threadId: `appeal:${appeal.id}`,
+          salt: daySalt(new Date(submittedAt)),
+          posterToken
+        });
+        appeal.history ??= [];
+        appeal.history.push({
+          action: 'submitted',
+          actor: 'anonymous',
+          reason: safeReason,
+          createdAt: submittedAt
+        });
+        logEvent('appeal.submit', {
+          boardSlug: appeal.boardSlug,
+          globalNumber: appeal.globalNumber,
+          postType: appeal.postType
+        });
+        return serializeAppeal(appeal, state);
       });
     },
 
@@ -3410,6 +3557,28 @@ export function createForumService({
         .slice(0, safeLimit);
     },
 
+    async listAppeals(limit = 50, filters = {}) {
+      const state = await store.read();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      return state.appeals
+        .filter((appeal) => appeal.status !== 'issued')
+        .filter((appeal) => !filters.boardSlug || appeal.boardSlug === filters.boardSlug)
+        .filter((appeal) => {
+          if (!filters.since) {
+            return true;
+          }
+          const appealDate = appeal.submittedAt ?? appeal.resolvedAt ?? appeal.createdAt ?? '';
+          return String(appealDate).localeCompare(filters.since) >= 0;
+        })
+        .sort((left, right) => {
+          const leftDate = left.submittedAt ?? left.resolvedAt ?? left.createdAt ?? '';
+          const rightDate = right.submittedAt ?? right.resolvedAt ?? right.createdAt ?? '';
+          return String(rightDate).localeCompare(String(leftDate));
+        })
+        .slice(0, safeLimit)
+        .map((appeal) => serializeAppeal(appeal, state));
+    },
+
     async listApprovedHistory(limit = 50, filters = {}) {
       return this.listModerationActions(limit, { ...filters, action: 'admin:approve' });
     },
@@ -3431,6 +3600,10 @@ export function createForumService({
       const reports = state.reports
         .filter((report) => report.globalNumber === found.post.globalNumber)
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+      const appeals = state.appeals
+        .filter((appeal) => appeal.globalNumber === found.post.globalNumber && appeal.status !== 'issued')
+        .sort((left, right) => String(right.submittedAt ?? '').localeCompare(String(left.submittedAt ?? '')))
+        .map((appeal) => serializeAppeal(appeal, state));
       const actions = state.moderationActions
         .filter((action) => action.globalNumber === found.post.globalNumber)
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
@@ -3443,9 +3616,63 @@ export function createForumService({
         post,
         thread: thread ? serializeThread(thread, state.comments) : null,
         reports,
+        appeals,
         actions,
         sanctions
       };
+    },
+
+    async resolveAppeal(id, { status = 'rejected', reason = '', actor = 'admin' } = {}) {
+      const safeStatus = APPEAL_RESOLUTION_STATUSES.has(String(status)) ? String(status) : '';
+      if (!safeStatus) {
+        const error = new Error('Trạng thái kháng nghị không hợp lệ');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        const appeal = state.appeals.find((item) => item.id === id && item.status === 'open');
+        if (!appeal) {
+          const error = new Error('Không tìm thấy kháng nghị đang mở');
+          error.statusCode = 404;
+          throw error;
+        }
+        const found = findAnyPostByGlobalNumber(state, appeal.globalNumber);
+        if (!found) {
+          const error = new Error('Không tìm thấy bài viết cho kháng nghị');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const resolvedAt = now().toISOString();
+        const safeReason = sanitizeReason(reason);
+        appeal.status = safeStatus;
+        appeal.resolutionReason = safeReason;
+        appeal.resolvedBy = actor;
+        appeal.resolvedAt = resolvedAt;
+        appeal.history ??= [];
+        appeal.history.push({
+          action: safeStatus,
+          actor,
+          reason: safeReason,
+          createdAt: resolvedAt
+        });
+        recordModerationAction(state, {
+          action: safeStatus === 'accepted' ? 'admin:appeal-accept' : 'admin:appeal-reject',
+          actor,
+          postType: found.postType,
+          post: found.post,
+          reason: safeReason || (safeStatus === 'accepted' ? 'accept appeal' : 'reject appeal'),
+          createdAt: resolvedAt
+        });
+        logEvent('appeal.resolve', {
+          status: safeStatus,
+          boardSlug: appeal.boardSlug,
+          globalNumber: appeal.globalNumber,
+          actor
+        });
+        return serializeAppeal(appeal, state);
+      });
     },
 
     async adminDeletePost(globalNumber, { reason = '', actor = 'admin', fileOnly = false } = {}) {

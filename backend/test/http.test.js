@@ -2160,6 +2160,105 @@ test('http api stores user reports and exposes them to admin only', async () => 
   });
 });
 
+test('http api supports anonymous appeal submission and admin resolution', async () => {
+  const dates = [
+    new Date('2026-05-22T08:00:00.000Z'),
+    new Date('2026-05-22T08:01:00.000Z'),
+    new Date('2026-05-22T08:02:00.000Z')
+  ];
+  await withServer(
+    async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/boards/tam-su/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Bai bi giu de test khang nghi',
+          captchaToken: 'dev-pass',
+          posterToken: 'poster-secret'
+        })
+      });
+      const createdBody = await created.json();
+
+      assert.equal(created.status, 201);
+      assert.equal(createdBody.data.status, 'pending');
+      assert.equal(typeof createdBody.data.appealToken, 'string');
+
+      const appeal = await fetch(`${baseUrl}/api/appeals`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-forwarded-for': '198.51.100.44' },
+        body: JSON.stringify({
+          token: createdBody.data.appealToken,
+          reason: 'Xin xem lai vi khong phai spam',
+          posterToken: 'appeal-poster-secret'
+        })
+      });
+      const appealBody = await appeal.json();
+      const serializedAppeal = JSON.stringify(appealBody.data);
+
+      assert.equal(appeal.status, 201);
+      assert.equal(appealBody.data.status, 'open');
+      assert.equal(appealBody.data.globalNumber, createdBody.data.thread.globalNumber);
+      assert.equal(serializedAppeal.includes(createdBody.data.appealToken), false);
+      assert.equal(serializedAppeal.includes('198.51.100.44'), false);
+      assert.equal(serializedAppeal.includes('appeal-poster-secret'), false);
+
+      const duplicate = await fetch(`${baseUrl}/api/appeals`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          token: createdBody.data.appealToken,
+          reason: 'Gui lai'
+        })
+      });
+      assert.equal(duplicate.status, 409);
+
+      const unauthorized = await fetch(`${baseUrl}/api/admin/appeals`);
+      assert.equal(unauthorized.status, 401);
+
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await login.json();
+      const adminHeaders = {
+        authorization: `Bearer ${loginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+
+      const appeals = await fetch(`${baseUrl}/api/admin/appeals`, {
+        headers: { authorization: adminHeaders.authorization }
+      });
+      const appealsBody = await appeals.json();
+      assert.equal(appeals.status, 200);
+      assert.equal(appealsBody.data.length, 1);
+      assert.equal(appealsBody.data[0].reason, 'Xin xem lai vi khong phai spam');
+
+      const resolved = await fetch(`${baseUrl}/api/admin/appeals/${appealBody.data.id}/resolve`, {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ status: 'rejected', reason: 'Quyet dinh giu nguyen' })
+      });
+      const resolvedBody = await resolved.json();
+      assert.equal(resolved.status, 200);
+      assert.equal(resolvedBody.data.status, 'rejected');
+      assert.equal(resolvedBody.data.history.at(-1).action, 'rejected');
+
+      const actions = await fetch(`${baseUrl}/api/admin/moderation-actions`, {
+        headers: { authorization: adminHeaders.authorization }
+      });
+      const actionsBody = await actions.json();
+      assert.equal(actions.status, 200);
+      assert.equal(actionsBody.data[0].action, 'admin:appeal-reject');
+      assert.equal(actionsBody.data[0].reason, 'Quyet dinh giu nguyen');
+    },
+    {
+      ai: flaggedAi,
+      now: () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z')
+    }
+  );
+});
+
 test('http admin queue supports filters, detail, notes, bulk actions, and history tabs', async () => {
   await withServer(
     async (baseUrl) => {

@@ -192,6 +192,7 @@ test('security: admin API rejects requests without authorization header', async 
       '/api/admin/pending',
       '/api/admin/moderation-actions',
       '/api/admin/reports',
+      '/api/admin/appeals',
       '/api/admin/deleted',
       '/api/admin/approved',
       '/api/admin/sanctions'

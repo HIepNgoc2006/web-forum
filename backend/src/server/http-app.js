@@ -40,6 +40,7 @@ const STORE_METRIC_NAMES = {
   comments: 'comments',
   users: 'users',
   reports: 'reports',
+  appeals: 'appeals',
   sanctions: 'sanctions',
   moderationActions: 'moderation_actions'
 };
@@ -1317,6 +1318,21 @@ export function createHttpServer({
         return;
       }
 
+      if (request.method === 'POST' && routePath === '/api/appeals') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.submitAppeal({
+            token: body.token,
+            reason: body.reason,
+            ip,
+            posterToken: body.posterToken
+          }),
+          201
+        );
+        return;
+      }
+
       if (request.method === 'POST' && routePath === '/api/admin/login') {
         if (!jwtSecret || !adminUsername || !adminPassword) {
           const error = new Error('Chưa cấu hình tài khoản quản trị viên');
@@ -1507,6 +1523,11 @@ export function createHttpServer({
           return;
         }
 
+        if (request.method === 'GET' && routePath === '/api/admin/appeals') {
+          ok(response, await service.listAppeals(url.searchParams.get('limit') ?? 50, filters));
+          return;
+        }
+
         if (request.method === 'GET' && routePath === '/api/admin/deleted') {
           ok(response, await service.listDeleted(url.searchParams.get('limit') ?? 50, filters));
           return;
@@ -1580,6 +1601,20 @@ export function createHttpServer({
         if (params && request.method === 'POST') {
           const body = await readJson(request, 20_000);
           ok(response, await service.addModeratorNote(params.globalNumber, { note: body.note, actor: admin.username ?? 'admin' }), 201);
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'appeals', ':id', 'resolve']);
+        if (params && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.resolveAppeal(params.id, {
+              status: body.status,
+              reason: body.reason,
+              actor: admin.username ?? 'admin'
+            })
+          );
           return;
         }
 

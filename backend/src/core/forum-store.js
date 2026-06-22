@@ -11,6 +11,7 @@ export const EMPTY_STATE = {
   comments: [],
   moderationActions: [],
   reports: [],
+  appeals: [],
   sanctions: [],
   adminSettings: {},
   aiUsage: {},
@@ -41,6 +42,7 @@ export function normalizeState(value = {}) {
     comments: Array.isArray(cloned.comments) ? cloned.comments : [],
     moderationActions: Array.isArray(cloned.moderationActions) ? cloned.moderationActions : [],
     reports: Array.isArray(cloned.reports) ? cloned.reports : [],
+    appeals: Array.isArray(cloned.appeals) ? cloned.appeals : [],
     sanctions: Array.isArray(cloned.sanctions) ? cloned.sanctions : [],
     adminSettings: cloned.adminSettings && typeof cloned.adminSettings === 'object' ? cloned.adminSettings : {},
     aiUsage: cloned.aiUsage && typeof cloned.aiUsage === 'object' ? cloned.aiUsage : {},
@@ -99,6 +101,7 @@ export function createJsonStore(filePath = path.resolve('data/forum.json')) {
         comments: state.comments.length,
         users: Array.isArray(state.users) ? state.users.length : 0,
         reports: state.reports.length,
+        appeals: state.appeals.length,
         sanctions: state.sanctions.length,
         moderationActions: state.moderationActions.length,
         nextGlobalNumber: state.nextGlobalNumber

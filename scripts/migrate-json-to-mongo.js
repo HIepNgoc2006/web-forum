@@ -131,6 +131,18 @@ function validateState(state) {
     errors.push(...reportErrors);
   }
 
+  // Validate appeals
+  const appeals = Array.isArray(state.appeals) ? state.appeals : [];
+  counts.appeals = appeals.length;
+  for (const appeal of appeals) {
+    const appealErrors = validateRecord(
+      appeal,
+      ['id', 'tokenHash', 'createdAt'],
+      `Appeal ${appeal.id ?? '(unknown)'}`
+    );
+    errors.push(...appealErrors);
+  }
+
   // Validate sanctions
   const sanctions = Array.isArray(state.sanctions) ? state.sanctions : [];
   counts.sanctions = sanctions.length;
@@ -197,6 +209,7 @@ async function migrate(args) {
   console.log(`   Comments:           ${counts.comments}`);
   console.log(`   Users:              ${counts.users}`);
   console.log(`   Reports:            ${counts.reports}`);
+  console.log(`   Appeals:            ${counts.appeals}`);
   console.log(`   Sanctions:          ${counts.sanctions}`);
   console.log(`   Moderation Actions: ${counts.moderationActions}`);
   console.log(`   AI Usage Keys:      ${counts.aiUsageKeys}`);
@@ -246,7 +259,7 @@ async function migrate(args) {
     if (args.drop) {
       console.log('\n🗑️  Dropping existing collections...');
       const collectionNames = [
-        'threads', 'comments', 'users', 'reports', 'sanctions',
+        'threads', 'comments', 'users', 'reports', 'appeals', 'sanctions',
         'moderationActions', 'aiUsage', 'aiSummaryCache', 'stateMeta', 'boards'
       ];
       for (const name of collectionNames) {
@@ -303,6 +316,7 @@ async function migrate(args) {
     await migrateCollection('comments', models.Comment, state.comments ?? []);
     await migrateCollection('users', models.User, state.users ?? []);
     await migrateCollection('reports', models.Report, state.reports ?? []);
+    await migrateCollection('appeals', models.Appeal, state.appeals ?? []);
     await migrateCollection('sanctions', models.Sanction, state.sanctions ?? []);
     await migrateCollection('moderationActions', models.ModerationAction, state.moderationActions ?? []);
 
@@ -322,12 +336,13 @@ async function migrate(args) {
 
     // Verify counts
     console.log('\n🔍 Verifying migration...');
-    const [threadCount, commentCount, userCount, reportCount, sanctionCount, modActionCount] =
+    const [threadCount, commentCount, userCount, reportCount, appealCount, sanctionCount, modActionCount] =
       await Promise.all([
         models.Thread.countDocuments(),
         models.Comment.countDocuments(),
         models.User.countDocuments(),
         models.Report.countDocuments(),
+        models.Appeal.countDocuments(),
         models.Sanction.countDocuments(),
         models.ModerationAction.countDocuments()
       ]);
@@ -337,6 +352,7 @@ async function migrate(args) {
       comments: (state.comments ?? []).length,
       users: (state.users ?? []).length,
       reports: (state.reports ?? []).length,
+      appeals: (state.appeals ?? []).length,
       sanctions: (state.sanctions ?? []).length,
       moderationActions: (state.moderationActions ?? []).length
     };
@@ -345,6 +361,7 @@ async function migrate(args) {
       comments: commentCount,
       users: userCount,
       reports: reportCount,
+      appeals: appealCount,
       sanctions: sanctionCount,
       moderationActions: modActionCount
     };
@@ -363,7 +380,7 @@ async function migrate(args) {
 
     console.log('\n🏁 Migration complete!');
     console.log('\nTo rollback, drop the following MongoDB collections:');
-    console.log('   threads, comments, users, reports, sanctions,');
+    console.log('   threads, comments, users, reports, appeals, sanctions,');
     console.log('   moderationActions, aiUsage, aiSummaryCache, stateMeta, boards');
   } finally {
     await connection.close();
