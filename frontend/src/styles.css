@@ -3715,6 +3715,7 @@ body.theme-yotsuba.board-page .topbar {
   display: grid;
   gap: 2px;
   font-size: 12px;
+  min-width: 0;
 }
 
 .admin-board-table-wrap {
@@ -3744,6 +3745,12 @@ body.theme-yotsuba.board-page .topbar {
 .admin-board-table input:not([type='checkbox']) {
   width: 100%;
   box-sizing: border-box;
+  min-width: 0;
+}
+
+.admin-board-slug-cell code {
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .admin-board-flags {
@@ -3765,10 +3772,82 @@ body.theme-yotsuba.board-page .topbar {
   margin-bottom: 0;
 }
 
-.admin-board-flags label,
 .admin-board-actions {
   display: grid;
   gap: 4px;
+}
+
+.admin-board-flags label {
+  display: inline-flex;
+  gap: 4px;
+  align-items: center;
+}
+
+@media (max-width: 720px) {
+  .admin-board-create-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .admin-board-table-wrap-boards {
+    overflow-x: visible;
+  }
+
+  .admin-board-table-wrap-boards .admin-board-table {
+    min-width: 0;
+    border-collapse: separate;
+    border-spacing: 0 8px;
+    background: transparent;
+  }
+
+  .admin-board-table-wrap-boards .admin-board-table thead {
+    display: none;
+  }
+
+  .admin-board-table-wrap-boards .admin-board-table,
+  .admin-board-table-wrap-boards .admin-board-table tbody,
+  .admin-board-table-wrap-boards .admin-board-table tr,
+  .admin-board-table-wrap-boards .admin-board-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .admin-board-table-wrap-boards .admin-board-table tr {
+    border: 1px solid var(--reply-border);
+    background: var(--reply);
+  }
+
+  .admin-board-table-wrap-boards .admin-board-table td {
+    display: grid;
+    grid-template-columns: minmax(82px, 28%) minmax(0, 1fr);
+    gap: 8px;
+    border: 0;
+    border-bottom: 1px solid var(--reply-border);
+    padding: 7px;
+    align-items: start;
+  }
+
+  .admin-board-table-wrap-boards .admin-board-table td:last-child {
+    border-bottom: 0;
+  }
+
+  .admin-board-table-wrap-boards .admin-board-table td::before {
+    content: attr(data-label);
+    color: var(--header);
+    font-weight: bold;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-board-retention {
+    min-width: 0;
+  }
+
+  .admin-board-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .admin-board-actions button {
+    min-width: 0;
+  }
 }
 
 /* Analytics dashboard styles */

@@ -3224,23 +3224,29 @@ function adminBoardsHtml(boards) {
       const retentionPolicy = board.retentionPolicy || {};
       return `
         <tr data-admin-board-row="${escapeHtml(board.slug)}">
-          <td><code>/${escapeHtml(board.slug)}/</code></td>
-          <td><input data-admin-board-name value="${escapeHtml(board.name)}" maxlength="80" /></td>
-          <td><input data-admin-board-category value="${escapeHtml(board.category)}" maxlength="80" /></td>
-          <td><input data-admin-board-description value="${escapeHtml(board.description)}" maxlength="240" /></td>
-          <td class="admin-board-retention">
-            <label><span>Active</span><input data-admin-board-retention-max type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.maxActiveThreadsPerBoard ?? '')}" /></label>
-            <label><span>Bump</span><input data-admin-board-retention-bump type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.bumpLimit ?? '')}" /></label>
-            <label><span>Reply</span><input data-admin-board-retention-reply type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.replyLimit ?? '')}" /></label>
-            <label><input data-admin-board-retention-public-archive type="checkbox" ${retentionPolicy.publicArchive === false ? '' : 'checked'} /> Public archive</label>
+          <td class="admin-board-slug-cell" data-label="Board"><code>/${escapeHtml(board.slug)}/</code></td>
+          <td data-label="Tên"><input data-admin-board-name value="${escapeHtml(board.name)}" maxlength="80" /></td>
+          <td data-label="Danh mục"><input data-admin-board-category value="${escapeHtml(board.category)}" maxlength="80" /></td>
+          <td data-label="Mô tả"><input data-admin-board-description value="${escapeHtml(board.description)}" maxlength="240" /></td>
+          <td data-label="Retention">
+            <div class="admin-board-retention">
+              <label><span>Active</span><input data-admin-board-retention-max type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.maxActiveThreadsPerBoard ?? '')}" /></label>
+              <label><span>Bump</span><input data-admin-board-retention-bump type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.bumpLimit ?? '')}" /></label>
+              <label><span>Reply</span><input data-admin-board-retention-reply type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.replyLimit ?? '')}" /></label>
+              <label><input data-admin-board-retention-public-archive type="checkbox" ${retentionPolicy.publicArchive === false ? '' : 'checked'} /> Public archive</label>
+            </div>
           </td>
-          <td class="admin-board-flags">
-            <label><input data-admin-board-hidden type="checkbox" ${board.isHidden ? 'checked' : ''} /> Ẩn</label>
-            <label><input data-admin-board-archived type="checkbox" ${board.isArchived ? 'checked' : ''} /> Lưu trữ</label>
+          <td data-label="Trạng thái">
+            <div class="admin-board-flags">
+              <label><input data-admin-board-hidden type="checkbox" ${board.isHidden ? 'checked' : ''} /> Ẩn</label>
+              <label><input data-admin-board-archived type="checkbox" ${board.isArchived ? 'checked' : ''} /> Lưu trữ</label>
+            </div>
           </td>
-          <td class="admin-board-actions">
-            <button class="ghost-button" data-admin-board-save type="button">[Lưu]</button>
-            <button class="danger-button" data-admin-board-delete type="button">Xóa</button>
+          <td data-label="Thao tác">
+            <div class="admin-board-actions">
+              <button class="ghost-button" data-admin-board-save type="button">[Lưu]</button>
+              <button class="danger-button" data-admin-board-delete type="button">Xóa</button>
+            </div>
           </td>
         </tr>
       `;
@@ -3265,7 +3271,7 @@ function adminBoardsHtml(boards) {
           <button class="primary-button" data-admin-board-create type="button">Tạo bảng</button>
         </div>
       </section>
-      <div class="admin-board-table-wrap">
+      <div class="admin-board-table-wrap admin-board-table-wrap-boards">
         <table class="admin-board-table">
           <thead>
             <tr>
@@ -6268,6 +6274,7 @@ function bindEvents() {
     const adminBoardCreateButton = event.target.closest('[data-admin-board-create]');
     if (adminBoardCreateButton) {
       const form = adminBoardCreateButton.closest('[data-admin-board-create-form]');
+      const restore = setButtonLoading(adminBoardCreateButton, 'Đang tạo...');
       try {
         await api('/api/admin/boards', {
           method: 'POST',
@@ -6278,6 +6285,8 @@ function bindEvents() {
         await loadAdmin();
       } catch (error) {
         showToast(error.message);
+      } finally {
+        restore();
       }
       return;
     }
@@ -6289,6 +6298,7 @@ function bindEvents() {
       if (!slug) {
         return;
       }
+      const restore = setButtonLoading(adminBoardSaveButton, 'Đang lưu...');
       try {
         await api(`/api/admin/boards/${encodeURIComponent(slug)}`, {
           method: 'PUT',
@@ -6299,6 +6309,8 @@ function bindEvents() {
         await loadAdmin();
       } catch (error) {
         showToast(error.message);
+      } finally {
+        restore();
       }
       return;
     }
@@ -6310,6 +6322,7 @@ function bindEvents() {
       if (!slug || !window.confirm(`Xóa board /${slug}/? Chỉ board rỗng mới xóa được.`)) {
         return;
       }
+      const restore = setButtonLoading(adminBoardDeleteButton, 'Đang xóa...');
       try {
         await api(`/api/admin/boards/${encodeURIComponent(slug)}`, { method: 'DELETE' });
         showToast('Đã xóa board.');
@@ -6317,6 +6330,8 @@ function bindEvents() {
         await loadAdmin();
       } catch (error) {
         showToast(error.message);
+      } finally {
+        restore();
       }
       return;
     }
