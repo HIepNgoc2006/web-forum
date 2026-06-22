@@ -726,6 +726,184 @@ test('http admin boards support dynamic create update and public filtering', asy
   });
 });
 
+test('http admin board management APIs require admin JWT', async () => {
+  await withServer(async (baseUrl) => {
+    const unauthorizedList = await fetch(`${baseUrl}/api/admin/boards`);
+    const unauthorizedCreate = await fetch(`${baseUrl}/api/admin/boards`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        slug: 'no-token-board',
+        name: 'No token',
+        category: 'Test',
+        description: 'Should require admin auth'
+      })
+    });
+    const unauthorizedUpdate = await fetch(`${baseUrl}/api/admin/boards/hoc-tap`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ isHidden: true })
+    });
+    const unauthorizedDelete = await fetch(`${baseUrl}/api/admin/boards/hoc-tap`, {
+      method: 'DELETE'
+    });
+
+    assert.equal(unauthorizedList.status, 401);
+    assert.equal(unauthorizedCreate.status, 401);
+    assert.equal(unauthorizedUpdate.status, 401);
+    assert.equal(unauthorizedDelete.status, 401);
+  });
+});
+
+test('http hidden boards hide existing threads from public APIs', async () => {
+  await withServer(async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const loginBody = await login.json();
+    const headers = {
+      authorization: `Bearer ${loginBody.data.token}`,
+      'content-type': 'application/json'
+    };
+
+    const createdBoard = await fetch(`${baseUrl}/api/admin/boards`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        slug: 'hidden-posts',
+        name: 'Hidden posts',
+        category: 'Test',
+        description: 'Board used to verify hidden public access'
+      })
+    });
+    assert.equal(createdBoard.status, 201);
+
+    const createdThread = await fetch(`${baseUrl}/api/boards/hidden-posts/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Hidden board public access regression',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const createdThreadBody = await createdThread.json();
+    assert.equal(createdThread.status, 201);
+
+    const visibleThread = await fetch(`${baseUrl}/api/threads/${createdThreadBody.data.thread.id}`);
+    assert.equal(visibleThread.status, 200);
+
+    const hiddenBoard = await fetch(`${baseUrl}/api/admin/boards/hidden-posts`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({ isHidden: true })
+    });
+    assert.equal(hiddenBoard.status, 200);
+
+    const publicBoards = await fetch(`${baseUrl}/api/boards`);
+    const publicBoardsBody = await publicBoards.json();
+    const adminBoards = await fetch(`${baseUrl}/api/admin/boards`, {
+      headers: { authorization: `Bearer ${loginBody.data.token}` }
+    });
+    const adminBoardsBody = await adminBoards.json();
+    const hiddenBoardAdmin = adminBoardsBody.data.find((board) => board.slug === 'hidden-posts');
+
+    const hiddenList = await fetch(`${baseUrl}/api/boards/hidden-posts/threads`);
+    const hiddenCreate = await fetch(`${baseUrl}/api/boards/hidden-posts/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Cannot post to hidden board',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const hiddenThread = await fetch(`${baseUrl}/api/threads/${createdThreadBody.data.thread.id}`);
+    const hiddenComment = await fetch(`${baseUrl}/api/threads/${createdThreadBody.data.thread.id}/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Cannot comment on hidden board thread',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const hiddenLookup = await fetch(`${baseUrl}/api/posts/${createdThreadBody.data.thread.globalNumber}`);
+    const hiddenReport = await fetch(`${baseUrl}/api/posts/${createdThreadBody.data.thread.globalNumber}`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reason: 'Hidden board report should not attach publicly' })
+    });
+    const latest = await fetch(`${baseUrl}/api/posts/latest`);
+    const latestBody = await latest.json();
+    const stats = await fetch(`${baseUrl}/api/stats`);
+    const statsBody = await stats.json();
+    const hotBoards = await fetch(`${baseUrl}/api/boards/hot`);
+    const hotBoardsBody = await hotBoards.json();
+
+    assert.equal(publicBoardsBody.data.some((board) => board.slug === 'hidden-posts'), false);
+    assert.equal(adminBoards.status, 200);
+    assert.equal(hiddenBoardAdmin?.isHidden, true);
+    assert.equal(hiddenList.status, 404);
+    assert.equal(hiddenCreate.status, 404);
+    assert.equal(hiddenThread.status, 404);
+    assert.equal(hiddenComment.status, 404);
+    assert.equal(hiddenLookup.status, 404);
+    assert.equal(hiddenReport.status, 404);
+    assert.equal(latestBody.data.some((post) => post.threadId === createdThreadBody.data.thread.id), false);
+    assert.equal(statsBody.data.totalThreads, 0);
+    assert.equal(hotBoardsBody.data.some((board) => board.boardSlug === 'hidden-posts'), false);
+  });
+});
+
+test('http board deletion refuses boards with comments or reports', async () => {
+  const store = createMemoryStore({
+    boards: [
+      ...BOARDS,
+      {
+        slug: 'comment-only-board',
+        path: '/comment-only-board/',
+        name: 'Comment only board',
+        category: 'Test',
+        description: 'Has comment state only'
+      },
+      {
+        slug: 'report-only-board',
+        path: '/report-only-board/',
+        name: 'Report only board',
+        category: 'Test',
+        description: 'Has report state only'
+      }
+    ],
+    comments: [{ id: 'comment-only-1', boardSlug: 'comment-only-board' }],
+    reports: [{ id: 'report-only-1', boardSlug: 'report-only-board' }]
+  });
+
+  await withServer(
+    async (baseUrl) => {
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await login.json();
+      const headers = { authorization: `Bearer ${loginBody.data.token}` };
+
+      const commentBoardDelete = await fetch(`${baseUrl}/api/admin/boards/comment-only-board`, {
+        method: 'DELETE',
+        headers
+      });
+      const reportBoardDelete = await fetch(`${baseUrl}/api/admin/boards/report-only-board`, {
+        method: 'DELETE',
+        headers
+      });
+
+      assert.equal(commentBoardDelete.status, 409);
+      assert.equal(reportBoardDelete.status, 409);
+    },
+    { store }
+  );
+});
+
 test('http admin analytics returns aggregate metrics without poster identifiers', async () => {
   await withServer(async (baseUrl) => {
     await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
