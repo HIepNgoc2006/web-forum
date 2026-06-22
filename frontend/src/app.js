@@ -3225,14 +3225,14 @@ function adminBoardsHtml(boards) {
       return `
         <tr data-admin-board-row="${escapeHtml(board.slug)}">
           <td class="admin-board-slug-cell" data-label="Board"><code>/${escapeHtml(board.slug)}/</code></td>
-          <td data-label="Tên"><input data-admin-board-name value="${escapeHtml(board.name)}" maxlength="80" /></td>
-          <td data-label="Danh mục"><input data-admin-board-category value="${escapeHtml(board.category)}" maxlength="80" /></td>
-          <td data-label="Mô tả"><input data-admin-board-description value="${escapeHtml(board.description)}" maxlength="240" /></td>
+          <td data-label="Tên"><input data-admin-board-name aria-label="Tên board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.name)}" maxlength="80" /></td>
+          <td data-label="Danh mục"><input data-admin-board-category aria-label="Danh mục board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.category)}" maxlength="80" /></td>
+          <td data-label="Mô tả"><input data-admin-board-description aria-label="Mô tả board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.description)}" maxlength="240" /></td>
           <td data-label="Retention">
             <div class="admin-board-retention">
-              <label><span>Active</span><input data-admin-board-retention-max type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.maxActiveThreadsPerBoard ?? '')}" /></label>
-              <label><span>Bump</span><input data-admin-board-retention-bump type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.bumpLimit ?? '')}" /></label>
-              <label><span>Reply</span><input data-admin-board-retention-reply type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.replyLimit ?? '')}" /></label>
+              <label><span>Active</span><input data-admin-board-retention-max aria-label="Giới hạn chủ đề active board /${escapeHtml(board.slug)}/" type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.maxActiveThreadsPerBoard ?? '')}" /></label>
+              <label><span>Bump</span><input data-admin-board-retention-bump aria-label="Bump limit board /${escapeHtml(board.slug)}/" type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.bumpLimit ?? '')}" /></label>
+              <label><span>Reply</span><input data-admin-board-retention-reply aria-label="Reply limit board /${escapeHtml(board.slug)}/" type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.replyLimit ?? '')}" /></label>
               <label><input data-admin-board-retention-public-archive type="checkbox" ${retentionPolicy.publicArchive === false ? '' : 'checked'} /> Public archive</label>
             </div>
           </td>
@@ -3244,8 +3244,8 @@ function adminBoardsHtml(boards) {
           </td>
           <td data-label="Thao tác">
             <div class="admin-board-actions">
-              <button class="ghost-button" data-admin-board-save type="button">[Lưu]</button>
-              <button class="danger-button" data-admin-board-delete type="button">Xóa</button>
+              <button class="ghost-button" data-admin-board-save type="button" aria-label="Lưu board /${escapeHtml(board.slug)}/">[Lưu]</button>
+              <button class="danger-button" data-admin-board-delete type="button" aria-label="Xóa board /${escapeHtml(board.slug)}/">Xóa</button>
             </div>
           </td>
         </tr>
@@ -3312,16 +3312,16 @@ function adminUsersHtml(users = []) {
         <tr data-admin-user-row="${escapeHtml(user.id)}">
           <td><strong>@${escapeHtml(user.username)}</strong></td>
           <td>
-            <select data-admin-user-role>
+            <select data-admin-user-role aria-label="Vai trò @${escapeHtml(user.username)}">
               ${adminRoleOptions(user.role)}
             </select>
           </td>
           <td>${user.twoFactorEnabled ? 'Đã bật' : 'Chưa bật'}</td>
           <td><label><input data-admin-user-disabled type="checkbox" ${user.disabled ? 'checked' : ''} /> Vô hiệu hóa</label></td>
-          <td><input data-admin-user-password type="password" minlength="10" placeholder="Đổi mật khẩu" autocomplete="new-password" /></td>
+          <td><input data-admin-user-password aria-label="Đổi mật khẩu @${escapeHtml(user.username)}" type="password" minlength="10" placeholder="Đổi mật khẩu" autocomplete="new-password" /></td>
           <td class="admin-board-actions">
-            <button class="ghost-button" data-admin-user-save type="button">[Lưu]</button>
-            <button class="danger-button" data-admin-user-disable type="button" ${user.disabled ? 'disabled' : ''}>Tắt</button>
+            <button class="ghost-button" data-admin-user-save type="button" aria-label="Lưu tài khoản @${escapeHtml(user.username)}">[Lưu]</button>
+            <button class="danger-button" data-admin-user-disable type="button" aria-label="Tắt tài khoản @${escapeHtml(user.username)}" ${user.disabled ? 'disabled' : ''}>Tắt</button>
           </td>
         </tr>
       `

@@ -386,6 +386,44 @@ async function smokePage(page) {
       assertContrastPairs(contrast.result?.value || [], page.label);
     }
 
+    if (page.accessibilityCheck) {
+      const unlabeled = await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const controls = [...document.querySelectorAll('input:not([type="hidden"]), select, textarea')];
+          const visible = (element) => {
+            if (element.disabled || element.closest('.hidden,[hidden],[aria-hidden="true"]')) {
+              return false;
+            }
+            const style = getComputedStyle(element);
+            return style.display !== 'none' && style.visibility !== 'hidden';
+          };
+          const hasName = (element) => {
+            if (element.labels?.length) {
+              return true;
+            }
+            if (element.getAttribute('aria-label')?.trim()) {
+              return true;
+            }
+            const labelledBy = element.getAttribute('aria-labelledby');
+            if (labelledBy) {
+              return labelledBy
+                .split(/\\s+/)
+                .some((id) => document.getElementById(id)?.textContent?.trim());
+            }
+            return Boolean(element.getAttribute('title')?.trim());
+          };
+          return controls
+            .filter((element) => visible(element) && !hasName(element))
+            .map((element) => element.outerHTML.slice(0, 180));
+        })()`,
+        returnByValue: true
+      });
+      const unlabeledControls = unlabeled.result?.value || [];
+      if (unlabeledControls.length) {
+        throw new Error(`${page.label} has visible form controls without accessible names: ${unlabeledControls.join(' | ')}`);
+      }
+    }
+
     if (page.interaction) {
       await page.interaction(cdp);
     }
@@ -808,6 +846,7 @@ async function main() {
     ];
 
     for (const page of pages) {
+      page.accessibilityCheck ??= true;
       if (page.before) {
         await page.before();
       }
