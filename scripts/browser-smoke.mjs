@@ -155,6 +155,39 @@ async function createSeedThread() {
   return threadId;
 }
 
+async function createPendingThread(body, posterToken) {
+  const threadResponse = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      body,
+      captchaToken: 'dev-pass',
+      posterToken
+    })
+  });
+  if (!threadResponse.ok) {
+    throw new Error(`Could not create pending smoke thread: ${threadResponse.status}`);
+  }
+  const threadPayload = await threadResponse.json();
+  return threadPayload.data.thread;
+}
+
+async function createAdminToken() {
+  const response = await fetch(`${baseUrl}/api/admin/login`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ username: 'admin', password: 'admin-password' })
+  });
+  if (!response.ok) {
+    throw new Error(`Admin smoke login failed: ${response.status}`);
+  }
+  const payload = await response.json();
+  if (!payload.data?.token) {
+    throw new Error('Admin smoke login did not return a token.');
+  }
+  return payload.data.token;
+}
+
 function connectWebSocket(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -239,21 +272,6 @@ async function closeTarget(targetId) {
   await fetch(`http://127.0.0.1:${chromeDebugPort}/json/close/${targetId}`).catch(() => {});
 }
 
-async function waitForPageUrl(cdp, expectedUrl) {
-  const deadline = Date.now() + 5000;
-  while (Date.now() < deadline) {
-    const result = await cdp.send('Runtime.evaluate', {
-      expression: 'location.href',
-      returnByValue: true
-    });
-    if (result.result?.value === expectedUrl) {
-      return;
-    }
-    await sleep(100);
-  }
-  throw new Error(`Page did not reach ${expectedUrl}.`);
-}
-
 async function smokePage(page) {
   const target = await createTarget('about:blank');
   const cdp = new CdpSession(await connectWebSocket(target.webSocketDebuggerUrl));
@@ -263,9 +281,19 @@ async function smokePage(page) {
     await cdp.send('Runtime.enable');
     await cdp.send('Log.enable').catch(() => {});
 
+    const preloadStatements = [];
     if (page.theme) {
+      preloadStatements.push(`localStorage.setItem('theme', ${JSON.stringify(page.theme)});`);
+    }
+    if (page.loginAdmin) {
+      if (!page.adminToken) {
+        throw new Error(`${page.label} requires an admin token.`);
+      }
+      preloadStatements.push(`localStorage.setItem('adminToken', ${JSON.stringify(page.adminToken)});`);
+    }
+    if (preloadStatements.length) {
       await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
-        source: `try { localStorage.setItem('theme', ${JSON.stringify(page.theme)}); } catch {}`
+        source: `try { ${preloadStatements.join(' ')} } catch {}`
       });
     }
 
@@ -281,28 +309,6 @@ async function smokePage(page) {
     }
 
     await cdp.send('Page.navigate', { url: page.url });
-    if (page.loginAdmin) {
-      await waitForPageUrl(cdp, page.url);
-      await cdp.send('Runtime.evaluate', {
-        expression: `(async () => {
-          const response = await fetch('/api/admin/login', {
-            method: 'POST',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify({ username: 'admin', password: 'admin-password' })
-          });
-          if (!response.ok) {
-            throw new Error('Admin smoke login failed: ' + response.status);
-          }
-          const payload = await response.json();
-          localStorage.setItem('adminToken', payload.data.token);
-          return true;
-        })()`,
-        awaitPromise: true,
-        returnByValue: true
-      });
-      await cdp.send('Page.reload', { ignoreCache: true });
-      await waitForPageUrl(cdp, page.url);
-    }
 
     const deadline = Date.now() + 12000;
     let snapshot = null;
@@ -450,7 +456,10 @@ async function main() {
   try {
     await waitForHealth();
     await waitForChromeDebug();
+    const adminToken = await createAdminToken();
     const threadId = await createSeedThread();
+    let approvePendingThread = null;
+    let deletePendingThread = null;
     const pages = [
       {
         label: 'home desktop',
@@ -666,10 +675,85 @@ async function main() {
         label: 'admin dashboard desktop',
         url: `${baseUrl}/#admin`,
         loginAdmin: true,
+        adminToken,
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-admin-desktop.png'),
         checks: ['AI chờ duyệt', 'Báo cáo', 'Đã duyệt', 'Nhật ký', 'Hàng đợi trống']
+      },
+      {
+        label: 'admin moderation flow desktop',
+        url: `${baseUrl}/#admin`,
+        loginAdmin: true,
+        adminToken,
+        theme: 'burichan',
+        contrastCheck: true,
+        async before() {
+          approvePendingThread = await createPendingThread(
+            'Admin visual pass pending approval PII 0912345678',
+            'ci-poster-admin-approve'
+          );
+          deletePendingThread = await createPendingThread(
+            'Admin visual pass pending bulk delete PII 0987654321',
+            'ci-poster-admin-delete'
+          );
+        },
+        checks: ['AI chờ duyệt', 'Báo cáo', 'Đã duyệt', 'Nhật ký', 'Admin visual pass pending approval'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const approveId = ${JSON.stringify(approvePendingThread.id)};
+              const deleteId = ${JSON.stringify(deletePendingThread.id)};
+              const approveGlobal = ${JSON.stringify(approvePendingThread.globalNumber)};
+              const waitFor = async (predicate, label) => {
+                const deadline = Date.now() + 5000;
+                while (Date.now() < deadline) {
+                  const value = predicate();
+                  if (value) return value;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                throw new Error('Timed out waiting for ' + label);
+              };
+              const submitReason = async (reason) => {
+                await waitFor(() => document.querySelector('#reasonTextarea'), 'reason modal');
+                const textarea = document.querySelector('#reasonTextarea');
+                textarea.value = reason;
+                textarea.dispatchEvent(new Event('input', { bubbles: true }));
+                document.querySelector('#reasonConfirmBtn')?.click();
+              };
+              const approveItem = await waitFor(() => document.querySelector('.pending-item[data-id="' + approveId + '"]'), 'approve pending item');
+              approveItem.querySelector('[data-admin-detail]')?.click();
+              await waitFor(() => approveItem.querySelector('.admin-detail-host')?.innerText.includes('Admin visual pass pending approval'), 'detail panel');
+              approveItem.querySelector('[data-action="approve"]')?.click();
+              await submitReason('Visual pass approved');
+              await waitFor(() => !document.querySelector('.pending-item[data-id="' + approveId + '"]'), 'approved item removal');
+
+              const deleteItem = await waitFor(() => document.querySelector('.pending-item[data-id="' + deleteId + '"]'), 'delete pending item');
+              deleteItem.querySelector('[data-admin-select]')?.click();
+              document.querySelector('#adminBulkDelete')?.click();
+              await submitReason('Visual pass bulk delete');
+              await waitFor(() => !document.querySelector('.pending-item[data-id="' + deleteId + '"]'), 'deleted item removal');
+
+              document.querySelector('[data-admin-tab="deleted"]')?.click();
+              await waitFor(() => document.body.innerText.includes('Visual pass bulk delete'), 'deleted tab reason');
+              document.querySelector('[data-admin-tab="audit"]')?.click();
+              await waitFor(() => document.body.innerText.includes('Visual pass approved'), 'audit tab approve reason');
+              return {
+                approvedGone: !document.querySelector('.pending-item[data-id="' + approveId + '"]'),
+                deletedGone: !document.querySelector('.pending-item[data-id="' + deleteId + '"]'),
+                auditHasApprove: document.body.innerText.includes('Visual pass approved'),
+                deletedHasReason: document.body.innerText.includes('Visual pass bulk delete'),
+                detailGlobal: approveGlobal
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          if (!payload.approvedGone || !payload.deletedGone || !payload.auditHasApprove || !payload.deletedHasReason) {
+            throw new Error('admin dashboard desktop did not complete pending moderation flow.');
+          }
+        }
       },
       {
         label: 'home mobile',
@@ -713,6 +797,7 @@ async function main() {
         label: 'admin dashboard mobile',
         url: `${baseUrl}/#admin`,
         loginAdmin: true,
+        adminToken,
         width: 390,
         height: 844,
         theme: 'burichan',
@@ -723,6 +808,9 @@ async function main() {
     ];
 
     for (const page of pages) {
+      if (page.before) {
+        await page.before();
+      }
       await smokePage(page);
     }
 
