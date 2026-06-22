@@ -79,10 +79,13 @@ If `status` is `degraded`, `/api/health` returns HTTP `503`; do not launch until
 1. Deploy the candidate build to staging or production-like infrastructure.
 2. Run `npm test`, `npm run check`, and `npm run build` on the candidate commit.
 3. Validate `/api/health` as above.
-4. Create a test thread/comment with hCaptcha in the target environment.
-5. Verify an uploaded image is readable from the public UI.
-6. Verify admin login and moderation dashboard access.
-7. Record all command output or links in the GitHub issue/PR.
+4. Dry-run any demo/staging seed import with `npm run seed:import` using
+   `docs/seed-data.md`, then apply with `--write` only after the summary is
+   expected.
+5. Create a test thread/comment with hCaptcha in the target environment.
+6. Verify an uploaded image is readable from the public UI.
+7. Verify admin login and moderation dashboard access.
+8. Record all command output or links in the GitHub issue/PR.
 
 ## 6. Rollback Plan
 

@@ -18,7 +18,10 @@
     "check": "npm --prefix backend run check && npm --prefix frontend run lint",
     "release:verify": "npm test && npm run check && npm run build && npm run test:e2e",
     "migrate:images": "npm --prefix backend run migrate:images --",
-    "cleanup:uploads": "npm --prefix backend run cleanup:uploads --"
+    "cleanup:uploads": "npm --prefix backend run cleanup:uploads --",
+    "seed:export": "npm --prefix backend run seed:export --",
+    "seed:import": "npm --prefix backend run seed:import --",
+    "seed:restore": "npm --prefix backend run seed:restore --"
   },
   "engines": {
     "node": ">=20"
