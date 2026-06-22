@@ -147,6 +147,62 @@ async function replaceCollection(model, items) {
   }
 }
 
+async function insertDocuments(model, items) {
+  if (items.length === 1) {
+    await model.collection.insertOne(items[0]);
+    return;
+  }
+  if (items.length > 1) {
+    await model.collection.insertMany(items, { ordered: true });
+  }
+}
+
+async function updateDocumentsById(model, items) {
+  if (items.length === 0) {
+    return;
+  }
+  await model.bulkWrite(
+    items.map((item) => ({
+      updateOne: {
+        filter: { id: item.id },
+        update: { $set: item }
+      }
+    })),
+    { ordered: true }
+  );
+}
+
+export async function appendMongoPostCreate(models, {
+  state,
+  thread = null,
+  comment = null,
+  updatedThreads = [],
+  moderationActions = []
+} = {}) {
+  const normalized = normalizeState(state);
+  const threadsToInsert = thread ? [thread] : [];
+  const commentsToInsert = comment ? [comment] : [];
+  const threadIdsToInsert = new Set(threadsToInsert.map((item) => item.id));
+  const threadsToUpdate = updatedThreads.filter((item) => item?.id && !threadIdsToInsert.has(item.id));
+
+  await insertDocuments(models.Thread, threadsToInsert);
+  await insertDocuments(models.Comment, commentsToInsert);
+  await insertDocuments(models.ModerationAction, moderationActions);
+  await updateDocumentsById(models.Thread, threadsToUpdate);
+  await models.StateMeta.updateOne(
+    { _id: 'global' },
+    {
+      $set: {
+        version: normalized.version,
+        nextGlobalNumber: normalized.nextGlobalNumber,
+        adminSettings: normalized.adminSettings
+      }
+    },
+    { upsert: true }
+  );
+  return normalizeState(normalized);
+}
+
 export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {}) {
   if (!uri) {
     throw new Error('MONGODB_URI is required when STORE_DRIVER=mongo');
@@ -239,6 +295,15 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
         await replaceCollection(models.AiUsage, objectToKeyValues(normalized.aiUsage));
         await replaceCollection(models.AiSummaryCache, objectToKeyValues(normalized.aiSummaryCache));
         return normalizeState(normalized);
+      });
+      return queue;
+    },
+
+    async appendPostCreate(delta) {
+      queue = queue.then(async () => {
+        const models = await getModels();
+        await ensureBoards(models);
+        return appendMongoPostCreate(models, delta);
       });
       return queue;
     },

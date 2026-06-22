@@ -100,8 +100,10 @@ whole-state model within the envelope above.
 Before broad traffic ramp:
 - [ ] Load test run at full beta envelope with p95 within budget.
 - [ ] Dataset-growth alert set (thread/comment/user counts approaching limits).
-- [ ] Incremental append-only creates implemented before exceeding the
+- [x] Incremental append-only creates implemented before exceeding the
       re-evaluation points.
+      - 2026-06-22: thread/comment create paths use Mongo `appendPostCreate`
+        for single-document inserts plus targeted parent/archive updates.
 
 Pairs with SSE limits (#115) and quota/cache observability (#117) as the #63
 scale follow-ups.

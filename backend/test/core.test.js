@@ -8,7 +8,7 @@ import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
 import { createS3ImageStorage } from '../src/core/image-storage.js';
 import { migrateInlineImages } from '../src/core/image-migration.js';
-import { createMongoModels } from '../src/core/mongo-store.js';
+import { appendMongoPostCreate, createMongoModels } from '../src/core/mongo-store.js';
 import { publicBoardConfig, publicConfig } from '../src/core/config.js';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
 import {
@@ -201,6 +201,127 @@ test('mongo store declares production persistence models without opening a conne
   } finally {
     await connection.destroy();
   }
+});
+
+test('mongo append post create uses targeted inserts and updates', async () => {
+  const calls = [];
+  const model = (name) => ({
+    collection: {
+      async insertOne(document) {
+        calls.push({ model: name, method: 'insertOne', id: document.id });
+      },
+      async insertMany(documents, options) {
+        calls.push({ model: name, method: 'insertMany', ids: documents.map((document) => document.id), options });
+      }
+    },
+    async bulkWrite(operations, options) {
+      calls.push({ model: name, method: 'bulkWrite', operations, options });
+    }
+  });
+  const stateMetaCalls = [];
+  const models = {
+    Thread: model('Thread'),
+    Comment: model('Comment'),
+    ModerationAction: model('ModerationAction'),
+    StateMeta: {
+      async updateOne(filter, update, options) {
+        stateMetaCalls.push({ filter, update, options });
+      }
+    }
+  };
+  const createdThread = { id: 'thread-new', boardSlug: 'hoc-tap', body: 'Chu de', globalNumber: 1 };
+  const archivedThread = {
+    id: 'thread-old',
+    boardSlug: 'hoc-tap',
+    body: 'Cu',
+    globalNumber: 2,
+    isArchived: true,
+    archivedAt: '2026-06-22T00:00:00.000Z'
+  };
+  const moderationAction = { id: 'mod-1', postId: 'thread-new', action: 'ai:moderate' };
+
+  await appendMongoPostCreate(models, {
+    state: {
+      nextGlobalNumber: 3,
+      threads: [createdThread, archivedThread],
+      moderationActions: [moderationAction],
+      adminSettings: { moderationConfidenceThreshold: 0.7 }
+    },
+    thread: createdThread,
+    updatedThreads: [createdThread, archivedThread],
+    moderationActions: [moderationAction]
+  });
+
+  assert.deepEqual(calls[0], { model: 'Thread', method: 'insertOne', id: 'thread-new' });
+  assert.deepEqual(calls[1], { model: 'ModerationAction', method: 'insertOne', id: 'mod-1' });
+  assert.equal(calls[2].model, 'Thread');
+  assert.equal(calls[2].method, 'bulkWrite');
+  assert.deepEqual(calls[2].operations, [
+    {
+      updateOne: {
+        filter: { id: 'thread-old' },
+        update: { $set: archivedThread }
+      }
+    }
+  ]);
+  assert.deepEqual(calls[2].options, { ordered: true });
+  assert.deepEqual(stateMetaCalls, [
+    {
+      filter: { _id: 'global' },
+      update: {
+        $set: {
+          version: 1,
+          nextGlobalNumber: 3,
+          adminSettings: { moderationConfidenceThreshold: 0.7 }
+        }
+      },
+      options: { upsert: true }
+    }
+  ]);
+});
+
+test('forum service uses targeted post create store hook when available', async () => {
+  const memory = createMemoryStore();
+  const appendCalls = [];
+  const store = {
+    async read() {
+      return memory.read();
+    },
+    async write() {
+      throw new Error('full write should not be used for post creates');
+    },
+    async appendPostCreate(delta) {
+      appendCalls.push(delta);
+      await memory.write(delta.state);
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-06-22T00:00:00.000Z')
+  });
+
+  const thread = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Chu de dung targeted append',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.10'
+  });
+  const comment = await service.createComment({
+    threadId: thread.thread.id,
+    body: 'Tra loi dung targeted append',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.11'
+  });
+
+  assert.equal(appendCalls.length, 2);
+  assert.equal(appendCalls[0].thread.id, thread.thread.id);
+  assert.equal(appendCalls[0].comment, undefined);
+  assert.equal(appendCalls[0].moderationActions.length, 1);
+  assert.equal(appendCalls[1].comment.id, comment.comment.id);
+  assert.equal(appendCalls[1].thread, undefined);
+  assert.deepEqual(appendCalls[1].updatedThreads.map((item) => item.id), [thread.thread.id]);
 });
 
 test('forum service health reports unavailable store without leaking connection details', async () => {

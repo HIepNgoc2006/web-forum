@@ -124,6 +124,10 @@ function publicReplyCount(state, threadId) {
   return state.comments.filter((comment) => comment.threadId === threadId && publicPost(comment)).length;
 }
 
+function uniqueById(items = []) {
+  return [...new Map(items.filter((item) => item?.id).map((item) => [item.id, item])).values()];
+}
+
 function archiveThreadRecord(thread, reason, archivedAt) {
   thread.isArchived = true;
   thread.archivedAt = archivedAt;
@@ -1410,7 +1414,7 @@ function serializeSanction(sanction) {
 }
 
 function recordModerationAction(state, { action, actor = 'system', postType, post, reason = '', createdAt }) {
-  state.moderationActions.push({
+  const entry = {
     id: crypto.randomUUID(),
     action,
     actor: String(actor || 'system').slice(0, 80),
@@ -1424,7 +1428,9 @@ function recordModerationAction(state, { action, actor = 'system', postType, pos
     moderationLabels: post.moderationLabels ?? [],
     ...(Number.isFinite(Number(post.moderationConfidence)) ? { moderationConfidence: Number(post.moderationConfidence) } : {}),
     createdAt
-  });
+  };
+  state.moderationActions.push(entry);
+  return entry;
 }
 
 function findPublicPostByGlobalNumber(state, globalNumber) {
@@ -1740,11 +1746,15 @@ export function createForumService({
   // collide). Queue is process-local; multi-instance deployments still need a
   // shared lock (see store notes).
   let mutateQueue = Promise.resolve();
-  function mutate(callback) {
+  function mutate(callback, { write = null } = {}) {
     const run = mutateQueue.then(async () => {
       const state = await store.read();
       const result = await callback(state);
-      await store.write(state);
+      if (write) {
+        await write(state, result);
+      } else {
+        await store.write(state);
+      }
       return result;
     });
     // Keep the chain alive regardless of this mutation's outcome.
@@ -1770,6 +1780,7 @@ export function createForumService({
   function enforceBoardThreadCap(state, boardSlug, archivedAt) {
     const board = findBoard(state, boardSlug);
     const retentionPolicy = boardRetentionPolicy(board, lifecycle);
+    const archivedThreads = [];
     const activeThreads = state.threads
       .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
       .sort((left, right) => left.bumpedAt.localeCompare(right.bumpedAt));
@@ -1777,8 +1788,10 @@ export function createForumService({
     while (activeThreads.length > retentionPolicy.maxActiveThreadsPerBoard) {
       const thread = activeThreads.shift();
       archiveThreadRecord(thread, 'board-limit', archivedAt);
+      archivedThreads.push(thread);
       realtime.publish('thread:archived', { thread: serializeThread(thread, state.comments) });
     }
+    return archivedThreads;
   }
 
   function archiveExpiredEventThreads(state, boardSlug, archivedAt) {
@@ -2847,6 +2860,11 @@ export function createForumService({
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
       const createdAt = now().toISOString();
       assertEventBoardOpen(board, createdAt);
+      const postCreateDelta = {
+        thread: null,
+        updatedThreads: [],
+        moderationActions: []
+      };
 
       return mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
@@ -2888,14 +2906,15 @@ export function createForumService({
           bumpedAt: createdAt
         };
         state.threads.push(thread);
-        recordModerationAction(state, {
+        postCreateDelta.thread = thread;
+        postCreateDelta.moderationActions.push(recordModerationAction(state, {
           action: 'ai:moderate',
           actor: 'ai',
           postType: 'thread',
           post: thread,
           reason: moderation.labels?.join(', ') || moderation.status,
           createdAt
-        });
+        }));
         logEvent('post.create', {
           postType: 'thread',
           boardSlug,
@@ -2907,11 +2926,24 @@ export function createForumService({
         });
 
         if (!thread.isPending) {
-          enforceBoardThreadCap(state, boardSlug, createdAt);
+          postCreateDelta.updatedThreads.push(...enforceBoardThreadCap(state, boardSlug, createdAt));
           realtime.publish('thread:created', { thread: serializeThread(thread, state.comments) });
         }
 
         return { status: thread.isPending ? 'pending' : 'published', thread: serializeThread(thread, state.comments) };
+      }, {
+        write: async (state) => {
+          if (typeof store.appendPostCreate !== 'function') {
+            await store.write(state);
+            return;
+          }
+          await store.appendPostCreate({
+            state,
+            thread: postCreateDelta.thread,
+            updatedThreads: uniqueById(postCreateDelta.updatedThreads),
+            moderationActions: postCreateDelta.moderationActions
+          });
+        }
       });
     },
 
@@ -3005,6 +3037,11 @@ export function createForumService({
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
+      const postCreateDelta = {
+        comment: null,
+        updatedThreads: [],
+        moderationActions: []
+      };
 
       return mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
@@ -3065,14 +3102,15 @@ export function createForumService({
           createdAt
         };
         state.comments.push(comment);
-        recordModerationAction(state, {
+        postCreateDelta.comment = comment;
+        postCreateDelta.moderationActions.push(recordModerationAction(state, {
           action: 'ai:moderate',
           actor: 'ai',
           postType: 'comment',
           post: comment,
           reason: moderation.labels?.join(', ') || moderation.status,
           createdAt
-        });
+        }));
         logEvent('post.create', {
           postType: 'comment',
           boardSlug: comment.boardSlug,
@@ -3089,10 +3127,12 @@ export function createForumService({
           realtime.publish('comment:created', { threadId, comment: serializeComment(comment, thread) });
           if (!postingOptions.sage && repliesBeforeCreate < retentionPolicy.bumpLimit) {
             thread.bumpedAt = createdAt;
+            postCreateDelta.updatedThreads.push(thread);
             realtime.publish('thread:bumped', { thread: serializeThread(thread, state.comments) });
           }
         }
         if (slowModeRaised) {
+          postCreateDelta.updatedThreads.push(thread);
           realtime.publish('thread:updated', { thread: serializeThread(thread, state.comments) });
         }
 
@@ -3100,6 +3140,19 @@ export function createForumService({
           status: comment.isPending ? 'pending' : 'published',
           comment: serializeComment(comment, thread)
         };
+      }, {
+        write: async (state) => {
+          if (typeof store.appendPostCreate !== 'function') {
+            await store.write(state);
+            return;
+          }
+          await store.appendPostCreate({
+            state,
+            comment: postCreateDelta.comment,
+            updatedThreads: uniqueById(postCreateDelta.updatedThreads),
+            moderationActions: postCreateDelta.moderationActions
+          });
+        }
       });
     },
 
