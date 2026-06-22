@@ -64,10 +64,10 @@ async function withServer(
     imageStorage,
     uploadRoot = path.resolve('data/uploads-test'),
     staticRoot,
-    jwtSecret = 'secret'
+    jwtSecret = 'secret',
+    realtime = { publish() {} }
   } = {}
 ) {
-  const realtime = { publish() {} };
   const service = createForumService({
     store,
     ai,
@@ -1019,6 +1019,61 @@ test('http health exposes deployment readiness without secrets', async () => {
       }
     }
   }
+});
+
+test('http metrics exposes scrapeable realtime counters and alert thresholds', async () => {
+  const realtime = {
+    publish() {},
+    metrics() {
+      return {
+        clients: 90,
+        boards: { 'hoc-tap': 50 },
+        maxClients: 100,
+        capacityUsedPct: 90,
+        capacityStatus: 'critical',
+        heartbeatMs: 25000,
+        maxBackpressureEvents: 3,
+        totalConnections: 120,
+        rejected: 3,
+        dropped: 2,
+        heartbeats: 9,
+        backpressureEvents: 4,
+        backpressureDrops: 1,
+        thresholds: { warnPct: 75, criticalPct: 90 }
+      };
+    },
+    count() {
+      return 90;
+    },
+    boardCounts() {
+      return { 'hoc-tap': 50 };
+    }
+  };
+
+  await withServer(
+    async (baseUrl) => {
+      const metrics = await fetch(`${baseUrl}/metrics`);
+      const body = await metrics.text();
+
+      assert.equal(metrics.status, 200);
+      assert.match(metrics.headers.get('content-type'), /text\/plain/);
+      assert.match(body, /chan36_health_ready 1/);
+      assert.match(body, /chan36_sse_clients 90/);
+      assert.match(body, /chan36_sse_capacity_alert_level 2/);
+      assert.match(body, /chan36_sse_capacity_warn_percent 75/);
+      assert.match(body, /chan36_sse_capacity_critical_percent 90/);
+      assert.match(body, /chan36_sse_max_backpressure_events 3/);
+      assert.match(body, /chan36_sse_rejected_connections_total 3/);
+      assert.match(body, /chan36_sse_backpressure_events_total 4/);
+      assert.match(body, /chan36_sse_backpressure_drops_total 1/);
+      assert.equal(body.includes('secret'), false);
+
+      const alias = await fetch(`${baseUrl}/api/metrics`);
+      assert.equal(alias.status, 200);
+      assert.match(await alias.text(), /chan36_sse_connections_total 120/);
+    },
+    { realtime }
+  );
 });
 
 test('http api supports v1 alias, paged search, backlinks and self delete password', async () => {

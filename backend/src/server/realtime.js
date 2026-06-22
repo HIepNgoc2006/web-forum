@@ -2,18 +2,28 @@ const DEFAULT_MAX_CLIENTS = 1000;
 const DEFAULT_HEARTBEAT_MS = 25_000;
 const DEFAULT_WARN_PCT = 75;
 const DEFAULT_CRITICAL_PCT = 90;
+const DEFAULT_MAX_BACKPRESSURE_EVENTS = 3;
 
 function positiveIntEnv(name, fallback) {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
+function percentEnv(name, fallback) {
+  const value = positiveIntEnv(name, fallback);
+  return Math.max(1, Math.min(value, 100));
+}
+
 export function createRealtimeHub(options = {}) {
   const clients = new Map();
   const maxClients = options.maxClients ?? positiveIntEnv('SSE_MAX_CLIENTS', DEFAULT_MAX_CLIENTS);
   const heartbeatMs = options.heartbeatMs ?? positiveIntEnv('SSE_HEARTBEAT_MS', DEFAULT_HEARTBEAT_MS);
-  const warnPct = options.warnPct ?? DEFAULT_WARN_PCT;
-  const criticalPct = options.criticalPct ?? DEFAULT_CRITICAL_PCT;
+  const configuredWarnPct = options.warnPct ?? percentEnv('SSE_WARN_PCT', DEFAULT_WARN_PCT);
+  const configuredCriticalPct = options.criticalPct ?? percentEnv('SSE_CRITICAL_PCT', DEFAULT_CRITICAL_PCT);
+  const warnPct = Math.min(configuredWarnPct, configuredCriticalPct);
+  const criticalPct = Math.max(configuredWarnPct, configuredCriticalPct);
+  const maxBackpressureEvents = options.maxBackpressureEvents ??
+    positiveIntEnv('SSE_MAX_BACKPRESSURE_EVENTS', DEFAULT_MAX_BACKPRESSURE_EVENTS);
   const startInterval = options.setIntervalFn ?? setInterval;
   const stopInterval = options.clearIntervalFn ?? clearInterval;
 
@@ -22,7 +32,8 @@ export function createRealtimeHub(options = {}) {
     rejected: 0,
     dropped: 0,
     heartbeats: 0,
-    backpressureEvents: 0
+    backpressureEvents: 0,
+    backpressureDrops: 0
   };
 
   let heartbeatTimer = null;
@@ -31,7 +42,8 @@ export function createRealtimeHub(options = {}) {
     const url = new URL(request.url, 'http://localhost');
     return {
       boardSlug: String(url.searchParams.get('boardSlug') || '').slice(0, 80),
-      threadId: String(url.searchParams.get('threadId') || '').slice(0, 120)
+      threadId: String(url.searchParams.get('threadId') || '').slice(0, 120),
+      backpressureEvents: 0
     };
   }
 
@@ -52,8 +64,19 @@ export function createRealtimeHub(options = {}) {
   function safeWrite(client, line) {
     try {
       const flushed = client.write(line);
+      const meta = clients.get(client);
       if (flushed === false) {
         metricsState.backpressureEvents += 1;
+        if (meta) {
+          meta.backpressureEvents += 1;
+          if (meta.backpressureEvents >= maxBackpressureEvents) {
+            metricsState.backpressureDrops += 1;
+            dropClient(client);
+            return false;
+          }
+        }
+      } else if (meta) {
+        meta.backpressureEvents = 0;
       }
       return true;
     } catch {
@@ -173,11 +196,13 @@ export function createRealtimeHub(options = {}) {
         capacityUsedPct,
         capacityStatus,
         heartbeatMs,
+        maxBackpressureEvents,
         totalConnections: metricsState.totalConnections,
         rejected: metricsState.rejected,
         dropped: metricsState.dropped,
         heartbeats: metricsState.heartbeats,
         backpressureEvents: metricsState.backpressureEvents,
+        backpressureDrops: metricsState.backpressureDrops,
         thresholds: { warnPct, criticalPct }
       };
     },

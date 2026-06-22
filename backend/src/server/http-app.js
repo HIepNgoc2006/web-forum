@@ -35,6 +35,14 @@ const MIME_TYPES = new Map([
 ]);
 const MAX_MEDIA_PER_POST = 4;
 const PRIVILEGED_ACCOUNT_ROLES = new Set(['owner', 'admin', 'moderator', 'viewer']);
+const STORE_METRIC_NAMES = {
+  threads: 'threads',
+  comments: 'comments',
+  users: 'users',
+  reports: 'reports',
+  sanctions: 'sanctions',
+  moderationActions: 'moderation_actions'
+};
 
 function normalizeAdminRole(role = '') {
   const value = String(role || '').toLowerCase();
@@ -101,6 +109,58 @@ function fail(response, error) {
       requires2FA: error.requires2FA
     }
   });
+}
+
+function metricNumber(value) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function appendGauge(lines, name, help, value) {
+  lines.push(`# HELP ${name} ${help}`);
+  lines.push(`# TYPE ${name} gauge`);
+  lines.push(`${name} ${metricNumber(value)}`);
+}
+
+function appendCounter(lines, name, help, value) {
+  lines.push(`# HELP ${name} ${help}`);
+  lines.push(`# TYPE ${name} counter`);
+  lines.push(`${name} ${metricNumber(value)}`);
+}
+
+function healthMetricsText(health = {}) {
+  const lines = [];
+  const realtime = health.realtime ?? {};
+  const thresholds = realtime.thresholds ?? {};
+  const capacityAlertLevel = realtime.capacityStatus === 'critical' ? 2 : realtime.capacityStatus === 'warning' ? 1 : 0;
+
+  appendGauge(lines, 'chan36_health_ready', 'Deployment readiness from the public health check.', health.status === 'ok' ? 1 : 0);
+  appendGauge(lines, 'chan36_store_ready', 'Store dependency readiness.', health.store?.ready === false ? 0 : 1);
+  appendGauge(lines, 'chan36_image_storage_ready', 'Image storage dependency readiness.', health.imageStorage?.ready === false ? 0 : 1);
+
+  appendGauge(lines, 'chan36_sse_clients', 'Currently connected SSE clients.', realtime.clients);
+  appendGauge(lines, 'chan36_sse_max_clients', 'Configured maximum concurrent SSE clients.', realtime.maxClients);
+  appendGauge(lines, 'chan36_sse_capacity_used_percent', 'SSE connection capacity currently used, in percent.', realtime.capacityUsedPct);
+  appendGauge(lines, 'chan36_sse_capacity_alert_level', 'SSE capacity alert level: 0 ok, 1 warning, 2 critical.', capacityAlertLevel);
+  appendGauge(lines, 'chan36_sse_capacity_warn_percent', 'SSE capacity warning threshold, in percent.', thresholds.warnPct);
+  appendGauge(lines, 'chan36_sse_capacity_critical_percent', 'SSE capacity critical threshold, in percent.', thresholds.criticalPct);
+  appendGauge(lines, 'chan36_sse_heartbeat_interval_ms', 'Configured SSE heartbeat interval in milliseconds.', realtime.heartbeatMs);
+  appendGauge(lines, 'chan36_sse_max_backpressure_events', 'Consecutive SSE backpressure events allowed before dropping a client.', realtime.maxBackpressureEvents);
+
+  appendCounter(lines, 'chan36_sse_connections_total', 'Total accepted SSE connections since process start.', realtime.totalConnections);
+  appendCounter(lines, 'chan36_sse_rejected_connections_total', 'Total rejected SSE connections since process start.', realtime.rejected);
+  appendCounter(lines, 'chan36_sse_dropped_connections_total', 'Total dropped SSE connections since process start.', realtime.dropped);
+  appendCounter(lines, 'chan36_sse_heartbeats_total', 'Total SSE heartbeat ticks since process start.', realtime.heartbeats);
+  appendCounter(lines, 'chan36_sse_backpressure_events_total', 'Total SSE writes that reported backpressure since process start.', realtime.backpressureEvents);
+  appendCounter(lines, 'chan36_sse_backpressure_drops_total', 'Total SSE clients dropped after repeated backpressure since process start.', realtime.backpressureDrops);
+
+  for (const [key, metricName] of Object.entries(STORE_METRIC_NAMES)) {
+    if (Number.isFinite(Number(health.store?.[key]))) {
+      appendGauge(lines, `chan36_store_${metricName}`, `Store ${metricName} count from the health snapshot.`, health.store[key]);
+    }
+  }
+
+  return `${lines.join('\n')}\n`;
 }
 
 async function readJson(request, maxBytes = 1_600_000) {
@@ -697,6 +757,16 @@ export function createHttpServer({
           security
         };
         ok(response, payload, health.status === 'ok' ? 200 : 503);
+        return;
+      }
+
+      if (request.method === 'GET' && (routePath === '/metrics' || routePath === '/api/metrics')) {
+        sendText(
+          response,
+          200,
+          healthMetricsText(await service.getHealth()),
+          'text/plain; version=0.0.4; charset=utf-8'
+        );
         return;
       }
 

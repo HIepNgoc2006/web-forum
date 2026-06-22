@@ -82,6 +82,37 @@ test('SSE metrics report capacity warning and critical thresholds', () => {
   assert.equal(hub.metrics().capacityStatus, 'critical');
 });
 
+test('SSE metrics read alert thresholds from env and keep warning before critical', () => {
+  const originalWarn = process.env.SSE_WARN_PCT;
+  const originalCritical = process.env.SSE_CRITICAL_PCT;
+  process.env.SSE_WARN_PCT = '95';
+  process.env.SSE_CRITICAL_PCT = '80';
+
+  try {
+    const hub = createRealtimeHub({ maxClients: 10, heartbeatMs: 0 });
+    for (let i = 0; i < 8; i++) {
+      hub.handle(createRequest(), createResponse());
+    }
+    assert.deepEqual(hub.metrics().thresholds, { warnPct: 80, criticalPct: 95 });
+    assert.equal(hub.metrics().capacityStatus, 'warning');
+    for (let i = 0; i < 2; i++) {
+      hub.handle(createRequest(), createResponse());
+    }
+    assert.equal(hub.metrics().capacityStatus, 'critical');
+  } finally {
+    if (originalWarn === undefined) {
+      delete process.env.SSE_WARN_PCT;
+    } else {
+      process.env.SSE_WARN_PCT = originalWarn;
+    }
+    if (originalCritical === undefined) {
+      delete process.env.SSE_CRITICAL_PCT;
+    } else {
+      process.env.SSE_CRITICAL_PCT = originalCritical;
+    }
+  }
+});
+
 test('SSE hub drops a client when a write throws and keeps others', () => {
   const hub = createRealtimeHub({ maxClients: 10, heartbeatMs: 0 });
   const healthy = createResponse();
@@ -112,6 +143,20 @@ test('SSE hub counts backpressure when client write buffer is full', () => {
   // initial connected write + publish both report backpressure
   assert.ok(hub.metrics().backpressureEvents >= 1);
   assert.equal(hub.count(), 1);
+});
+
+test('SSE hub drops clients after repeated backpressure', () => {
+  const hub = createRealtimeHub({ maxClients: 10, heartbeatMs: 0, maxBackpressureEvents: 2 });
+  const slow = createResponse({ writeImpl: () => false });
+
+  hub.handle(createRequest(), slow);
+  assert.equal(hub.count(), 1);
+  hub.publish('thread:created', { id: 't1' });
+
+  assert.equal(hub.count(), 0);
+  assert.equal(slow.ended, true);
+  assert.equal(hub.metrics().backpressureDrops, 1);
+  assert.equal(hub.metrics().dropped, 1);
 });
 
 test('SSE heartbeat pings connected clients and is controllable', () => {
