@@ -239,6 +239,21 @@ async function closeTarget(targetId) {
   await fetch(`http://127.0.0.1:${chromeDebugPort}/json/close/${targetId}`).catch(() => {});
 }
 
+async function waitForPageUrl(cdp, expectedUrl) {
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const result = await cdp.send('Runtime.evaluate', {
+      expression: 'location.href',
+      returnByValue: true
+    });
+    if (result.result?.value === expectedUrl) {
+      return;
+    }
+    await sleep(100);
+  }
+  throw new Error(`Page did not reach ${expectedUrl}.`);
+}
+
 async function smokePage(page) {
   const target = await createTarget('about:blank');
   const cdp = new CdpSession(await connectWebSocket(target.webSocketDebuggerUrl));
@@ -266,17 +281,8 @@ async function smokePage(page) {
     }
 
     await cdp.send('Page.navigate', { url: page.url });
-    if (page.theme) {
-      await cdp.send('Runtime.evaluate', {
-        expression: `(() => {
-          localStorage.setItem('theme', ${JSON.stringify(page.theme)});
-          ${page.loginAdmin ? '' : 'location.reload();'}
-          return true;
-        })()`,
-        returnByValue: true
-      });
-    }
     if (page.loginAdmin) {
+      await waitForPageUrl(cdp, page.url);
       await cdp.send('Runtime.evaluate', {
         expression: `(async () => {
           const response = await fetch('/api/admin/login', {
@@ -289,12 +295,13 @@ async function smokePage(page) {
           }
           const payload = await response.json();
           localStorage.setItem('adminToken', payload.data.token);
-          location.reload();
           return true;
         })()`,
         awaitPromise: true,
         returnByValue: true
       });
+      await cdp.send('Page.reload', { ignoreCache: true });
+      await waitForPageUrl(cdp, page.url);
     }
 
     const deadline = Date.now() + 12000;
@@ -408,7 +415,9 @@ async function main() {
   }
 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), '36chan-browser-smoke-'));
-  const screenshotRoot = path.join(tempRoot, 'screenshots');
+  const screenshotRoot = process.env.VISUAL_SCREENSHOT_DIR
+    ? path.resolve(repoRoot, process.env.VISUAL_SCREENSHOT_DIR)
+    : path.join(tempRoot, 'screenshots');
   await mkdir(screenshotRoot, { recursive: true });
   const userDataDir = path.join(tempRoot, 'chrome-profile');
   const server = spawnProcess(process.execPath, [path.join(repoRoot, 'backend/server.js')], {
@@ -582,9 +591,26 @@ async function main() {
         checks: ['Danh mục', 'Sắp xếp theo:', 'Lọc:', 'Có ảnh', 'Bài kiểm thử browser smoke cho CI']
       },
       {
+        label: 'archive desktop',
+        url: `${baseUrl}/#archive/confession`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-archive-desktop.png'),
+        checks: ['Kho lưu trữ', 'Kho lưu trữ chưa có chủ đề']
+      },
+      {
         label: 'admin desktop',
         url: `${baseUrl}/#admin`,
+        screenshotPath: path.join(screenshotRoot, 'admin-login-desktop.png'),
         checks: ['Hàng đợi kiểm duyệt', 'Tài khoản', 'Đăng nhập']
+      },
+      {
+        label: 'account login desktop',
+        url: `${baseUrl}/#login`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-account-login-desktop.png'),
+        checks: ['Đăng nhập tài khoản', 'Tài khoản', 'Mật khẩu']
       },
       {
         label: 'account desktop',
@@ -650,7 +676,18 @@ async function main() {
         url: `${baseUrl}/#home`,
         width: 390,
         height: 844,
+        screenshotPath: path.join(screenshotRoot, 'home-mobile.png'),
         checks: ['36chan là gì?', 'Bảng', 'Bài mới nhất', 'Chủ đề đang theo dõi', 'Bài của tôi', 'Bảng đang theo dõi']
+      },
+      {
+        label: 'board mobile',
+        url: `${baseUrl}/#board/confession`,
+        width: 390,
+        height: 844,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-board-mobile.png'),
+        checks: ['Tạo chủ đề mới', 'Danh mục', 'Kho lưu trữ', 'Bài kiểm thử browser smoke cho CI']
       },
       {
         label: 'thread mobile',
@@ -661,6 +698,27 @@ async function main() {
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-thread-mobile.png'),
         checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI']
+      },
+      {
+        label: 'archive mobile',
+        url: `${baseUrl}/#archive/confession`,
+        width: 390,
+        height: 844,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-archive-mobile.png'),
+        checks: ['Kho lưu trữ', 'Kho lưu trữ chưa có chủ đề']
+      },
+      {
+        label: 'admin dashboard mobile',
+        url: `${baseUrl}/#admin`,
+        loginAdmin: true,
+        width: 390,
+        height: 844,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-admin-mobile.png'),
+        checks: ['AI chờ duyệt', 'Báo cáo', 'Đã duyệt', 'Nhật ký', 'Hàng đợi trống']
       }
     ];
 
@@ -669,6 +727,7 @@ async function main() {
     }
 
     console.log(`Browser smoke passed with ${chromePath}`);
+    console.log(`Screenshots saved to ${screenshotRoot}`);
   } finally {
     await stopProcess(server);
     await stopProcess(chrome);
