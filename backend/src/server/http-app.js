@@ -391,12 +391,12 @@ function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
   return { limiter: limiters.generic, key: `${ip}:generic:${method}:${pathname}` };
 }
 
-function enforceRateLimit(rate) {
+async function enforceRateLimit(rate) {
   if (!rate) {
     return;
   }
 
-  const result = rate.limiter.check(rate.key);
+  const result = await rate.limiter.check(rate.key);
   if (!result.ok) {
     const error = new Error(`Quá nhiều yêu cầu. Thử lại sau ${result.retryAfter}s`);
     error.statusCode = 429;
@@ -697,16 +697,24 @@ export function createHttpServer({
   adminUsername,
   adminPassword,
   staticRoot = path.resolve('public'),
-  uploadRoot = path.resolve('data/uploads')
+  uploadRoot = path.resolve('data/uploads'),
+  rateLimitStore,
+  rateLimitFailureMode = 'closed',
+  rateLimitLogger = (error) => console.error('RATE LIMIT STORE ERROR:', error)
 }) {
+  const sharedLimiterOptions = {
+    store: rateLimitStore,
+    failureMode: rateLimitFailureMode,
+    onStoreError: rateLimitLogger
+  };
   const limiters = {
-    thread: createRateLimiter({ limit: 5, windowMs: 60_000 }),
-    comment: createRateLimiter({ limit: 20, windowMs: 60_000 }),
-    ai: createRateLimiter({ limit: 8, windowMs: 60_000 }),
-    account: createRateLimiter({ limit: 20, windowMs: 60_000 }),
-    admin: createRateLimiter({ limit: 30, windowMs: 60_000 }),
-    search: createRateLimiter({ limit: 10, windowMs: 60_000 }),
-    generic: createRateLimiter({ limit: 60, windowMs: 60_000 })
+    thread: createRateLimiter({ ...sharedLimiterOptions, limit: 5, windowMs: 60_000 }),
+    comment: createRateLimiter({ ...sharedLimiterOptions, limit: 20, windowMs: 60_000 }),
+    ai: createRateLimiter({ ...sharedLimiterOptions, limit: 8, windowMs: 60_000 }),
+    account: createRateLimiter({ ...sharedLimiterOptions, limit: 20, windowMs: 60_000 }),
+    admin: createRateLimiter({ ...sharedLimiterOptions, limit: 30, windowMs: 60_000 }),
+    search: createRateLimiter({ ...sharedLimiterOptions, limit: 10, windowMs: 60_000 }),
+    generic: createRateLimiter({ ...sharedLimiterOptions, limit: 60, windowMs: 60_000 })
   };
 
   return http.createServer(async (request, response) => {
@@ -725,7 +733,7 @@ export function createHttpServer({
         return;
       }
 
-      enforceRateLimit(rateLimitForRequest({ method: request.method, pathname: routePath, parts, ip, limiters }));
+      await enforceRateLimit(rateLimitForRequest({ method: request.method, pathname: routePath, parts, ip, limiters }));
 
       if (request.method === 'GET' && routePath === '/api/config') {
         ok(response, publicConfig());

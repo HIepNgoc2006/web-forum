@@ -60,6 +60,10 @@ Important runtime values:
 - `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable AI summary/suggestions and provider-backed moderation.
 - `AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD`: optional default queue threshold for provider confidence, default `0` to keep every `Flagged` AI result in the admin queue. Admins can override it from the moderation UI. Accepts `0..1` or `0..100`; flagged results without confidence are still queued.
 - `MAX_IMAGE_BYTES`: upload payload limit.
+- `RATE_LIMIT_STORE`: `memory` by default, or `redis` to share HTTP rate counters across backend instances.
+- `RATE_LIMIT_REDIS_URL` or `REDIS_URL`: required when `RATE_LIMIT_STORE=redis`.
+- `RATE_LIMIT_FAILURE_MODE`: `closed` by default to deny requests when the shared limiter backend is unavailable; set `open` only when availability is preferred over strict abuse control.
+- `RATE_LIMIT_REDIS_PREFIX`: optional Redis key prefix for rate-limit counters.
 - `IMAGE_STORAGE_DRIVER`: `local` by default, or `s3` for S3-compatible object storage.
 - `UPLOAD_ROOT`: local disk folder for uploaded images, served as `/uploads/*` when `IMAGE_STORAGE_DRIVER=local`.
 - `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`: required when `IMAGE_STORAGE_DRIVER=s3`.
@@ -71,6 +75,14 @@ MongoDB is the production persistence store. Mongo storage uses Mongoose models 
 ```bash
 STORE_DRIVER=mongo
 MONGODB_URI=mongodb://127.0.0.1:27017/36chan
+```
+
+For horizontally scaled production backends, configure a shared limiter:
+
+```bash
+RATE_LIMIT_STORE=redis
+RATE_LIMIT_REDIS_URL=redis://127.0.0.1:6379
+RATE_LIMIT_FAILURE_MODE=closed
 ```
 
 For production readiness and Docker/deployment health checks, `GET /api/health` reports app status, store readiness, image storage readiness, AI provider configured state, hCaptcha configured state, safe counts, and model readiness without returning `MONGODB_URI`, admin credentials, API keys, hCaptcha secrets, storage endpoints, or other secret/raw environment values.

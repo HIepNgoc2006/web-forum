@@ -66,7 +66,10 @@ async function withServer(
     uploadRoot = path.resolve('data/uploads-test'),
     staticRoot,
     jwtSecret = 'secret',
-    realtime = { publish() {} }
+    realtime = { publish() {} },
+    rateLimitStore,
+    rateLimitFailureMode,
+    rateLimitLogger
   } = {}
 ) {
   const service = createForumService({
@@ -83,7 +86,10 @@ async function withServer(
     adminUsername: 'admin',
     adminPassword: 'pass',
     staticRoot,
-    uploadRoot
+    uploadRoot,
+    rateLimitStore,
+    rateLimitFailureMode,
+    rateLimitLogger
   });
   server.listen(0);
   await once(server, 'listening');
@@ -94,6 +100,23 @@ async function withServer(
     server.close();
     await once(server, 'close');
   }
+}
+
+function createCountingRateLimitStore({ fail = false } = {}) {
+  const counts = new Map();
+  const calls = [];
+  return {
+    calls,
+    async increment(key, { windowMs, now }) {
+      calls.push(key);
+      if (fail) {
+        throw new Error('shared limiter unavailable');
+      }
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      return { count, resetAt: now + windowMs };
+    }
+  };
 }
 
 async function withEnv(overrides, callback) {
@@ -1595,6 +1618,103 @@ test('http rate limits thread creation separately from comments', async () => {
     });
     assert.equal(comment.status, 201);
   });
+});
+
+test('http rate limits can share counters across server instances', async () => {
+  const rateLimitStore = createCountingRateLimitStore();
+
+  await withServer(
+    async (baseUrl) => {
+      for (let index = 0; index < 3; index += 1) {
+        const response = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: `Shared limiter A ${index}`,
+            captchaToken: 'dev-pass'
+          })
+        });
+        assert.equal(response.status, 201);
+      }
+    },
+    { rateLimitStore }
+  );
+
+  await withServer(
+    async (baseUrl) => {
+      for (let index = 0; index < 2; index += 1) {
+        const response = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: `Shared limiter B ${index}`,
+            captchaToken: 'dev-pass'
+          })
+        });
+        assert.equal(response.status, 201);
+      }
+
+      const limited = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Shared limiter should block',
+          captchaToken: 'dev-pass'
+        })
+      });
+      assert.equal(limited.status, 429);
+    },
+    { rateLimitStore }
+  );
+
+  assert.equal(rateLimitStore.calls.every((key) => key.includes(':thread:hoc-tap')), true);
+});
+
+test('http shared rate limiter failure mode can fail closed or open', async () => {
+  const closedStore = createCountingRateLimitStore({ fail: true });
+  const closedErrors = [];
+  await withServer(
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Fail closed',
+          captchaToken: 'dev-pass'
+        })
+      });
+      assert.equal(response.status, 429);
+    },
+    {
+      rateLimitStore: closedStore,
+      rateLimitFailureMode: 'closed',
+      rateLimitLogger(error) {
+        closedErrors.push(error.message);
+      }
+    }
+  );
+
+  const openStore = createCountingRateLimitStore({ fail: true });
+  await withServer(
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Fail open',
+          captchaToken: 'dev-pass'
+        })
+      });
+      assert.equal(response.status, 201);
+    },
+    {
+      rateLimitStore: openStore,
+      rateLimitFailureMode: 'open',
+      rateLimitLogger() {}
+    }
+  );
+
+  assert.deepEqual(closedErrors, ['shared limiter unavailable']);
 });
 
 test('http api exposes homepage stats aggregated from public content', async () => {

@@ -10,10 +10,11 @@ production store, and the current app already persists the AI summary cache and
 AI usage counters through the store layer.
 
 Redis, or another shared low-latency backend, should gate broad multi-instance
-traffic for rate counters. The current HTTP rate limiters use in-process
+traffic for rate counters. The default HTTP rate limiters use in-process
 fixed-window maps, so horizontal scaling multiplies the effective per-IP limit
 by the number of backend instances. That weakens auth, posting, search, and AI
-abuse controls. Follow-up #261 tracks a shared rate limiter backend.
+abuse controls. Follow-up #261 implemented a Redis-backed shared limiter option
+for multi-instance deployments.
 
 Catalog caching should not move to Redis yet. The catalog view is derived from
 the same thread listing data as board/archive pages, and the higher-priority
@@ -30,7 +31,7 @@ persisted in MongoDB in production.
 
 | Surface | Current implementation | Cache decision |
 | --- | --- | --- |
-| HTTP rate counters | `backend/src/core/security.js` exposes `createRateLimiter({ store })`; `backend/src/server/http-app.js` creates per-process limiters for thread, comment, AI, account, admin, search, and generic routes. | Add a shared backend before broad multi-instance traffic. |
+| HTTP rate counters | `backend/src/core/security.js` exposes `createRateLimiter({ store })`; `backend/src/core/rate-limit-store.js` provides Redis-backed atomic counters; `backend/src/server/http-app.js` creates scoped limiters for thread, comment, AI, account, admin, search, and generic routes. | Use `RATE_LIMIT_STORE=redis` before broad multi-instance traffic. |
 | AI summaries | `cacheSummary(...)` in `backend/src/core/forum-service.js` stores summaries in `state.aiSummaryCache` by fingerprint. `mongo-store.js` persists this as the `aiSummaryCache` key-value collection. | Keep store-backed cache. Redis hot cache is optional only if metrics show repeated hot-read pressure. |
 | AI daily budgets | `consumeAiBudget(...)` stores daily counters in `state.aiUsage`; Mongo persists them as the `aiUsage` key-value collection. | Keep store-backed counters for daily budgets; do not mix them with minute-scale HTTP limiter counters. |
 | Catalog/list reads | Frontend catalog rendering uses the normal board/thread data path. Backend list/archive responses are derived from store reads and service filtering/sorting. | Do not add Redis now. Prefer indexed/paginated Mongo reads and measured read latency first. |
@@ -81,7 +82,7 @@ Before implementing catalog caching, collect production/staging metrics for:
 
 | Issue | Recommendation | Release gate |
 | --- | --- | --- |
-| #261 | Add a shared Redis-compatible rate limiter backend with atomic increment/TTL, route-scoped failover policy, env-based wiring, and tests for auth/posting/AI buckets. | Required before broad multi-instance traffic. |
+| #261 | Add a shared Redis-compatible rate limiter backend with atomic increment/TTL, fail-open/fail-closed policy, env-based wiring, and tests for auth/posting/AI buckets. | Implemented; enable with `RATE_LIMIT_STORE=redis` before broad multi-instance traffic. |
 
 No follow-up is filed for catalog or AI summary Redis caching. Revisit those
 only after observability shows list-read latency or repeated AI summary hot
@@ -93,13 +94,14 @@ For controlled beta:
 
 - [x] MongoDB remains the production store.
 - [x] AI summary cache and AI daily budgets are persisted in MongoDB.
-- [x] In-process HTTP rate limiters are documented as single-instance only.
-- [x] Shared limiter follow-up filed as #261.
+- [x] In-process HTTP rate limiters remain the default for single-instance beta.
+- [x] Shared Redis limiter follow-up #261 is implemented and documented.
 
 Before broad multi-instance traffic:
 
-- [ ] Implement #261 or keep auth/posting/AI routes on a single backend
-      instance with load-balancer routing that does not multiply limits.
-- [ ] Add Redis/shared-limiter availability metrics and alerts if adopted.
+- [ ] Configure `RATE_LIMIT_STORE=redis` with `RATE_LIMIT_REDIS_URL` or keep
+      auth/posting/AI routes on a single backend instance with load-balancer
+      routing that does not multiply limits.
+- [ ] Add Redis/shared-limiter availability metrics and alerts.
 - [ ] Re-check catalog/list latency after Mongo read pagination and production
       traffic metrics are available.

@@ -53,7 +53,7 @@ Scrape `/metrics` or `/api/metrics` from each backend instance. `SSE_WARN_PCT` d
 | #116 | Define MongoDB write-path scale thresholds, run load tests, and plan incremental persistence or pagination. | P1 before broad traffic ramp |
 | #117 | Add production quota/cache observability for S3/R2 bandwidth, AI provider spend/rate limits, and CDN/static cache behavior. | P1 before broad traffic ramp |
 | #229 | Evaluate Redis/cache layer for catalog, AI summaries, and rate counters. | Documented in `phase-tracking/CACHE_LAYER_EVALUATION_2026-06-23.md`; Redis not required for single-instance beta |
-| #261 | Add shared rate limiter backend for multi-instance deployments. | Required before broad multi-instance traffic |
+| #261 | Add shared rate limiter backend for multi-instance deployments. | Implemented in repo; configure `RATE_LIMIT_STORE=redis` before broad multi-instance traffic |
 
 ## Release Readiness
 

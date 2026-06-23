@@ -12,6 +12,11 @@ import { appendMongoPostCreate, createMongoModels } from '../src/core/mongo-stor
 import { publicBoardConfig, publicConfig } from '../src/core/config.js';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
 import {
+  createRateLimitStoreFromEnv,
+  createRedisRateLimitStore,
+  normalizeRateLimitFailureMode
+} from '../src/core/rate-limit-store.js';
+import {
   assertProductionSecrets,
   createModerationFingerprint,
   createPosterHash,
@@ -3719,6 +3724,103 @@ test('rate limiter enforces the limit and accepts a shared Map-like backend', ()
   } finally {
     limiter.stop();
   }
+});
+
+test('rate limiter accepts an atomic async shared backend', async () => {
+  const counts = new Map();
+  const store = {
+    async increment(key, { windowMs, now }) {
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      return { count, resetAt: now + windowMs };
+    }
+  };
+  const limiter = createRateLimiter({ limit: 2, windowMs: 60_000, store, sweepIntervalMs: 0 });
+
+  assert.equal((await limiter.check('ip:thread:hoc-tap')).ok, true);
+  assert.equal((await limiter.check('ip:thread:hoc-tap')).ok, true);
+  const blocked = await limiter.check('ip:thread:hoc-tap');
+  assert.equal(blocked.ok, false);
+  assert.equal(blocked.remaining, 0);
+  assert.equal(blocked.retryAfter, 60);
+  assert.equal(limiter.size(), undefined);
+});
+
+test('rate limiter fail-open and fail-closed modes handle shared store errors', async () => {
+  const errors = [];
+  const store = {
+    async increment() {
+      throw new Error('redis unavailable');
+    }
+  };
+
+  const openLimiter = createRateLimiter({
+    limit: 2,
+    windowMs: 60_000,
+    store,
+    failureMode: 'open',
+    onStoreError(error) {
+      errors.push(error.message);
+    }
+  });
+  const closedLimiter = createRateLimiter({ limit: 2, windowMs: 60_000, store, failureMode: 'closed' });
+
+  assert.deepEqual(await openLimiter.check('k'), { ok: true, remaining: 1, degraded: true });
+  const closed = await closedLimiter.check('k');
+  assert.equal(closed.ok, false);
+  assert.equal(closed.retryAfter, 60);
+  assert.equal(closed.degraded, true);
+  assert.deepEqual(errors, ['redis unavailable']);
+});
+
+test('redis rate limit store increments with prefix and derives reset time from TTL', async () => {
+  const calls = [];
+  const store = createRedisRateLimitStore({
+    prefix: 'test:rl:',
+    client: {
+      async eval(script, options) {
+        calls.push({ script, options });
+        return [3, 1250];
+      }
+    }
+  });
+
+  const bucket = await store.increment('127.0.0.1:admin:POST:/api/admin/login', {
+    windowMs: 60_000,
+    now: 1000
+  });
+
+  assert.equal(bucket.count, 3);
+  assert.equal(bucket.resetAt, 2250);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].options.keys, ['test:rl:127.0.0.1:admin:POST:/api/admin/login']);
+  assert.deepEqual(calls[0].options.arguments, ['60000']);
+  assert.match(calls[0].script, /PEXPIRE/);
+});
+
+test('rate limit failure mode defaults closed and only accepts explicit open', () => {
+  assert.equal(normalizeRateLimitFailureMode(), 'closed');
+  assert.equal(normalizeRateLimitFailureMode('open'), 'open');
+  assert.equal(normalizeRateLimitFailureMode('OPEN'), 'open');
+  assert.equal(normalizeRateLimitFailureMode('fail-open'), 'closed');
+});
+
+test('rate limit store env factory keeps memory default and validates redis url', async () => {
+  const memory = await createRateLimitStoreFromEnv({
+    env: {
+      RATE_LIMIT_STORE: 'memory',
+      RATE_LIMIT_FAILURE_MODE: 'open'
+    }
+  });
+  assert.equal(memory.driver, 'memory');
+  assert.equal(memory.store, undefined);
+  assert.equal(memory.failureMode, 'open');
+  await memory.close();
+
+  await assert.rejects(
+    () => createRateLimitStoreFromEnv({ env: { RATE_LIMIT_STORE: 'redis' } }),
+    /RATE_LIMIT_STORE=redis requires/
+  );
 });
 
 test('login runs password verification even for unknown usernames (timing equalization)', async () => {

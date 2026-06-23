@@ -7,6 +7,7 @@ import { createForumService } from './src/core/forum-service.js';
 import { createJsonStore } from './src/core/forum-store.js';
 import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-storage.js';
 import { createMongoStore } from './src/core/mongo-store.js';
+import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.js';
 import { createHttpServer } from './src/server/http-app.js';
 import { createRealtimeHub } from './src/server/realtime.js';
 import { assertProductionSecrets } from './src/core/security.js';
@@ -71,6 +72,7 @@ const imageStorage =
   imageStorageDriver === 's3'
     ? createS3ImageStorage()
     : createLocalImageStorage({ root: uploadRoot });
+const rateLimit = await createRateLimitStoreFromEnv({ logger });
 const service = createForumService({
   store,
   ai: createAiClient(),
@@ -86,7 +88,23 @@ const server = createHttpServer({
   adminUsername: process.env.ADMIN_USERNAME,
   adminPassword: process.env.ADMIN_PASSWORD,
   staticRoot: await resolveStaticRoot(),
-  uploadRoot
+  uploadRoot,
+  rateLimitStore: rateLimit.store,
+  rateLimitFailureMode: rateLimit.failureMode,
+  rateLimitLogger: (error) => logger({
+    level: 'warn',
+    event: 'rate_limit.store.failure',
+    message: error?.message ?? String(error)
+  })
+});
+server.on('close', () => {
+  rateLimit.close().catch((error) => {
+    logger({
+      level: 'warn',
+      event: 'rate_limit.store.close_failed',
+      message: error?.message ?? String(error)
+    });
+  });
 });
 
 const port = Number(process.env.PORT ?? 3000);
@@ -94,6 +112,7 @@ server.listen(port, () => {
   console.log(`36chan đang chạy tại http://localhost:${port}`);
   console.log(`Store: ${storeDriver === 'mongo' ? 'MongoDB' : 'JSON'}`);
   console.log(`Image storage: ${imageStorageDriver === 's3' ? 'S3-compatible' : 'local disk'}`);
+  console.log(`Rate limit store: ${rateLimit.driver}${rateLimit.driver === 'redis' ? ` (${rateLimit.failureMode})` : ''}`);
   if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD || !process.env.JWT_SECRET) {
     console.log('Đăng nhập quản trị viên bị tắt cho đến khi cấu hình ADMIN_USERNAME, ADMIN_PASSWORD và JWT_SECRET.');
   }

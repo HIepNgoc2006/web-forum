@@ -247,21 +247,35 @@ export function getClientIp(request) {
  *    process alive; call `stop()` for deterministic cleanup in tests/shutdown.
  * 2. **Multi-instance**: a per-process Map is NOT shared across instances. With
  *    N processes behind a load balancer an attacker effectively gets N× the
- *    limit. To rate-limit across instances, pass a shared `store` that
- *    implements a synchronous Map-like interface (`get`/`set`/`delete` and
- *    iteration of `[key, { count, resetAt }]` entries) backed by e.g. Redis.
- *    Auth brute-force protection assumes such a shared counter at scale.
+ *    limit. To rate-limit across instances, pass a shared `store` with an
+ *    atomic async `increment(key, { windowMs, now })` method, or a Map-like
+ *    backend for tests/local composition. Auth brute-force protection assumes
+ *    such a shared counter at scale.
  *
  * @param {object} [options]
  * @param {number} [options.limit] max requests per window
  * @param {number} [options.windowMs] window length in ms
- * @param {Map} [options.store] optional shared, Map-like backend
+ * @param {Map|object} [options.store] optional shared backend
+ * @param {'closed'|'open'} [options.failureMode] behavior when shared store fails
+ * @param {Function} [options.onStoreError] optional shared-store error callback
  * @param {number} [options.sweepIntervalMs] eviction interval (0 disables)
  */
-export function createRateLimiter({ limit = 40, windowMs = 60_000, store, sweepIntervalMs = windowMs } = {}) {
+export function createRateLimiter({
+  limit = 40,
+  windowMs = 60_000,
+  store,
+  failureMode = 'closed',
+  onStoreError,
+  sweepIntervalMs = windowMs
+} = {}) {
   const buckets = store ?? new Map();
+  const hasAtomicIncrement = typeof buckets.increment === 'function';
+  const canSweep = !hasAtomicIncrement && typeof buckets[Symbol.iterator] === 'function' && typeof buckets.delete === 'function';
 
   function sweep(now = Date.now()) {
+    if (!canSweep) {
+      return;
+    }
     for (const [key, bucket] of buckets) {
       if (bucket.resetAt <= now) {
         buckets.delete(key);
@@ -270,16 +284,48 @@ export function createRateLimiter({ limit = 40, windowMs = 60_000, store, sweepI
   }
 
   let timer = null;
-  if (sweepIntervalMs > 0 && typeof setInterval === 'function') {
+  if (canSweep && sweepIntervalMs > 0 && typeof setInterval === 'function') {
     timer = setInterval(() => sweep(), sweepIntervalMs);
     if (typeof timer.unref === 'function') {
       timer.unref();
     }
   }
 
+  function resultFromBucket(bucket, now) {
+    const count = Number(bucket?.count) || 0;
+    const resetAt = Number(bucket?.resetAt) || now + windowMs;
+    const remaining = Math.max(0, limit - count);
+    return {
+      ok: count <= limit,
+      remaining,
+      retryAfter: Math.max(1, Math.ceil((resetAt - now) / 1000))
+    };
+  }
+
+  function resultFromStoreError(error) {
+    if (typeof onStoreError === 'function') {
+      onStoreError(error);
+    }
+    if (failureMode === 'open') {
+      return { ok: true, remaining: Math.max(0, limit - 1), degraded: true };
+    }
+    return {
+      ok: false,
+      remaining: 0,
+      retryAfter: Math.max(1, Math.ceil(windowMs / 1000)),
+      degraded: true
+    };
+  }
+
   return {
     check(key) {
       const now = Date.now();
+      if (hasAtomicIncrement) {
+        return Promise.resolve(buckets.increment(key, { windowMs, now }))
+          .then((bucket) => resultFromBucket(bucket, now))
+          .catch((error) => resultFromStoreError(error));
+      }
+
       const current = buckets.get(key);
       if (!current || current.resetAt <= now) {
         buckets.set(key, { count: 1, resetAt: now + windowMs });
@@ -298,7 +344,7 @@ export function createRateLimiter({ limit = 40, windowMs = 60_000, store, sweepI
     },
     sweep,
     size() {
-      return typeof buckets.size === 'number' ? buckets.size : undefined;
+      return !hasAtomicIncrement && typeof buckets.size === 'number' ? buckets.size : undefined;
     },
     stop() {
       if (timer) {
