@@ -2934,6 +2934,214 @@ test('latest posts returns public threads and comments newest first', async () =
   assert.equal(latest[0].bodyLines[0].text, 'Binh luan cong khai');
 });
 
+test('recommended threads rank active public candidates with transparent scoring', async () => {
+  const service = createForumService({
+    store: createMemoryStore({
+      version: 1,
+      nextGlobalNumber: 10,
+      threads: [
+        {
+          id: 'thread-active',
+          boardSlug: 'hoc-tap',
+          body: 'Nhieu nguoi dang thao luan',
+          image: null,
+          globalNumber: 1,
+          posterHash: 'ID:ACTIVE',
+          isPending: false,
+          isDeleted: false,
+          moderationStatus: 'Safe',
+          moderationLabels: [],
+          votes: { up: 2, down: 0 },
+          createdAt: '2026-05-22T06:00:00.000Z',
+          bumpedAt: '2026-05-22T08:40:00.000Z'
+        },
+        {
+          id: 'thread-fresh',
+          boardSlug: 'hoc-tap',
+          body: 'Moi dang',
+          image: null,
+          globalNumber: 2,
+          posterHash: 'ID:FRESH',
+          isPending: false,
+          isDeleted: false,
+          moderationStatus: 'Safe',
+          moderationLabels: [],
+          createdAt: '2026-05-22T08:55:00.000Z',
+          bumpedAt: '2026-05-22T08:55:00.000Z'
+        },
+        {
+          id: 'thread-risky',
+          boardSlug: 'hoc-tap',
+          body: 'Moi dang nhung bi bao cao',
+          image: null,
+          globalNumber: 9,
+          posterHash: 'ID:RISKY',
+          isPending: false,
+          isDeleted: false,
+          moderationStatus: 'Safe',
+          moderationLabels: [],
+          votes: { up: 10, down: 0 },
+          createdAt: '2026-05-22T08:58:00.000Z',
+          bumpedAt: '2026-05-22T08:58:00.000Z'
+        },
+        {
+          id: 'thread-pending',
+          boardSlug: 'hoc-tap',
+          body: 'Dang cho duyet',
+          image: null,
+          globalNumber: 3,
+          posterHash: 'ID:PENDING',
+          isPending: true,
+          isDeleted: false,
+          moderationStatus: 'Flagged',
+          moderationLabels: ['Spam'],
+          createdAt: '2026-05-22T08:58:00.000Z',
+          bumpedAt: '2026-05-22T08:58:00.000Z'
+        },
+        {
+          id: 'thread-archived',
+          boardSlug: 'hoc-tap',
+          body: 'Da luu tru',
+          image: null,
+          globalNumber: 4,
+          posterHash: 'ID:ARCHIVED',
+          isPending: false,
+          isDeleted: false,
+          isArchived: true,
+          moderationStatus: 'Safe',
+          moderationLabels: [],
+          createdAt: '2026-05-22T08:50:00.000Z',
+          bumpedAt: '2026-05-22T08:50:00.000Z'
+        },
+        {
+          id: 'thread-stale',
+          boardSlug: 'hoc-tap',
+          body: 'Qua cu',
+          image: null,
+          globalNumber: 5,
+          posterHash: 'ID:STALE',
+          isPending: false,
+          isDeleted: false,
+          moderationStatus: 'Safe',
+          moderationLabels: [],
+          createdAt: '2026-05-20T08:00:00.000Z',
+          bumpedAt: '2026-05-20T08:00:00.000Z'
+        }
+      ],
+      comments: [
+        {
+          id: 'comment-active-1',
+          threadId: 'thread-active',
+          boardSlug: 'hoc-tap',
+          body: 'Tra loi 1',
+          globalNumber: 6,
+          posterHash: 'ID:C1',
+          isPending: false,
+          isDeleted: false,
+          moderationStatus: 'Safe',
+          moderationLabels: [],
+          createdAt: '2026-05-22T08:30:00.000Z'
+        },
+        {
+          id: 'comment-active-2',
+          threadId: 'thread-active',
+          boardSlug: 'hoc-tap',
+          body: 'Tra loi 2',
+          globalNumber: 7,
+          posterHash: 'ID:C2',
+          isPending: false,
+          isDeleted: false,
+          moderationStatus: 'Safe',
+          moderationLabels: [],
+          createdAt: '2026-05-22T08:40:00.000Z'
+        },
+        {
+          id: 'comment-pending',
+          threadId: 'thread-active',
+          boardSlug: 'hoc-tap',
+          body: 'Pending',
+          globalNumber: 8,
+          posterHash: 'ID:C3',
+          isPending: true,
+          isDeleted: false,
+          moderationStatus: 'Flagged',
+          moderationLabels: ['Spam'],
+          createdAt: '2026-05-22T08:45:00.000Z'
+        }
+      ],
+      reports: [
+        {
+          id: 'report-risky-1',
+          postType: 'thread',
+          postId: 'thread-risky',
+          threadId: 'thread-risky',
+          boardSlug: 'hoc-tap',
+          globalNumber: 9,
+          category: 'Spam',
+          reason: 'Spam',
+          status: 'open',
+          createdAt: '2026-05-22T08:59:00.000Z'
+        },
+        {
+          id: 'report-risky-2',
+          postType: 'thread',
+          postId: 'thread-risky',
+          threadId: 'thread-risky',
+          boardSlug: 'hoc-tap',
+          globalNumber: 9,
+          category: 'Spam',
+          reason: 'Spam',
+          status: 'open',
+          createdAt: '2026-05-22T08:59:10.000Z'
+        },
+        {
+          id: 'report-risky-3',
+          postType: 'thread',
+          postId: 'thread-risky',
+          threadId: 'thread-risky',
+          boardSlug: 'hoc-tap',
+          globalNumber: 9,
+          category: 'Spam',
+          reason: 'Spam',
+          status: 'open',
+          createdAt: '2026-05-22T08:59:20.000Z'
+        },
+        {
+          id: 'report-risky-4',
+          postType: 'thread',
+          postId: 'thread-risky',
+          threadId: 'thread-risky',
+          boardSlug: 'hoc-tap',
+          globalNumber: 9,
+          category: 'Spam',
+          reason: 'Spam',
+          status: 'open',
+          createdAt: '2026-05-22T08:59:30.000Z'
+        }
+      ]
+    }),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T09:00:00.000Z')
+  });
+
+  const recommended = await service.listRecommendedThreads(10, { maxAgeHours: 24 });
+
+  assert.deepEqual(recommended.map((thread) => thread.id), ['thread-active', 'thread-fresh', 'thread-risky']);
+  assert.ok(recommended[0].recommendation.score > recommended[1].recommendation.score);
+  assert.ok(recommended[1].recommendation.score > recommended[2].recommendation.score);
+  assert.deepEqual(recommended[0].recommendation.reasons, [
+    'recent-activity',
+    'active-discussion',
+    'positive-votes'
+  ]);
+  assert.deepEqual(recommended[0].recommendation.sources, ['engagement', 'recent-activity']);
+  assert.equal(recommended[0].recommendation.features.replyCount, 2);
+  assert.equal(recommended[0].recommendation.features.recentReplyCount, 2);
+  assert.equal(recommended[2].recommendation.features.openReportCount, 4);
+  assert.ok(recommended[2].recommendation.reasons.includes('safety-penalty'));
+});
+
 test('hot boards count active public posts from the last 24 hours', async () => {
   const service = createForumService({
     store: createMemoryStore({

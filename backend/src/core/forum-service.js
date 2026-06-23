@@ -76,6 +76,10 @@ const PII_PRIORITY_LABELS = new Set(['PII Risk', 'PII']);
 const HIGH_RISK_REPORT_CATEGORIES = new Set(['PII', 'Illegal']);
 const PRIVILEGED_ACCOUNT_ROLES = new Set(['owner', 'admin', 'moderator', 'viewer']);
 const MANAGED_PRIVILEGED_ROLES = new Set(['owner', 'moderator', 'viewer']);
+const RECOMMENDED_THREAD_WINDOW_HOURS = 7 * 24;
+const RECOMMENDED_THREAD_MAX_LIMIT = 50;
+const RECOMMENDED_THREAD_HIGH_RISK_LABELS = new Set(['PII Risk', 'PII', 'Illegal', 'Hate Speech', 'Toxic']);
+const RECOMMENDED_THREAD_MEDIUM_RISK_LABELS = new Set(['Spam', 'Fake News']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -1296,6 +1300,148 @@ function compareBoardThreads(left, right) {
     if (stickiedCompare !== 0) {
       return stickiedCompare;
     }
+  }
+  const bumpedCompare = String(right.bumpedAt ?? '').localeCompare(String(left.bumpedAt ?? ''));
+  if (bumpedCompare !== 0) {
+    return bumpedCompare;
+  }
+  return Number(right.globalNumber) - Number(left.globalNumber);
+}
+
+function dateValue(value) {
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
+function hoursBetween(laterMs, earlierMs) {
+  if (!laterMs || !earlierMs) {
+    return 0;
+  }
+  return Math.max(0, (laterMs - earlierMs) / (60 * 60 * 1000));
+}
+
+function rounded(value, digits = 4) {
+  return Number(value.toFixed(digits));
+}
+
+function recommendedThreadCandidateSources(state, oldestActivityMs) {
+  const candidates = new Map();
+  const addCandidate = (thread, source) => {
+    if (!publicThread(state, thread) || !activePublicThread(thread)) {
+      return;
+    }
+    if (dateValue(thread.bumpedAt || thread.createdAt) < oldestActivityMs) {
+      return;
+    }
+    const candidate = candidates.get(thread.id) ?? { thread, sources: new Set() };
+    candidate.sources.add(source);
+    candidates.set(thread.id, candidate);
+  };
+
+  for (const thread of state.threads) {
+    addCandidate(thread, thread.isSticky ? 'sticky' : 'recent-activity');
+  }
+
+  for (const thread of state.threads) {
+    if (publicReplyCount(state, thread.id) > 0 || publicVotes(thread).score > 0 || mediaItems(thread).length > 0) {
+      addCandidate(thread, 'engagement');
+    }
+  }
+
+  return [...candidates.values()].map((candidate) => ({
+    thread: candidate.thread,
+    sources: [...candidate.sources].sort()
+  }));
+}
+
+function recommendedModerationRisk(thread) {
+  const labels = thread.moderationLabels ?? [];
+  const highRiskCount = labels.filter((label) => RECOMMENDED_THREAD_HIGH_RISK_LABELS.has(label)).length;
+  const mediumRiskCount = labels.filter((label) => RECOMMENDED_THREAD_MEDIUM_RISK_LABELS.has(label)).length;
+  const statusRisk = thread.moderationStatus && thread.moderationStatus !== 'Safe' ? 1 : 0;
+  const confidence = Number(thread.moderationConfidence);
+  const confidenceRisk = Number.isFinite(confidence) && confidence >= 0.8 ? 1 : 0;
+  return Math.min(5, highRiskCount * 2 + mediumRiskCount + statusRisk + confidenceRisk);
+}
+
+function recommendedThreadFeatures(state, thread, referenceDate, context = {}) {
+  const referenceMs = referenceDate.getTime();
+  const createdMs = dateValue(thread.createdAt);
+  const lastActivityAt = thread.bumpedAt || thread.createdAt;
+  const lastActivityMs = dateValue(lastActivityAt);
+  const oneDayAgoMs = referenceMs - 24 * 60 * 60 * 1000;
+  const replies = state.comments.filter((comment) => comment.threadId === thread.id && publicPost(comment));
+  const recentReplyCount = replies.filter((comment) => dateValue(comment.createdAt) >= oneDayAgoMs).length;
+  const votes = publicVotes(thread);
+  const openReportCount = context.reportCounts?.get(Number(thread.globalNumber)) ?? 0;
+  return {
+    sources: context.sources ?? [],
+    activityAgeHours: hoursBetween(referenceMs, lastActivityMs || createdMs),
+    threadAgeHours: hoursBetween(referenceMs, createdMs),
+    replyCount: replies.length,
+    recentReplyCount,
+    mediaCount: mediaItems(thread).length,
+    voteScore: votes.score,
+    upVotes: votes.up,
+    downVotes: votes.down,
+    openReportCount,
+    moderationRisk: recommendedModerationRisk(thread),
+    isSticky: Boolean(thread.isSticky)
+  };
+}
+
+function recommendedThreadReasons(features) {
+  const reasons = [];
+  if (features.activityAgeHours <= 6) {
+    reasons.push('recent-activity');
+  }
+  if (features.recentReplyCount >= 2) {
+    reasons.push('active-discussion');
+  }
+  if (features.mediaCount > 0) {
+    reasons.push('has-media');
+  }
+  if (features.voteScore > 0) {
+    reasons.push('positive-votes');
+  }
+  if (features.isSticky) {
+    reasons.push('sticky');
+  }
+  if (features.openReportCount > 0 || features.moderationRisk > 0 || features.downVotes > 0) {
+    reasons.push('safety-penalty');
+  }
+  return reasons;
+}
+
+function scoreRecommendedThread(features) {
+  const recencyScore = Math.exp(-features.activityAgeHours / 18) * 40;
+  const replyScore = Math.log1p(features.replyCount) * 8;
+  const recentReplyScore = Math.log1p(features.recentReplyCount) * 14;
+  const mediaScore = Math.min(features.mediaCount, 4) * 2;
+  const positiveVoteScore = Math.max(0, features.voteScore) * 3;
+  const negativeVotePenalty = Math.max(0, -features.voteScore) * 4;
+  const downVotePenalty = Math.min(features.downVotes, 10) * 2;
+  const reportPenalty = Math.min(features.openReportCount, 5) * 10;
+  const moderationPenalty = Math.min(features.moderationRisk, 5) * 6;
+  const stickyScore = features.isSticky ? 8 : 0;
+  return rounded(
+    recencyScore +
+      replyScore +
+      recentReplyScore +
+      mediaScore +
+      positiveVoteScore +
+      stickyScore -
+      negativeVotePenalty -
+      downVotePenalty -
+      reportPenalty -
+      moderationPenalty
+  );
+}
+
+function compareRecommendedThreads(left, right) {
+  const scoreCompare = Number(right.recommendation?.score || 0) - Number(left.recommendation?.score || 0);
+  if (scoreCompare !== 0) {
+    return scoreCompare;
   }
   const bumpedCompare = String(right.bumpedAt ?? '').localeCompare(String(left.bumpedAt ?? ''));
   if (bumpedCompare !== 0) {
@@ -2673,6 +2819,48 @@ export function createForumService({
         }));
 
       return [...threads, ...comments].sort(compareNewestPosts).slice(0, safeLimit);
+    },
+
+    async listRecommendedThreads(limit = 10, options = {}) {
+      const state = await store.read();
+      const referenceDate = now();
+      const referenceMs = referenceDate.getTime();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 10, RECOMMENDED_THREAD_MAX_LIMIT));
+      const maxAgeHours = Math.max(
+        1,
+        Math.min(Number(options.maxAgeHours) || RECOMMENDED_THREAD_WINDOW_HOURS, 30 * 24)
+      );
+      const oldestActivityMs = referenceMs - maxAgeHours * 60 * 60 * 1000;
+
+      const reportCounts = openReportCountsByGlobalNumber(state.reports);
+
+      return recommendedThreadCandidateSources(state, oldestActivityMs)
+        .map(({ thread, sources }) => {
+          const features = recommendedThreadFeatures(state, thread, referenceDate, { reportCounts, sources });
+          return {
+            ...serializeThread(thread, state.comments),
+            recommendation: {
+              sources,
+              score: scoreRecommendedThread(features),
+              reasons: recommendedThreadReasons(features),
+              features: {
+                sources: features.sources,
+                activityAgeHours: rounded(features.activityAgeHours, 1),
+                threadAgeHours: rounded(features.threadAgeHours, 1),
+                replyCount: features.replyCount,
+                recentReplyCount: features.recentReplyCount,
+                mediaCount: features.mediaCount,
+                voteScore: features.voteScore,
+                upVotes: features.upVotes,
+                downVotes: features.downVotes,
+                openReportCount: features.openReportCount,
+                moderationRisk: features.moderationRisk
+              }
+            }
+          };
+        })
+        .sort(compareRecommendedThreads)
+        .slice(0, safeLimit);
     },
 
     async listHotBoards(limit = 8) {

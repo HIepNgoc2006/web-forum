@@ -2060,6 +2060,57 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
   });
 });
 
+test('http api and feeds expose recommended threads', async () => {
+  await withServer(async (baseUrl) => {
+    const first = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Chu de co nhieu tuong tac',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const firstBody = await first.json();
+    await fetch(`${baseUrl}/api/threads/${firstBody.data.thread.id}/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Them mot goc nhin',
+        captchaToken: 'dev-pass'
+      })
+    });
+    await fetch(`${baseUrl}/api/boards/an-uong/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Chu de moi',
+        captchaToken: 'dev-pass'
+      })
+    });
+
+    const api = await fetch(`${baseUrl}/api/threads/recommended?limit=1`);
+    const apiBody = await api.json();
+    assert.equal(api.status, 200);
+    assert.equal(apiBody.data.length, 1);
+    assert.equal(typeof apiBody.data[0].recommendation.score, 'number');
+    assert.equal(Array.isArray(apiBody.data[0].recommendation.reasons), true);
+    assert.equal(Array.isArray(apiBody.data[0].recommendation.sources), true);
+    assert.equal(typeof apiBody.data[0].recommendation.features.openReportCount, 'number');
+
+    const json = await fetch(`${baseUrl}/feeds/recommended.json?limit=1`);
+    const jsonBody = await json.json();
+    assert.equal(json.status, 200);
+    assert.equal(jsonBody.title, '36chan - Chủ đề đề xuất');
+    assert.equal(jsonBody.items.length, 1);
+
+    const rss = await fetch(`${baseUrl}/feeds/recommended.rss?limit=1`);
+    const rssBody = await rss.text();
+    assert.equal(rss.status, 200);
+    assert.equal(rss.headers.get('content-type')?.includes('application/rss+xml'), true);
+    assert.equal(rssBody.includes('<rss version="2.0">'), true);
+  });
+});
+
 test('http api exposes hot boards for homepage discovery', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
