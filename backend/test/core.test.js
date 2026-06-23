@@ -3962,6 +3962,39 @@ test('AI TTS times out when provider does not respond', async () => {
   }
 });
 
+test('AI transcription times out when provider does not respond', async () => {
+  const originalFetch = global.fetch;
+  const envKeys = ['AI_PROVIDER', 'GOOGLE_AI_API_KEY', 'AI_FETCH_TIMEOUT_MS'];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  process.env.AI_PROVIDER = 'google-ai-studio';
+  process.env.GOOGLE_AI_API_KEY = 'google-test-key';
+  process.env.AI_FETCH_TIMEOUT_MS = '5';
+
+  global.fetch = async (_url, options) => {
+    await new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('aborted')));
+    });
+  };
+
+  try {
+    const ai = createAiClient();
+    await assert.rejects(
+      () => ai.transcribe({ data: 'AAAA', mimeType: 'audio/mpeg', filename: 'clip.mp3' }),
+      /quá thời gian chờ/
+    );
+  } finally {
+    global.fetch = originalFetch;
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
 test('AI Google client can route only speech-to-text through Groq Whisper', async () => {
   const originalFetch = global.fetch;
   const envKeys = [

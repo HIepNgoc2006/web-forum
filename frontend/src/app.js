@@ -135,6 +135,7 @@ const AUDIO_RECORDING_TYPES = [
   'audio/mp4',
   'audio/ogg;codecs=opus'
 ];
+const AI_TRANSCRIBE_TIMEOUT_MS = 60_000;
 const AI_SPEAK_TIMEOUT_MS = 60_000;
 
 function reportCategoryLabel(value) {
@@ -5484,6 +5485,7 @@ async function transcribeAudioFile(file, textarea) {
   try {
     const result = await api('/api/ai/transcribe', {
       method: 'POST',
+      timeoutMs: AI_TRANSCRIBE_TIMEOUT_MS,
       body: JSON.stringify({ data: dataUrl, mimeType: file.type, filename: file.name, posterToken: state.posterToken })
     });
     if (!result.text) {

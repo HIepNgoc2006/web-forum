@@ -355,11 +355,11 @@ async function transcribeOpenAiCompatible({ media, apiKey, baseUrl, model }) {
   const form = new FormData();
   form.append('file', new Blob([bytes], { type }), media.filename ?? 'audio.mp3');
   form.append('model', model);
-  const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+  const response = await fetchWithTimeout(`${baseUrl}/audio/transcriptions`, {
     method: 'POST',
     headers: { authorization: `Bearer ${apiKey}` },
     body: form
-  });
+  }, { operation: 'Chép audio' });
   if (!response.ok) {
     throw new Error(`Yêu cầu gỡ băng thất bại: ${response.status}`);
   }
@@ -437,11 +437,11 @@ function createGoogleProvider() {
     if (systemPrompt) {
       body.systemInstruction = { parts: [{ text: systemPrompt }] };
     }
-    const response = await fetch(endpoint, {
+    const response = await fetchWithTimeout(endpoint, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify(body)
-    });
+    }, { operation: 'Google AI' });
     if (!response.ok) {
       throw new Error(`Yêu cầu Google AI thất bại: ${response.status}`);
     }
