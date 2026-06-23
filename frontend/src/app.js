@@ -6308,7 +6308,12 @@ function bindEvents() {
     const hidePostButton = event.target.closest('[data-hide-post]');
     if (hidePostButton) {
       addLocalSetItem(hiddenPostsKey, hidePostButton.dataset.hidePost);
-      await loadThread().catch((error) => showToast(error.message));
+      const onThreadScreen = (window.location.hash || '').startsWith('#thread/') && state.threadId;
+      if (onThreadScreen) {
+        await loadThread().catch((error) => showToast(error.message));
+      } else {
+        hidePostButton.closest('article.post')?.remove();
+      }
       showToast('Đã ẩn bài trên trình duyệt này.');
       return;
     }
