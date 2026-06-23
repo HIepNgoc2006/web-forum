@@ -43,6 +43,7 @@ const state = {
   realtimeContextKey: '',
   browserNotificationIds: new Set(),
   boardThreads: [],
+  boardThreadsCache: new Map(),
   catalogThreads: [],
   catalogSort: 'bump',
   catalogImageSize: 'small',
@@ -334,6 +335,7 @@ const themeKey = 'theme';
 const homeBoardKey = 'homeBoard';
 const displayPreferencesKey = 'displayPreferences';
 const notificationPreferencesKey = 'notificationPreferences';
+const boardThreadsCachePrefix = 'boardThreadsCache:';
 const aiNotConfiguredMessage =
   'Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.';
 const MAX_MEDIA_PER_POST = 4;
@@ -1885,6 +1887,81 @@ function normalizeSearchValue(value = '') {
     .trim();
 }
 
+function boardThreadsCacheKey({
+  boardSlug = state.boardSlug,
+  page = state.boardPage,
+  pageSize = state.boardPageSize,
+  q = state.boardSearchTerm
+} = {}) {
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safePageSize = Math.max(1, Math.floor(Number(pageSize) || state.boardPageSize));
+  return [boardSlug, safePage, safePageSize, normalizeSearchValue(q)].join('|');
+}
+
+function firstBoardPageFromThreads(threads = [], { page = 1, pageSize = state.boardPageSize } = {}) {
+  const safePage = Math.max(1, Math.floor(Number(page) || 1));
+  const safePageSize = Math.max(1, Math.floor(Number(pageSize) || state.boardPageSize));
+  const offset = (safePage - 1) * safePageSize;
+  const total = threads.length;
+  return {
+    items: threads.slice(offset, offset + safePageSize),
+    page: safePage,
+    pageSize: safePageSize,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / safePageSize)),
+    hasMore: offset + safePageSize < total
+  };
+}
+
+function normalizeBoardThreadsPayload(payload) {
+  if (Array.isArray(payload)) {
+    return { threads: payload, meta: null };
+  }
+  const threads = Array.isArray(payload?.items) ? payload.items : [];
+  return { threads, meta: payload && typeof payload === 'object' ? payload : null };
+}
+
+function writeBoardThreadsCache(boardSlug, payload, options = {}) {
+  const { threads, meta } = normalizeBoardThreadsPayload(payload);
+  const pagePayload = meta || firstBoardPageFromThreads(threads, options);
+  const entry = {
+    threads: meta ? threads : pagePayload.items,
+    meta: pagePayload,
+    cachedAt: Date.now()
+  };
+  const key = boardThreadsCacheKey({
+    boardSlug,
+    page: pagePayload.page,
+    pageSize: pagePayload.pageSize,
+    q: options.q || ''
+  });
+  state.boardThreadsCache.set(key, entry);
+  try {
+    sessionStorage.setItem(`${boardThreadsCachePrefix}${key}`, JSON.stringify(entry));
+  } catch {
+    /* ignore storage limits */
+  }
+  return entry;
+}
+
+function readBoardThreadsCache(options = {}) {
+  const key = boardThreadsCacheKey(options);
+  const memoryEntry = state.boardThreadsCache.get(key);
+  if (memoryEntry) {
+    return memoryEntry;
+  }
+  try {
+    const parsed = JSON.parse(sessionStorage.getItem(`${boardThreadsCachePrefix}${key}`) || '');
+    if (parsed && Array.isArray(parsed.threads) && (!parsed.meta || typeof parsed.meta === 'object')) {
+      state.boardThreadsCache.set(key, parsed);
+      return parsed;
+    }
+  } catch {
+    /* ignore stale cache */
+  }
+  return null;
+}
+
 function findBoardByQuery(query) {
   const normalized = normalizeSearchValue(query);
   if (!normalized) {
@@ -2266,7 +2343,9 @@ async function loadHomeThreadsByBoard() {
   const entries = await Promise.all(
     state.boards.map(async (board) => {
       try {
-        return [board.slug, await api(`/api/boards/${board.slug}/threads`)];
+        const threads = await api(`/api/boards/${board.slug}/threads`);
+        writeBoardThreadsCache(board.slug, threads, { page: 1, pageSize: state.boardPageSize });
+        return [board.slug, threads];
       } catch {
         return [board.slug, []];
       }
@@ -3519,6 +3598,9 @@ async function bulkModerate(action) {
 async function loadHome() {
   setScreen('home');
   renderBoards();
+  renderHomeBoards();
+  renderMyPosts();
+  renderSubscribedBoards();
   const [threadsByBoard, latestPosts, watchedThreads, hotBoards, campusPulse, stats] = await Promise.all([
     loadHomeThreadsByBoard(),
     api('/api/posts/latest?limit=10'),
@@ -4123,6 +4205,7 @@ async function loadCatalog() {
   els.catalogSearchInput.value = '';
 
   const threads = await api(`/api/boards/${board.slug}/threads`);
+  writeBoardThreadsCache(board.slug, threads, { page: 1, pageSize: state.boardPageSize });
   state.catalogThreads = threads;
   if (!threads.length) {
     els.catalogGrid.innerHTML = '<p class="muted">Chưa có chủ đề công khai.</p>';
@@ -4246,6 +4329,25 @@ async function loadBoard() {
     closeThreadComposer();
   }
 
+  const cacheOptions = {
+    boardSlug: board.slug,
+    page: state.boardPage,
+    pageSize: state.boardPageSize,
+    q: state.boardSearchTerm
+  };
+  const requestKey = boardThreadsCacheKey(cacheOptions);
+  const cached = readBoardThreadsCache(cacheOptions);
+  if (cached) {
+    state.boardThreads = cached.threads;
+    state.boardPageMeta = cached.meta;
+    renderBoardThreads(cached.threads);
+  } else {
+    state.boardThreads = [];
+    state.boardPageMeta = null;
+    els.threadList.innerHTML = '<p class="muted">Đang tải chủ đề...</p>';
+    els.boardPagination.innerHTML = '';
+  }
+
   const query = new URLSearchParams({
     page: String(state.boardPage),
     pageSize: String(state.boardPageSize)
@@ -4254,10 +4356,17 @@ async function loadBoard() {
     query.set('q', state.boardSearchTerm.trim());
   }
   const payload = await api(`/api/boards/${board.slug}/threads?${query.toString()}`);
-  const threads = Array.isArray(payload) ? payload : payload.items || [];
-  state.boardThreads = threads;
-  state.boardPageMeta = Array.isArray(payload) ? null : payload;
-  renderBoardThreads(threads);
+  const entry = writeBoardThreadsCache(board.slug, payload, cacheOptions);
+  const stillOnBoard =
+    (window.location.hash || '').startsWith('#board/') &&
+    state.boardSlug === board.slug &&
+    boardThreadsCacheKey() === requestKey;
+  if (!stillOnBoard) {
+    return;
+  }
+  state.boardThreads = entry.threads;
+  state.boardPageMeta = entry.meta;
+  renderBoardThreads(entry.threads);
 }
 
 async function loadThread({ resetReply = false, focusPost = '' } = {}) {
