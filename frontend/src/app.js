@@ -26,6 +26,7 @@ const state = {
   quickReplyImage: [],
   audioRecorders: {},
   audioTranscribing: new Set(),
+  audioTranscriptionControllers: new Map(),
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,
@@ -1814,7 +1815,7 @@ async function loadAccountSettings() {
 }
 
 async function api(path, options = {}) {
-  const { auth = 'admin', timeoutMs, ...fetchOptions } = options;
+  const { auth = 'admin', timeoutMs, signal, ...fetchOptions } = options;
   const headers = { ...(options.headers || {}) };
   if (options.body && !headers['content-type']) {
     headers['content-type'] = 'application/json';
@@ -1827,13 +1828,24 @@ async function api(path, options = {}) {
 
   let timeoutId = null;
   let timedOut = false;
-  if (timeoutMs && window.AbortController) {
+  let abortListener = null;
+  if ((timeoutMs || signal) && window.AbortController) {
     const controller = new AbortController();
     fetchOptions.signal = controller.signal;
-    timeoutId = window.setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, timeoutMs);
+    if (signal?.aborted) {
+      controller.abort(signal.reason);
+    } else if (signal) {
+      abortListener = () => controller.abort(signal.reason);
+      signal.addEventListener('abort', abortListener, { once: true });
+    }
+    if (timeoutMs) {
+      timeoutId = window.setTimeout(() => {
+        timedOut = true;
+        controller.abort();
+      }, timeoutMs);
+    }
+  } else if (signal) {
+    fetchOptions.signal = signal;
   }
 
   let response;
@@ -1847,6 +1859,9 @@ async function api(path, options = {}) {
   } finally {
     if (timeoutId) {
       window.clearTimeout(timeoutId);
+    }
+    if (signal && abortListener) {
+      signal.removeEventListener('abort', abortListener);
     }
   }
   const payload = await response.json().catch(() => ({}));
@@ -5497,6 +5512,15 @@ function setAudioTranscribing(key, active) {
   }
 }
 
+function cancelAudioTranscription(key) {
+  const controller = key ? state.audioTranscriptionControllers.get(key) : null;
+  if (!controller) {
+    return false;
+  }
+  controller.abort();
+  return true;
+}
+
 // Reads an audio File as base64 and transcribes it into the given draft textarea.
 async function transcribeAudioFile(file, textarea, { activityKey = '' } = {}) {
   if (!state.aiConfigured) {
@@ -5505,6 +5529,10 @@ async function transcribeAudioFile(file, textarea, { activityKey = '' } = {}) {
   }
   if (!file) {
     return;
+  }
+  const controller = window.AbortController ? new AbortController() : null;
+  if (activityKey && controller) {
+    state.audioTranscriptionControllers.set(activityKey, controller);
   }
   setAudioTranscribing(activityKey, true);
   try {
@@ -5517,6 +5545,7 @@ async function transcribeAudioFile(file, textarea, { activityKey = '' } = {}) {
     const result = await api('/api/ai/transcribe', {
       method: 'POST',
       timeoutMs: AI_TRANSCRIBE_TIMEOUT_MS,
+      signal: controller?.signal,
       body: JSON.stringify({ data: dataUrl, mimeType: file.type, filename: file.name, posterToken: state.posterToken })
     });
     if (!result.text) {
@@ -5526,8 +5555,15 @@ async function transcribeAudioFile(file, textarea, { activityKey = '' } = {}) {
     appendDraftText(textarea, result.text);
     showToast('Đã chèn lời thoại vào nháp. Kiểm tra trước khi gửi.');
   } catch (error) {
+    if (error?.name === 'AbortError') {
+      showToast('Đã dừng chép audio.');
+      return;
+    }
     showToast(error.message);
   } finally {
+    if (activityKey) {
+      state.audioTranscriptionControllers.delete(activityKey);
+    }
     setAudioTranscribing(activityKey, false);
   }
 }
@@ -5537,11 +5573,13 @@ function setRecordButtonState(button, stateName) {
     return;
   }
   const recording = stateName === 'recording';
+  const transcribing = stateName === 'transcribing';
   button.classList.toggle('is-recording', recording);
-  button.setAttribute('aria-pressed', recording ? 'true' : 'false');
-  button.disabled = stateName === 'transcribing';
+  button.classList.toggle('is-transcribing', transcribing);
+  button.setAttribute('aria-pressed', recording || transcribing ? 'true' : 'false');
+  button.disabled = false;
   button.textContent =
-    stateName === 'recording' ? '[Dừng ghi âm]' : stateName === 'transcribing' ? '[Đang chép...]' : '[Ghi âm]';
+    stateName === 'recording' ? '[Dừng ghi âm]' : stateName === 'transcribing' ? '[Dừng chép]' : '[Ghi âm]';
 }
 
 function stopActiveAudioRecording(key) {
@@ -5552,6 +5590,12 @@ function stopActiveAudioRecording(key) {
 }
 
 async function toggleAudioRecording({ key, button, textarea }) {
+  if (state.audioTranscribing.has(key)) {
+    if (!cancelAudioTranscription(key)) {
+      showToast('Đang dừng chép audio...');
+    }
+    return;
+  }
   if (state.audioRecorders[key]?.recorder?.state === 'recording') {
     stopActiveAudioRecording(key);
     return;
@@ -6300,11 +6344,25 @@ function bindEvents() {
     captionAttachedImage({ stateKey: 'commentImage', textarea: els.commentBody, mode: 'ocr' })
   );
   els.threadAudio?.addEventListener('change', async () => {
-    await transcribeAudioFile(els.threadAudio.files?.[0], els.threadBody, { activityKey: 'thread-upload' });
+    els.threadAudio.disabled = true;
+    setRecordButtonState(els.threadRecordButton, 'transcribing');
+    try {
+      await transcribeAudioFile(els.threadAudio.files?.[0], els.threadBody, { activityKey: 'thread' });
+    } finally {
+      els.threadAudio.disabled = false;
+      setRecordButtonState(els.threadRecordButton, 'idle');
+    }
     els.threadAudio.value = '';
   });
   els.commentAudio?.addEventListener('change', async () => {
-    await transcribeAudioFile(els.commentAudio.files?.[0], els.commentBody, { activityKey: 'comment-upload' });
+    els.commentAudio.disabled = true;
+    setRecordButtonState(els.commentRecordButton, 'transcribing');
+    try {
+      await transcribeAudioFile(els.commentAudio.files?.[0], els.commentBody, { activityKey: 'comment' });
+    } finally {
+      els.commentAudio.disabled = false;
+      setRecordButtonState(els.commentRecordButton, 'idle');
+    }
     els.commentAudio.value = '';
   });
   els.threadRecordButton?.addEventListener('click', () =>

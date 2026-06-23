@@ -2619,6 +2619,11 @@ body.theme-yotsuba.board-page .topbar {
   font-weight: bold;
 }
 
+.audio-record-button.is-transcribing {
+  color: #8a4b00;
+  font-weight: bold;
+}
+
 .board-page textarea {
   min-height: 70px;
 }
