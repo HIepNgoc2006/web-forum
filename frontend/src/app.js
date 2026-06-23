@@ -135,6 +135,7 @@ const AUDIO_RECORDING_TYPES = [
   'audio/mp4',
   'audio/ogg;codecs=opus'
 ];
+const AI_SPEAK_TIMEOUT_MS = 60_000;
 
 function reportCategoryLabel(value) {
   return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
@@ -1811,7 +1812,7 @@ async function loadAccountSettings() {
 }
 
 async function api(path, options = {}) {
-  const { auth = 'admin', ...fetchOptions } = options;
+  const { auth = 'admin', timeoutMs, ...fetchOptions } = options;
   const headers = { ...(options.headers || {}) };
   if (options.body && !headers['content-type']) {
     headers['content-type'] = 'application/json';
@@ -1822,7 +1823,30 @@ async function api(path, options = {}) {
     headers.authorization = `Bearer ${state.token}`;
   }
 
-  const response = await fetch(path, { ...fetchOptions, headers });
+  let timeoutId = null;
+  let timedOut = false;
+  if (timeoutMs && window.AbortController) {
+    const controller = new AbortController();
+    fetchOptions.signal = controller.signal;
+    timeoutId = window.setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, timeoutMs);
+  }
+
+  let response;
+  try {
+    response = await fetch(path, { ...fetchOptions, headers });
+  } catch (error) {
+    if (timedOut) {
+      throw new Error('AI phản hồi quá lâu, vui lòng thử lại.', { cause: error });
+    }
+    throw error;
+  } finally {
+    if (timeoutId) {
+      window.clearTimeout(timeoutId);
+    }
+  }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
     const error = new Error(payload.error?.message || 'Yêu cầu thất bại');
@@ -5361,6 +5385,7 @@ async function speakPost(button) {
   try {
     const result = await api('/api/ai/speak', {
       method: 'POST',
+      timeoutMs: AI_SPEAK_TIMEOUT_MS,
       body: JSON.stringify({ text: text.slice(0, 2000), posterToken: state.posterToken })
     });
     if (aiAudioPlayer) {

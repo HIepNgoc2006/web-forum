@@ -3870,7 +3870,7 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
   }
 });
 
-test('AI Google TTS uses generateContent audio response and returns WAV audio', async () => {
+test('AI Google TTS uses interactions audio response and returns WAV audio', async () => {
   const originalFetch = global.fetch;
   const envKeys = ['AI_PROVIDER', 'GOOGLE_AI_API_KEY', 'GOOGLE_TTS_MODEL'];
   const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
@@ -3905,19 +3905,51 @@ test('AI Google TTS uses generateContent audio response and returns WAV audio', 
 
     assert.equal(
       capturedRequests[0].url,
-      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=google-test-key'
+      'https://generativelanguage.googleapis.com/v1beta/interactions'
     );
     assert.equal(capturedRequests[0].options.headers['content-type'], 'application/json');
+    assert.equal(capturedRequests[0].options.headers['x-goog-api-key'], 'google-test-key');
 
     const body = JSON.parse(capturedRequests[0].options.body);
-    assert.deepEqual(body.generationConfig.responseModalities, ['AUDIO']);
-    assert.equal(body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Kore');
-    assert.equal(body.contents[0].parts[0].text.includes('test@example.com'), false);
+    assert.equal(body.model, 'gemini-3.1-flash-tts-preview');
+    assert.deepEqual(body.response_format, { type: 'audio' });
+    assert.deepEqual(body.generation_config.speech_config, [{ voice: 'Kore' }]);
+    assert.equal(body.input.includes('test@example.com'), false);
 
     const wav = Buffer.from(result.data, 'base64');
     assert.equal(result.mimeType, 'audio/wav');
     assert.equal(wav.subarray(0, 4).toString('ascii'), 'RIFF');
     assert.equal(wav.subarray(8, 12).toString('ascii'), 'WAVE');
+  } finally {
+    global.fetch = originalFetch;
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
+test('AI TTS times out when provider does not respond', async () => {
+  const originalFetch = global.fetch;
+  const envKeys = ['AI_PROVIDER', 'GOOGLE_AI_API_KEY', 'AI_FETCH_TIMEOUT_MS'];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  process.env.AI_PROVIDER = 'google-ai-studio';
+  process.env.GOOGLE_AI_API_KEY = 'google-test-key';
+  process.env.AI_FETCH_TIMEOUT_MS = '5';
+
+  global.fetch = async (_url, options) => {
+    await new Promise((resolve, reject) => {
+      options.signal.addEventListener('abort', () => reject(new Error('aborted')));
+    });
+  };
+
+  try {
+    const ai = createAiClient();
+    await assert.rejects(() => ai.speak('Xin chào'), /quá thời gian chờ/);
   } finally {
     global.fetch = originalFetch;
     for (const key of envKeys) {

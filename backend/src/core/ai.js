@@ -116,6 +116,28 @@ const AUDIO_MIME_TYPES = new Set([
   'audio/flac'
 ]);
 
+function aiFetchTimeoutMs() {
+  const value = Number(process.env.AI_FETCH_TIMEOUT_MS);
+  return Number.isFinite(value) && value > 0 ? value : 45_000;
+}
+
+async function fetchWithTimeout(url, options = {}, { operation = 'AI', timeoutMs = aiFetchTimeoutMs() } = {}) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      const timeoutError = new Error(`${operation} quá thời gian chờ. Vui lòng thử lại.`);
+      timeoutError.statusCode = 504;
+      throw timeoutError;
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function mimeTypeFromDataUrl(data = '') {
   const value = String(data);
   if (!value.startsWith('data:')) {
@@ -551,30 +573,20 @@ ${redactSensitiveText(text)}
 
     async speak(text, { voice } = {}) {
       const apiKey = requireGoogleAiKey();
-      const model = process.env.GOOGLE_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-      const response = await fetch(endpoint, {
+      const model = process.env.GOOGLE_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
+      const endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+      const response = await fetchWithTimeout(endpoint, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}` }]
-            }
-          ],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: voice || 'Kore'
-                }
-              }
-            }
+          model,
+          input: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}`,
+          response_format: { type: 'audio' },
+          generation_config: {
+            speech_config: [{ voice: voice || 'Kore' }]
           }
         })
-      });
+      }, { operation: 'Google TTS' });
       if (!response.ok) {
         throw new Error(`Yêu cầu Google TTS thất bại: ${response.status}`);
       }
@@ -805,7 +817,7 @@ ${redactSensitiveText(text)}
 
     async speak(text, { voice = 'alloy' } = {}) {
       const ttsModel = process.env.OPENAI_TTS_MODEL || 'tts-1';
-      const response = await fetch(`${baseUrl}/audio/speech`, {
+      const response = await fetchWithTimeout(`${baseUrl}/audio/speech`, {
         method: 'POST',
         headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
@@ -814,7 +826,7 @@ ${redactSensitiveText(text)}
           voice,
           response_format: 'mp3'
         })
-      });
+      }, { operation: 'TTS' });
       if (!response.ok) {
         throw new Error(`Yêu cầu chuyển văn bản thành giọng nói thất bại: ${response.status}`);
       }
