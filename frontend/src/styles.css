@@ -831,6 +831,12 @@ button {
   line-height: 1.15;
 }
 
+.policy-jump-links {
+  margin-top: 8px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
 .policy-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -841,6 +847,7 @@ button {
   border: 1px solid #800;
   background: #fff;
   color: #111;
+  scroll-margin-top: 54px;
 }
 
 .policy-box h2 {

@@ -4505,9 +4505,20 @@ async function loadAdmin() {
   }
 }
 
-function loadPolicy() {
+function loadPolicy(section = '') {
   setScreen('policy');
-  window.scrollTo({ top: 0 });
+  const sectionId = {
+    rules: 'policy-rules',
+    privacy: 'policy-rules',
+    feedback: 'policy-feedback',
+    report: 'policy-report',
+    contact: 'policy-contact'
+  }[section];
+  if (sectionId) {
+    document.querySelector(`#${sectionId}`)?.scrollIntoView({ block: 'start' });
+  } else {
+    window.scrollTo({ top: 0 });
+  }
 }
 
 function route() {
@@ -4518,7 +4529,7 @@ function route() {
   if (name === 'home' || !name) {
     loadHome().catch((error) => showToast(error.message));
   } else if (name === 'policy') {
-    loadPolicy();
+    loadPolicy(id || '');
   } else if (name === 'register') {
     els.registerForm.classList.remove('hidden');
     els.registerRecoveryNotice.classList.add('hidden');

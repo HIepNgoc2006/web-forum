@@ -145,10 +145,10 @@
             <a href="#board/random">Ngẫu nhiên</a>
           </nav>
           <p class="portal-small-links">
-            <a href="#policy">Nội quy & riêng tư</a> •
-            <a href="#board/hoi-dap">Góp ý</a> •
-            <a href="#policy">Cách báo cáo</a> •
-            <a href="#board/su-kien">Liên hệ</a>
+            <a href="#policy/rules">Nội quy & riêng tư</a> •
+            <a href="#policy/feedback">Góp ý</a> •
+            <a href="#policy/report">Cách báo cáo</a> •
+            <a href="#policy/contact">Liên hệ</a>
           </p>
           <p class="portal-copyright">
             Bản quyền © 2026 dự án sinh viên 36chan. Không liên kết với 4chan.
@@ -161,11 +161,17 @@
           <p class="path-chip">/policy/</p>
           <h1 id="policyTitle">Nội quy, riêng tư và báo cáo</h1>
           <p class="muted">Bản ngắn cho người dùng public trước khi đăng hoặc báo cáo bài viết.</p>
+          <nav class="policy-jump-links" aria-label="Mục chính sách">
+            [<a href="#policy/rules">Nội quy & riêng tư</a>]
+            [<a href="#policy/feedback">Góp ý</a>]
+            [<a href="#policy/report">Cách báo cáo</a>]
+            [<a href="#policy/contact">Liên hệ</a>]
+          </nav>
         </div>
 
         <div class="policy-grid">
-          <section class="policy-box" aria-labelledby="policyRulesTitle">
-            <h2 id="policyRulesTitle">Nội quy</h2>
+          <section id="policy-rules" class="policy-box" aria-labelledby="policyRulesTitle">
+            <h2 id="policyRulesTitle">Nội quy & riêng tư</h2>
             <ul>
               <li>Không đăng đe dọa, quấy rối, kích động thù ghét, spam hoặc nội dung bất hợp pháp.</li>
               <li>Không doxxing, không tố cáo cá nhân chưa kiểm chứng, không đăng ảnh riêng tư của người khác.</li>
@@ -191,12 +197,30 @@
             </ul>
           </section>
 
-          <section class="policy-box" aria-labelledby="policyReportTitle">
-            <h2 id="policyReportTitle">Báo cáo bài viết</h2>
+          <section id="policy-report" class="policy-box" aria-labelledby="policyReportTitle">
+            <h2 id="policyReportTitle">Cách báo cáo</h2>
             <ul>
               <li>Bấm <strong>[Báo cáo]</strong> dưới bài viết và nhập lý do ngắn, ví dụ: lộ số điện thoại, quấy rối, spam.</li>
               <li>Báo cáo đi vào hàng đợi admin; người báo cáo chỉ được lưu dưới dạng hash, không lộ poster token.</li>
               <li>Nếu có nguy cơ khẩn cấp ngoài đời thật, hãy liên hệ nhà trường hoặc cơ quan chức năng trước.</li>
+            </ul>
+          </section>
+
+          <section id="policy-feedback" class="policy-box" aria-labelledby="policyFeedbackTitle">
+            <h2 id="policyFeedbackTitle">Góp ý</h2>
+            <ul>
+              <li>Dùng bảng <a href="#board/hoi-dap">Hỏi đáp</a> cho góp ý public về tính năng, nội quy, lỗi hiển thị hoặc trải nghiệm sử dụng.</li>
+              <li>Viết góp ý cụ thể: vấn đề gặp phải, nơi xảy ra, ảnh hưởng và gợi ý cải thiện nếu có.</li>
+              <li>Không đưa thông tin riêng tư của người khác vào bài góp ý; hãy dùng báo cáo nếu nội dung cần xử lý kín.</li>
+            </ul>
+          </section>
+
+          <section id="policy-contact" class="policy-box" aria-labelledby="policyContactTitle">
+            <h2 id="policyContactTitle">Liên hệ</h2>
+            <ul>
+              <li>Vấn đề public hoặc câu hỏi chung: đăng tại <a href="#board/hoi-dap">Hỏi đáp</a> để admin và cộng đồng cùng phản hồi.</li>
+              <li>Vấn đề liên quan bài viết cụ thể, riêng tư hoặc vi phạm: dùng nút <strong>[Báo cáo]</strong> ngay dưới bài đó.</li>
+              <li>Yêu cầu khẩn cấp ngoài phạm vi diễn đàn nên gửi trực tiếp tới nhà trường, đơn vị quản lý hoặc cơ quan chức năng phù hợp.</li>
             </ul>
           </section>
         </div>
