@@ -2598,6 +2598,27 @@ body.theme-yotsuba.board-page .topbar {
   font-size: 12px;
 }
 
+.audio-transcribe-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.audio-transcribe-controls input {
+  flex: 1 1 180px;
+  min-width: 0;
+}
+
+.audio-record-button {
+  white-space: nowrap;
+}
+
+.audio-record-button.is-recording {
+  color: #b00020;
+  font-weight: bold;
+}
+
 .board-page textarea {
   min-height: 70px;
 }
