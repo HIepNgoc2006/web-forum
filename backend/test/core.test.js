@@ -3889,9 +3889,9 @@ test('AI Google TTS uses interactions audio response and returns WAV audio', asy
       async json() {
         return {
           interaction: {
-            output_audio: {
+            outputAudio: {
               data: rawPcm,
-              mime_type: 'audio/pcm;rate=24000'
+              mimeType: 'audio/pcm;rate=24000'
             }
           }
         };
@@ -3920,6 +3920,52 @@ test('AI Google TTS uses interactions audio response and returns WAV audio', asy
     assert.equal(result.mimeType, 'audio/wav');
     assert.equal(wav.subarray(0, 4).toString('ascii'), 'RIFF');
     assert.equal(wav.subarray(8, 12).toString('ascii'), 'WAVE');
+  } finally {
+    global.fetch = originalFetch;
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
+test('AI Google TTS retries when response has no audio block', async () => {
+  const originalFetch = global.fetch;
+  const envKeys = ['AI_PROVIDER', 'GOOGLE_AI_API_KEY', 'GOOGLE_TTS_MODEL'];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  process.env.AI_PROVIDER = 'google-ai-studio';
+  process.env.GOOGLE_AI_API_KEY = 'google-test-key';
+  process.env.GOOGLE_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
+
+  let attempts = 0;
+  const rawPcm = Buffer.from([4, 5, 6, 7]).toString('base64');
+  global.fetch = async () => {
+    attempts += 1;
+    return {
+      ok: true,
+      async json() {
+        return attempts === 1
+          ? { output_text: 'Xin lỗi, tôi không tạo được audio.' }
+          : {
+              output_audio: {
+                data: rawPcm,
+                mime_type: 'audio/pcm;rate=24000'
+              }
+            };
+      }
+    };
+  };
+
+  try {
+    const ai = createAiClient();
+    const result = await ai.speak('Xin chào');
+    assert.equal(attempts, 2);
+    assert.equal(result.mimeType, 'audio/wav');
+    assert.equal(Buffer.from(result.data, 'base64').subarray(0, 4).toString('ascii'), 'RIFF');
   } finally {
     global.fetch = originalFetch;
     for (const key of envKeys) {

@@ -330,22 +330,52 @@ function normalizeDuplicateResult(parsed = {}) {
   };
 }
 
-function extractGoogleAudioData(data = {}) {
-  const outputAudio = data.interaction?.output_audio ?? data.output_audio;
+function audioBlockData(outputAudio) {
   if (outputAudio?.data) {
     return {
       data: outputAudio.data,
       mimeType: outputAudio.mime_type ?? outputAudio.mimeType ?? 'audio/pcm;rate=24000'
     };
   }
+  return null;
+}
 
-  const inline = data.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
-  return inline?.data
-    ? {
-        data: inline.data,
-        mimeType: inline.mimeType ?? inline.mime_type ?? 'audio/pcm;rate=24000'
+function findGoogleAudioData(value, seen = new Set()) {
+  if (!value || typeof value !== 'object' || seen.has(value)) {
+    return null;
+  }
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      const audio = findGoogleAudioData(item, seen);
+      if (audio) {
+        return audio;
       }
-    : null;
+    }
+    return null;
+  }
+
+  const outputAudio = audioBlockData(value.output_audio ?? value.outputAudio);
+  if (outputAudio) {
+    return outputAudio;
+  }
+  const inline = value.inlineData ?? value.inline_data;
+  const inlineMimeType = inline?.mimeType ?? inline?.mime_type ?? '';
+  if (inline?.data && String(inlineMimeType).toLowerCase().startsWith('audio/')) {
+    return { data: inline.data, mimeType: inlineMimeType };
+  }
+
+  for (const child of Object.values(value)) {
+    const audio = findGoogleAudioData(child, seen);
+    if (audio) {
+      return audio;
+    }
+  }
+  return null;
+}
+
+function extractGoogleAudioData(data = {}) {
+  return findGoogleAudioData(data);
 }
 
 async function transcribeOpenAiCompatible({ media, apiKey, baseUrl, model }) {
@@ -575,25 +605,34 @@ ${redactSensitiveText(text)}
       const apiKey = requireGoogleAiKey();
       const model = process.env.GOOGLE_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
       const endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
-      const response = await fetchWithTimeout(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
-        body: JSON.stringify({
-          model,
-          input: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}`,
-          response_format: { type: 'audio' },
-          generation_config: {
-            speech_config: [{ voice: voice || 'Kore' }]
+      const body = JSON.stringify({
+        model,
+        input: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}`,
+        response_format: { type: 'audio' },
+        generation_config: {
+          speech_config: [{ voice: voice || 'Kore' }]
+        }
+      });
+      let audio = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const response = await fetchWithTimeout(endpoint, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+          body
+        }, { operation: 'Google TTS' });
+        if (!response.ok) {
+          if (attempt === 0 && response.status >= 500) {
+            continue;
           }
-        })
-      }, { operation: 'Google TTS' });
-      if (!response.ok) {
-        throw new Error(`Yêu cầu Google TTS thất bại: ${response.status}`);
+          throw new Error(`Yêu cầu Google TTS thất bại: ${response.status}`);
+        }
+        audio = extractGoogleAudioData(await response.json());
+        if (audio?.data) {
+          break;
+        }
       }
-      const data = await response.json();
-      const audio = extractGoogleAudioData(data);
       if (!audio?.data) {
-        throw new Error('Google TTS không trả về audio.');
+        throw new Error('Google TTS không trả về audio sau khi thử lại.');
       }
       const sampleRate = Number(/rate=(\d+)/.exec(audio.mimeType ?? '')?.[1]) || 24000;
       const pcm = Buffer.from(audio.data, 'base64');
