@@ -25,6 +25,7 @@ const state = {
   commentImage: [],
   quickReplyImage: [],
   audioRecorders: {},
+  audioTranscribing: new Set(),
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,
@@ -4045,6 +4046,18 @@ function stopAutoUpdateTimer() {
   }
 }
 
+function audioWorkInProgress() {
+  return (
+    state.audioTranscribing.size > 0 ||
+    Object.values(state.audioRecorders).some((item) => item?.recorder?.state === 'recording')
+  );
+}
+
+function postponeAutoUpdateForAudio() {
+  state.autoCountdown = 7;
+  syncAutoUpdateControls();
+}
+
 function resetAutoUpdateTimer() {
   stopAutoUpdateTimer();
   state.autoCountdown = 7;
@@ -4055,6 +4068,10 @@ function resetAutoUpdateTimer() {
   state.autoTimer = window.setInterval(() => {
     if (!(window.location.hash || '').startsWith('#thread/')) {
       stopAutoUpdateTimer();
+      return;
+    }
+    if (audioWorkInProgress()) {
+      postponeAutoUpdateForAudio();
       return;
     }
     state.autoCountdown -= 1;
@@ -5467,8 +5484,21 @@ function stopAudioStream(stream) {
   }
 }
 
+function setAudioTranscribing(key, active) {
+  if (!key) {
+    return;
+  }
+  if (active) {
+    state.audioTranscribing.add(key);
+    postponeAutoUpdateForAudio();
+  } else {
+    state.audioTranscribing.delete(key);
+    syncAutoUpdateControls();
+  }
+}
+
 // Reads an audio File as base64 and transcribes it into the given draft textarea.
-async function transcribeAudioFile(file, textarea) {
+async function transcribeAudioFile(file, textarea, { activityKey = '' } = {}) {
   if (!state.aiConfigured) {
     showToast(aiNotConfiguredMessage);
     return;
@@ -5476,13 +5506,14 @@ async function transcribeAudioFile(file, textarea) {
   if (!file) {
     return;
   }
-  const dataUrl = await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(new Error('Không đọc được tệp audio.'));
-    reader.readAsDataURL(file);
-  });
+  setAudioTranscribing(activityKey, true);
   try {
+    const dataUrl = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ''));
+      reader.onerror = () => reject(new Error('Không đọc được tệp audio.'));
+      reader.readAsDataURL(file);
+    });
     const result = await api('/api/ai/transcribe', {
       method: 'POST',
       timeoutMs: AI_TRANSCRIBE_TIMEOUT_MS,
@@ -5496,6 +5527,8 @@ async function transcribeAudioFile(file, textarea) {
     showToast('Đã chèn lời thoại vào nháp. Kiểm tra trước khi gửi.');
   } catch (error) {
     showToast(error.message);
+  } finally {
+    setAudioTranscribing(activityKey, false);
   }
 }
 
@@ -5531,8 +5564,8 @@ async function toggleAudioRecording({ key, button, textarea }) {
     showToast('Trình duyệt này chưa hỗ trợ ghi âm trực tiếp.');
     return;
   }
-  if (Object.values(state.audioRecorders).some((item) => item?.recorder?.state === 'recording')) {
-    showToast('Đang ghi âm ở form khác. Dừng bản ghi đó trước.');
+  if (audioWorkInProgress()) {
+    showToast('Đang xử lý audio ở form khác. Dừng hoặc đợi bản ghi đó trước.');
     return;
   }
 
@@ -5558,7 +5591,7 @@ async function toggleAudioRecording({ key, button, textarea }) {
         const type = recorder.mimeType || chunks[0]?.type || mimeType || 'audio/webm';
         const blob = new Blob(chunks, { type });
         const file = new File([blob], `recording-${Date.now()}.${audioExtension(type)}`, { type });
-        await transcribeAudioFile(file, textarea);
+        await transcribeAudioFile(file, textarea, { activityKey: key });
       } finally {
         state.audioRecorders[key] = null;
         setRecordButtonState(button, 'idle');
@@ -5567,15 +5600,18 @@ async function toggleAudioRecording({ key, button, textarea }) {
     recorder.addEventListener('error', () => {
       stopAudioStream(stream);
       state.audioRecorders[key] = null;
+      setAudioTranscribing(key, false);
       setRecordButtonState(button, 'idle');
       showToast('Ghi âm thất bại.');
     });
     state.audioRecorders[key] = { recorder, stream };
     recorder.start();
+    postponeAutoUpdateForAudio();
     setRecordButtonState(button, 'recording');
   } catch (error) {
     stopAudioStream(stream);
     state.audioRecorders[key] = null;
+    setAudioTranscribing(key, false);
     setRecordButtonState(button, 'idle');
     showToast(error?.name === 'NotAllowedError' ? 'Bạn chưa cấp quyền microphone.' : 'Không thể bắt đầu ghi âm.');
   }
@@ -5996,7 +6032,9 @@ function setupRealtime() {
       if (hash.startsWith('#home') || hash === '') {
         loadHome().catch(() => {});
       } else if (hash.startsWith('#thread/')) {
-        loadThread().catch(() => {});
+        if (!audioWorkInProgress()) {
+          loadThread().catch(() => {});
+        }
       } else if (hash.startsWith('#catalog/')) {
         loadCatalog().catch(() => {});
       } else if (hash.startsWith('#archive/')) {
@@ -6262,11 +6300,11 @@ function bindEvents() {
     captionAttachedImage({ stateKey: 'commentImage', textarea: els.commentBody, mode: 'ocr' })
   );
   els.threadAudio?.addEventListener('change', async () => {
-    await transcribeAudioFile(els.threadAudio.files?.[0], els.threadBody);
+    await transcribeAudioFile(els.threadAudio.files?.[0], els.threadBody, { activityKey: 'thread-upload' });
     els.threadAudio.value = '';
   });
   els.commentAudio?.addEventListener('change', async () => {
-    await transcribeAudioFile(els.commentAudio.files?.[0], els.commentBody);
+    await transcribeAudioFile(els.commentAudio.files?.[0], els.commentBody, { activityKey: 'comment-upload' });
     els.commentAudio.value = '';
   });
   els.threadRecordButton?.addEventListener('click', () =>
