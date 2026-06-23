@@ -517,6 +517,24 @@ function latestPostRssFeed(request, posts = []) {
   });
 }
 
+function recommendedThreadJsonFeed(request, threads = []) {
+  return jsonFeed({
+    request,
+    title: '36chan - Chủ đề đề xuất',
+    feedPath: '/feeds/recommended.json',
+    items: threads.map((thread) => postFeedItem(request, thread))
+  });
+}
+
+function recommendedThreadRssFeed(request, threads = []) {
+  return rssFeed({
+    request,
+    title: '36chan - Chủ đề đề xuất',
+    description: 'Chủ đề công khai được xếp hạng theo hoạt động gần đây và tín hiệu tương tác',
+    items: threads.map((thread) => postFeedItem(request, thread))
+  });
+}
+
 function hotBoardFeedItem(request, board = {}) {
   const url = absoluteUrl(request, `/#board/${encodeURIComponent(board.boardSlug)}`);
   const postCount = Number(board.postCountLast24h || 0);
@@ -794,6 +812,45 @@ export function createHttpServer({
           response,
           200,
           latestPostRssFeed(request, await service.listLatestPosts(url.searchParams.get('limit') ?? 20)),
+          'application/rss+xml; charset=utf-8'
+        );
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/threads/recommended') {
+        ok(
+          response,
+          await service.listRecommendedThreads(url.searchParams.get('limit') ?? 10, {
+            maxAgeHours: url.searchParams.get('maxAgeHours')
+          })
+        );
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/feeds/recommended.json') {
+        sendJson(
+          response,
+          200,
+          recommendedThreadJsonFeed(
+            request,
+            await service.listRecommendedThreads(url.searchParams.get('limit') ?? 20, {
+              maxAgeHours: url.searchParams.get('maxAgeHours')
+            })
+          )
+        );
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/feeds/recommended.rss') {
+        sendText(
+          response,
+          200,
+          recommendedThreadRssFeed(
+            request,
+            await service.listRecommendedThreads(url.searchParams.get('limit') ?? 20, {
+              maxAgeHours: url.searchParams.get('maxAgeHours')
+            })
+          ),
           'application/rss+xml; charset=utf-8'
         );
         return;
