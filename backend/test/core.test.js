@@ -3870,6 +3870,121 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
   }
 });
 
+test('AI Google TTS uses Interactions API and returns WAV audio', async () => {
+  const originalFetch = global.fetch;
+  const envKeys = ['AI_PROVIDER', 'GOOGLE_AI_API_KEY', 'GOOGLE_TTS_MODEL'];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  process.env.AI_PROVIDER = 'google-ai-studio';
+  process.env.GOOGLE_AI_API_KEY = 'google-test-key';
+  process.env.GOOGLE_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
+
+  const capturedRequests = [];
+  const rawPcm = Buffer.from([0, 1, 2, 3]).toString('base64');
+
+  global.fetch = async (url, options) => {
+    capturedRequests.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return {
+          interaction: {
+            output_audio: {
+              data: rawPcm,
+              mime_type: 'audio/pcm;rate=24000'
+            }
+          }
+        };
+      }
+    };
+  };
+
+  try {
+    const ai = createAiClient();
+    const result = await ai.speak('Xin chào test@example.com', { voice: 'Kore' });
+
+    assert.equal(capturedRequests[0].url, 'https://generativelanguage.googleapis.com/v1beta/interactions');
+    assert.equal(capturedRequests[0].options.headers['x-goog-api-key'], 'google-test-key');
+    assert.equal(capturedRequests[0].options.headers['content-type'], 'application/json');
+
+    const body = JSON.parse(capturedRequests[0].options.body);
+    assert.equal(body.model, 'gemini-3.1-flash-tts-preview');
+    assert.equal(body.response_format.type, 'audio');
+    assert.equal(body.generation_config.speech_config.voice_config[0].voice, 'Kore');
+    assert.equal(body.input.includes('test@example.com'), false);
+
+    const wav = Buffer.from(result.data, 'base64');
+    assert.equal(result.mimeType, 'audio/wav');
+    assert.equal(wav.subarray(0, 4).toString('ascii'), 'RIFF');
+    assert.equal(wav.subarray(8, 12).toString('ascii'), 'WAVE');
+  } finally {
+    global.fetch = originalFetch;
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
+test('AI Google client can route only speech-to-text through Groq Whisper', async () => {
+  const originalFetch = global.fetch;
+  const envKeys = [
+    'AI_PROVIDER',
+    'GOOGLE_AI_API_KEY',
+    'TRANSCRIBE_PROVIDER',
+    'TRANSCRIBE_BASE_URL',
+    'GROQ_API_KEY',
+    'TRANSCRIBE_MODEL'
+  ];
+  const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+
+  process.env.AI_PROVIDER = 'google-ai-studio';
+  process.env.GOOGLE_AI_API_KEY = 'google-test-key';
+  process.env.TRANSCRIBE_PROVIDER = 'openai-compatible';
+  process.env.TRANSCRIBE_BASE_URL = 'https://api.groq.com/openai/v1';
+  process.env.GROQ_API_KEY = 'groq-test-key';
+  process.env.TRANSCRIBE_MODEL = 'whisper-large-v3';
+
+  const capturedRequests = [];
+
+  global.fetch = async (url, options) => {
+    capturedRequests.push({ url, options });
+    return {
+      ok: true,
+      async json() {
+        return { text: 'Lời nói đã chép lại' };
+      }
+    };
+  };
+
+  try {
+    const ai = createAiClient();
+    const text = await ai.transcribe({
+      data: 'data:audio/webm;base64,AAAA',
+      mimeType: 'audio/webm',
+      filename: 'recording.webm'
+    });
+
+    assert.equal(text, 'Lời nói đã chép lại');
+    assert.equal(capturedRequests[0].url, 'https://api.groq.com/openai/v1/audio/transcriptions');
+    assert.equal(capturedRequests[0].options.headers.authorization, 'Bearer groq-test-key');
+    assert.equal(capturedRequests[0].options.body.get('model'), 'whisper-large-v3');
+    assert.equal(capturedRequests[0].options.body.get('file').type, 'audio/webm');
+  } finally {
+    global.fetch = originalFetch;
+    for (const key of envKeys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
 test('publicConfig reports OpenAI-compatible auto-detect when AI_PROVIDER is unset', () => {
   const envKeys = [
     'AI_PROVIDER',

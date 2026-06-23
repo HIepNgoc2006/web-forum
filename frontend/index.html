@@ -325,7 +325,12 @@
             </label>
             <label class="field-row">
               <span>Âm thanh → chữ</span>
-              <input id="threadAudio" type="file" accept="audio/*" />
+              <div class="audio-transcribe-controls">
+                <input id="threadAudio" type="file" accept="audio/*" />
+                <button id="threadRecordButton" class="ghost-button audio-record-button" type="button" aria-pressed="false">
+                  [Ghi âm]
+                </button>
+              </div>
             </label>
             <label class="field-row">
               <span>Mã xác minh</span>
@@ -393,6 +398,7 @@
         <div class="catalog-controls">
           <input id="catalogSearchInput" type="search" placeholder="Tìm OP..." autocomplete="off" aria-label="Tìm OP trong danh mục" />
           <span>Sắp xếp theo:</span>
+          <button class="link-button" data-catalog-sort="recommended" type="button">Đề xuất</button>
           <button class="link-button" data-catalog-sort="bump" type="button">Thứ tự đẩy lên</button>
           <button class="link-button" data-catalog-sort="latest-reply" type="button">Trả lời mới nhất</button>
           <button class="link-button" data-catalog-sort="created" type="button">Ngày tạo</button>
@@ -514,7 +520,12 @@
             </label>
             <label class="field-row">
               <span>Âm thanh → chữ</span>
-              <input id="commentAudio" type="file" accept="audio/*" />
+              <div class="audio-transcribe-controls">
+                <input id="commentAudio" type="file" accept="audio/*" />
+                <button id="commentRecordButton" class="ghost-button audio-record-button" type="button" aria-pressed="false">
+                  [Ghi âm]
+                </button>
+              </div>
             </label>
             <div id="commentImagePreview" class="image-preview hidden"></div>
             <p class="reply-notes">

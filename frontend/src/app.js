@@ -24,6 +24,7 @@ const state = {
   selectedImage: [],
   commentImage: [],
   quickReplyImage: [],
+  audioRecorders: {},
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,
@@ -126,6 +127,13 @@ const THREAD_TEMPLATES = [
     label: 'Góp ý',
     body: 'Mình muốn góp ý:\n- Vấn đề: ...\n- Ảnh hưởng: ...\n- Gợi ý cải thiện: ...\nMình viết để xây dựng, không nhắm vào cá nhân cụ thể.'
   }
+];
+
+const AUDIO_RECORDING_TYPES = [
+  'audio/webm;codecs=opus',
+  'audio/webm',
+  'audio/mp4',
+  'audio/ogg;codecs=opus'
 ];
 
 function reportCategoryLabel(value) {
@@ -836,6 +844,7 @@ const els = {
   threadAiRewriteLabel: document.querySelector('#threadAiRewriteLabel'),
   threadImage: document.querySelector('#threadImage'),
   threadAudio: document.querySelector('#threadAudio'),
+  threadRecordButton: document.querySelector('#threadRecordButton'),
   threadCaptionButton: document.querySelector('#threadCaptionButton'),
   threadOcrButton: document.querySelector('#threadOcrButton'),
   translateTarget: document.querySelector('#translateTarget'),
@@ -862,6 +871,7 @@ const els = {
   commentCaptcha: document.querySelector('#commentCaptcha'),
   commentImage: document.querySelector('#commentImage'),
   commentAudio: document.querySelector('#commentAudio'),
+  commentRecordButton: document.querySelector('#commentRecordButton'),
   commentCaptionButton: document.querySelector('#commentCaptionButton'),
   commentOcrButton: document.querySelector('#commentOcrButton'),
   commentImagePreview: document.querySelector('#commentImagePreview'),
@@ -4129,8 +4139,45 @@ function catalogThreadHtml(thread) {
   `;
 }
 
+function timestamp(value) {
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : 0;
+}
+
+function hoursSince(value) {
+  const time = timestamp(value);
+  if (!time) {
+    return 0;
+  }
+  return Math.max(0, (Date.now() - time) / (60 * 60 * 1000));
+}
+
+function catalogRecommendationScore(thread) {
+  const activityAgeHours = hoursSince(thread.bumpedAt || thread.createdAt);
+  const replyCount = Number(thread.replyCount || 0);
+  const mediaCount = mediaItemsFromPost(thread).length;
+  const voteScore = Number(thread.votes?.score || 0);
+  const recencyScore = Math.exp(-activityAgeHours / 18) * 40;
+  const replyScore = Math.log1p(replyCount) * 8;
+  const mediaScore = Math.min(mediaCount, 4) * 2;
+  const positiveVoteScore = Math.max(0, voteScore) * 3;
+  const negativeVotePenalty = Math.max(0, -voteScore) * 4;
+  const stickyScore = thread.isSticky ? 8 : 0;
+  return recencyScore + replyScore + mediaScore + positiveVoteScore + stickyScore - negativeVotePenalty;
+}
+
 function sortedCatalogThreads(threads) {
   const copy = [...threads];
+  if (state.catalogSort === 'recommended') {
+    return copy.sort((left, right) => {
+      const scoreCompare = catalogRecommendationScore(right) - catalogRecommendationScore(left);
+      if (scoreCompare !== 0) {
+        return scoreCompare;
+      }
+      const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+      return stickyCompare || right.bumpedAt.localeCompare(left.bumpedAt);
+    });
+  }
   if (state.catalogSort === 'created') {
     return copy.sort((left, right) => {
       const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
@@ -5357,6 +5404,43 @@ async function captionAttachedImage({ stateKey, textarea, mode = 'describe' } = 
   }
 }
 
+function appendDraftText(textarea, text) {
+  const prefix = textarea.value.trim() ? `${textarea.value.trim()}\n` : '';
+  textarea.value = `${prefix}${text}`;
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.focus();
+}
+
+function preferredAudioRecordingType() {
+  if (!window.MediaRecorder?.isTypeSupported) {
+    return '';
+  }
+  return AUDIO_RECORDING_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) || '';
+}
+
+function audioExtension(mimeType = '') {
+  const type = String(mimeType).toLowerCase();
+  if (type.includes('mp4')) {
+    return 'm4a';
+  }
+  if (type.includes('ogg')) {
+    return 'ogg';
+  }
+  if (type.includes('mpeg') || type.includes('mp3')) {
+    return 'mp3';
+  }
+  if (type.includes('wav')) {
+    return 'wav';
+  }
+  return 'webm';
+}
+
+function stopAudioStream(stream) {
+  for (const track of stream?.getTracks?.() || []) {
+    track.stop();
+  }
+}
+
 // Reads an audio File as base64 and transcribes it into the given draft textarea.
 async function transcribeAudioFile(file, textarea) {
   if (!state.aiConfigured) {
@@ -5381,12 +5465,92 @@ async function transcribeAudioFile(file, textarea) {
       showToast('Không nhận được nội dung từ audio.');
       return;
     }
-    const prefix = textarea.value.trim() ? `${textarea.value.trim()}\n` : '';
-    textarea.value = `${prefix}${result.text}`;
-    textarea.focus();
+    appendDraftText(textarea, result.text);
     showToast('Đã chèn lời thoại vào nháp. Kiểm tra trước khi gửi.');
   } catch (error) {
     showToast(error.message);
+  }
+}
+
+function setRecordButtonState(button, stateName) {
+  if (!button) {
+    return;
+  }
+  const recording = stateName === 'recording';
+  button.classList.toggle('is-recording', recording);
+  button.setAttribute('aria-pressed', recording ? 'true' : 'false');
+  button.disabled = stateName === 'transcribing';
+  button.textContent =
+    stateName === 'recording' ? '[Dừng ghi âm]' : stateName === 'transcribing' ? '[Đang chép...]' : '[Ghi âm]';
+}
+
+function stopActiveAudioRecording(key) {
+  const active = state.audioRecorders[key];
+  if (active?.recorder?.state === 'recording') {
+    active.recorder.stop();
+  }
+}
+
+async function toggleAudioRecording({ key, button, textarea }) {
+  if (state.audioRecorders[key]?.recorder?.state === 'recording') {
+    stopActiveAudioRecording(key);
+    return;
+  }
+  if (!state.aiConfigured) {
+    showToast(aiNotConfiguredMessage);
+    return;
+  }
+  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
+    showToast('Trình duyệt này chưa hỗ trợ ghi âm trực tiếp.');
+    return;
+  }
+  if (Object.values(state.audioRecorders).some((item) => item?.recorder?.state === 'recording')) {
+    showToast('Đang ghi âm ở form khác. Dừng bản ghi đó trước.');
+    return;
+  }
+
+  let stream = null;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mimeType = preferredAudioRecordingType();
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const chunks = [];
+    recorder.addEventListener('dataavailable', (event) => {
+      if (event.data?.size > 0) {
+        chunks.push(event.data);
+      }
+    });
+    recorder.addEventListener('stop', async () => {
+      stopAudioStream(stream);
+      setRecordButtonState(button, 'transcribing');
+      try {
+        if (!chunks.length) {
+          showToast('Không nhận được audio từ microphone.');
+          return;
+        }
+        const type = recorder.mimeType || chunks[0]?.type || mimeType || 'audio/webm';
+        const blob = new Blob(chunks, { type });
+        const file = new File([blob], `recording-${Date.now()}.${audioExtension(type)}`, { type });
+        await transcribeAudioFile(file, textarea);
+      } finally {
+        state.audioRecorders[key] = null;
+        setRecordButtonState(button, 'idle');
+      }
+    });
+    recorder.addEventListener('error', () => {
+      stopAudioStream(stream);
+      state.audioRecorders[key] = null;
+      setRecordButtonState(button, 'idle');
+      showToast('Ghi âm thất bại.');
+    });
+    state.audioRecorders[key] = { recorder, stream };
+    recorder.start();
+    setRecordButtonState(button, 'recording');
+  } catch (error) {
+    stopAudioStream(stream);
+    state.audioRecorders[key] = null;
+    setRecordButtonState(button, 'idle');
+    showToast(error?.name === 'NotAllowedError' ? 'Bạn chưa cấp quyền microphone.' : 'Không thể bắt đầu ghi âm.');
   }
 }
 
@@ -6078,6 +6242,12 @@ function bindEvents() {
     await transcribeAudioFile(els.commentAudio.files?.[0], els.commentBody);
     els.commentAudio.value = '';
   });
+  els.threadRecordButton?.addEventListener('click', () =>
+    toggleAudioRecording({ key: 'thread', button: els.threadRecordButton, textarea: els.threadBody })
+  );
+  els.commentRecordButton?.addEventListener('click', () =>
+    toggleAudioRecording({ key: 'comment', button: els.commentRecordButton, textarea: els.commentBody })
+  );
   els.threadImage.addEventListener(
     'change',
     handleImageInputChange(els.threadImage, { stateKey: 'selectedImage', preview: els.imagePreview })

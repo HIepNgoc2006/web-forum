@@ -288,6 +288,89 @@ function normalizeDuplicateResult(parsed = {}) {
   };
 }
 
+function extractGoogleAudioData(data = {}) {
+  const outputAudio = data.interaction?.output_audio ?? data.output_audio;
+  if (outputAudio?.data) {
+    return {
+      data: outputAudio.data,
+      mimeType: outputAudio.mime_type ?? outputAudio.mimeType ?? 'audio/pcm;rate=24000'
+    };
+  }
+
+  const inline = data.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
+  return inline?.data
+    ? {
+        data: inline.data,
+        mimeType: inline.mimeType ?? inline.mime_type ?? 'audio/pcm;rate=24000'
+      }
+    : null;
+}
+
+async function transcribeOpenAiCompatible({ media, apiKey, baseUrl, model }) {
+  assertAudioMedia(media);
+  const bytes = Buffer.from(rawBase64(media.data), 'base64');
+  const form = new FormData();
+  form.append('file', new Blob([bytes], { type: media.mimeType ?? 'audio/mpeg' }), media.filename ?? 'audio.mp3');
+  form.append('model', model);
+  const response = await fetch(`${baseUrl}/audio/transcriptions`, {
+    method: 'POST',
+    headers: { authorization: `Bearer ${apiKey}` },
+    body: form
+  });
+  if (!response.ok) {
+    throw new Error(`Yêu cầu gỡ băng thất bại: ${response.status}`);
+  }
+  const data = await response.json();
+  return String(data.text ?? '').trim();
+}
+
+function createTranscribeOverride() {
+  const provider = process.env.TRANSCRIBE_PROVIDER;
+  if (!provider) {
+    return null;
+  }
+  if (provider !== 'openai-compatible') {
+    const error = new Error('TRANSCRIBE_PROVIDER hiện chỉ hỗ trợ openai-compatible.');
+    error.statusCode = 503;
+    return {
+      async transcribe() {
+        throw error;
+      }
+    };
+  }
+
+  const apiKey =
+    process.env.TRANSCRIBE_API_KEY ||
+    process.env.GROQ_API_KEY ||
+    process.env.OPENAI_COMPATIBLE_API_KEY ||
+    process.env.OPENAI_API_KEY;
+  const baseUrl = process.env.TRANSCRIBE_BASE_URL || process.env.OPENAI_COMPATIBLE_BASE_URL || process.env.OPENAI_BASE_URL;
+  const model = process.env.TRANSCRIBE_MODEL || process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
+
+  if (!apiKey || !baseUrl) {
+    const error = new Error(
+      'Chưa cấu hình speech-to-text provider. Thêm TRANSCRIBE_API_KEY và TRANSCRIBE_BASE_URL vào backend/.env.'
+    );
+    error.statusCode = 503;
+    return {
+      async transcribe() {
+        throw error;
+      }
+    };
+  }
+
+  return {
+    async transcribe(media) {
+      return transcribeOpenAiCompatible({ media, apiKey, baseUrl, model });
+    }
+  };
+}
+
+function withTranscribeOverride(client) {
+  const override = createTranscribeOverride();
+  return override ? { ...client, transcribe: override.transcribe } : client;
+}
+
 // Google AI Provider
 function createGoogleProvider() {
   function requireGoogleAiKey() {
@@ -446,19 +529,20 @@ ${redactSensitiveText(text)}
     },
 
     async speak(text, { voice } = {}) {
-      // Use Gemini's native TTS via the generativelanguage endpoint so the same AI Studio
-      // key works (Cloud Text-to-Speech is a separate, separately-authorized API).
+      // Use Gemini's native TTS through the Interactions API so the AI Studio key
+      // works with current TTS models without Cloud Text-to-Speech credentials.
       const apiKey = requireGoogleAiKey();
-      const model = process.env.GOOGLE_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
+      const model = process.env.GOOGLE_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
+      const endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'content-type': 'application/json' },
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
         body: JSON.stringify({
-          contents: [{ role: 'user', parts: [{ text: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}` }] }],
-          generationConfig: {
-            responseModalities: ['AUDIO'],
-            speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice || 'Kore' } } }
+          model,
+          input: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}`,
+          response_format: { type: 'audio' },
+          generation_config: {
+            speech_config: { voice_config: [{ voice: voice || 'Kore' }] }
           }
         })
       });
@@ -466,12 +550,12 @@ ${redactSensitiveText(text)}
         throw new Error(`Yêu cầu Google TTS thất bại: ${response.status}`);
       }
       const data = await response.json();
-      const inline = data.candidates?.[0]?.content?.parts?.find((part) => part.inlineData)?.inlineData;
-      if (!inline?.data) {
+      const audio = extractGoogleAudioData(data);
+      if (!audio?.data) {
         throw new Error('Google TTS không trả về audio.');
       }
-      const sampleRate = Number(/rate=(\d+)/.exec(inline.mimeType ?? '')?.[1]) || 24000;
-      const pcm = Buffer.from(inline.data, 'base64');
+      const sampleRate = Number(/rate=(\d+)/.exec(audio.mimeType ?? '')?.[1]) || 24000;
+      const pcm = Buffer.from(audio.data, 'base64');
       return { data: pcmToWav(pcm, sampleRate).toString('base64'), mimeType: 'audio/wav' };
     }
   };
@@ -655,22 +739,8 @@ ${redactSensitiveText(text)}
     },
 
     async transcribe(media) {
-      assertAudioMedia(media);
       const transcribeModel = process.env.OPENAI_TRANSCRIBE_MODEL || 'whisper-1';
-      const bytes = Buffer.from(rawBase64(media.data), 'base64');
-      const form = new FormData();
-      form.append('file', new Blob([bytes], { type: media.mimeType ?? 'audio/mpeg' }), media.filename ?? 'audio.mp3');
-      form.append('model', transcribeModel);
-      const response = await fetch(`${baseUrl}/audio/transcriptions`, {
-        method: 'POST',
-        headers: { authorization: `Bearer ${apiKey}` },
-        body: form
-      });
-      if (!response.ok) {
-        throw new Error(`Yêu cầu gỡ băng thất bại: ${response.status}`);
-      }
-      const data = await response.json();
-      return String(data.text ?? '').trim();
+      return transcribeOpenAiCompatible({ media, apiKey, baseUrl, model: transcribeModel });
     },
 
     async caption(media, mode = 'describe') {
@@ -727,24 +797,29 @@ ${redactSensitiveText(text)}
 
 export function createAiClient() {
   const explicitProvider = process.env.AI_PROVIDER;
+  let client = null;
 
   if (explicitProvider === 'openai-compatible') {
-    return createOpenAiCompatibleProvider();
+    client = createOpenAiCompatibleProvider();
   } else if (explicitProvider === 'google' || explicitProvider === 'google-ai-studio') {
-    return createGoogleProvider();
+    client = createGoogleProvider();
   }
 
   // Auto-detect based on configured keys
-  if (process.env.GOOGLE_AI_API_KEY) {
-    return createGoogleProvider();
+  if (!client && process.env.GOOGLE_AI_API_KEY) {
+    client = createGoogleProvider();
   }
 
-  if ((process.env.OPENAI_COMPATIBLE_API_KEY && process.env.OPENAI_COMPATIBLE_BASE_URL) || (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL)) {
-    return createOpenAiCompatibleProvider();
+  if (
+    !client &&
+    ((process.env.OPENAI_COMPATIBLE_API_KEY && process.env.OPENAI_COMPATIBLE_BASE_URL) ||
+      (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL))
+  ) {
+    client = createOpenAiCompatibleProvider();
   }
 
   // Fallback with Google AI Studio warnings/errors for backward compatibility
-  return {
+  client = client ?? {
     async moderate(text) {
       return heuristicModeration(text);
     },
@@ -787,4 +862,6 @@ export function createAiClient() {
       throw notConfiguredError();
     }
   };
+
+  return withTranscribeOverride(client);
 }
