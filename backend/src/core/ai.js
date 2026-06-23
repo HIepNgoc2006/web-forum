@@ -116,6 +116,26 @@ const AUDIO_MIME_TYPES = new Set([
   'audio/flac'
 ]);
 
+function mimeTypeFromDataUrl(data = '') {
+  const value = String(data);
+  if (!value.startsWith('data:')) {
+    return '';
+  }
+  const comma = value.indexOf(',');
+  if (comma === -1) {
+    return '';
+  }
+  return value.slice(5, comma);
+}
+
+function normalizeMimeType(mimeType = '') {
+  return String(mimeType).split(';')[0].trim().toLowerCase();
+}
+
+function audioMimeType(media, fallback = 'audio/mpeg') {
+  return normalizeMimeType(media?.mimeType || mimeTypeFromDataUrl(media?.data) || fallback);
+}
+
 // Wraps raw little-endian PCM (s16) in a minimal WAV container so browsers can play it
 // from an <audio> element. Gemini TTS returns bare PCM (audio/L16), not a playable file.
 function pcmToWav(pcm, sampleRate = 24000, channels = 1, bitsPerSample = 16) {
@@ -150,7 +170,7 @@ function assertAudioMedia(media) {
     error.statusCode = 400;
     throw error;
   }
-  if (media.mimeType && !AUDIO_MIME_TYPES.has(media.mimeType)) {
+  if (!AUDIO_MIME_TYPES.has(audioMimeType(media))) {
     const error = new Error('Định dạng audio không được hỗ trợ.');
     error.statusCode = 415;
     throw error;
@@ -309,8 +329,9 @@ function extractGoogleAudioData(data = {}) {
 async function transcribeOpenAiCompatible({ media, apiKey, baseUrl, model }) {
   assertAudioMedia(media);
   const bytes = Buffer.from(rawBase64(media.data), 'base64');
+  const type = audioMimeType(media);
   const form = new FormData();
-  form.append('file', new Blob([bytes], { type: media.mimeType ?? 'audio/mpeg' }), media.filename ?? 'audio.mp3');
+  form.append('file', new Blob([bytes], { type }), media.filename ?? 'audio.mp3');
   form.append('model', model);
   const response = await fetch(`${baseUrl}/audio/transcriptions`, {
     method: 'POST',
@@ -506,7 +527,7 @@ ${redactSensitiveText(text)}
       assertAudioMedia(media);
       const data = await generateContent(
         [
-          { inlineData: { mimeType: media.mimeType ?? 'audio/mpeg', data: rawBase64(media.data) } },
+          { inlineData: { mimeType: audioMimeType(media), data: rawBase64(media.data) } },
           { text: 'Chép lại toàn bộ lời nói trong audio này.' }
         ],
         TRANSCRIBE_SYSTEM_PROMPT
@@ -529,20 +550,28 @@ ${redactSensitiveText(text)}
     },
 
     async speak(text, { voice } = {}) {
-      // Use Gemini's native TTS through the Interactions API so the AI Studio key
-      // works with current TTS models without Cloud Text-to-Speech credentials.
       const apiKey = requireGoogleAiKey();
-      const model = process.env.GOOGLE_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
-      const endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
+      const model = process.env.GOOGLE_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
       const response = await fetch(endpoint, {
         method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': apiKey },
+        headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          model,
-          input: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}`,
-          response_format: { type: 'audio' },
-          generation_config: {
-            speech_config: { voice_config: [{ voice: voice || 'Kore' }] }
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}` }]
+            }
+          ],
+          generationConfig: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: voice || 'Kore'
+                }
+              }
+            }
           }
         })
       });

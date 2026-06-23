@@ -3870,7 +3870,7 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
   }
 });
 
-test('AI Google TTS uses Interactions API and returns WAV audio', async () => {
+test('AI Google TTS uses generateContent audio response and returns WAV audio', async () => {
   const originalFetch = global.fetch;
   const envKeys = ['AI_PROVIDER', 'GOOGLE_AI_API_KEY', 'GOOGLE_TTS_MODEL'];
   const originalEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
@@ -3903,15 +3903,16 @@ test('AI Google TTS uses Interactions API and returns WAV audio', async () => {
     const ai = createAiClient();
     const result = await ai.speak('Xin chào test@example.com', { voice: 'Kore' });
 
-    assert.equal(capturedRequests[0].url, 'https://generativelanguage.googleapis.com/v1beta/interactions');
-    assert.equal(capturedRequests[0].options.headers['x-goog-api-key'], 'google-test-key');
+    assert.equal(
+      capturedRequests[0].url,
+      'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-tts-preview:generateContent?key=google-test-key'
+    );
     assert.equal(capturedRequests[0].options.headers['content-type'], 'application/json');
 
     const body = JSON.parse(capturedRequests[0].options.body);
-    assert.equal(body.model, 'gemini-3.1-flash-tts-preview');
-    assert.equal(body.response_format.type, 'audio');
-    assert.equal(body.generation_config.speech_config.voice_config[0].voice, 'Kore');
-    assert.equal(body.input.includes('test@example.com'), false);
+    assert.deepEqual(body.generationConfig.responseModalities, ['AUDIO']);
+    assert.equal(body.generationConfig.speechConfig.voiceConfig.prebuiltVoiceConfig.voiceName, 'Kore');
+    assert.equal(body.contents[0].parts[0].text.includes('test@example.com'), false);
 
     const wav = Buffer.from(result.data, 'base64');
     assert.equal(result.mimeType, 'audio/wav');
@@ -3963,8 +3964,8 @@ test('AI Google client can route only speech-to-text through Groq Whisper', asyn
   try {
     const ai = createAiClient();
     const text = await ai.transcribe({
-      data: 'data:audio/webm;base64,AAAA',
-      mimeType: 'audio/webm',
+      data: 'data:audio/webm;codecs=opus;base64,AAAA',
+      mimeType: 'audio/webm;codecs=opus',
       filename: 'recording.webm'
     });
 
