@@ -2741,6 +2741,24 @@ function popularThreadsFrom(threadsByBoard) {
     .slice(0, 8);
 }
 
+function spoilerSummaryLabelHtml() {
+  return '<span class="summary-spoiler-label">Spoiler</span>';
+}
+
+function popularThumbnailHtml(firstMedia, initials) {
+  const thumbnailSrc = mediaThumbnailSrc(firstMedia);
+  if (!firstMedia || !thumbnailSrc) {
+    return `<span class="popular-placeholder">${escapeHtml(initials)}</span>`;
+  }
+  const spoiler = Boolean(firstMedia.spoiler);
+  return `
+    <span class="popular-thumb${spoiler ? ' spoiler-summary-thumb' : ''}">
+      <img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(firstMedia.name)}">
+      ${spoiler ? spoilerSummaryLabelHtml() : ''}
+    </span>
+  `;
+}
+
 function renderPopularThreads(threads) {
   if (!threads.length) {
     els.popularThreads.classList.add('popular-empty');
@@ -2760,16 +2778,11 @@ function renderPopularThreads(threads) {
       const title = plainPreview(thread.bodyLines, board?.description).slice(0, 120);
       const initials = (board?.name || thread.boardSlug).slice(0, 2).toUpperCase();
       const firstMedia = mediaItemsFromPost(thread)[0];
-      const thumbnailSrc = mediaThumbnailSrc(firstMedia);
 
       return `
         <a class="popular-item" href="${href}">
           <strong>${board?.name || thread.boardSlug}</strong>
-          ${
-            firstMedia && thumbnailSrc
-              ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(firstMedia.name)}">`
-              : `<span class="popular-placeholder">${initials}</span>`
-          }
+          ${popularThumbnailHtml(firstMedia, initials)}
           <span>${title}${title.length >= 120 ? '...' : ''}</span>
         </a>
       `;
@@ -4654,6 +4667,7 @@ function catalogThreadHtml(thread) {
   const fileCount = catalogThreadFileCount(thread);
   const firstMedia = images[0];
   const thumbnailSrc = mediaThumbnailSrc(firstMedia);
+  const spoiler = Boolean(firstMedia?.spoiler);
   const image = firstMedia && thumbnailSrc
     ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(firstMedia.name)}">`
     : firstMedia
@@ -4662,7 +4676,7 @@ function catalogThreadHtml(thread) {
 
   return `
     <a class="catalog-thread" href="#thread/${thread.id}">
-      <span class="catalog-thumb">${image}</span>
+      <span class="catalog-thumb${spoiler ? ' spoiler-summary-thumb' : ''}">${image}${spoiler ? spoilerSummaryLabelHtml() : ''}</span>
       <strong>${escapeHtml(`${stickyPrefix}${title.slice(0, 70)}`)}${title.length >= 70 ? '...' : ''}</strong>
       <span class="catalog-thread-stats">R: ${thread.replyCount} / I: ${fileCount} / No.${thread.globalNumber}</span>
       <p>${escapeHtml(bodyPreview || title)}${bodyPreview.length >= 260 ? '...' : ''}</p>
