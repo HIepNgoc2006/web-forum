@@ -72,6 +72,7 @@ const MAX_DICE_COUNT = 20;
 const MAX_DICE_SIDES = 1_000;
 const MAX_DICE_MODIFIER = 999;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
+const UNSAFE_IMAGE_TYPES = new Set(['image/svg+xml']);
 const REPORT_CATEGORIES = new Set(['Spam', 'Toxic', 'PII', 'Fake News', 'Illegal', 'Other']);
 const APPEAL_RESOLUTION_STATUSES = new Set(['accepted', 'rejected']);
 const PRIORITY_FILTERS = new Set(['high', 'medium', 'low']);
@@ -1095,6 +1096,9 @@ function serializePoll(poll) {
 }
 
 function supportedMediaType(type) {
+  if (UNSAFE_IMAGE_TYPES.has(type)) {
+    return false;
+  }
   return type.startsWith('image/') || SUPPORTED_VIDEO_TYPES.has(type);
 }
 
@@ -1256,7 +1260,7 @@ function validateImageThumbnail(thumbnail) {
   }
 
   const type = String(thumbnail.type ?? '').toLowerCase();
-  if (!type.startsWith('image/')) {
+  if (!type.startsWith('image/') || UNSAFE_IMAGE_TYPES.has(type)) {
     const error = new Error('Thumbnail ảnh không hợp lệ');
     error.statusCode = 400;
     throw error;

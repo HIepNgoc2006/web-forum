@@ -137,6 +137,7 @@ test('security: sanitizeText escapes all dangerous HTML characters', () => {
 test('security: thread creation rejects invalid image MIME types', async () => {
   await withServer(async (baseUrl) => {
     const invalidMimes = [
+      { type: 'image/svg+xml', name: 'payload.svg' },
       { type: 'application/javascript', name: 'malware.js' },
       { type: 'text/html', name: 'page.html' },
       { type: 'application/x-executable', name: 'malware.exe' }
