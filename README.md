@@ -57,7 +57,8 @@ Important runtime values:
 - `MODERATION_FINGERPRINT_SECRET`: secret used to hash poster/IP fingerprints for temporary cooldown/ban enforcement.
 - `POSTER_PROOF_SECRET`: secret used to recognize OP follow-up replies from the same local poster token without exposing the token.
 - `HCAPTCHA_SITE_KEY`, `HCAPTCHA_SECRET`: enable hCaptcha on public posting. In production, posting fails unless `HCAPTCHA_SECRET` is configured.
-- `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable AI summary/suggestions and provider-backed moderation.
+- `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable AI summary/suggestions, speech generation, and provider-backed moderation.
+- `GOOGLE_TTS_MODEL`: optional Gemini speech model override for post listening, default `gemini-3.1-flash-tts-preview`.
 - `AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD`: optional default queue threshold for provider confidence, default `0` to keep every `Flagged` AI result in the admin queue. Admins can override it from the moderation UI. Accepts `0..1` or `0..100`; flagged results without confidence are still queued.
 - `MAX_IMAGE_BYTES`: upload payload limit.
 - `RATE_LIMIT_STORE`: `memory` by default, or `redis` to share HTTP rate counters across backend instances.

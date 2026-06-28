@@ -116,6 +116,28 @@ const AUDIO_MIME_TYPES = new Set([
   'audio/flac'
 ]);
 
+const TTS_LANGUAGE_NAMES = new Map([
+  ['ar', 'Arabic'],
+  ['de', 'German'],
+  ['en', 'English'],
+  ['es', 'Spanish'],
+  ['fr', 'French'],
+  ['id', 'Indonesian'],
+  ['it', 'Italian'],
+  ['ja', 'Japanese'],
+  ['ko', 'Korean'],
+  ['pt', 'Portuguese'],
+  ['ru', 'Russian'],
+  ['th', 'Thai'],
+  ['tr', 'Turkish'],
+  ['vi', 'Vietnamese'],
+  ['zh', 'Chinese']
+]);
+
+const VIETNAMESE_DIACRITIC_RE = /[ăâđêôơưáàảãạắằẳẵặấầẩẫậéèẻẽẹếềểễệíìỉĩịóòỏõọốồổỗộớờởỡợúùủũụứừửữựýỳỷỹỵ]/i;
+const VIETNAMESE_WORD_RE =
+  /\b(?:anh|ban|bạn|biết|biet|cai|cái|cho|chua|chưa|cua|của|dang|đang|den|đến|duoc|được|hoc|học|khong|không|la|là|lam|làm|minh|mình|nay|này|nguoi|người|nhung|nhưng|noi|nói|tai|tại|thay|thấy|toi|tôi|trong|voi|với)\b/i;
+
 function aiFetchTimeoutMs() {
   const value = Number(process.env.AI_FETCH_TIMEOUT_MS);
   return Number.isFinite(value) && value > 0 ? value : 45_000;
@@ -330,6 +352,55 @@ function normalizeDuplicateResult(parsed = {}) {
   };
 }
 
+function normalizeTtsLanguageCode(languageCode) {
+  const normalized = String(languageCode ?? '')
+    .trim()
+    .toLowerCase()
+    .replace('_', '-')
+    .split('-')[0];
+  return TTS_LANGUAGE_NAMES.has(normalized) ? normalized : '';
+}
+
+function inferTtsLanguageCode(text = '') {
+  const value = String(text);
+  if (/[\u3040-\u30ff]/.test(value)) {
+    return 'ja';
+  }
+  if (/[\uac00-\ud7af]/.test(value)) {
+    return 'ko';
+  }
+  if (/[\u0e00-\u0e7f]/.test(value)) {
+    return 'th';
+  }
+  if (/[\u0400-\u04ff]/.test(value)) {
+    return 'ru';
+  }
+  if (/[\u0600-\u06ff]/.test(value)) {
+    return 'ar';
+  }
+  if (/[\u4e00-\u9fff]/.test(value)) {
+    return 'zh';
+  }
+  if (VIETNAMESE_DIACRITIC_RE.test(value) || VIETNAMESE_WORD_RE.test(value)) {
+    return 'vi';
+  }
+  return 'en';
+}
+
+function ttsPrompt(text, languageCode) {
+  const redacted = redactSensitiveText(text);
+  const lang = normalizeTtsLanguageCode(languageCode) || inferTtsLanguageCode(redacted);
+  const languageHint = TTS_LANGUAGE_NAMES.get(lang) || 'the transcript language';
+  return [
+    `Read the transcript below exactly as written in ${languageHint}.`,
+    'Preserve the original language, script, pronunciation, numbers, and punctuation.',
+    'Do not translate, romanize, summarize, or add any words.',
+    '',
+    'Transcript:',
+    redacted
+  ].join('\n');
+}
+
 function audioBlockData(outputAudio) {
   if (outputAudio?.data) {
     return {
@@ -376,6 +447,23 @@ function findGoogleAudioData(value, seen = new Set()) {
 
 function extractGoogleAudioData(data = {}) {
   return findGoogleAudioData(data);
+}
+
+function googleTtsError(status) {
+  const error = new Error(
+    status === 429
+      ? 'Google TTS đang giới hạn lượt đọc. Vui lòng thử lại sau.'
+      : `Yêu cầu Google TTS thất bại: ${status}`
+  );
+  error.statusCode = status === 429 ? 429 : status >= 500 ? 503 : 502;
+  error.providerStatusCode = status;
+  return error;
+}
+
+function googleTtsNoAudioError() {
+  const error = new Error('Google TTS chưa trả về audio. Vui lòng thử lại sau.');
+  error.statusCode = 502;
+  return error;
 }
 
 async function transcribeOpenAiCompatible({ media, apiKey, baseUrl, model }) {
@@ -601,13 +689,13 @@ ${redactSensitiveText(text)}
       return textFromResponse(data).trim();
     },
 
-    async speak(text, { voice } = {}) {
+    async speak(text, { voice, languageCode } = {}) {
       const apiKey = requireGoogleAiKey();
       const model = process.env.GOOGLE_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
       const endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
       const body = JSON.stringify({
         model,
-        input: `Đọc to đoạn văn sau bằng giọng tự nhiên:\n${redactSensitiveText(text)}`,
+        input: ttsPrompt(text, languageCode),
         response_format: { type: 'audio' },
         generation_config: {
           speech_config: [{ voice: voice || 'Kore' }]
@@ -624,7 +712,7 @@ ${redactSensitiveText(text)}
           if (attempt === 0 && response.status >= 500) {
             continue;
           }
-          throw new Error(`Yêu cầu Google TTS thất bại: ${response.status}`);
+          throw googleTtsError(response.status);
         }
         audio = extractGoogleAudioData(await response.json());
         if (audio?.data) {
@@ -632,7 +720,7 @@ ${redactSensitiveText(text)}
         }
       }
       if (!audio?.data) {
-        throw new Error('Google TTS không trả về audio sau khi thử lại.');
+        throw googleTtsNoAudioError();
       }
       const sampleRate = Number(/rate=(\d+)/.exec(audio.mimeType ?? '')?.[1]) || 24000;
       const pcm = Buffer.from(audio.data, 'base64');
