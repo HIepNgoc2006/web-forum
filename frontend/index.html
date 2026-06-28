@@ -320,10 +320,10 @@
               <span>Tên hiển thị</span>
               <input name="displayName" placeholder="Anonymous (dùng tên#mã để tạo tripcode)" maxlength="60" autocomplete="off" />
             </label>
-            <label class="field-row checkbox-row account-display-option hidden" data-account-display-option>
+            <div class="field-row checkbox-row account-display-option hidden" data-account-display-option>
               <span>Tài khoản</span>
               <label><input name="useAccountName" type="checkbox" data-use-account-name /> Dùng username tài khoản</label>
-            </label>
+            </div>
             <label class="field-row">
               <span>Tùy chọn</span>
               <input name="options" autocomplete="off" placeholder="sage, noko" />
@@ -356,14 +356,14 @@
               <span>Tệp</span>
               <input id="threadImage" type="file" accept="image/*,video/mp4,video/webm" multiple />
             </label>
-            <label class="field-row checkbox-row">
+            <div class="field-row checkbox-row">
               <span>Ẩn ảnh</span>
               <label><input name="imageSpoiler" type="checkbox" /> Đánh dấu ảnh là spoiler</label>
-            </label>
-            <label class="field-row checkbox-row capcode-option hidden" data-capcode-option>
+            </div>
+            <div class="field-row checkbox-row capcode-option hidden" data-capcode-option>
               <span>Capcode</span>
               <label><input name="capcode" type="checkbox" data-capcode-input /> Đăng với chức danh quản trị</label>
-            </label>
+            </div>
             <label class="field-row">
               <span>Âm thanh → chữ</span>
               <div class="audio-transcribe-controls">
@@ -773,22 +773,22 @@
             <span>Bảng nhà</span>
             <select id="accountHomeBoard"></select>
           </label>
-          <label class="field-row checkbox-row">
+          <div class="field-row checkbox-row">
             <span>Đồng bộ</span>
             <label><input id="accountSyncDrafts" type="checkbox" /> Bản nháp riêng tư</label>
-          </label>
-          <label class="field-row checkbox-row">
+          </div>
+          <div class="field-row checkbox-row">
             <span>Hiển thị</span>
             <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
             <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn thumbnail</label>
-          </label>
-          <label class="field-row checkbox-row">
+          </div>
+          <div class="field-row checkbox-row">
             <span>Thông báo</span>
             <label><input id="accountEmailNotifications" type="checkbox" /> Thông báo email</label>
             <label><input id="accountNotifyWatchedThreads" type="checkbox" /> Thread đang theo dõi</label>
             <label><input id="accountNotifyBoardSubscriptions" type="checkbox" /> Bảng đang theo dõi</label>
             <label><input id="accountBrowserNotifyWatchedThreads" type="checkbox" /> Trình duyệt: thread đang theo dõi</label>
-          </label>
+          </div>
           <p id="accountBrowserNotificationsStatus" class="account-note">Tắt thông báo trình duyệt cho thread đang theo dõi.</p>
           <div class="field-row account-board-settings">
             <span>Bảng theo dõi</span>
