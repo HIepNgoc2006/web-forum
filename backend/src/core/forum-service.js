@@ -7,6 +7,7 @@ import {
   THREAD_LIFECYCLE,
   aiConfigStatus,
   normalizeRetentionPolicy,
+  publicBoardConfig,
   readModerationConfidenceThreshold,
   readPositiveInteger
 } from './config.js';
@@ -174,12 +175,15 @@ function publicBoard(board = {}) {
 }
 
 function serializeBoard(board = {}, { admin = false, retentionDefaults = THREAD_LIFECYCLE } = {}) {
+  const presentation = publicBoardConfig(board);
   const serialized = {
     slug: board.slug,
-    path: board.path || `/${board.slug}/`,
-    name: board.name,
-    category: board.category,
-    description: board.description,
+    path: board.path || '/' + board.slug + '/',
+    name: presentation.name,
+    category: presentation.category,
+    description: presentation.description,
+    rules: presentation.rules,
+    banner: presentation.banner,
     temporary: Boolean(board.temporary),
     eventEndsAt: board.eventEndsAt ?? null,
     retentionPolicy: boardRetentionPolicy(board, retentionDefaults)
@@ -209,7 +213,58 @@ function assertBoardText(value, field, maxLength) {
   return text.slice(0, maxLength);
 }
 
-function normalizeBoardInput({ slug, name, category, description, isHidden, isArchived } = {}, { requireSlug = true } = {}) {
+function optionalBoardText(value = '', maxLength = 400) {
+  return String(value ?? '')
+    .replace(/<[^>]*>/g, '')
+    .replace(/[<>]/g, '')
+    .replace(/[\u0000-\u001f\u007f]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeEventEndsAt(value) {
+  const raw = String(value ?? '').trim();
+  if (!raw) {
+    return null;
+  }
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) {
+    const error = new Error('Thời điểm kết thúc sự kiện không hợp lệ');
+    error.statusCode = 400;
+    throw error;
+  }
+  return date.toISOString();
+}
+
+function normalizeBoardRulesInput(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const values = Array.isArray(value) ? value : String(value ?? '').split(/\r?\n/);
+  return values
+    .map((rule) => optionalBoardText(rule, 240))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function normalizeBoardBannerInput(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+  const banner = value && typeof value === 'object' ? value : {};
+  const imageUrl = optionalBoardText(banner.imageUrl, 300);
+  return {
+    text: optionalBoardText(banner.text, 180),
+    imageUrl: /^(?:\/(?!\/)|https:\/\/)/i.test(imageUrl) ? imageUrl : '',
+    altText: optionalBoardText(banner.altText, 140)
+  };
+}
+
+function normalizeBoardInput(
+  { slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt } = {},
+  { requireSlug = true } = {}
+) {
   const board = {};
   if (requireSlug || slug !== undefined) {
     const safeSlug = String(slug ?? '').trim().toLowerCase();
@@ -219,13 +274,20 @@ function normalizeBoardInput({ slug, name, category, description, isHidden, isAr
       throw error;
     }
     board.slug = safeSlug;
-    board.path = `/${safeSlug}/`;
+    board.path = '/' + safeSlug + '/';
   }
   if (name !== undefined || requireSlug) board.name = assertBoardText(name, 'Tên board', 80);
   if (category !== undefined || requireSlug) board.category = assertBoardText(category, 'Danh mục board', 80);
   if (description !== undefined || requireSlug) board.description = assertBoardText(description, 'Mô tả board', 240);
+  const normalizedRules = normalizeBoardRulesInput(rules);
+  if (normalizedRules !== undefined) board.rules = normalizedRules;
+  const normalizedBanner = normalizeBoardBannerInput(banner);
+  if (normalizedBanner !== undefined) board.banner = normalizedBanner;
   if (typeof isHidden === 'boolean') board.isHidden = isHidden;
   if (typeof isArchived === 'boolean') board.isArchived = isArchived;
+  if (typeof temporary === 'boolean') board.temporary = temporary;
+  if (eventEndsAt !== undefined) board.eventEndsAt = normalizeEventEndsAt(eventEndsAt);
+  if (board.temporary === false) board.eventEndsAt = null;
   return board;
 }
 
@@ -4718,8 +4780,13 @@ export function createForumService({
       };
     },
 
-    async createBoard({ slug, name, category, description, isHidden, isArchived, retentionPolicy } = {}, { actor } = {}) {
-      const input = normalizeBoardInput({ slug, name, category, description, isHidden, isArchived });
+    async createBoard({ slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt, retentionPolicy } = {}, { actor } = {}) {
+      const input = normalizeBoardInput({ slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt });
+      if (input.temporary && !input.eventEndsAt) {
+        const error = new Error('Board sự kiện cần thời điểm kết thúc');
+        error.statusCode = 400;
+        throw error;
+      }
       return mutate(async (state) => {
         if (state.boards.find((b) => b.slug === input.slug)) {
           const error = new Error('Board đã tồn tại');
@@ -4738,7 +4805,7 @@ export function createForumService({
       });
     },
 
-    async updateBoard(slug, { name, category, description, isHidden, isArchived, retentionPolicy } = {}, { actor } = {}) {
+    async updateBoard(slug, { name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt, retentionPolicy } = {}, { actor } = {}) {
       const safeSlug = String(slug ?? '').trim().toLowerCase();
       if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
         const error = new Error('Slug board không hợp lệ');
@@ -4746,7 +4813,7 @@ export function createForumService({
         throw error;
       }
       const updates = normalizeBoardInput(
-        { name, category, description, isHidden, isArchived },
+        { name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt },
         { requireSlug: false }
       );
       return mutate(async (state) => {
@@ -4754,6 +4821,12 @@ export function createForumService({
         if (!board) {
           const error = new Error('Không tìm thấy board');
           error.statusCode = 404;
+          throw error;
+        }
+        const nextBoard = { ...board, ...updates };
+        if (nextBoard.temporary && !nextBoard.eventEndsAt) {
+          const error = new Error('Board sự kiện cần thời điểm kết thúc');
+          error.statusCode = 400;
           throw error;
         }
         Object.assign(board, updates);
