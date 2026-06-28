@@ -154,6 +154,7 @@ const AUDIO_RECORDING_TYPES = [
 ];
 const AI_TRANSCRIBE_TIMEOUT_MS = 60_000;
 const AI_SPEAK_TIMEOUT_MS = 60_000;
+const AI_TTS_PROVIDER_COOLDOWN_MS = 60_000;
 
 function reportCategoryLabel(value) {
   return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
@@ -5897,12 +5898,89 @@ async function translatePost(button) {
 }
 
 let aiAudioPlayer = null;
+let aiTtsUnavailableUntil = 0;
+let browserSpeechUtterance = null;
+
+function browserSpeechSupported() {
+  return Boolean(window.speechSynthesis && window.SpeechSynthesisUtterance);
+}
+
+function vietnameseSpeechVoice() {
+  if (!browserSpeechSupported()) {
+    return null;
+  }
+  const voices = window.speechSynthesis.getVoices();
+  return (
+    voices.find((voice) => /^vi([-_]|$)/i.test(voice.lang)) ||
+    voices.find((voice) => /vietnam|việt|tieng viet|tiếng việt/i.test(`${voice.name} ${voice.lang}`)) ||
+    null
+  );
+}
+
+function stopCurrentSpeech() {
+  if (aiAudioPlayer) {
+    aiAudioPlayer.pause();
+    aiAudioPlayer.currentTime = 0;
+    aiAudioPlayer = null;
+  }
+  if (browserSpeechSupported()) {
+    window.speechSynthesis.cancel();
+  }
+  browserSpeechUtterance = null;
+}
+
+function speakWithBrowser(text) {
+  if (!browserSpeechSupported()) {
+    throw new Error('Trình duyệt này chưa hỗ trợ đọc bài viết.');
+  }
+
+  stopCurrentSpeech();
+  const utterance = new SpeechSynthesisUtterance(text.slice(0, 2000));
+  utterance.lang = 'vi-VN';
+  utterance.rate = 1;
+  utterance.pitch = 1;
+  const voice = vietnameseSpeechVoice();
+  if (voice) {
+    utterance.voice = voice;
+  }
+  browserSpeechUtterance = utterance;
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (callback) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      window.clearTimeout(timer);
+      callback();
+    };
+    const timer = window.setTimeout(() => settle(resolve), 300);
+    utterance.onstart = () => settle(resolve);
+    utterance.onend = () => {
+      if (browserSpeechUtterance === utterance) {
+        browserSpeechUtterance = null;
+      }
+    };
+    utterance.onerror = (event) => {
+      if (event.error === 'canceled' || event.error === 'interrupted') {
+        settle(resolve);
+        return;
+      }
+      if (browserSpeechUtterance === utterance) {
+        browserSpeechUtterance = null;
+      }
+      settle(() => reject(new Error('Trình duyệt không đọc được bài này.')));
+    };
+    window.speechSynthesis.speak(utterance);
+  });
+}
+
+function canFallbackToBrowserSpeech(error) {
+  return [429, 502, 503, 504].includes(error?.statusCode);
+}
 
 async function speakPost(button) {
-  if (!state.aiConfigured) {
-    showToast(aiNotConfiguredMessage);
-    return;
-  }
   const text = postBodyText(button.dataset.ttsPost);
   if (!text) {
     showToast('Bài này không có nội dung để đọc.');
@@ -5910,17 +5988,31 @@ async function speakPost(button) {
   }
   const restore = setButtonLoading(button, '...');
   try {
+    if (!state.aiConfigured || Date.now() < aiTtsUnavailableUntil) {
+      await speakWithBrowser(text);
+      showToast(state.aiConfigured ? 'Đang đọc bằng giọng trình duyệt do TTS đang giới hạn.' : 'Đang đọc bằng giọng trình duyệt.');
+      return;
+    }
+
     const result = await api('/api/ai/speak', {
       method: 'POST',
       timeoutMs: AI_SPEAK_TIMEOUT_MS,
       body: JSON.stringify({ text: text.slice(0, 2000), posterToken: state.posterToken })
     });
-    if (aiAudioPlayer) {
-      aiAudioPlayer.pause();
-    }
+    stopCurrentSpeech();
     aiAudioPlayer = new Audio(`data:${result.mimeType};base64,${result.audio}`);
     await aiAudioPlayer.play();
   } catch (error) {
+    if (canFallbackToBrowserSpeech(error) && browserSpeechSupported()) {
+      aiTtsUnavailableUntil = Date.now() + AI_TTS_PROVIDER_COOLDOWN_MS;
+      try {
+        await speakWithBrowser(text);
+        showToast('TTS đang bị giới hạn; đang đọc bằng giọng trình duyệt.');
+        return;
+      } catch {
+        // Fall through and show the provider error if local speech cannot start.
+      }
+    }
     showToast(error.message);
   } finally {
     restore();
