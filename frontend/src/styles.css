@@ -1377,6 +1377,13 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   font-size: 11px;
 }
 
+.thread-subject {
+  margin: 2px 0 4px;
+  color: #0f0c5d;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
 .post-body {
   margin: 6px 0 0;
   color: var(--text);

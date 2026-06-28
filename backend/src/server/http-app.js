@@ -500,13 +500,18 @@ function feedLimit(value, fallback = 20, max = 50) {
   return Math.max(1, Math.min(Number(value) || fallback, max));
 }
 
+function postFeedTitle(post = {}, prefix = '') {
+  const subject = String(post.subject || '').trim();
+  return `${prefix}${subject || `No.${post.globalNumber}`} /${post.boardSlug}/`;
+}
+
 function postFeedItem(request, post) {
   const threadId = post.threadId || post.id;
   const url = absoluteUrl(request, `/#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`);
   return {
     id: String(post.globalNumber),
     url,
-    title: `No.${post.globalNumber} /${post.boardSlug}/`,
+    title: postFeedTitle(post),
     content_text: postPreview(post),
     date_published: post.createdAt
   };
@@ -633,7 +638,7 @@ function archivedThreadFeedItem(request, thread = {}) {
   return {
     id: String(thread.globalNumber),
     url,
-    title: `Lưu trữ No.${thread.globalNumber} /${thread.boardSlug}/`,
+    title: postFeedTitle(thread, 'Lưu trữ '),
     content_text: postPreview(thread),
     date_published: thread.archivedAt || thread.createdAt
   };
@@ -1253,6 +1258,7 @@ export function createHttpServer({
           response,
           await service.createThread({
             boardSlug: params.boardSlug,
+            subject: body.subject,
             body: body.body,
             image: body.image,
             images: body.images,

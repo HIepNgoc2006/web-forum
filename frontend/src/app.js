@@ -2252,6 +2252,19 @@ function plainPreview(lines, fallback = '') {
   return text || fallback;
 }
 
+function threadSubject(thread) {
+  return String(thread?.subject || '').trim();
+}
+
+function threadTitle(thread, fallback = 'Chưa có nội dung') {
+  return threadSubject(thread) || plainPreview(thread?.bodyLines, fallback);
+}
+
+function threadSubjectHtml(thread) {
+  const subject = threadSubject(thread);
+  return subject ? `<div class="thread-subject">${escapeHtml(subject)}</div>` : '';
+}
+
 function homeBoardList() {
   const publicBoardsBySlug = new Map(state.boards.map((board) => [board.slug, board]));
   const groupedBoards = state.boardGroups
@@ -4004,6 +4017,7 @@ function postHtml(post, type = 'post', options = {}) {
     <article class="${classes.join(' ')}" id="p${post.globalNumber}">
       ${imageHtml(post)}
       ${meta(post, options)}
+      ${classes.includes('op') ? threadSubjectHtml(post) : ''}
       <div class="post-body">${renderPostLines(post.bodyLines || [], options)}</div>
       ${diceRollsHtml(post.diceRolls)}
       ${backlinksHtml(post.backlinks)}
@@ -4191,7 +4205,7 @@ function threadMatchesSearch(thread, term) {
     return true;
   }
   const haystack = normalizeSearchValue(
-    `${boardHeading(state.boards.find((board) => board.slug === thread.boardSlug))} ${plainPreview(
+    `${boardHeading(state.boards.find((board) => board.slug === thread.boardSlug))} ${threadSubject(thread)} ${plainPreview(
       thread.bodyLines,
       ''
     )} No.${thread.globalNumber}`
@@ -4200,7 +4214,7 @@ function threadMatchesSearch(thread, term) {
 }
 
 function catalogThreadHtml(thread) {
-  const title = plainPreview(thread.bodyLines, 'Chưa có nội dung').slice(0, 260);
+  const title = threadTitle(thread).slice(0, 260);
   const stickyPrefix = thread.isSticky ? '[Ghim] ' : '';
   const images = mediaItemsFromPost(thread);
   const firstMedia = images[0];
@@ -4415,6 +4429,7 @@ function renderBoardThreads(threads) {
           }
             ${meta(thread, { replyAction: false })}
             <a class="thread-open" href="#thread/${thread.id}">[Trả lời]</a>
+            ${threadSubjectHtml(thread)}
             <div class="post-body">${renderPostLines(thread.bodyLines || [], { opNumber: thread.globalNumber })}</div>
             ${diceRollsHtml(thread.diceRolls)}
             <div class="thread-meta">
@@ -4536,7 +4551,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   const board = currentBoard();
   renderBoards();
   updateBoardPresentation(board);
-  els.threadTitle.textContent = boardHeading(board) || detail.thread.boardSlug;
+  els.threadTitle.textContent = threadTitle(detail.thread, boardHeading(board) || detail.thread.boardSlug);
   els.threadBoardPath.textContent = board?.path || `/${detail.thread.boardSlug}/`;
   els.threadBoardDescription.textContent = board?.description || 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt';
   els.threadToolbarTop.innerHTML = threadToolbarHtml(detail, 'top');
@@ -5061,6 +5076,7 @@ async function submitThread(event) {
     }
     const options = formValue(els.threadForm, 'options');
     const payload = {
+      subject: formValue(els.threadForm, 'subject'),
       body,
       pollOptions: els.threadPollOptions.value
         .split('\n')
@@ -5082,6 +5098,9 @@ async function submitThread(event) {
     rememberMyPost(result.thread, 'thread');
     els.threadBody.value = '';
     els.threadPollOptions.value = '';
+    if (els.threadForm.elements.subject) {
+      els.threadForm.elements.subject.value = '';
+    }
     clearDisplayName(els.threadForm);
     removeDraft(draftKey('thread', state.boardSlug));
     updatePrivacyWarning('', els.threadPrivacyWarning);

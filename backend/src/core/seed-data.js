@@ -34,6 +34,7 @@ const MEDIA_FIELDS = [
 const THREAD_FIELDS = [
   'id',
   'boardSlug',
+  'subject',
   'body',
   'displayName',
   'tripcode',
