@@ -370,6 +370,9 @@ function writeThreadLastSeen(threadId, globalNumber) {
 
 const watchedThreadsKey = 'watchedThreads';
 const savedSearchesKey = 'savedSearches';
+const contentFiltersKey = 'contentFilters';
+const replyTemplatesKey = 'replyTemplates';
+const posterNotesKey = 'posterNotes';
 const myPostsKey = 'myPosts';
 const hiddenThreadsKey = 'hiddenThreads';
 const hiddenPostsKey = 'hiddenPosts';
@@ -574,8 +577,93 @@ function defaultAccountPrivateData() {
   return {
     watchlist: [],
     drafts: [],
-    savedSearches: []
+    savedSearches: [],
+    contentFilters: [],
+    replyTemplates: [],
+    posterNotes: []
   };
+}
+
+function safePrivateText(value = '', maxLength = 160) {
+  return [...String(value ?? '')]
+    .filter((char) => {
+      const code = char.charCodeAt(0);
+      return code >= 32 && code !== 127;
+    })
+    .join('')
+    .trim()
+    .slice(0, maxLength);
+}
+
+function normalizeContentFilters(value = []) {
+  const allowedTypes = new Set(['keyword', 'poster', 'thread', 'post']);
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((item) => ({
+      id: safePrivateText(item?.id || item?.key || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 120),
+      type: safePrivateText(item?.type, 40).toLowerCase(),
+      value: safePrivateText(item?.value || item?.keyword || item?.posterHash || item?.threadId || item?.globalNumber, 160),
+      label: safePrivateText(item?.label, 180),
+      boardSlug: safePrivateText(item?.boardSlug, 80),
+      createdAt: safePrivateText(item?.createdAt || new Date().toISOString(), 80)
+    }))
+    .filter((item) => allowedTypes.has(item.type) && item.value)
+    .filter((item) => {
+      const key = `${item.type}:${item.boardSlug}:${item.value.toLowerCase()}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 80);
+}
+
+function normalizeReplyTemplates(value = []) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((item) => ({
+      id: safePrivateText(item?.id || item?.key || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 120),
+      title: safePrivateText(item?.title || item?.label || 'Mẫu trả lời', 120),
+      body: safePrivateText(item?.body || item?.text, 5000),
+      boardSlug: safePrivateText(item?.boardSlug, 80),
+      createdAt: safePrivateText(item?.createdAt || new Date().toISOString(), 80),
+      updatedAt: safePrivateText(item?.updatedAt || item?.createdAt || new Date().toISOString(), 80)
+    }))
+    .filter((item) => item.body)
+    .filter((item) => {
+      const key = `${item.boardSlug}:${item.title.toLowerCase()}:${item.body}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 60);
+}
+
+function normalizePosterNotes(value = []) {
+  const seen = new Set();
+  return (Array.isArray(value) ? value : [])
+    .map((item) => ({
+      id: safePrivateText(item?.id || item?.key || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 120),
+      posterId: safePrivateText(item?.posterId || item?.posterHash || item?.idText, 80),
+      label: safePrivateText(item?.label, 120),
+      note: safePrivateText(item?.note || item?.body || item?.text, 500),
+      boardSlug: safePrivateText(item?.boardSlug, 80),
+      createdAt: safePrivateText(item?.createdAt || new Date().toISOString(), 80),
+      updatedAt: safePrivateText(item?.updatedAt || item?.createdAt || new Date().toISOString(), 80)
+    }))
+    .filter((item) => item.posterId)
+    .filter((item) => {
+      const key = `${item.boardSlug}:${item.posterId.toLowerCase()}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, 120);
 }
 
 function accountDraftSyncEnabled() {
@@ -1403,7 +1491,10 @@ function normalizeAccountPrivateData(value = {}) {
     drafts: Array.isArray(value.drafts) ? value.drafts.filter((item) => item?.key && item?.body).slice(0, 40) : [],
     savedSearches: Array.isArray(value.savedSearches)
       ? value.savedSearches.filter((item) => item?.boardSlug && item?.query).slice(0, 50)
-      : []
+      : [],
+    contentFilters: normalizeContentFilters(value.contentFilters),
+    replyTemplates: normalizeReplyTemplates(value.replyTemplates),
+    posterNotes: normalizePosterNotes(value.posterNotes)
   };
 }
 
@@ -1421,6 +1512,9 @@ function mergeByKey(items, keyFn) {
 function mergeAccountPrivateData(serverData = defaultAccountPrivateData()) {
   const localWatchlist = Object.values(readJsonLocal(watchedThreadsKey, {})).filter((item) => item?.threadId);
   const localSearches = readLocalList(savedSearchesKey).filter((item) => item?.boardSlug && item?.query);
+  const localFilters = normalizeContentFilters(readLocalList(contentFiltersKey));
+  const localTemplates = normalizeReplyTemplates(readLocalList(replyTemplatesKey));
+  const localPosterNotes = normalizePosterNotes(readLocalList(posterNotesKey));
   const drafts = accountDraftSyncEnabled()
     ? mergeByKey([...(serverData.drafts || []), ...localDraftEntries()], (item) => item.key)
     : serverData.drafts || [];
@@ -1430,6 +1524,18 @@ function mergeAccountPrivateData(serverData = defaultAccountPrivateData()) {
     savedSearches: mergeByKey(
       [...(serverData.savedSearches || []), ...localSearches],
       (item) => `${item.boardSlug}:${item.query}`
+    ),
+    contentFilters: mergeByKey(
+      [...(serverData.contentFilters || []), ...localFilters],
+      (item) => `${item.type}:${item.boardSlug || ''}:${item.value}`
+    ),
+    replyTemplates: mergeByKey(
+      [...(serverData.replyTemplates || []), ...localTemplates],
+      (item) => `${item.boardSlug || ''}:${item.title}:${item.body}`
+    ),
+    posterNotes: mergeByKey(
+      [...(serverData.posterNotes || []), ...localPosterNotes],
+      (item) => `${item.boardSlug || ''}:${item.posterId}`
     )
   });
 }
@@ -1492,6 +1598,15 @@ async function clearAccountPrivateData(section = '') {
   }
   if (!section || section === 'drafts') {
     localDraftEntries().forEach((draft) => localStorage.removeItem(draft.key));
+  }
+  if (!section || section === 'contentFilters') {
+    writeJsonLocal(contentFiltersKey, []);
+  }
+  if (!section || section === 'replyTemplates') {
+    writeJsonLocal(replyTemplatesKey, []);
+  }
+  if (!section || section === 'posterNotes') {
+    writeJsonLocal(posterNotesKey, []);
   }
   renderAccountPrivateData();
 }
@@ -1917,6 +2032,18 @@ function renderAccountPrivateData() {
     <section>
       <h3>Drafts</h3>
       <p>${Number(data.drafts?.length || 0).toLocaleString()} draft đang lưu.</p>
+    </section>
+    <section>
+      <h3>Bộ lọc nội dung</h3>
+      <p>${Number(data.contentFilters?.length || 0).toLocaleString()} bộ lọc đang đồng bộ.</p>
+    </section>
+    <section>
+      <h3>Mẫu trả lời</h3>
+      <p>${Number(data.replyTemplates?.length || 0).toLocaleString()} mẫu trả lời đang đồng bộ.</p>
+    </section>
+    <section>
+      <h3>Ghi chú Poster ID</h3>
+      <p>${Number(data.posterNotes?.length || 0).toLocaleString()} ghi chú đang đồng bộ.</p>
     </section>
   `;
 }
