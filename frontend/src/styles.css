@@ -2032,6 +2032,22 @@ body.display-compact .post-body {
 
 .ref-preview {
   width: min(420px, calc(100% - 20px));
+  max-height: min(420px, calc(100vh - 20px));
+  overflow: auto;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
+}
+
+.ref-preview-loading,
+.ref-preview-error {
+  font-size: 12px;
+}
+
+.ref-preview-error {
+  color: #800000;
+}
+
+.ref-preview .preview-post {
+  margin: 0;
 }
 
 .reason-modal-overlay {
