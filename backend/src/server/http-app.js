@@ -619,6 +619,14 @@ function archiveRssFeed(request, boardSlug, threads = []) {
     items: threads.map((thread) => archivedThreadFeedItem(request, thread))
   });
 }
+function safeDecodePath(value) {
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return null;
+  }
+}
+
 
 async function serveStatic(request, response, staticRoot) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
@@ -626,7 +634,11 @@ async function serveStatic(request, response, staticRoot) {
   }
 
   const url = new URL(request.url, 'http://localhost');
-  const requestedPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
+  const decodedPath = safeDecodePath(url.pathname);
+  if (!decodedPath) {
+    return false;
+  }
+  const requestedPath = decodedPath === '/' ? '/index.html' : decodedPath;
   const safeRoot = path.resolve(staticRoot);
   const candidate = path.resolve(safeRoot, `.${requestedPath}`);
   const relativePath = path.relative(safeRoot, candidate);
@@ -685,7 +697,10 @@ async function serveUploadedFile(request, response, uploadRoot) {
     return false;
   }
 
-  const requestedName = decodeURIComponent(url.pathname.slice('/uploads/'.length));
+  const requestedName = safeDecodePath(url.pathname.slice('/uploads/'.length));
+  if (!requestedName) {
+    return false;
+  }
   const fileName = path.basename(requestedName);
   if (!fileName || fileName !== requestedName) {
     return false;

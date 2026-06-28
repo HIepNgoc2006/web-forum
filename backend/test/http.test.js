@@ -562,11 +562,15 @@ test('http static serving treats missing assets as 404 without 500 logging', asy
       async (baseUrl) => {
         const favicon = await fetch(`${baseUrl}/favicon.ico`);
         const gitConfig = await fetch(`${baseUrl}/.git/config`);
+        const malformedStatic = await fetch(`${baseUrl}/%E0%A4%A`);
+        const malformedUpload = await fetch(`${baseUrl}/uploads/%E0%A4%A`);
         const appRoute = await fetch(`${baseUrl}/admin/moderation`);
         const appRouteBody = await appRoute.text();
 
         assert.equal(favicon.status, 404);
         assert.equal(gitConfig.status, 404);
+        assert.equal(malformedStatic.status, 404);
+        assert.equal(malformedUpload.status, 404);
         assert.equal(appRoute.status, 200);
         assert.equal(appRouteBody.includes('<title>36chan</title>'), true);
       },
