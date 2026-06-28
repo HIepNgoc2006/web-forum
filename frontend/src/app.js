@@ -862,8 +862,12 @@ const els = {
   saveBoardSearchButton: document.querySelector('#saveBoardSearchButton'),
   boardCatalogLink: document.querySelector('#boardCatalogLink'),
   boardArchiveLink: document.querySelector('#boardArchiveLink'),
+  boardJsonFeedLink: document.querySelector('#boardJsonFeedLink'),
+  boardRssFeedLink: document.querySelector('#boardRssFeedLink'),
   boardCatalogLinkBottom: document.querySelector('#boardCatalogLinkBottom'),
   boardArchiveLinkBottom: document.querySelector('#boardArchiveLinkBottom'),
+  boardJsonFeedLinkBottom: document.querySelector('#boardJsonFeedLinkBottom'),
+  boardRssFeedLinkBottom: document.querySelector('#boardRssFeedLinkBottom'),
   threadList: document.querySelector('#threadList'),
   boardPagination: document.querySelector('#boardPagination'),
   catalogTitle: document.querySelector('#catalogTitle'),
@@ -4175,6 +4179,16 @@ function postHtml(post, type = 'post', options = {}) {
   `;
 }
 
+function threadFeedLinksHtml(detail) {
+  if (!detail.thread?.id) {
+    return '';
+  }
+  const threadId = encodeURIComponent(detail.thread.id);
+  return `
+      [<a data-thread-json-feed href="/feeds/threads/${threadId}/posts.json" target="_blank" rel="noopener noreferrer">JSON</a>]
+      [<a data-thread-rss-feed href="/feeds/threads/${threadId}/posts.rss" target="_blank" rel="noopener noreferrer">RSS</a>]`;
+}
+
 function threadNavigationLinksHtml(detail) {
   const navigation = detail.threadNavigation || {};
   const links = [];
@@ -4213,6 +4227,7 @@ function threadToolbarHtml(detail, position) {
       [<a href="#board/${state.boardSlug}">Quay lại</a>]
       [<a href="#catalog/${state.boardSlug}">Danh mục</a>]
       ${threadNavigationLinksHtml(detail)}
+      ${threadFeedLinksHtml(detail)}
       [<button class="link-button" data-toggle-watch type="button">${watchLabel}</button>]
       [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
       [<button class="link-button" data-thread-refresh type="button">Cập nhật</button>]
@@ -4703,8 +4718,12 @@ async function loadBoard() {
   els.boardDescription.textContent = board.description;
   els.boardCatalogLink.href = `#catalog/${board.slug}`;
   els.boardArchiveLink.href = `#archive/${board.slug}`;
+  els.boardJsonFeedLink.href = `/feeds/boards/${board.slug}/threads.json`;
+  els.boardRssFeedLink.href = `/feeds/boards/${board.slug}/threads.rss`;
   els.boardCatalogLinkBottom.href = `#catalog/${board.slug}`;
   els.boardArchiveLinkBottom.href = `#archive/${board.slug}`;
+  els.boardJsonFeedLinkBottom.href = `/feeds/boards/${board.slug}/threads.json`;
+  els.boardRssFeedLinkBottom.href = `/feeds/boards/${board.slug}/threads.rss`;
   const publicArchive = board.retentionPolicy?.publicArchive !== false;
   els.boardArchiveLink.classList.toggle('hidden', !publicArchive);
   els.boardArchiveLinkBottom.classList.toggle('hidden', !publicArchive);
