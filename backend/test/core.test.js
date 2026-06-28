@@ -2965,6 +2965,191 @@ test('admin moderation lists use targeted store hooks when available', async () 
 });
 
 
+test('admin sanctions use targeted store hook when available', async () => {
+  let hookArgs = null;
+  const store = {
+    async createSanctionForPost(args) {
+      hookArgs = args;
+      return {
+        id: 'sanction-1',
+        kind: args.kind,
+        fingerprint: 'fingerprint-secret-value',
+        fingerprintPreview: 'fingerprint-...',
+        sourceGlobalNumber: Number(args.globalNumber),
+        sourcePostType: 'thread',
+        boardSlug: 'tam-su',
+        reason: args.reason,
+        actor: args.actor,
+        createdAt: args.createdAt,
+        expiresAt: args.expiresAt
+      };
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const sanction = await service.createSanctionForPost(7, {
+    kind: 'ban',
+    durationMinutes: 30,
+    reason: 'spam lien tuc',
+    actor: 'adminfixture'
+  });
+  const serialized = JSON.stringify(sanction);
+
+  assert.equal(hookArgs.globalNumber, 7);
+  assert.equal(hookArgs.kind, 'ban');
+  assert.equal(hookArgs.durationMinutes, 30);
+  assert.equal(hookArgs.reason, 'spam lien tuc');
+  assert.equal(hookArgs.actor, 'adminfixture');
+  assert.equal(hookArgs.createdAt, '2026-05-22T08:00:00.000Z');
+  assert.equal(hookArgs.expiresAt, '2026-05-22T08:30:00.000Z');
+  assert.equal(sanction.kind, 'ban');
+  assert.equal(sanction.sourceGlobalNumber, 7);
+  assert.equal(serialized.includes('fingerprint-secret-value'), false);
+  assert.equal(sanction.fingerprintPreview, 'fingerprint-...');
+});
+
+
+test('admin revoke sanction uses targeted store hook when available', async () => {
+  let hookArgs = null;
+  const store = {
+    async revokeSanction(args) {
+      hookArgs = args;
+      return {
+        sanction: {
+          id: args.id,
+          kind: 'ban',
+          fingerprint: 'fingerprint-secret-value',
+          fingerprintPreview: 'fingerprint-...',
+          sourceGlobalNumber: 7,
+          sourcePostType: 'thread',
+          boardSlug: 'tam-su',
+          reason: 'spam lien tuc',
+          actor: 'adminfixture',
+          createdAt: '2026-05-22T07:00:00.000Z',
+          expiresAt: '2026-05-23T07:00:00.000Z',
+          revokedAt: args.revokedAt,
+          revokeReason: args.reason,
+          revokedBy: args.actor
+        }
+      };
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const sanction = await service.revokeSanction('sanction-1', {
+    reason: 'go khoa',
+    actor: 'adminfixture'
+  });
+  const serialized = JSON.stringify(sanction);
+
+  assert.equal(hookArgs.id, 'sanction-1');
+  assert.equal(hookArgs.reason, 'go khoa');
+  assert.equal(hookArgs.actor, 'adminfixture');
+  assert.equal(hookArgs.revokedAt, '2026-05-22T08:00:00.000Z');
+  assert.equal(sanction.revokedAt, '2026-05-22T08:00:00.000Z');
+  assert.equal(sanction.revokeReason, 'go khoa');
+  assert.equal(serialized.includes('fingerprint-secret-value'), false);
+});
+
+
+test('admin approval uses targeted store hook when available', async () => {
+  const calls = [];
+  const parent = {
+    id: 'thread-parent',
+    boardSlug: 'tam-su',
+    body: 'Parent thread',
+    image: null,
+    images: [],
+    globalNumber: 10,
+    posterHash: 'ID:PARENT',
+    isPending: false,
+    isDeleted: false,
+    moderationStatus: 'Safe',
+    moderationLabels: [],
+    createdAt: '2026-05-22T07:00:00.000Z',
+    bumpedAt: '2026-05-22T08:00:00.000Z'
+  };
+  const pendingThread = { ...parent, id: 'thread-pending', globalNumber: 11, body: 'Pending thread', isPending: false, moderationStatus: 'ApprovedByAdmin' };
+  const pendingComment = {
+    id: 'comment-pending',
+    threadId: parent.id,
+    boardSlug: 'tam-su',
+    body: 'Pending comment',
+    image: null,
+    images: [],
+    globalNumber: 12,
+    posterHash: 'ID:COMMENT',
+    isPending: false,
+    isDeleted: false,
+    moderationStatus: 'ApprovedByAdmin',
+    moderationLabels: [],
+    createdAt: '2026-05-22T07:30:00.000Z'
+  };
+  const store = {
+    async approvePending(args) {
+      calls.push(args);
+      if (args.id === pendingThread.id) {
+        return { postType: 'thread', post: { ...pendingThread, moderationReason: args.reason }, comments: [] };
+      }
+      if (args.id === pendingComment.id) {
+        return {
+          postType: 'comment',
+          post: { ...pendingComment, moderationReason: args.reason },
+          parent,
+          comments: [pendingComment]
+        };
+      }
+      throw new Error('unexpected pending id');
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const realtime = createEvents();
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime,
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const thread = await service.approvePending(pendingThread.id, { reason: ' ok ', actor: 'adminfixture' });
+  const comment = await service.approvePending(pendingComment.id, { reason: 'comment ok', actor: 'adminfixture' });
+
+  assert.equal(calls[0].id, pendingThread.id);
+  assert.equal(calls[0].reason, 'ok');
+  assert.equal(calls[0].createdAt, '2026-05-22T08:00:00.000Z');
+  assert.equal(thread.globalNumber, pendingThread.globalNumber);
+  assert.equal(comment.globalNumber, pendingComment.globalNumber);
+  assert.deepEqual(realtime.events.map((item) => item.event), ['thread:created', 'comment:created', 'thread:bumped']);
+});
+
+
 test('archived threads are hidden from board list and visible in archive list', async () => {
   const realtime = createEvents();
   const service = createForumService({

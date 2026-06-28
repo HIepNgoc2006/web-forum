@@ -119,6 +119,28 @@ function reportCandidateLimit(limit = 50, filters = {}) {
   return needsPriorityPass ? Math.min(Math.max(safeLimit * 10, 500), 2_000) : safeLimit;
 }
 
+function fingerprintPreview(fingerprint = '') {
+  return `${String(fingerprint).slice(0, 12)}...`;
+}
+
+function moderationActionForPost({ action, actor = 'system', postType, post, reason = '', createdAt }) {
+  return {
+    id: crypto.randomUUID(),
+    action,
+    actor: String(actor || 'system').slice(0, 80),
+    reason,
+    postType,
+    postId: post.id,
+    threadId: postType === 'thread' ? post.id : post.threadId,
+    boardSlug: post.boardSlug,
+    globalNumber: post.globalNumber,
+    moderationStatus: post.moderationStatus,
+    moderationLabels: post.moderationLabels ?? [],
+    ...(Number.isFinite(Number(post.moderationConfidence)) ? { moderationConfidence: Number(post.moderationConfidence) } : {}),
+    createdAt
+  };
+}
+
 export function createMongoModels(connection) {
   const model = (name, schema, collection) =>
     connection.models[name] ?? connection.model(name, schema, collection);
@@ -560,6 +582,230 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           .filter(([globalNumber]) => Number.isFinite(globalNumber))
       );
       return state;
+    },
+
+    async createSanctionForPost({
+      globalNumber,
+      kind = 'cooldown',
+      durationMinutes = 60,
+      reason = '',
+      actor = 'admin',
+      createdAt = new Date().toISOString(),
+      expiresAt
+    } = {}) {
+      queue = queue.then(async () => {
+        const models = await getModels();
+        const postNumber = Number(globalNumber);
+        const [thread, comment] = await Promise.all([
+          models.Thread.findOne({ globalNumber: postNumber }).lean(),
+          models.Comment.findOne({ globalNumber: postNumber }).lean()
+        ]);
+        const postType = thread ? 'thread' : comment ? 'comment' : '';
+        const post = thread ? plainDocument(thread) : comment ? plainDocument(comment) : null;
+        if (!post) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (!post.authorFingerprint) {
+          const error = new Error('Bài viết này chưa có fingerprint vận hành');
+          error.statusCode = 409;
+          throw error;
+        }
+
+        const safeKind = kind === 'ban' ? 'ban' : 'cooldown';
+        const safeDuration = Math.max(1, Math.min(Number(durationMinutes) || 60, 60 * 24 * 30));
+        const safeReason = String(reason || '').slice(0, 240);
+        const safeExpiresAt = expiresAt || new Date(new Date(createdAt).getTime() + safeDuration * 60 * 1000).toISOString();
+        const sanction = {
+          id: crypto.randomUUID(),
+          kind: safeKind,
+          fingerprint: post.authorFingerprint,
+          fingerprintPreview: fingerprintPreview(post.authorFingerprint),
+          sourceGlobalNumber: post.globalNumber,
+          sourcePostType: postType,
+          boardSlug: post.boardSlug,
+          reason: safeReason,
+          actor: String(actor || 'admin').slice(0, 80),
+          createdAt,
+          expiresAt: safeExpiresAt
+        };
+        const moderationAction = moderationActionForPost({
+          action: safeKind === 'ban' ? 'admin:ban' : 'admin:cooldown',
+          actor,
+          postType,
+          post,
+          reason: `${safeReason} (${safeDuration} phút)`,
+          createdAt
+        });
+        await Promise.all([
+          models.Sanction.collection.insertOne(sanction),
+          models.ModerationAction.collection.insertOne(moderationAction)
+        ]);
+        return sanction;
+      });
+      return queue;
+    },
+
+    async revokeSanction({ id, reason = '', actor = 'admin', revokedAt = new Date().toISOString() } = {}) {
+      queue = queue.then(async () => {
+        const models = await getModels();
+        const revokeReason = String(reason || '').slice(0, 240);
+        const sanction = await models.Sanction.findOneAndUpdate(
+          {
+            id,
+            $or: [
+              { revokedAt: { $exists: false } },
+              { revokedAt: null },
+              { revokedAt: '' }
+            ]
+          },
+          {
+            $set: {
+              revokedAt,
+              revokeReason,
+              revokedBy: String(actor || 'admin').slice(0, 80)
+            }
+          },
+          { new: true }
+        ).lean();
+        if (!sanction) {
+          const error = new Error('Không tìm thấy khóa tạm đang hoạt động');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const plainSanction = plainDocument(sanction);
+        const postNumber = Number(plainSanction.sourceGlobalNumber);
+        const [thread, comment] = await Promise.all([
+          models.Thread.findOne({ globalNumber: postNumber }).lean(),
+          models.Comment.findOne({ globalNumber: postNumber }).lean()
+        ]);
+        const postType = thread ? 'thread' : comment ? 'comment' : '';
+        const post = thread ? plainDocument(thread) : comment ? plainDocument(comment) : null;
+        if (post) {
+          await models.ModerationAction.collection.insertOne(
+            moderationActionForPost({
+              action: 'admin:unsanction',
+              actor,
+              postType,
+              post,
+              reason: revokeReason || 'Gỡ khóa tạm',
+              createdAt: revokedAt
+            })
+          );
+        }
+        return { sanction: plainSanction };
+      });
+      return queue;
+    },
+
+    async approvePending({ id, reason = '', actor = 'admin', createdAt = new Date().toISOString() } = {}) {
+      queue = queue.then(async () => {
+        const models = await getModels();
+        const moderationReason = String(reason || '').slice(0, 240);
+        const thread = await models.Thread.findOneAndUpdate(
+          { id, isPending: true, isDeleted: { $ne: true } },
+          {
+            $set: {
+              isPending: false,
+              moderationStatus: 'ApprovedByAdmin',
+              moderationReason,
+              bumpedAt: createdAt
+            }
+          },
+          { new: true }
+        ).lean();
+
+        if (thread) {
+          const post = plainDocument(thread);
+          const moderationAction = moderationActionForPost({
+            action: 'admin:approve',
+            actor,
+            postType: 'thread',
+            post,
+            reason: moderationReason,
+            createdAt
+          });
+          await models.ModerationAction.collection.insertOne(moderationAction);
+          const comments = await models.Comment.find({
+            threadId: post.id,
+            isPending: { $ne: true },
+            isDeleted: { $ne: true }
+          }).lean();
+          return {
+            postType: 'thread',
+            post,
+            comments: comments.map(plainDocument),
+            moderationAction
+          };
+        }
+
+        const pendingComment = await models.Comment.findOne({ id, isPending: true, isDeleted: { $ne: true } }).lean();
+        if (!pendingComment) {
+          const error = new Error('Không tìm thấy bài đang chờ duyệt');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const parentBeforeUpdate = await models.Thread.findOne({
+          id: pendingComment.threadId,
+          isPending: { $ne: true },
+          isDeleted: { $ne: true },
+          isArchived: { $ne: true }
+        }).lean();
+        if (!parentBeforeUpdate) {
+          const error = new Error('Không tìm thấy chủ đề cha');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const comment = await models.Comment.findOneAndUpdate(
+          { id, isPending: true, isDeleted: { $ne: true } },
+          {
+            $set: {
+              isPending: false,
+              moderationStatus: 'ApprovedByAdmin',
+              moderationReason
+            }
+          },
+          { new: true }
+        ).lean();
+        if (!comment) {
+          const error = new Error('Không tìm thấy bài đang chờ duyệt');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const parent = await models.Thread.findOneAndUpdate(
+          { id: pendingComment.threadId },
+          { $set: { bumpedAt: createdAt } },
+          { new: true }
+        ).lean();
+        const post = plainDocument(comment);
+        const moderationAction = moderationActionForPost({
+          action: 'admin:approve',
+          actor,
+          postType: 'comment',
+          post,
+          reason: moderationReason,
+          createdAt
+        });
+        await models.ModerationAction.collection.insertOne(moderationAction);
+        const comments = await models.Comment.find({
+          threadId: post.threadId,
+          isPending: { $ne: true },
+          isDeleted: { $ne: true }
+        }).lean();
+        return {
+          postType: 'comment',
+          post,
+          parent: plainDocument(parent ?? parentBeforeUpdate),
+          comments: comments.map(plainDocument),
+          moderationAction
+        };
+      });
+      return queue;
     },
 
     async read() {

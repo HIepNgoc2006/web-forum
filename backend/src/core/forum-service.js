@@ -4841,6 +4841,26 @@ export function createForumService({
       const safeKind = kind === 'ban' ? 'ban' : 'cooldown';
       const safeDuration = sanitizeDurationMinutes(durationMinutes, safeKind === 'ban' ? 24 * 60 : 60);
       const safeReason = sanitizeReason(reason) || (safeKind === 'ban' ? 'Tạm khóa' : 'Cooldown');
+      if (typeof store.createSanctionForPost === 'function') {
+        const createdAt = now().toISOString();
+        const expiresAt = new Date(new Date(createdAt).getTime() + safeDuration * 60 * 1000).toISOString();
+        const sanction = await store.createSanctionForPost({
+          globalNumber,
+          kind: safeKind,
+          durationMinutes: safeDuration,
+          reason: safeReason,
+          actor,
+          createdAt,
+          expiresAt
+        });
+        logEvent('moderation.sanction', {
+          kind: safeKind,
+          boardSlug: sanction.boardSlug,
+          globalNumber: sanction.sourceGlobalNumber,
+          actor
+        });
+        return serializeSanction(sanction);
+      }
 
       return mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
@@ -4890,6 +4910,19 @@ export function createForumService({
     },
 
     async revokeSanction(id, { reason = '', actor = 'admin' } = {}) {
+      if (typeof store.revokeSanction === 'function') {
+        const revokedAt = now().toISOString();
+        const revokeReason = sanitizeReason(reason);
+        const revoked = await store.revokeSanction({ id, reason: revokeReason, actor, revokedAt });
+        logEvent('moderation.unsanction', {
+          kind: revoked.sanction.kind,
+          boardSlug: revoked.sanction.boardSlug,
+          sourceGlobalNumber: revoked.sanction.sourceGlobalNumber,
+          actor
+        });
+        return serializeSanction(revoked.sanction);
+      }
+
       return mutate(async (state) => {
         const sanction = state.sanctions.find((item) => item.id === id && !item.revokedAt);
         if (!sanction) {
@@ -4923,6 +4956,34 @@ export function createForumService({
     },
 
     async approvePending(id, { reason = '', actor = 'admin' } = {}) {
+      if (typeof store.approvePending === 'function') {
+        const actionAt = now().toISOString();
+        const moderationReason = sanitizeReason(reason);
+        const approved = await store.approvePending({ id, reason: moderationReason, actor, createdAt: actionAt });
+        if (approved.postType === 'thread') {
+          logEvent('moderation.approve', {
+            postType: 'thread',
+            boardSlug: approved.post.boardSlug,
+            globalNumber: approved.post.globalNumber,
+            actor
+          });
+          const thread = serializeThread(approved.post, approved.comments ?? []);
+          realtime.publish('thread:created', { thread });
+          return thread;
+        }
+        if (approved.postType === 'comment') {
+          logEvent('moderation.approve', {
+            postType: 'comment',
+            boardSlug: approved.post.boardSlug,
+            globalNumber: approved.post.globalNumber,
+            actor
+          });
+          const comment = serializeComment(approved.post, approved.parent);
+          realtime.publish('comment:created', { threadId: approved.parent.id, comment });
+          realtime.publish('thread:bumped', { thread: serializeThread(approved.parent, approved.comments ?? []) });
+          return comment;
+        }
+      }
       return mutate(async (state) => {
         const actionAt = now().toISOString();
         const thread = state.threads.find((item) => item.id === id && item.isPending && !item.isDeleted);
