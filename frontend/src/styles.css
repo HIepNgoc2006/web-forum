@@ -1682,8 +1682,31 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   grid-template-columns: 92px minmax(0, 1fr);
 }
 
+.login-panel .otp-field-row {
+  grid-template-columns: 138px minmax(0, 1fr);
+}
+
+.otp-field-row > span {
+  white-space: nowrap;
+}
+
+.otp-code-input {
+  font-size: 18px;
+  letter-spacing: 0;
+  text-align: center;
+}
+
+.otp-code-input-compact {
+  max-width: 150px;
+  font-size: 16px;
+}
+
 .login-panel .form-actions {
   margin-left: 92px;
+}
+
+.login-panel .otp-field-row + .form-actions {
+  margin-left: 138px;
 }
 
 .account-screen .login-panel {
@@ -2264,9 +2287,17 @@ body.display-compact .post-body {
     grid-template-columns: 78px minmax(0, 1fr);
   }
 
+  .login-panel .otp-field-row {
+    grid-template-columns: minmax(118px, 40%) minmax(0, 1fr);
+  }
+
   .form-actions,
   .login-panel .form-actions {
     margin-left: 78px;
+  }
+
+  .login-panel .otp-field-row + .form-actions {
+    margin-left: min(40%, 138px);
   }
 
   .privacy-warning {

@@ -18,7 +18,7 @@
       </a>
       <nav id="boardNav" class="board-nav" aria-label="Bảng"></nav>
       <div class="top-actions">
-        <span id="socketStatus" class="socket-pill">đang kết nối</span>
+        <span id="socketStatus" class="socket-pill" role="status" aria-live="polite">đang kết nối</span>
         <a href="/feeds/latest.rss">RSS</a>
         <a href="/feeds/latest.json">JSON</a>
         <a href="#policy">Nội quy</a>
@@ -684,9 +684,9 @@
           <div id="account2FAVerifyError" class="form-error hidden" role="alert"></div>
           <p class="muted">Tài khoản này đã kích hoạt bảo mật 2 lớp. Vui lòng nhập mã xác thực từ ứng dụng của bạn.</p>
           <div id="totpInputSection" class="stack">
-            <label class="field-row">
+            <label class="field-row otp-field-row">
               <span>Mã 2FA (6 chữ số)</span>
-              <input id="login2FACode" maxlength="6" placeholder="Mã 6 chữ số" style="font-size:18px; text-align:center;" type="text" />
+              <input id="login2FACode" class="otp-code-input" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
             </label>
             <div class="form-actions account-actions">
               <button class="primary-button" type="submit">Xác thực</button>
@@ -855,9 +855,9 @@
               <p class="muted" style="margin:0 0 5px 0;">Lưu lại các mã dự phòng sau. Mỗi mã chỉ sử dụng được một lần để khôi phục tài khoản nếu bạn mất thiết bị 2FA.</p>
               <textarea id="backupCodesDisplay" readonly rows="5" style="width:100%; font-family:monospace; resize:none;"></textarea>
             </div>
-            <div class="field-row">
+            <div class="field-row otp-field-row">
               <span>Nhập mã 2FA xác nhận</span>
-              <input id="verify2FACode" maxlength="6" placeholder="Mã 6 chữ số" style="max-width: 150px; font-size:16px; text-align:center;" type="text" />
+              <input id="verify2FACode" class="otp-code-input otp-code-input-compact" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
             </div>
             <div class="form-actions account-actions">
               <button id="verify2FASetupButton" class="primary-button" type="button">Xác nhận và kích hoạt</button>
@@ -906,9 +906,9 @@
         <form id="admin2FAVerifyForm" class="login-panel stack hidden">
           <div id="admin2FAVerifyError" class="form-error hidden" role="alert"></div>
           <p class="muted">Tài khoản quản trị đã kích hoạt bảo mật 2 lớp. Vui lòng nhập mã xác thực từ ứng dụng của bạn.</p>
-          <label class="field-row">
+          <label class="field-row otp-field-row">
             <span>Mã 2FA (6 chữ số)</span>
-            <input id="admin2FACode" maxlength="6" placeholder="Mã 6 chữ số" style="font-size:18px; text-align:center;" type="text" />
+            <input id="admin2FACode" class="otp-code-input" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
           </label>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Xác thực</button>
@@ -931,9 +931,9 @@
               <p class="muted" style="margin:0 0 5px 0;">Lưu lại các mã dự phòng sau. Mỗi mã chỉ sử dụng được một lần để khôi phục tài khoản nếu bạn mất thiết bị 2FA.</p>
               <textarea id="admin2FABackupCodes" readonly rows="5" style="width:100%; font-family:monospace; resize:none;"></textarea>
             </div>
-            <label class="field-row">
+            <label class="field-row otp-field-row">
               <span>Nhập mã 2FA xác nhận</span>
-              <input id="admin2FASetupCode" maxlength="6" placeholder="Mã 6 chữ số" style="max-width: 150px; font-size:16px; text-align:center;" type="text" />
+              <input id="admin2FASetupCode" class="otp-code-input otp-code-input-compact" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
             </label>
             <div class="form-actions account-actions">
               <button id="adminVerify2FASetupButton" class="primary-button" type="button">Xác nhận và kích hoạt</button>
