@@ -1,6 +1,6 @@
 # 36chan API Inventory
 
-Date: 2026-06-21
+Date: 2026-06-28
 
 Base path: same origin backend. Development frontend proxies `/api`, `/events`, and `/uploads`.
 
@@ -41,19 +41,25 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 
 | Method | Path | Purpose | Notes |
 | --- | --- | --- | --- |
-| GET | `/api/boards/:boardSlug/threads?page=&pageSize=&q=` | Lay active public threads cua board. | Sticky threads sort truoc thread thuong, sau do sort `bumpedAt` desc. Khong tra pending/deleted/archived. Neu co query paging/search thi tra `{ items, page, pageSize, total, totalPages, hasMore }`; neu khong co query thi tra array cu de tuong thich. |
+| GET | `/api/boards/:boardSlug/threads?page=&pageSize=&q=&sort=&filter=` | Lay active public threads cua board. | Sticky threads sort truoc thread thuong. `sort=bump` default theo `bumpedAt` desc; `sort=created` theo OP moi nhat; `sort=replies` theo so reply public. `filter=all\|media\|video\|poll\|unanswered` loc truoc pagination. Khong tra pending/deleted/archived. Neu co query paging/search/sort/filter thi tra `{ items, page, pageSize, total, totalPages, hasMore }`; neu khong co query thi tra array cu de tuong thich. |
+| GET | `/feeds/boards/:boardSlug/threads.json?limit=20` | JSON Feed active public threads cua board. | Public feed, limit clamp 1-50, returns 404 when board hidden or missing. |
+| GET | `/feeds/boards/:boardSlug/threads.rss?limit=20` | RSS 2.0 active public threads cua board. | Public feed, escape XML, limit clamp 1-50, returns 404 when board hidden or missing. |
 | POST | `/api/boards/:boardSlug/threads` | Tao thread moi. | Body: `body`, optional `displayName`, `image` + `image.thumbnail`, `pollOptions`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options` ho tro `noko`. Rate limited. |
 | GET | `/api/boards/:boardSlug/archive` | Lay archived public threads. | Sort `archivedAt` desc. Returns 404 when board is hidden or `retentionPolicy.publicArchive` is false. |
 | GET | `/feeds/boards/:boardSlug/archive.json?limit=20` | JSON Feed archived public threads cua board. | Public feed, limit clamp 1-50, returns 404 when board hidden or `retentionPolicy.publicArchive` is false. |
 | GET | `/feeds/boards/:boardSlug/archive.rss?limit=20` | RSS 2.0 archived public threads cua board. | Public feed, escape XML, returns 404 when board hidden or `retentionPolicy.publicArchive` is false. |
 | POST | `/api/boards/:boardSlug/summary` | AI tom tat board. | Chi dung public content. Can Google AI key. Rate limit can tach rieng o phase sau. |
-| GET | `/api/threads/:threadId?commentsPage=&commentsPageSize=&focusGlobalNumber=` | Lay thread detail. | Tra OP public va comments public. Neu co query paging thi comments duoc phan trang va tra `commentPage`; `focusGlobalNumber` tu dong chon trang chua post permalink. |
+| GET | `/api/threads/:threadId?commentsPage=&commentsPageSize=&focusGlobalNumber=` | Lay thread detail. | Tra OP public va comments public. Neu co query paging thi comments duoc phan trang va tra `commentPage`; `focusGlobalNumber` tu dong chon trang chua post permalink. Tra them `threadNavigation.previous/next` cho thread cong khai dang hoat dong lien ke tren cung board. |
+| GET | `/feeds/threads/:threadId/posts.json?limit=20` | JSON Feed bai public trong thread. | Public feed, sap xep bai moi nhat truoc, limit clamp 1-50, chi tra OP/comment public cua thread truy cap duoc. |
+| GET | `/feeds/threads/:threadId/posts.rss?limit=20` | RSS 2.0 bai public trong thread. | Public feed, escape XML, sap xep bai moi nhat truoc, limit clamp 1-50, chi tra OP/comment public cua thread truy cap duoc. |
 | POST | `/api/threads/:threadId/comments` | Tao comment. | Body: `body`, optional `displayName`, `options`, `deletePassword`, `captchaToken`, `posterToken`. `displayName` bo trong/mac dinh hien `Anonymous`; sanitize, gioi han 40 ky tu, chan reserved authority labels; khong phai account username tru khi user explicit chon gui username lam display name. `options=sage` se reply khong bump thread. Rate limited. |
 | POST | `/api/threads/:threadId/summary` | AI tom tat thread. | Chi dung public content. Can Google AI key. |
 | POST | `/api/threads/:threadId/suggestions` | AI goi y comment. | Khong luu suggestion neu user chua submit. Can Google AI key. |
 | GET | `/api/posts/:globalNumber` | Lookup post by global number. | Dung cho `>>ID` preview/permalink. Chi tra public post. |
+| PUT | `/api/posts/:globalNumber` | Account owner sua bai da dang. | Bearer JWT account bat buoc; chi sua bai co `accountId` trung voi token; body `{ "body": "", "images": [] }`; bo qua `images` de giu tep cu, gui `images: []` de xoa tep; luu `editHistory` admin-only va public `editedAt`. |
 | POST | `/api/posts/:globalNumber` | Bao cao bai viet. | Body `{ "category": "Spam\|Toxic\|PII\|Fake News\|Illegal\|Other", "reason": "", "posterToken": "" }`; `category` khong hop le fallback `Other`; luu reporter hash, khong luu IP raw. |
 | DELETE | `/api/posts/:globalNumber` | User tu xoa bai/tap tin bang mat khau xoa. | Body `{ "password": "", "fileOnly": false }`; yeu cau `deletePassword` da duoc dat khi dang. |
+| POST | `/api/appeals` | Gui khang nghi an danh cho bai da bi admin xoa. | Body `{ "token": "", "reason": "", "posterToken": "" }`; token duoc cap khi dang bai va khong tra lai public/admin; chi chap nhan sau khi bai da bi xoa; luu reporter hash, khong luu IP raw. |
 
 ## Public uploaded files
 
@@ -75,6 +81,8 @@ Account is optional and private. These endpoints require `JWT_SECRET` for issuin
 | GET | `/api/account/private-data` | Lay account-private watchlist, drafts, saved searches. | Bearer JWT role `user`; khong expose qua public post serializers. |
 | PUT | `/api/account/private-data` | Luu account-private `{ watchlist, drafts, savedSearches }` de dong bo giua thiet bi. | Bearer JWT role `user`; server normalize/gioi han so luong, draft body, preview/search text. |
 | DELETE | `/api/account/private-data?section=` | Xoa account-private data; `section` co the la `watchlist`, `drafts`, `savedSearches`, hoac bo trong de xoa tat ca. | Bearer JWT role `user`; dung cho clear controls. |
+| POST | `/api/auth/2fa/totp-login` | Xac thuc TOTP sau password login. | Public endpoint; body `{ tempToken, code }`; returns fully verified account/admin JWT. `/api/auth/2fa/verify` remains a compatibility alias. |
+| POST | `/api/auth/2fa/backup-login` | Xac thuc bang ma du phong sau password login. | Public endpoint; body `{ tempToken, code }`; burns backup code on success and returns fully verified account/admin JWT. |
 
 ## Admin
 
@@ -87,9 +95,9 @@ Admin auth uses privileged account roles. `owner` can view/moderate/manage board
 | POST | `/api/admin/users` | Create privileged user. | `owner`; body `{ "username": "", "password": "", "role": "owner|moderator|viewer", "disabled": false }`. |
 | PUT | `/api/admin/users/:id` | Update privileged user role/status/password. | `owner`; body may include `{ "role": "owner|moderator|viewer", "disabled": true, "password": "" }`; cannot disable/demote self or the last active owner. |
 | DELETE | `/api/admin/users/:id` | Disable privileged user. | `owner`; same last-owner/self protections as update. |
-| GET | `/api/admin/boards` | List all boards for admin editing. | Permission `admin:view`; returns hidden/archived flags and effective `retentionPolicy`. |
-| POST | `/api/admin/boards` | Create dynamic board. | Permission `admin:manage_boards` (`owner`); body includes `slug`, `name`, `category`, `description`, optional flags, optional `retentionPolicy`. |
-| PUT | `/api/admin/boards/:boardSlug` | Update board config. | Permission `admin:manage_boards` (`owner`); body may include text fields, flags, and partial `retentionPolicy`. |
+| GET | `/api/admin/boards` | List all boards for admin editing. | Permission `admin:view`; returns hidden/archived flags, presentation fields `rules`/`banner`, event board fields `temporary`/`eventEndsAt`, and effective `retentionPolicy`. |
+| POST | `/api/admin/boards` | Create dynamic board. | Permission `admin:manage_boards` (`owner`); body includes `slug`, `name`, `category`, `description`, optional `rules`, optional `banner.text`/`banner.imageUrl`/`banner.altText`, optional flags, optional `temporary` + ISO/datetime `eventEndsAt`, optional `retentionPolicy`. Temporary boards require `eventEndsAt`. Banner image URLs must be relative `/...` or HTTPS to render publicly. |
+| PUT | `/api/admin/boards/:boardSlug` | Update board config. | Permission `admin:manage_boards` (`owner`); body may include text fields, `rules`, `banner`, flags, `temporary` + `eventEndsAt`, and partial `retentionPolicy`. Setting `temporary=false` clears `eventEndsAt`. |
 | DELETE | `/api/admin/boards/:boardSlug` | Delete empty board. | Permission `admin:manage_boards` (`owner`); boards with content/reports/sanctions must be hidden or archived instead. |
 | GET | `/api/admin/pending?boardSlug=&label=&since=&priority=&confidence=&sort=` | Lay pending queue. | Permission `admin:view`; ho tro filter. `priority=high|medium|low`; `confidence` la nguong toi thieu 0..1 hoac 0..100; `sort=priority|newest|oldest|confidence-desc|confidence-asc`, default `priority`. Items include `moderationPriority` va `moderationConfidence` khi AI tra ve. |
 | GET | `/api/admin/moderation-settings` | Lay cau hinh moderation admin. | Permission `admin:view`; tra ve `moderationConfidenceThreshold` hien hanh. |
@@ -99,7 +107,10 @@ Admin auth uses privileged account roles. `owner` can view/moderate/manage board
 | GET | `/api/admin/deleted?limit=50&boardSlug=&label=&since=` | Lay bai da xoa. | Permission `admin:view`. |
 | GET | `/api/admin/approved?limit=50&boardSlug=&label=&since=` | Lay lich su admin approve. | Permission `admin:view`. |
 | GET | `/api/admin/sanctions?limit=50&status=active&kind=&boardSlug=` | Lay danh sach cooldown/ban. | Permission `admin:view`; chi tra fingerprint preview, khong tra IP raw. |
-| GET | `/api/admin/posts/:globalNumber` | Lay chi tiet bai cho admin. | Permission `admin:view`; gom post, thread context, reports, actions. |
+| GET | `/api/admin/posts/:globalNumber` | Lay chi tiet bai cho admin. | Permission `admin:view`; gom post, thread context, reports, actions, va `editHistory` admin-only voi before/after body + media. |
+| PUT | `/api/admin/posts/:globalNumber` | Sua noi dung bai dang cua user. | Permission `admin:moderate`; body `{ "body": "", "reason": "" }`; luu audit `admin:edit` va entry `editHistory` gom before/after body + media; khong public `editedBy`/`editReason`/`editHistory`. |
+| DELETE | `/api/admin/posts/:globalNumber` | Xoa bai hoac tep cua bai dang. | Permission `admin:moderate`; body `{ "reason": "", "fileOnly": false }`; khong can mat khau xoa cua user. |
+| POST | `/api/admin/posts/:globalNumber/restore` | Khoi phuc bai da xoa. | Permission `admin:moderate`; body optional `{ "reason": "" }`; luu audit `admin:restore`; bai pending quay lai hang doi, bai public hien lai tren public API. |
 | POST | `/api/admin/posts/:globalNumber/notes` | Them moderator note noi bo. | Permission `admin:moderate`; body `{ "note": "" }`. |
 | POST | `/api/admin/posts/:globalNumber/sanctions` | Tao cooldown/ban tu bai viet. | Permission `admin:moderate`; body `{ "kind": "cooldown|ban", "durationMinutes": 60, "reason": "" }`. |
 | DELETE | `/api/admin/sanctions/:id` | Go cooldown/ban dang hoat dong. | Permission `admin:moderate`; body optional `{ "reason": "" }`. |
@@ -152,7 +163,7 @@ Transport: Server-Sent Events.
 
 ## Board config public display contract
 
-Status: public board banner/rules display is implemented from fixed board config as a bridge toward dynamic board config.
+Status: public board banner/rules display is implemented for fixed and dynamic/admin-managed boards.
 
 - `/api/config` board items may include `rules: string[]`.
 - `/api/config` board items include `banner: { text, imageUrl?, altText? }`.
