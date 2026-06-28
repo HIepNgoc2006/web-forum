@@ -1482,8 +1482,8 @@ function fillAccountSettings(account = state.account) {
     email: Boolean(settings.emailNotifications)
   };
   els.accountStatus.textContent = account
-    ? `Đang đăng nhập @${account.username}. Account không thay thế Anonymous trên bài public.`
-    : 'Chưa đăng nhập. Settings bên dưới chỉ lưu trên trình duyệt này.';
+    ? `Đang đăng nhập @${account.username}. Tài khoản không thay thế Anonymous trên bài công khai.`
+    : 'Chưa đăng nhập. Cài đặt bên dưới chỉ lưu trên trình duyệt này.';
   els.accountSettingsForm.classList.remove('hidden');
   els.accountLoggedOut.classList.toggle('hidden', Boolean(account));
   els.accountSettingsLogout.classList.toggle('hidden', !account);

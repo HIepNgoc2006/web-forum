@@ -705,7 +705,7 @@ async function main() {
         label: 'admin desktop',
         url: `${baseUrl}/#admin`,
         screenshotPath: path.join(screenshotRoot, 'admin-login-desktop.png'),
-        checks: ['Hàng đợi kiểm duyệt', 'Tài khoản', 'Đăng nhập']
+        checks: ['Bảng quản trị', 'Tài khoản', 'Đăng nhập']
       },
       {
         label: 'account login desktop',
@@ -721,7 +721,7 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-account-desktop.png'),
-        checks: ['Settings tài khoản', 'Giao diện', 'Bảng nhà', 'Browser: thread đang theo dõi', 'Bạn chưa đăng nhập tài khoản'],
+        checks: ['Cài đặt tài khoản', 'Giao diện', 'Bảng nhà', 'Trình duyệt: thread đang theo dõi', 'Bạn chưa đăng nhập tài khoản'],
         async interaction(cdp) {
           const result = await cdp.send('Runtime.evaluate', {
             expression: `(async () => {
