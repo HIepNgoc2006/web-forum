@@ -1618,6 +1618,45 @@ test('http api supports anonymous thread poll voting once per fingerprint', asyn
   });
 });
 
+test('http api toggles post reactions by poster fingerprint', async () => {
+  await withServer(async (baseUrl) => {
+    const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'React endpoint thread',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const createdBody = await created.json();
+
+    const reacted = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reaction: 'laugh', posterToken: 'reader-a' })
+    });
+    const reactedBody = await reacted.json();
+    assert.equal(reacted.status, 200);
+    assert.equal(reactedBody.data.reactions.laugh, 1);
+    assert.equal(reactedBody.data.myReaction, 'laugh');
+
+    const detail = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
+    const detailBody = await detail.json();
+    assert.equal(detailBody.data.thread.reactions.laugh, 1);
+    assert.equal(JSON.stringify(detailBody.data.thread).includes('reactionVoters'), false);
+
+    const removed = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ reaction: 'laugh', posterToken: 'reader-a' })
+    });
+    const removedBody = await removed.json();
+    assert.equal(removed.status, 200);
+    assert.equal(removedBody.data.reactions.laugh, 0);
+    assert.equal(removedBody.data.myReaction, null);
+  });
+});
+
 test('http rate limits thread creation separately from comments', async () => {
   await withServer(async (baseUrl) => {
     let firstThreadId = '';

@@ -86,6 +86,7 @@ const RECOMMENDED_THREAD_MAX_LIMIT = 50;
 const RECOMMENDED_THREAD_HIGH_RISK_LABELS = new Set(['PII Risk', 'PII', 'Illegal', 'Hate Speech', 'Toxic']);
 const RECOMMENDED_THREAD_MEDIUM_RISK_LABELS = new Set(['Spam', 'Fake News']);
 const MAX_THREAD_SUBJECT_LENGTH = 120;
+const POST_REACTION_TYPES = new Set(['like', 'laugh', 'surprise', 'sad', 'angry', 'thanks']);
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -110,6 +111,7 @@ function stripPrivatePostFields(post) {
     deletePasswordHash: _deletePasswordHash,
     pollVotes: _pollVotes,
     voters: _voters,
+    reactionVoters: _reactionVoters,
     stickiedBy: _stickiedBy,
     accountId: _accountId,
     ip: _ip,
@@ -852,6 +854,11 @@ function publicVotes(post) {
   return { up, down, score: up - down };
 }
 
+function publicReactions(post) {
+  const existing = post?.reactions && typeof post.reactions === 'object' ? post.reactions : {};
+  return Object.fromEntries([...POST_REACTION_TYPES].map((type) => [type, Math.max(0, Number(existing[type]) || 0)]));
+}
+
 function rollDie(randomInt, sides) {
   const value = Number(randomInt(1, sides + 1));
   if (Number.isInteger(value) && value >= 1 && value <= sides) {
@@ -922,6 +929,16 @@ function createDiceRolls(body, randomInt) {
     rolls
   );
   return rolls;
+}
+
+function normalizeReactionType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  if (POST_REACTION_TYPES.has(type)) {
+    return type;
+  }
+  const error = new Error('Reaction không hợp lệ');
+  error.statusCode = 400;
+  throw error;
 }
 
 const COMMENT_SORTS = new Set(['best', 'top', 'new', 'controversial', 'old']);
@@ -1354,6 +1371,7 @@ function serializeThread(thread, comments) {
     slowModeSeconds: Number(thread.slowModeSeconds || 0),
     bodyLines: parsePostText(thread.body),
     votes: publicVotes(thread),
+    reactions: publicReactions(thread),
     diceRolls: Array.isArray(thread.diceRolls) ? thread.diceRolls : [],
     replyCount: publicComments.length
   };
@@ -1371,6 +1389,7 @@ function serializeComment(comment, thread = null) {
     isOp: Boolean(thread?.opProofHash && comment.opProofHash && thread.opProofHash === comment.opProofHash),
     bodyLines: parsePostText(comment.body),
     votes: publicVotes(comment),
+    reactions: publicReactions(comment),
     diceRolls: Array.isArray(comment.diceRolls) ? comment.diceRolls : []
   };
 }
@@ -3806,6 +3825,50 @@ export function createForumService({
           });
         }
         return { votes: publicVotes(post), myVote };
+      });
+    },
+
+    async reactPost({ globalNumber, reaction, accountId, ip, posterToken } = {}) {
+      const reactionType = normalizeReactionType(reaction);
+
+      return mutate(async (state) => {
+        const found = findPublicPostByGlobalNumber(state, globalNumber);
+        if (!found) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const post = found.post;
+        const voterKey = accountId
+          ? `account:${accountId}`
+          : `anon:${createModerationFingerprint({ ip, posterToken })}`;
+        post.reactionVoters ??= {};
+        if (post.reactionVoters[voterKey] === reactionType) {
+          delete post.reactionVoters[voterKey];
+        } else {
+          post.reactionVoters[voterKey] = reactionType;
+        }
+
+        const reactions = Object.fromEntries([...POST_REACTION_TYPES].map((type) => [type, 0]));
+        for (const value of Object.values(post.reactionVoters)) {
+          if (POST_REACTION_TYPES.has(value)) {
+            reactions[value] += 1;
+          }
+        }
+        post.reactions = reactions;
+        const myReaction = post.reactionVoters[voterKey] ?? null;
+
+        if (found.postType === 'thread') {
+          realtime.publish('thread:updated', { thread: serializeThread(post, state.comments) });
+        } else {
+          const thread = state.threads.find((item) => item.id === post.threadId);
+          realtime.publish('comment:updated', {
+            threadId: post.threadId,
+            comment: serializeComment(post, thread)
+          });
+        }
+        return { reactions: publicReactions(post), myReaction };
       });
     },
 
