@@ -1,15 +1,12 @@
+import { readdir } from 'node:fs/promises';
+
 process.env.NODE_ENV = 'test';
-import './core.test.js';
-import './http.test.js';
-import './realtime.test.js';
-import './account.test.js';
-import './image-storage.test.js';
-import './upload-cleanup.test.js';
-import './backup-scheduler.test.js';
-import './seed-data.test.js';
-import './totp.test.js';
-import './webauthn.test.js';
-import './webauthn-origin.test.js';
-import './security-regression.test.js';
-import './board-digest.test.js';
-import './duplicate-check.test.js';
+
+const entries = await readdir(new URL('.', import.meta.url));
+const testFiles = entries
+  .filter((entry) => entry.endsWith('.test.js'))
+  .sort((left, right) => left.localeCompare(right));
+
+for (const file of testFiles) {
+  await import(`./${file}`);
+}
