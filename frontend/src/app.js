@@ -372,6 +372,22 @@ const aiNotConfiguredMessage =
 const MAX_MEDIA_PER_POST = 4;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 const SUPPORTED_THEMES = ['yotsuba-b', 'yotsuba', 'tomorrow', 'burichan'];
+const API_BASE_URL = String(import.meta.env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
+const REALTIME_URL = String(import.meta.env?.VITE_SOCKET_URL || '/events').trim() || '/events';
+
+function withUrlBase(path, baseUrl) {
+  if (!baseUrl || /^[a-z][a-z\d+\-.]*:/i.test(path)) {
+    return path;
+  }
+  const safePath = path.startsWith('/') ? path : `/${path}`;
+  return `${baseUrl}${safePath}`;
+}
+
+function realtimeEndpoint(contextKey = '') {
+  const url = withUrlBase(REALTIME_URL, API_BASE_URL);
+  const separator = url.includes('?') ? '&' : '?';
+  return `${url}${contextKey ? `${separator}${contextKey}` : ''}`;
+}
 
 function readWatchedThreads() {
   if (state.accountToken && state.accountPrivateData) {
@@ -1911,7 +1927,7 @@ async function api(path, options = {}) {
 
   let response;
   try {
-    response = await fetch(path, { ...fetchOptions, headers });
+    response = await fetch(withUrlBase(path, API_BASE_URL), { ...fetchOptions, headers });
   } catch (error) {
     if (timedOut) {
       throw new Error('AI phản hồi quá lâu, vui lòng thử lại.', { cause: error });
@@ -6436,7 +6452,7 @@ function setupRealtime() {
     state.realtimeSource.close();
   }
   state.realtimeContextKey = contextKey;
-  const source = new EventSource(`/events${contextKey ? `?${contextKey}` : ''}`);
+  const source = new EventSource(realtimeEndpoint(contextKey));
   state.realtimeSource = source;
   source.addEventListener('connected', () => {
     els.socketStatus.textContent = 'trực tiếp';
