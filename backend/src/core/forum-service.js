@@ -2409,6 +2409,18 @@ export function createForumService({
     return run;
   }
 
+  async function readUserById(userId) {
+    if (typeof store.readUser === 'function') {
+      const user = await store.readUser(userId);
+      return { state: { boards: BOARDS }, user };
+    }
+    const state = await store.read();
+    return {
+      state,
+      user: state.users.find((item) => item.id === userId)
+    };
+  }
+
   async function requireCaptcha(token, ip) {
     const ok = await verifyHcaptcha(token, ip);
     if (!ok) {
@@ -2502,11 +2514,19 @@ export function createForumService({
 
   return {
     async listBoards() {
+      if (typeof store.readBoards === 'function') {
+        const boards = await store.readBoards();
+        return boards.filter(publicBoard).map((board) => serializeBoard(board, { retentionDefaults: lifecycle }));
+      }
       const state = await store.read();
       return state.boards.filter(publicBoard).map((board) => serializeBoard(board, { retentionDefaults: lifecycle }));
     },
 
     async listAdminBoards() {
+      if (typeof store.readBoards === 'function') {
+        const boards = await store.readBoards();
+        return boards.map((board) => serializeBoard(board, { admin: true, retentionDefaults: lifecycle }));
+      }
       const state = await store.read();
       return state.boards.map((board) => serializeBoard(board, { admin: true, retentionDefaults: lifecycle }));
     },
@@ -2756,6 +2776,15 @@ export function createForumService({
     },
 
     async getAccount(userId) {
+      if (typeof store.readUser === 'function') {
+        const user = await store.readUser(userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        return serializeAccount({ boards: BOARDS }, user);
+      }
       const state = await store.read();
       const user = state.users.find((item) => item.id === userId);
       if (!user) {
@@ -2782,7 +2811,9 @@ export function createForumService({
     },
 
     async getAccountPrivateData(userId) {
-      const user = (await store.read()).users.find((item) => item.id === userId);
+      const user = typeof store.readUser === 'function'
+        ? await store.readUser(userId)
+        : (await store.read()).users.find((item) => item.id === userId);
       if (!user) {
         const error = new Error('Phiên đăng nhập không còn hợp lệ');
         error.statusCode = 401;
@@ -2851,6 +2882,20 @@ export function createForumService({
 
     async getOrCreateAdminAccount(username, password) {
       const safeUsername = normalizeAccountUsername(username);
+      if (typeof store.upsertAdminAccount === 'function') {
+        const actionAt = now().toISOString();
+        const admin = await store.upsertAdminAccount({
+          username: safeUsername,
+          passwordHash: accountPasswordHash(password),
+          role: 'owner',
+          settings: defaultAccountSettings(),
+          privateData: defaultAccountPrivateData(),
+          disabled: false,
+          createdAt: actionAt,
+          updatedAt: actionAt
+        });
+        return serializeAccount({ boards: BOARDS }, admin);
+      }
       return mutate(async (state) => {
         let admin = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
         if (!admin) {
@@ -2879,6 +2924,12 @@ export function createForumService({
     },
 
     async listPrivilegedUsers() {
+      if (typeof store.readPrivilegedUsers === 'function') {
+        const users = await store.readPrivilegedUsers();
+        return users
+          .map((user) => serializePrivilegedAccount({ boards: BOARDS }, user))
+          .sort((left, right) => left.username.localeCompare(right.username));
+      }
       const state = await store.read();
       return state.users
         .filter(isPrivilegedAccount)
@@ -3006,8 +3057,7 @@ export function createForumService({
     },
 
     async verify2FALogin(userId, code) {
-      const state = await store.read();
-      const user = state.users.find((item) => item.id === userId);
+      const { state, user } = await readUserById(userId);
       if (!user) {
         const error = new Error('Không tìm thấy tài khoản');
         error.statusCode = 404;
@@ -3415,9 +3465,11 @@ export function createForumService({
     },
 
     async listModerationActions(limit = 50, filters = {}) {
-      const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
-      return [...state.moderationActions]
+      const actions = typeof store.readModerationActions === 'function'
+        ? await store.readModerationActions({ limit: safeLimit, filters })
+        : (await store.read()).moderationActions;
+      return [...actions]
         .filter((action) => !filters.action || action.action === filters.action)
         .filter((action) => matchesAdminFilters(action, filters, 'createdAt'))
         .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
@@ -3425,10 +3477,12 @@ export function createForumService({
     },
 
     async listReports(limit = 50, filters = {}) {
-      const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const state = typeof store.readReportsModerationState === 'function'
+        ? await store.readReportsModerationState({ limit: safeLimit, filters })
+        : await store.read();
       const priorityContext = {
-        reportCounts: openReportCountsByGlobalNumber(state.reports),
+        reportCounts: state.reportCounts ?? openReportCountsByGlobalNumber(state.reports),
         referenceDate: now()
       };
       return [...state.reports]
@@ -4225,7 +4279,9 @@ export function createForumService({
     },
 
     async listPending(filters = {}, limit = 100) {
-      const state = await store.read();
+      const state = typeof store.readPendingModerationState === 'function'
+        ? await store.readPendingModerationState()
+        : await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 200));
       const priorityContext = {
         reportCounts: openReportCountsByGlobalNumber(state.reports),
@@ -4246,8 +4302,10 @@ export function createForumService({
     },
 
     async listDeleted(limit = 50, filters = {}) {
-      const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const state = typeof store.readDeletedModerationState === 'function'
+        ? await store.readDeletedModerationState({ limit: safeLimit, filters })
+        : await store.read();
       const threads = state.threads
         .filter((thread) => thread.isDeleted)
         .filter((thread) => matchesAdminFilters(thread, filters, 'deletedAt'))
@@ -4262,8 +4320,10 @@ export function createForumService({
     },
 
     async listAppeals(limit = 50, filters = {}) {
-      const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const state = typeof store.readAppealsModerationState === 'function'
+        ? await store.readAppealsModerationState({ limit: safeLimit, filters })
+        : await store.read();
       return state.appeals
         .filter((appeal) => appeal.status !== 'issued')
         .filter((appeal) => !filters.boardSlug || appeal.boardSlug === filters.boardSlug)
@@ -4752,10 +4812,12 @@ export function createForumService({
     },
 
     async listSanctions(limit = 50, filters = {}) {
-      const state = await store.read();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const sanctions = typeof store.readSanctions === 'function'
+        ? await store.readSanctions({ limit: safeLimit, filters })
+        : (await store.read()).sanctions;
       const checkedAt = now().toISOString();
-      return [...state.sanctions]
+      return [...sanctions]
         .filter((sanction) => !filters.kind || sanction.kind === filters.kind)
         .filter((sanction) => !filters.boardSlug || sanction.boardSlug === filters.boardSlug)
         .filter((sanction) => {

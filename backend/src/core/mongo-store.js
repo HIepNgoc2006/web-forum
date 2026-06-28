@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 
 import { BOARDS } from './config.js';
@@ -20,7 +21,7 @@ const BOARD_SCHEMA = new mongoose.Schema(
     path: String,
     description: String
   },
-  { versionKey: false }
+  MODEL_OPTIONS
 );
 
 const STATE_META_SCHEMA = new mongoose.Schema(
@@ -54,6 +55,7 @@ const USER_SCHEMA = new mongoose.Schema(
   MODEL_OPTIONS
 );
 USER_SCHEMA.index({ username: 1 }, { unique: true, sparse: true });
+USER_SCHEMA.index({ id: 1 }, { unique: true, sparse: true });
 USER_SCHEMA.index({ role: 1, createdAt: -1 });
 
 const PRODUCTION_MODEL_READINESS = {
@@ -93,6 +95,30 @@ function keyValuesToObject(items = []) {
   return Object.fromEntries(items.map((item) => [item._id, item.value]));
 }
 
+function reportQueryForFilters(filters = {}) {
+  const query = {};
+  if (filters.boardSlug) {
+    query.boardSlug = filters.boardSlug;
+  }
+  if (filters.status) {
+    query.status = filters.status;
+  }
+  if (filters.category) {
+    query.category = filters.category;
+  }
+  if (filters.since) {
+    query.createdAt = { $gte: filters.since };
+  }
+  return query;
+}
+
+function reportCandidateLimit(limit = 50, filters = {}) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+  const sort = String(filters.sort || '').toLowerCase();
+  const needsPriorityPass = !sort || sort === 'priority' || filters.priority;
+  return needsPriorityPass ? Math.min(Math.max(safeLimit * 10, 500), 2_000) : safeLimit;
+}
+
 export function createMongoModels(connection) {
   const model = (name, schema, collection) =>
     connection.models[name] ?? connection.model(name, schema, collection);
@@ -104,7 +130,8 @@ export function createMongoModels(connection) {
       flexibleSchema([
         { fields: { id: 1 }, options: { unique: true } },
         { fields: { boardSlug: 1, bumpedAt: -1 } },
-        { fields: { globalNumber: 1 } }
+        { fields: { globalNumber: 1 } },
+        { fields: { isPending: 1, isDeleted: 1, createdAt: -1 } }
       ]),
       'threads'
     ),
@@ -113,7 +140,8 @@ export function createMongoModels(connection) {
       flexibleSchema([
         { fields: { id: 1 }, options: { unique: true } },
         { fields: { threadId: 1, globalNumber: 1 } },
-        { fields: { globalNumber: 1 } }
+        { fields: { globalNumber: 1 } },
+        { fields: { isPending: 1, isDeleted: 1, createdAt: -1 } }
       ]),
       'comments'
     ),
@@ -125,7 +153,13 @@ export function createMongoModels(connection) {
     ),
     Report: model(
       'Report',
-      flexibleSchema([{ fields: { createdAt: -1 } }, { fields: { status: 1, boardSlug: 1 } }]),
+      flexibleSchema([
+        { fields: { createdAt: -1 } },
+        { fields: { status: 1, boardSlug: 1 } },
+        { fields: { status: 1, category: 1, createdAt: -1 } },
+        { fields: { status: 1, globalNumber: 1 } },
+        { fields: { boardSlug: 1, createdAt: -1 } }
+      ]),
       'reports'
     ),
     Appeal: model(
@@ -140,7 +174,11 @@ export function createMongoModels(connection) {
     ),
     Sanction: model(
       'Sanction',
-      flexibleSchema([{ fields: { fingerprint: 1, expiresAt: 1 } }, { fields: { createdAt: -1 } }]),
+      flexibleSchema([
+        { fields: { id: 1 }, options: { unique: true, sparse: true } },
+        { fields: { fingerprint: 1, expiresAt: 1 } },
+        { fields: { createdAt: -1 } }
+      ]),
       'sanctions'
     ),
     AiUsage: model('AiUsage', KEY_VALUE_SCHEMA, 'aiUsage'),
@@ -251,6 +289,278 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
 
   return {
     type: 'mongo',
+
+    async readUser(userId) {
+      const models = await getModels();
+      const user = await models.User.findOne({ id: userId }).lean();
+      return user ? plainDocument(user) : null;
+    },
+
+    async readBoards() {
+      const models = await getModels();
+      await ensureBoards(models);
+      const boards = await models.Board.find({}).lean();
+      return boards.map(plainDocument);
+    },
+
+    async readPrivilegedUsers() {
+      const models = await getModels();
+      const users = await models.User.find({ role: { $in: ['owner', 'moderator', 'viewer'] } }).lean();
+      return users.map(plainDocument);
+    },
+
+    async readModerationActions({ limit = 50, filters = {} } = {}) {
+      const models = await getModels();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const query = {};
+      if (filters.action) {
+        query.action = filters.action;
+      }
+      if (filters.boardSlug) {
+        query.boardSlug = filters.boardSlug;
+      }
+      if (filters.since) {
+        query.createdAt = { $gte: filters.since };
+      }
+      const actions = await models.ModerationAction.find(query).sort({ createdAt: -1 }).limit(safeLimit).lean();
+      return actions.map(plainDocument);
+    },
+
+    async upsertAdminAccount({
+      username,
+      passwordHash,
+      role = 'owner',
+      settings = {},
+      privateData = {},
+      disabled = false,
+      createdAt,
+      updatedAt
+    } = {}) {
+      const models = await getModels();
+      queue = queue.then(async () => {
+        const existing = await models.User.findOne({ username }).lean();
+        if (existing) {
+          const existingPlain = plainDocument(existing);
+          await models.User.updateOne(
+            { username },
+            {
+              $set: {
+                id: existingPlain.id || crypto.randomUUID(),
+                passwordHash,
+                role,
+                disabled,
+                privateData: existingPlain.privateData ?? privateData,
+                updatedAt
+              }
+            }
+          );
+        } else {
+          await models.User.create({
+            id: crypto.randomUUID(),
+            username,
+            passwordHash,
+            role,
+            settings,
+            privateData,
+            disabled,
+            createdAt,
+            updatedAt
+          });
+        }
+        const user = await models.User.findOne({ username }).lean();
+        return user ? plainDocument(user) : null;
+      });
+      return queue;
+    },
+
+    async readDeletedModerationState({ limit = 50, filters = {} } = {}) {
+      const models = await getModels();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const deletedQuery = { isDeleted: true };
+      if (filters.boardSlug) {
+        deletedQuery.boardSlug = filters.boardSlug;
+      }
+      if (filters.since) {
+        deletedQuery.deletedAt = { $gte: filters.since };
+      }
+      const [deletedThreads, deletedComments] = await Promise.all([
+        models.Thread.find(deletedQuery).sort({ deletedAt: -1 }).limit(safeLimit).lean(),
+        models.Comment.find(deletedQuery).sort({ deletedAt: -1 }).limit(safeLimit).lean()
+      ]);
+      const threadIds = [
+        ...new Set([
+          ...deletedThreads.map((thread) => thread.id).filter(Boolean),
+          ...deletedComments.map((comment) => comment.threadId).filter(Boolean)
+        ])
+      ];
+      const [parentThreads, threadComments] = threadIds.length
+        ? await Promise.all([
+            models.Thread.find({ id: { $in: threadIds } }).lean(),
+            models.Comment.find({ threadId: { $in: threadIds } }).lean()
+          ])
+        : [[], []];
+      const threadsById = new Map();
+      for (const thread of [...parentThreads, ...deletedThreads]) {
+        const plain = plainDocument(thread);
+        if (plain.id) {
+          threadsById.set(plain.id, plain);
+        }
+      }
+      return normalizeState({
+        ...EMPTY_STATE,
+        boards: BOARDS,
+        threads: [...threadsById.values()],
+        comments: [...deletedComments, ...threadComments].map(plainDocument)
+      });
+    },
+
+    async readAppealsModerationState({ limit = 50, filters = {} } = {}) {
+      const models = await getModels();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const query = { status: { $ne: 'issued' } };
+      if (filters.boardSlug) {
+        query.boardSlug = filters.boardSlug;
+      }
+      const appeals = await models.Appeal.find(query)
+        .sort({ submittedAt: -1, resolvedAt: -1, createdAt: -1 })
+        .limit(safeLimit)
+        .lean();
+      const plainAppeals = appeals.map(plainDocument);
+      const globalNumbers = [
+        ...new Set(plainAppeals.map((appeal) => Number(appeal.globalNumber)).filter(Number.isFinite))
+      ];
+      const [threads, comments] = globalNumbers.length
+        ? await Promise.all([
+            models.Thread.find({ globalNumber: { $in: globalNumbers } }).lean(),
+            models.Comment.find({ globalNumber: { $in: globalNumbers } }).lean()
+          ])
+        : [[], []];
+      const threadIds = new Set(comments.map((comment) => comment.threadId).filter(Boolean));
+      const parentThreads = threadIds.size
+        ? await models.Thread.find({ id: { $in: [...threadIds] } }).lean()
+        : [];
+      const threadsById = new Map();
+      for (const thread of [...threads, ...parentThreads]) {
+        const plain = plainDocument(thread);
+        if (plain.id) {
+          threadsById.set(plain.id, plain);
+        }
+      }
+      return normalizeState({
+        ...EMPTY_STATE,
+        boards: BOARDS,
+        threads: [...threadsById.values()],
+        comments: comments.map(plainDocument),
+        appeals: plainAppeals
+      });
+    },
+
+    async readSanctions({ limit = 50, filters = {} } = {}) {
+      const models = await getModels();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
+      const query = {};
+      if (filters.kind) {
+        query.kind = filters.kind;
+      }
+      if (filters.boardSlug) {
+        query.boardSlug = filters.boardSlug;
+      }
+      const sanctions = await models.Sanction.find(query).sort({ createdAt: -1 }).limit(safeLimit).lean();
+      return sanctions.map(plainDocument);
+    },
+
+    async readPendingModerationState() {
+      const models = await getModels();
+      const [pendingThreads, pendingComments, reports] = await Promise.all([
+        models.Thread.find({ isPending: true, isDeleted: { $ne: true } }).lean(),
+        models.Comment.find({ isPending: true, isDeleted: { $ne: true } }).lean(),
+        models.Report.find({
+          $or: [
+            { status: 'open' },
+            { status: { $exists: false } },
+            { status: null },
+            { status: '' }
+          ]
+        }).lean()
+      ]);
+
+      const threadIds = new Set([
+        ...pendingThreads.map((thread) => thread.id).filter(Boolean),
+        ...pendingComments.map((comment) => comment.threadId).filter(Boolean)
+      ]);
+      const publicComments = threadIds.size
+        ? await models.Comment.find({
+            threadId: { $in: [...threadIds] },
+            isPending: { $ne: true },
+            isDeleted: { $ne: true }
+          }).lean()
+        : [];
+      const parentThreads = threadIds.size
+        ? await models.Thread.find({ id: { $in: [...threadIds] } }).lean()
+        : [];
+
+      const threadsById = new Map();
+      for (const thread of [...parentThreads, ...pendingThreads]) {
+        const plain = plainDocument(thread);
+        if (plain.id) {
+          threadsById.set(plain.id, plain);
+        }
+      }
+
+      return normalizeState({
+        ...EMPTY_STATE,
+        boards: BOARDS,
+        threads: [...threadsById.values()],
+        comments: [...pendingComments, ...publicComments].map(plainDocument),
+        reports: reports.map(plainDocument)
+      });
+    },
+
+    async readReportsModerationState({ limit = 50, filters = {} } = {}) {
+      const models = await getModels();
+      const query = reportQueryForFilters(filters);
+      const sortDirection = String(filters.sort || '').toLowerCase() === 'oldest' ? 1 : -1;
+      const candidateLimit = reportCandidateLimit(limit, filters);
+      const [reports, reportCountRows] = await Promise.all([
+        models.Report.find(query).sort({ createdAt: sortDirection }).limit(candidateLimit).lean(),
+        models.Report.aggregate([
+          {
+            $match: {
+              $or: [
+                { status: 'open' },
+                { status: { $exists: false } },
+                { status: null },
+                { status: '' }
+              ]
+            }
+          },
+          { $group: { _id: '$globalNumber', count: { $sum: 1 } } }
+        ])
+      ]);
+      const plainReports = reports.map(plainDocument);
+      const globalNumbers = [
+        ...new Set(plainReports.map((report) => Number(report.globalNumber)).filter(Number.isFinite))
+      ];
+      const [threads, comments] = globalNumbers.length
+        ? await Promise.all([
+            models.Thread.find({ globalNumber: { $in: globalNumbers } }).lean(),
+            models.Comment.find({ globalNumber: { $in: globalNumbers } }).lean()
+          ])
+        : [[], []];
+      const state = normalizeState({
+        ...EMPTY_STATE,
+        boards: BOARDS,
+        threads: threads.map(plainDocument),
+        comments: comments.map(plainDocument),
+        reports: plainReports
+      });
+      state.reportCounts = new Map(
+        reportCountRows
+          .map((row) => [Number(row._id), Number(row.count) || 0])
+          .filter(([globalNumber]) => Number.isFinite(globalNumber))
+      );
+      return state;
+    },
 
     async read() {
       const models = await getModels();

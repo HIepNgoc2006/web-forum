@@ -2760,6 +2760,211 @@ test('admin reports include priority metadata and support priority filtering', a
   assert.deepEqual(newest.map((report) => report.globalNumber), [2, 1]);
 });
 
+test('admin reports use targeted moderation report reads when available', async () => {
+  let hookArgs = null;
+  const store = {
+    async readReportsModerationState(args) {
+      hookArgs = args;
+      return {
+        version: 1,
+        nextGlobalNumber: 2,
+        boards: [],
+        users: [],
+        threads: [
+          {
+            id: 'thread-pii',
+            boardSlug: 'tam-su',
+            body: 'Public PII report target',
+            image: null,
+            images: [],
+            globalNumber: 1,
+            posterHash: 'ID:PIIPOST',
+            isPending: false,
+            isDeleted: false,
+            moderationStatus: 'Safe',
+            moderationLabels: ['PII Risk'],
+            createdAt: '2026-05-22T07:00:00.000Z',
+            updatedAt: '2026-05-22T07:00:00.000Z'
+          }
+        ],
+        comments: [],
+        moderationActions: [],
+        reports: [
+          {
+            id: 'report-pii',
+            postType: 'thread',
+            postId: 'thread-pii',
+            threadId: 'thread-pii',
+            boardSlug: 'tam-su',
+            globalNumber: 1,
+            category: 'PII',
+            reason: 'phone number',
+            reporterHash: 'ID:REPORT1',
+            status: 'open',
+            createdAt: '2026-05-22T07:10:00.000Z'
+          }
+        ],
+        appeals: [],
+        sanctions: [],
+        adminSettings: {},
+        aiUsage: {},
+        aiSummaryCache: {},
+        reportCounts: new Map([[1, 3]])
+      };
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const reports = await service.listReports(25, { boardSlug: 'tam-su', priority: 'high' });
+
+  assert.equal(hookArgs.limit, 25);
+  assert.equal(hookArgs.filters.boardSlug, 'tam-su');
+  assert.equal(reports.length, 1);
+  assert.equal(reports[0].moderationPriority.reportCount, 3);
+  assert.equal(reports[0].moderationPriority.level, 'high');
+});
+
+
+test('account and board reads use targeted store hooks when available', async () => {
+  const calls = [];
+  const targetedUser = {
+    id: 'user-targeted',
+    username: 'owner-targeted',
+    passwordHash: 'hash',
+    role: 'owner',
+    settings: { theme: 'burichan', homeBoard: 'hoc-tap' },
+    privateData: { watchlist: [{ threadId: 'thread-1' }], drafts: [], savedSearches: [], contentFilters: [], replyTemplates: [], posterNotes: [] },
+    twoFactorEnabled: true,
+    twoFactorSecret: 'JBSWY3DPEHPK3PXP',
+    createdAt: '2026-05-22T08:00:00.000Z',
+    updatedAt: '2026-05-22T08:00:00.000Z'
+  };
+  const store = {
+    async readBoards() {
+      calls.push('readBoards');
+      return [{ slug: 'hoc-tap', name: 'Học tập', path: '/hoc-tap/', category: 'study' }];
+    },
+    async readUser(userId) {
+      calls.push(['readUser', userId]);
+      return userId === targetedUser.id ? targetedUser : null;
+    },
+    async readPrivilegedUsers() {
+      calls.push('readPrivilegedUsers');
+      return [targetedUser, { ...targetedUser, id: 'viewer-targeted', username: 'viewer-targeted', role: 'viewer' }];
+    },
+    async upsertAdminAccount(args) {
+      calls.push(['upsertAdminAccount', args.username, args.role]);
+      return { ...targetedUser, username: args.username, passwordHash: args.passwordHash, role: args.role };
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const boards = await service.listBoards();
+  const adminBoards = await service.listAdminBoards();
+  const account = await service.getAccount(targetedUser.id);
+  const privateData = await service.getAccountPrivateData(targetedUser.id);
+  const admin = await service.getOrCreateAdminAccount('RootAdmin', 'new-admin-password');
+  const privileged = await service.listPrivilegedUsers();
+
+  assert.deepEqual(boards.map((board) => board.slug), ['hoc-tap']);
+  assert.equal(adminBoards[0].slug, 'hoc-tap');
+  assert.equal(account.username, targetedUser.username);
+  assert.equal(privateData.watchlist[0].threadId, 'thread-1');
+  assert.equal(admin.username, 'rootadmin');
+  assert.deepEqual(privileged.map((user) => user.username), ['owner-targeted', 'viewer-targeted']);
+  assert.deepEqual(calls.filter((call) => call === 'readBoards').length, 2);
+  assert.equal(calls.some((call) => Array.isArray(call) && call[0] === 'upsertAdminAccount'), true);
+});
+
+test('admin moderation lists use targeted store hooks when available', async () => {
+  const calls = [];
+  const baseThread = {
+    id: 'thread-targeted',
+    boardSlug: 'tam-su',
+    body: 'Targeted moderation thread',
+    image: null,
+    images: [],
+    globalNumber: 10,
+    posterHash: 'ID:TARGET',
+    isPending: false,
+    isDeleted: false,
+    moderationStatus: 'Safe',
+    moderationLabels: [],
+    createdAt: '2026-05-22T07:00:00.000Z',
+    bumpedAt: '2026-05-22T07:00:00.000Z'
+  };
+  const store = {
+    async readModerationActions(args) {
+      calls.push(['actions', args.limit, args.filters.boardSlug]);
+      return [{ id: 'action-1', action: 'admin:approve', actor: 'admin', postType: 'thread', postId: baseThread.id, threadId: baseThread.id, boardSlug: 'tam-su', globalNumber: 10, createdAt: '2026-05-22T07:20:00.000Z' }];
+    },
+    async readPendingModerationState() {
+      calls.push(['pending']);
+      return { version: 1, nextGlobalNumber: 11, boards: [], users: [], threads: [{ ...baseThread, isPending: true, moderationLabels: ['PII Risk'] }], comments: [], moderationActions: [], reports: [], appeals: [], sanctions: [], adminSettings: {}, aiUsage: {}, aiSummaryCache: {} };
+    },
+    async readDeletedModerationState(args) {
+      calls.push(['deleted', args.limit, args.filters.boardSlug]);
+      return { version: 1, nextGlobalNumber: 11, boards: [], users: [], threads: [{ ...baseThread, isDeleted: true, deletedAt: '2026-05-22T07:30:00.000Z' }], comments: [], moderationActions: [], reports: [], appeals: [], sanctions: [], adminSettings: {}, aiUsage: {}, aiSummaryCache: {} };
+    },
+    async readAppealsModerationState(args) {
+      calls.push(['appeals', args.limit, args.filters.boardSlug]);
+      return { version: 1, nextGlobalNumber: 11, boards: [], users: [], threads: [baseThread], comments: [], moderationActions: [], reports: [], appeals: [{ id: 'appeal-1', globalNumber: 10, boardSlug: 'tam-su', status: 'open', reason: 'Xin xem lai', submittedAt: '2026-05-22T07:40:00.000Z' }], sanctions: [], adminSettings: {}, aiUsage: {}, aiSummaryCache: {} };
+    },
+    async readSanctions(args) {
+      calls.push(['sanctions', args.limit, args.filters.boardSlug]);
+      return [{ id: 'sanction-1', kind: 'cooldown', boardSlug: 'tam-su', sourceGlobalNumber: 10, reason: 'Spam', actor: 'admin', createdAt: '2026-05-22T07:50:00.000Z', expiresAt: '2026-05-22T08:50:00.000Z' }];
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const actions = await service.listModerationActions(5, { boardSlug: 'tam-su' });
+  const pending = await service.listPending({ boardSlug: 'tam-su' }, 5);
+  const deleted = await service.listDeleted(5, { boardSlug: 'tam-su' });
+  const appeals = await service.listAppeals(5, { boardSlug: 'tam-su' });
+  const sanctions = await service.listSanctions(5, { boardSlug: 'tam-su', status: 'active' });
+
+  assert.deepEqual(actions.map((action) => action.globalNumber), [10]);
+  assert.deepEqual(pending.map((post) => post.globalNumber), [10]);
+  assert.deepEqual(deleted.map((post) => post.globalNumber), [10]);
+  assert.deepEqual(appeals.map((appeal) => appeal.globalNumber), [10]);
+  assert.deepEqual(sanctions.map((sanction) => sanction.id), ['sanction-1']);
+  assert.deepEqual(calls.map((call) => call[0]), ['actions', 'pending', 'deleted', 'appeals', 'sanctions']);
+});
+
+
 test('archived threads are hidden from board list and visible in archive list', async () => {
   const realtime = createEvents();
   const service = createForumService({
