@@ -1477,6 +1477,109 @@ test('http account identity is not exposed on public posts', async () => {
   });
 });
 
+test('http account owners can edit their own post body and media with private history', async () => {
+  await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'edit_owner', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const registeredBody = await registered.json();
+    const ownerHeaders = {
+      authorization: `Bearer ${registeredBody.data.token}`,
+      'content-type': 'application/json'
+    };
+    const other = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'edit_other', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const otherBody = await other.json();
+
+    const created = await fetch(`${baseUrl}/api/boards/tam-su/threads`, {
+      method: 'POST',
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        body: 'Noi dung truoc khi sua',
+        captchaToken: 'dev-pass',
+        images: [
+          {
+            name: 'before.png',
+            type: 'image/png',
+            dataUrl: 'data:image/png;base64,AAAA',
+            sizeBytes: 3
+          }
+        ]
+      })
+    });
+    const createdBody = await created.json();
+    const globalNumber = createdBody.data.thread.globalNumber;
+
+    const anonymousEdit = await fetch(`${baseUrl}/api/posts/${globalNumber}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'Anonymous edit' })
+    });
+    const otherEdit = await fetch(`${baseUrl}/api/posts/${globalNumber}`, {
+      method: 'PUT',
+      headers: {
+        authorization: `Bearer ${otherBody.data.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ body: 'Other edit' })
+    });
+    const ownerEdit = await fetch(`${baseUrl}/api/posts/${globalNumber}`, {
+      method: 'PUT',
+      headers: ownerHeaders,
+      body: JSON.stringify({
+        body: 'Noi dung sau khi sua',
+        images: [
+          {
+            name: 'after.png',
+            type: 'image/png',
+            dataUrl: 'data:image/png;base64,BBBB',
+            sizeBytes: 3
+          }
+        ]
+      })
+    });
+    const ownerEditBody = await ownerEdit.json();
+    const publicPost = await fetch(`${baseUrl}/api/posts/${globalNumber}`);
+    const publicPostBody = await publicPost.json();
+
+    const adminLogin = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const adminLoginBody = await adminLogin.json();
+    const adminDetail = await fetch(`${baseUrl}/api/admin/posts/${globalNumber}`, {
+      headers: { authorization: `Bearer ${adminLoginBody.data.token}` }
+    });
+    const adminDetailBody = await adminDetail.json();
+
+    assert.equal(created.status, 201);
+    assert.equal(anonymousEdit.status, 403);
+    assert.equal(otherEdit.status, 403);
+    assert.equal(ownerEdit.status, 200);
+    assert.equal(ownerEditBody.data.status, 'published');
+    assert.equal(ownerEditBody.data.post.body, 'Noi dung sau khi sua');
+    assert.equal(ownerEditBody.data.post.images[0].name, 'after.png');
+    assert.equal(publicPost.status, 200);
+    assert.equal(publicPostBody.data.post.body, 'Noi dung sau khi sua');
+    assert.equal(publicPostBody.data.post.images[0].name, 'after.png');
+    assert.equal(typeof publicPostBody.data.post.editedAt, 'string');
+    assert.equal('editHistory' in publicPostBody.data.post, false);
+    assert.equal('editedBy' in publicPostBody.data.post, false);
+    assert.equal(adminDetail.status, 200);
+    assert.equal(adminDetailBody.data.editHistory.length, 1);
+    assert.equal(adminDetailBody.data.editHistory[0].previousBody, 'Noi dung truoc khi sua');
+    assert.equal(adminDetailBody.data.editHistory[0].newBody, 'Noi dung sau khi sua');
+    assert.equal(adminDetailBody.data.editHistory[0].previousImages[0].name, 'before.png');
+    assert.equal(adminDetailBody.data.editHistory[0].newImages[0].name, 'after.png');
+  });
+});
+
 test('http posting rejects reserved display names', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {

@@ -1555,12 +1555,27 @@ export function createHttpServer({
         return;
       }
       if (params && request.method === 'PUT') {
-        const body = await readJson(request, 20_000);
+        const body = await readJson(request, imageUploadJsonLimit());
+        const hasAccountToken = String(request.headers.authorization ?? '').startsWith('Bearer ');
+        if (!hasAccountToken) {
+          ok(
+            response,
+            await service.editPostWithPassword(params.globalNumber, {
+              password: body.password,
+              body: body.body
+            })
+          );
+          return;
+        }
+        const account = requireAccount(request, jwtSecret, service);
         ok(
           response,
-          await service.editPostWithPassword(params.globalNumber, {
-            password: body.password,
-            body: body.body
+          await service.editAccountPost(params.globalNumber, {
+            accountId: account.sub,
+            body: body.body,
+            image: body.image,
+            images: body.images,
+            replaceImages: Object.hasOwn(body, 'image') || Object.hasOwn(body, 'images')
           })
         );
         return;

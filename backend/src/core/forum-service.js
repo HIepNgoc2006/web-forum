@@ -4608,6 +4608,114 @@ export function createForumService({
       });
     },
 
+    async editAccountPost(globalNumber, { accountId, body = '', image, images, replaceImages = false } = {}) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản để sửa bài');
+        error.statusCode = 401;
+        throw error;
+      }
+      assertPostBodySize(body);
+      const normalizedBody = normalizeBody(body);
+      if (!normalizedBody) {
+        const error = new Error('Nội dung không được để trống');
+        error.statusCode = 400;
+        throw error;
+      }
+      const shouldReplaceImages = Boolean(replaceImages);
+      const safeImages = shouldReplaceImages ? validateMediaList({ image, images }) : [];
+
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found || found.post.isDeleted) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (!found.post.accountId || found.post.accountId !== accountId) {
+          const error = new Error('Chỉ tài khoản đã đăng bài mới được sửa bài này');
+          error.statusCode = 403;
+          throw error;
+        }
+
+        const editedAt = now().toISOString();
+        const previousBody = String(found.post.body ?? '');
+        const previousImages = cloneMediaItems(found.post);
+        const storedImages = shouldReplaceImages ? await saveMediaList(imageStorage, safeImages) : previousImages;
+        const moderation = mergeModerationResults(
+          await ai.moderate(normalizedBody),
+          shouldReplaceImages ? await scanUploadsForModeration(ai, safeImages) : { status: 'Safe', labels: [] }
+        );
+        const wasPending = Boolean(found.post.isPending);
+        const nextPending =
+          wasPending ||
+          shouldQueueModeration(
+            moderation,
+            moderationSettingsForState(state, moderationConfidenceThreshold).moderationConfidenceThreshold
+          );
+
+        found.post.body = normalizedBody;
+        if (shouldReplaceImages) {
+          found.post.image = storedImages[0] ?? null;
+          found.post.images = storedImages;
+          found.post.fileDeletedAt = storedImages.length ? null : editedAt;
+        }
+        found.post.editedAt = editedAt;
+        found.post.editedBy = `account:${accountId}`;
+        found.post.editReason = 'account-edit';
+        found.post.isPending = nextPending;
+        found.post.moderationStatus = moderation.status;
+        found.post.moderationLabels = moderation.labels ?? [];
+        if (Number.isFinite(Number(moderation.confidence))) {
+          found.post.moderationConfidence = Number(moderation.confidence);
+        } else {
+          delete found.post.moderationConfidence;
+        }
+        appendEditHistory(found.post, {
+          actor: `account:${accountId}`,
+          reason: 'account-edit',
+          previousBody,
+          newBody: normalizedBody,
+          previousImages,
+          newImages: cloneMediaItems(found.post),
+          createdAt: editedAt
+        });
+        recordModerationAction(state, {
+          action: 'user:edit',
+          actor: `account:${accountId}`,
+          postType: found.postType,
+          post: found.post,
+          reason: 'account-edit',
+          createdAt: editedAt
+        });
+        logEvent('post.edit', {
+          postType: found.postType,
+          boardSlug: found.post.boardSlug,
+          globalNumber: found.post.globalNumber,
+          isPending: found.post.isPending
+        });
+
+        if (!found.post.isPending) {
+          if (found.postType === 'thread') {
+            realtime.publish('thread:updated', { thread: serializeThread(found.post, state.comments) });
+          } else {
+            const parent = state.threads.find((thread) => thread.id === found.post.threadId);
+            realtime.publish('comment:updated', {
+              threadId: found.post.threadId,
+              comment: serializeComment(found.post, parent)
+            });
+            realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+          }
+        }
+
+        const parent = found.postType === 'comment' ? state.threads.find((thread) => thread.id === found.post.threadId) : null;
+        return {
+          status: found.post.isPending ? 'pending' : 'published',
+          type: found.postType,
+          post: found.postType === 'thread' ? serializeThread(found.post, state.comments) : serializeComment(found.post, parent)
+        };
+      });
+    },
+
     async addModeratorNote(globalNumber, { note = '', actor = 'admin' } = {}) {
       const safeNote = sanitizeReason(note);
       if (!safeNote) {
