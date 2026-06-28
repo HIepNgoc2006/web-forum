@@ -3839,8 +3839,9 @@ export function createForumService({
       });
     },
 
-    async listPending(filters = {}) {
+    async listPending(filters = {}, limit = 100) {
       const state = await store.read();
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 100, 200));
       const priorityContext = {
         reportCounts: openReportCountsByGlobalNumber(state.reports),
         referenceDate: now()
@@ -3855,7 +3856,8 @@ export function createForumService({
         .map((comment) => serializeAdminPost('comment', comment, state, priorityContext));
       return [...threads, ...comments]
         .filter((item) => matchesPriorityFilter(item, filters))
-        .sort(compareAdminPriority(filters));
+        .sort(compareAdminPriority(filters))
+        .slice(0, safeLimit);
     },
 
     async listDeleted(limit = 50, filters = {}) {

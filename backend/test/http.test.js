@@ -2742,6 +2742,39 @@ test('http admin queue exposes and filters AI moderation confidence', async () =
   );
 });
 
+test('http admin pending queue honors limit query', async () => {
+  await withServer(
+    async (baseUrl) => {
+      for (let index = 0; index < 3; index += 1) {
+        const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: 'Pending limited ' + index,
+            captchaToken: 'dev-pass'
+          })
+        });
+        assert.equal(created.status, 201);
+      }
+
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await login.json();
+      const limited = await fetch(`${baseUrl}/api/admin/pending?limit=2`, {
+        headers: { authorization: `Bearer ${loginBody.data.token}` }
+      });
+      const limitedBody = await limited.json();
+
+      assert.equal(limited.status, 200);
+      assert.equal(limitedBody.data.length, 2);
+    },
+    { ai: flaggedAi }
+  );
+});
+
 test('http admin moderation settings update confidence queue threshold', async () => {
   await withServer(
     async (baseUrl) => {
