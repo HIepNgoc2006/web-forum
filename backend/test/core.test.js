@@ -2157,6 +2157,143 @@ test('admin delete rejects an unknown post number', async () => {
   );
 });
 
+test('admin can restore a deleted live post', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: (() => {
+      const dates = [
+        new Date('2026-05-22T08:00:00.000Z'),
+        new Date('2026-05-22T08:01:00.000Z'),
+        new Date('2026-05-22T08:02:00.000Z')
+      ];
+      return () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z');
+    })()
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Bai co the khoi phuc',
+    captchaToken: 'dev-pass',
+    deletePassword: 'owner-pass',
+    ip: '203.0.113.9'
+  });
+
+  await service.adminDeletePost(created.thread.globalNumber, {
+    reason: 'xoa nham',
+    actor: 'modfixture'
+  });
+  const restore = await service.adminRestorePost(created.thread.globalNumber, {
+    reason: 'khoi phuc sau khi xem lai',
+    actor: 'modfixture'
+  });
+  const board = await service.listThreads('tam-su');
+  const restored = board.find((thread) => thread.globalNumber === created.thread.globalNumber);
+  const actions = await service.listModerationActions(10);
+  const restoreAction = actions.find((action) => action.action === 'admin:restore');
+
+  assert.equal(restore.ok, true);
+  assert.equal(restored.body, 'Bai co the khoi phuc');
+  assert.ok(restoreAction);
+  assert.equal(restoreAction.actor, 'modfixture');
+  assert.equal(restoreAction.reason, 'khoi phuc sau khi xem lai');
+});
+
+test('admin can edit a live post without the delete password', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Noi dung ban dau',
+    captchaToken: 'dev-pass',
+    deletePassword: 'owner-pass',
+    ip: '203.0.113.9'
+  });
+
+  const result = await service.adminEditPost(created.thread.globalNumber, {
+    body: 'Noi dung da sua',
+    reason: 'sua theo noi quy',
+    actor: 'modfixture'
+  });
+
+  const board = await service.listThreads('tam-su');
+  const edited = board.find((thread) => thread.globalNumber === created.thread.globalNumber);
+  const detail = await service.getAdminPostDetail(created.thread.globalNumber);
+  const actions = await service.listModerationActions(10);
+  const editAction = actions.find((action) => action.action === 'admin:edit');
+
+  assert.equal(result.ok, true);
+  assert.equal(edited.body, 'Noi dung da sua');
+  assert.equal('editHistory' in edited, false);
+  assert.equal(detail.editHistory.length, 1);
+  assert.equal(detail.editHistory[0].previousBody, 'Noi dung ban dau');
+  assert.equal(detail.editHistory[0].newBody, 'Noi dung da sua');
+  assert.equal(detail.editHistory[0].actor, 'modfixture');
+  assert.equal(detail.editHistory[0].reason, 'sua theo noi quy');
+  assert.ok(editAction);
+  assert.equal(editAction.actor, 'modfixture');
+  assert.equal(editAction.reason, 'sua theo noi quy');
+});
+
+test('anonymous poster can edit a live post with the delete password', async () => {
+  const realtime = createEvents();
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime,
+    now: (() => {
+      const dates = [new Date('2026-05-22T08:00:00.000Z'), new Date('2026-05-22T08:05:00.000Z')];
+      return () => dates.shift() ?? new Date('2026-05-22T08:05:00.000Z');
+    })()
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Noi dung tu nguoi dang',
+    captchaToken: 'dev-pass',
+    deletePassword: 'owner-pass',
+    ip: '203.0.113.9'
+  });
+
+  await assert.rejects(
+    () =>
+      service.editPostWithPassword(created.thread.globalNumber, {
+        password: 'wrong-pass',
+        body: 'Khong duoc sua'
+      }),
+    /Mật khẩu xóa không đúng/
+  );
+  const result = await service.editPostWithPassword(created.thread.globalNumber, {
+    password: 'owner-pass',
+    body: 'Noi dung nguoi dang da sua'
+  });
+  const board = await service.listThreads('tam-su');
+  const edited = board.find((thread) => thread.globalNumber === created.thread.globalNumber);
+  const detail = await service.getAdminPostDetail(created.thread.globalNumber);
+  const actions = await service.listModerationActions(10);
+  const editAction = actions.find((action) => action.action === 'user:edit');
+
+  assert.equal(result.status, 'published');
+  assert.equal(result.post.body, 'Noi dung nguoi dang da sua');
+  assert.equal(edited.body, 'Noi dung nguoi dang da sua');
+  assert.equal(typeof edited.editedAt, 'string');
+  assert.equal('editHistory' in edited, false);
+  assert.equal('editedBy' in edited, false);
+  assert.equal(detail.editHistory.length, 1);
+  assert.equal(detail.editHistory[0].actor, 'anonymous');
+  assert.equal(detail.editHistory[0].previousBody, 'Noi dung tu nguoi dang');
+  assert.equal(detail.editHistory[0].newBody, 'Noi dung nguoi dang da sua');
+  assert.ok(editAction);
+  assert.equal(editAction.actor, 'anonymous');
+  assert.equal(realtime.events.at(-1).event, 'thread:updated');
+});
+
 test('published posts can use creation-time appeal token after admin deletion', async () => {
   const service = createForumService({
     store: createMemoryStore(),

@@ -1554,6 +1554,17 @@ export function createHttpServer({
         ok(response, await service.lookupPost(params.globalNumber));
         return;
       }
+      if (params && request.method === 'PUT') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.editPostWithPassword(params.globalNumber, {
+            password: body.password,
+            body: body.body
+          })
+        );
+        return;
+      }
       if (params && request.method === 'DELETE') {
         const body = await readJson(request, 20_000);
         ok(
@@ -1827,6 +1838,18 @@ export function createHttpServer({
           ok(response, await service.getAdminPostDetail(params.globalNumber));
           return;
         }
+        if (params && request.method === 'PUT') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.adminEditPost(params.globalNumber, {
+              body: body.body,
+              reason: body.reason,
+              actor: admin.username ?? 'admin'
+            })
+          );
+          return;
+        }
         if (params && request.method === 'DELETE') {
           const body = await readJson(request, 20_000);
           ok(
@@ -1834,6 +1857,19 @@ export function createHttpServer({
             await service.adminDeletePost(params.globalNumber, {
               reason: body.reason,
               fileOnly: Boolean(body.fileOnly),
+              actor: admin.username ?? 'admin'
+            })
+          );
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'posts', ':globalNumber', 'restore']);
+        if (params && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.adminRestorePost(params.globalNumber, {
+              reason: body.reason,
               actor: admin.username ?? 'admin'
             })
           );

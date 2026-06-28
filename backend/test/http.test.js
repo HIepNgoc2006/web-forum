@@ -1628,6 +1628,120 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
   });
 });
 
+test('http posts support self edit and admin edit restore history', async () => {
+  await withServer(async (baseUrl) => {
+    const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Noi dung ban dau',
+        captchaToken: 'dev-pass',
+        deletePassword: 'owner-pass'
+      })
+    });
+    const createdBody = await created.json();
+    const globalNumber = createdBody.data.thread.globalNumber;
+    assert.equal(created.status, 201);
+
+    const wrongEdit = await fetch(`${baseUrl}/api/posts/${globalNumber}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'wrong-pass', body: 'Khong duoc sua' })
+    });
+    assert.equal(wrongEdit.status, 403);
+
+    const selfEdit = await fetch(`${baseUrl}/api/posts/${globalNumber}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'owner-pass', body: 'Nguoi dang da sua' })
+    });
+    const selfEditBody = await selfEdit.json();
+    assert.equal(selfEdit.status, 200);
+    assert.equal(selfEditBody.data.status, 'published');
+    assert.equal(selfEditBody.data.post.body, 'Nguoi dang da sua');
+
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const loginBody = await login.json();
+    const adminHeaders = {
+      authorization: `Bearer ${loginBody.data.token}`,
+      'content-type': 'application/json'
+    };
+
+    const adminEdit = await fetch(`${baseUrl}/api/admin/posts/${globalNumber}`, {
+      method: 'PUT',
+      headers: adminHeaders,
+      body: JSON.stringify({ body: 'Mod da sua bai', reason: 'sua theo noi quy' })
+    });
+    const adminEditBody = await adminEdit.json();
+    assert.equal(adminEdit.status, 200);
+    assert.equal(adminEditBody.data.post.body, 'Mod da sua bai');
+
+    const publicLookup = await fetch(`${baseUrl}/api/posts/${globalNumber}`);
+    const publicLookupBody = await publicLookup.json();
+    const publicSerialized = JSON.stringify(publicLookupBody.data);
+    assert.equal(publicLookup.status, 200);
+    assert.equal(publicSerialized.includes('Mod da sua bai'), true);
+    assert.equal(publicSerialized.includes('editHistory'), false);
+    assert.equal(publicSerialized.includes('editedBy'), false);
+    assert.equal(publicSerialized.includes('editReason'), false);
+
+    const detail = await fetch(`${baseUrl}/api/admin/posts/${globalNumber}`, {
+      headers: { authorization: adminHeaders.authorization }
+    });
+    const detailBody = await detail.json();
+    assert.equal(detail.status, 200);
+    assert.equal(detailBody.data.editHistory.length, 2);
+    assert.equal(
+      detailBody.data.editHistory.some(
+        (entry) => entry.previousBody === 'Noi dung ban dau' && entry.newBody === 'Nguoi dang da sua'
+      ),
+      true
+    );
+    assert.equal(
+      detailBody.data.editHistory.some(
+        (entry) => entry.previousBody === 'Nguoi dang da sua' && entry.newBody === 'Mod da sua bai'
+      ),
+      true
+    );
+
+    const deleted = await fetch(`${baseUrl}/api/admin/posts/${globalNumber}`, {
+      method: 'DELETE',
+      headers: adminHeaders,
+      body: JSON.stringify({ reason: 'xoa de test restore' })
+    });
+    assert.equal(deleted.status, 200);
+
+    const restore = await fetch(`${baseUrl}/api/admin/posts/${globalNumber}/restore`, {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ reason: 'khoi phuc sau khi xem lai' })
+    });
+    assert.equal(restore.status, 200);
+
+    const restored = await fetch(`${baseUrl}/api/posts/${globalNumber}`);
+    const restoredBody = await restored.json();
+    const restoredSerialized = JSON.stringify(restoredBody.data);
+    assert.equal(restored.status, 200);
+    assert.equal(restoredSerialized.includes('Mod da sua bai'), true);
+    assert.equal(restoredSerialized.includes('restoredAt'), false);
+    assert.equal(restoredSerialized.includes('restoredBy'), false);
+    assert.equal(restoredSerialized.includes('restoreReason'), false);
+
+    const actions = await fetch(`${baseUrl}/api/admin/moderation-actions`, {
+      headers: { authorization: adminHeaders.authorization }
+    });
+    const actionsBody = await actions.json();
+    assert.equal(actions.status, 200);
+    assert.equal(actionsBody.data.some((action) => action.action === 'user:edit'), true);
+    assert.equal(actionsBody.data.some((action) => action.action === 'admin:edit'), true);
+    assert.equal(actionsBody.data.some((action) => action.action === 'admin:restore'), true);
+  });
+});
+
 test('http thread detail filters paged comments by search query', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(baseUrl + '/api/boards/hoc-tap/threads', {

@@ -87,6 +87,7 @@ const RECOMMENDED_THREAD_WINDOW_HOURS = 7 * 24;
 const RECOMMENDED_THREAD_MAX_LIMIT = 50;
 const RECOMMENDED_THREAD_HIGH_RISK_LABELS = new Set(['PII Risk', 'PII', 'Illegal', 'Hate Speech', 'Toxic']);
 const RECOMMENDED_THREAD_MEDIUM_RISK_LABELS = new Set(['Spam', 'Fake News']);
+const MAX_EDIT_HISTORY_ENTRIES = 100;
 const MAX_THREAD_SUBJECT_LENGTH = 120;
 const POST_REACTION_TYPES = new Set(['like', 'laugh', 'surprise', 'sad', 'angry', 'thanks']);
 
@@ -120,6 +121,12 @@ function stripPrivatePostFields(post) {
     posterToken: _posterToken,
     captchaToken: _captchaToken,
     adminToken: _adminToken,
+    editedBy: _editedBy,
+    editReason: _editReason,
+    editHistory: _editHistory,
+    restoredAt: _restoredAt,
+    restoredBy: _restoredBy,
+    restoreReason: _restoreReason,
     ...publicFields
   } = post;
   if (publicFields.body) {
@@ -136,6 +143,10 @@ function mediaItems(post) {
     return post.images.filter(Boolean);
   }
   return post?.image ? [post.image] : [];
+}
+
+function cloneMediaItems(post) {
+  return mediaItems(post).map((item) => JSON.parse(JSON.stringify(item)));
 }
 
 function activePublicThread(thread) {
@@ -1957,6 +1968,47 @@ function serializeAdminPost(postType, post, state, priorityContext = {}) {
       priorityContext.referenceDate ?? new Date()
     )
   };
+}
+
+function serializeEditHistory(post) {
+  if (!Array.isArray(post?.editHistory)) {
+    return [];
+  }
+  return [...post.editHistory]
+    .sort((left, right) => String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? '')))
+    .map((entry) => {
+      const previousBody = String(entry.previousBody ?? '');
+      const newBody = String(entry.newBody ?? entry.body ?? '');
+      return {
+        id: entry.id,
+        actor: entry.actor ?? 'admin',
+        reason: entry.reason ?? '',
+        createdAt: entry.createdAt,
+        previousBody,
+        newBody,
+        previousImages: Array.isArray(entry.previousImages) ? entry.previousImages.filter(Boolean) : [],
+        newImages: Array.isArray(entry.newImages) ? entry.newImages.filter(Boolean) : [],
+        previousBodyLines: parsePostText(previousBody),
+        newBodyLines: parsePostText(newBody)
+      };
+    });
+}
+
+function appendEditHistory(post, { actor, reason, previousBody, newBody, previousImages, newImages, createdAt }) {
+  post.editHistory = Array.isArray(post.editHistory) ? post.editHistory : [];
+  post.editHistory.push({
+    id: crypto.randomUUID(),
+    actor: String(actor || 'user').slice(0, 80),
+    reason: sanitizeReason(reason),
+    previousBody: String(previousBody ?? ''),
+    newBody: String(newBody ?? ''),
+    previousImages: Array.isArray(previousImages) ? previousImages : [],
+    newImages: Array.isArray(newImages) ? newImages : [],
+    createdAt
+  });
+  if (post.editHistory.length > MAX_EDIT_HISTORY_ENTRIES) {
+    post.editHistory = post.editHistory.slice(-MAX_EDIT_HISTORY_ENTRIES);
+  }
 }
 
 function serializeAppeal(appeal, state) {
@@ -4157,7 +4209,8 @@ export function createForumService({
         reports,
         appeals,
         actions,
-        sanctions
+        sanctions,
+        editHistory: serializeEditHistory(found.post)
       };
     },
 
@@ -4222,6 +4275,73 @@ export function createForumService({
       });
     },
 
+    async adminEditPost(globalNumber, { body = '', reason = '', actor = 'admin' } = {}) {
+      assertPostBodySize(body);
+      const normalizedBody = normalizeBody(body);
+      if (!normalizedBody) {
+        const error = new Error('Nội dung không được để trống');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found || found.post.isDeleted) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const editedAt = now().toISOString();
+        const safeReason = sanitizeReason(reason);
+        const previousBody = String(found.post.body ?? '');
+        const previousImages = cloneMediaItems(found.post);
+        appendEditHistory(found.post, {
+          actor: String(actor || 'admin').slice(0, 80),
+          reason: safeReason,
+          previousBody,
+          newBody: normalizedBody,
+          previousImages,
+          newImages: previousImages,
+          createdAt: editedAt
+        });
+        found.post.body = normalizedBody;
+        found.post.editedAt = editedAt;
+        found.post.editedBy = actor;
+        found.post.editReason = safeReason;
+        recordModerationAction(state, {
+          action: 'admin:edit',
+          actor,
+          postType: found.postType,
+          post: found.post,
+          reason: safeReason || 'admin-edit',
+          createdAt: editedAt
+        });
+        logEvent('moderation.edit', {
+          postType: found.postType,
+          boardSlug: found.post.boardSlug,
+          globalNumber: found.post.globalNumber,
+          actor
+        });
+
+        if (found.postType === 'thread') {
+          realtime.publish('thread:updated', { thread: serializeThread(found.post, state.comments) });
+        } else {
+          const parent = state.threads.find((thread) => thread.id === found.post.threadId);
+          realtime.publish('comment:updated', {
+            threadId: found.post.threadId,
+            comment: serializeComment(found.post, parent)
+          });
+          realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+        }
+        return {
+          ok: true,
+          globalNumber: found.post.globalNumber,
+          post: serializeAdminPost(found.postType, found.post, state)
+        };
+      });
+    },
+
     async adminDeletePost(globalNumber, { reason = '', actor = 'admin', fileOnly = false } = {}) {
       return mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
@@ -4270,6 +4390,108 @@ export function createForumService({
           realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
         }
         return { ok: true, fileOnly: Boolean(fileOnly), globalNumber: found.post.globalNumber };
+      });
+    },
+
+    async editPostWithPassword(globalNumber, { password = '', body = '' } = {}) {
+      assertPostBodySize(body);
+      const normalizedBody = normalizeBody(body);
+      if (!normalizedBody) {
+        const error = new Error('Nội dung không được để trống');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found || found.post.isDeleted) {
+          const error = new Error('Không tìm thấy bài viết');
+          error.statusCode = 404;
+          throw error;
+        }
+        verifyDeletePassword(found.post, password);
+
+        const editedAt = now().toISOString();
+        const previousBody = String(found.post.body ?? '');
+        const previousImages = cloneMediaItems(found.post);
+        const moderation = await ai.moderate(normalizedBody);
+        const wasPending = Boolean(found.post.isPending);
+        const nextPending =
+          wasPending ||
+          shouldQueueModeration(
+            moderation,
+            moderationSettingsForState(state, moderationConfidenceThreshold).moderationConfidenceThreshold
+          );
+
+        found.post.body = normalizedBody;
+        found.post.editedAt = editedAt;
+        found.post.editedBy = 'anonymous';
+        found.post.editReason = 'self-edit';
+        found.post.isPending = nextPending;
+        found.post.moderationStatus = moderation.status;
+        found.post.moderationLabels = moderation.labels ?? [];
+        if (Number.isFinite(Number(moderation.confidence))) {
+          found.post.moderationConfidence = Number(moderation.confidence);
+        } else {
+          delete found.post.moderationConfidence;
+        }
+        appendEditHistory(found.post, {
+          actor: 'anonymous',
+          reason: 'self-edit',
+          previousBody,
+          newBody: normalizedBody,
+          previousImages,
+          newImages: previousImages,
+          createdAt: editedAt
+        });
+        recordModerationAction(state, {
+          action: 'user:edit',
+          actor: 'anonymous',
+          postType: found.postType,
+          post: found.post,
+          reason: 'self-edit',
+          createdAt: editedAt
+        });
+        logEvent('post.edit', {
+          postType: found.postType,
+          boardSlug: found.post.boardSlug,
+          globalNumber: found.post.globalNumber,
+          isPending: found.post.isPending
+        });
+
+        if (!found.post.isPending) {
+          if (found.postType === 'thread') {
+            realtime.publish('thread:updated', { thread: serializeThread(found.post, state.comments) });
+          } else {
+            const parent = state.threads.find((thread) => thread.id === found.post.threadId);
+            realtime.publish('comment:updated', {
+              threadId: found.post.threadId,
+              comment: serializeComment(found.post, parent)
+            });
+            realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+          }
+        }
+
+        const parent = found.postType === 'comment' ? state.threads.find((thread) => thread.id === found.post.threadId) : null;
+        return {
+          status: found.post.isPending ? 'pending' : 'published',
+          type: found.postType,
+          post: found.postType === 'thread' ? serializeThread(found.post, state.comments) : serializeComment(found.post, parent)
+        };
+      });
+    },
+
+    async adminRestorePost(globalNumber, { reason = '', actor = 'admin' } = {}) {
+      return mutate(async (state) => {
+        const found = findAnyPostByGlobalNumber(state, globalNumber);
+        if (!found || !found.post.isDeleted) {
+          const error = new Error('Không tìm thấy bài đã xóa');
+          error.statusCode = 404;
+          throw error;
+        }
+
+        const restoredAt = now().toISOString();
+        return restoreDeletedPostRecord(state, found, { reason, actor, restoredAt });
       });
     },
 
