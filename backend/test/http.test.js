@@ -2437,6 +2437,103 @@ test('http api supports anonymous appeal submission and admin resolution', async
   );
 });
 
+test('http api restores deleted public post when anonymous appeal is accepted', async () => {
+  const dates = [
+    new Date('2026-05-22T09:00:00.000Z'),
+    new Date('2026-05-22T09:01:00.000Z'),
+    new Date('2026-05-22T09:02:00.000Z'),
+    new Date('2026-05-22T09:03:00.000Z')
+  ];
+  await withServer(
+    async (baseUrl) => {
+      const created = await fetch(`${baseUrl}/api/boards/tam-su/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Bai public de test khoi phuc khang nghi',
+          captchaToken: 'dev-pass',
+          posterToken: 'poster-restore-secret'
+        })
+      });
+      const createdBody = await created.json();
+      assert.equal(created.status, 201);
+      assert.equal(createdBody.data.status, 'published');
+      assert.equal(typeof createdBody.data.appealToken, 'string');
+
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await login.json();
+      const adminHeaders = {
+        authorization: `Bearer ${loginBody.data.token}`,
+        'content-type': 'application/json'
+      };
+
+      const deleted = await fetch(`${baseUrl}/api/admin/posts/${createdBody.data.thread.globalNumber}`, {
+        method: 'DELETE',
+        headers: adminHeaders,
+        body: JSON.stringify({ reason: 'Xoa de cho khang nghi' })
+      });
+      assert.equal(deleted.status, 200);
+
+      const hiddenThreads = await fetch(`${baseUrl}/api/boards/tam-su/threads`);
+      const hiddenThreadsBody = await hiddenThreads.json();
+      assert.equal(hiddenThreads.status, 200);
+      assert.equal(
+        hiddenThreadsBody.data.some((thread) => thread.globalNumber === createdBody.data.thread.globalNumber),
+        false
+      );
+
+      const appeal = await fetch(`${baseUrl}/api/appeals`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          token: createdBody.data.appealToken,
+          reason: 'Xin khoi phuc bai da xoa'
+        })
+      });
+      const appealBody = await appeal.json();
+      assert.equal(appeal.status, 201);
+      assert.equal(appealBody.data.status, 'open');
+
+      const resolved = await fetch(`${baseUrl}/api/admin/appeals/${appealBody.data.id}/resolve`, {
+        method: 'POST',
+        headers: adminHeaders,
+        body: JSON.stringify({ status: 'accepted', reason: 'Dong y khoi phuc' })
+      });
+      const resolvedBody = await resolved.json();
+      assert.equal(resolved.status, 200);
+      assert.equal(resolvedBody.data.status, 'accepted');
+
+      const restoredThreads = await fetch(`${baseUrl}/api/boards/tam-su/threads`);
+      const restoredThreadsBody = await restoredThreads.json();
+      assert.equal(restoredThreads.status, 200);
+      assert.equal(
+        restoredThreadsBody.data.some((thread) => thread.globalNumber === createdBody.data.thread.globalNumber),
+        true
+      );
+
+      const actions = await fetch(`${baseUrl}/api/admin/moderation-actions`, {
+        headers: { authorization: adminHeaders.authorization }
+      });
+      const actionsBody = await actions.json();
+      const restoreAction = actionsBody.data.find((action) => action.action === 'admin:appeal-restore');
+      const acceptAction = actionsBody.data.find((action) => action.action === 'admin:appeal-accept');
+      assert.equal(actions.status, 200);
+      assert.equal(restoreAction?.globalNumber, createdBody.data.thread.globalNumber);
+      assert.equal(restoreAction?.reason, 'Dong y khoi phuc');
+      assert.equal(acceptAction?.globalNumber, createdBody.data.thread.globalNumber);
+      assert.equal(acceptAction?.reason, 'Dong y khoi phuc');
+    },
+    {
+      ai: safeAi,
+      now: () => dates.shift() ?? new Date('2026-05-22T09:03:00.000Z')
+    }
+  );
+});
+
 test('http admin queue supports filters, detail, notes, bulk actions, and history tabs', async () => {
   await withServer(
     async (baseUrl) => {

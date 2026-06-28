@@ -2121,8 +2121,50 @@ export function createForumService({
         archiveThreadRecord(thread, 'event-ended', archivedAt);
         realtime.publish('thread:archived', { thread: serializeThread(thread, state.comments) });
         changed = true;
-      });
+    });
     return changed;
+  }
+
+  function restoreDeletedPostRecord(state, found, { reason = '', actor = 'admin', restoredAt = now().toISOString(), action = 'admin:restore' } = {}) {
+    const safeReason = sanitizeReason(reason);
+    found.post.isDeleted = false;
+    found.post.restoredAt = restoredAt;
+    found.post.restoredBy = actor;
+    found.post.restoreReason = safeReason;
+    found.post.deletedAt = null;
+    found.post.deleteReason = null;
+    recordModerationAction(state, {
+      action,
+      actor,
+      postType: found.postType,
+      post: found.post,
+      reason: safeReason || (action === 'admin:appeal-restore' ? 'appeal-restore' : 'admin-restore'),
+      createdAt: restoredAt
+    });
+    logEvent(action === 'admin:appeal-restore' ? 'appeal.restore' : 'moderation.restore', {
+      postType: found.postType,
+      boardSlug: found.post.boardSlug,
+      globalNumber: found.post.globalNumber,
+      actor
+    });
+
+    if (found.postType === 'thread') {
+      if (!found.post.isPending && publicThread(state, found.post)) {
+        realtime.publish('thread:created', { thread: serializeThread(found.post, state.comments) });
+      }
+    } else {
+      const parent = state.threads.find((thread) => thread.id === found.post.threadId);
+      if (!found.post.isPending && parent && publicThread(state, parent)) {
+        realtime.publish('thread:updated', { thread: serializeThread(parent, state.comments) });
+        realtime.publish('comment:created', { threadId: parent.id, comment: serializeComment(found.post, parent) });
+      }
+    }
+
+    return {
+      ok: true,
+      globalNumber: found.post.globalNumber,
+      post: serializeAdminPost(found.postType, found.post, state)
+    };
   }
 
   return {
@@ -3928,6 +3970,14 @@ export function createForumService({
           reason: safeReason,
           createdAt: resolvedAt
         });
+        if (safeStatus === 'accepted' && found.post.isDeleted) {
+          restoreDeletedPostRecord(state, found, {
+            reason: safeReason || 'appeal accepted',
+            actor,
+            restoredAt: resolvedAt,
+            action: 'admin:appeal-restore'
+          });
+        }
         recordModerationAction(state, {
           action: safeStatus === 'accepted' ? 'admin:appeal-accept' : 'admin:appeal-reject',
           actor,

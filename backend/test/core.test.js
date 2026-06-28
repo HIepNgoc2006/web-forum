@@ -2089,17 +2089,19 @@ test('pending moderation issues anonymous appeal tokens without storing raw toke
 });
 
 test('admin resolves anonymous appeals with audit history', async () => {
+  const realtime = createEvents();
   const service = createForumService({
     store: createMemoryStore(),
-    ai: flaggedAi,
-    realtime: createEvents(),
+    ai: safeAi,
+    realtime,
     now: (() => {
       const dates = [
         new Date('2026-05-22T08:00:00.000Z'),
         new Date('2026-05-22T08:01:00.000Z'),
-        new Date('2026-05-22T08:02:00.000Z')
+        new Date('2026-05-22T08:02:00.000Z'),
+        new Date('2026-05-22T08:03:00.000Z')
       ];
-      return () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z');
+      return () => dates.shift() ?? new Date('2026-05-22T08:03:00.000Z');
     })()
   });
 
@@ -2108,6 +2110,10 @@ test('admin resolves anonymous appeals with audit history', async () => {
     body: 'Bai cho khang nghi',
     captchaToken: 'dev-pass',
     ip: '203.0.113.9'
+  });
+  await service.adminDeletePost(created.thread.globalNumber, {
+    reason: 'Xoa de test khang nghi',
+    actor: 'pengu1'
   });
   const submitted = await service.submitAppeal({
     token: created.appealToken,
@@ -2122,15 +2128,21 @@ test('admin resolves anonymous appeals with audit history', async () => {
   });
   const appeals = await service.listAppeals(10);
   const actions = await service.listModerationActions(10);
+  const activeThreads = await service.listThreads('tam-su');
+  const restoreAction = actions.find((action) => action.action === 'admin:appeal-restore');
+  const acceptAction = actions.find((action) => action.action === 'admin:appeal-accept');
 
   assert.equal(resolved.status, 'accepted');
   assert.equal(resolved.resolvedBy, 'pengu1');
   assert.equal(resolved.history.at(-1).action, 'accepted');
   assert.equal(appeals.length, 1);
   assert.equal(appeals[0].status, 'accepted');
-  assert.equal(actions[0].action, 'admin:appeal-accept');
-  assert.equal(actions[0].reason, 'Dong y xem lai');
-  assert.equal(actions[0].globalNumber, created.thread.globalNumber);
+  assert.equal(activeThreads.some((thread) => thread.id === created.thread.id), true);
+  assert.equal(restoreAction?.reason, 'Dong y xem lai');
+  assert.equal(restoreAction?.globalNumber, created.thread.globalNumber);
+  assert.equal(acceptAction?.reason, 'Dong y xem lai');
+  assert.equal(acceptAction?.globalNumber, created.thread.globalNumber);
+  assert.equal(realtime.events.some((event) => event.event === 'thread:created' && event.payload.thread.id === created.thread.id), true);
 });
 
 test('admin pending queue prioritizes report count PII risk and recency without private data', async () => {
