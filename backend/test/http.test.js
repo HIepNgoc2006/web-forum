@@ -1646,6 +1646,27 @@ test('http rate limits thread creation separately from comments', async () => {
     assert.equal(comment.status, 201);
   });
 });
+test('http rate limits board thread search queries', async () => {
+  const rateLimitStore = createCountingRateLimitStore();
+
+  await withServer(
+    async (baseUrl) => {
+      const unsearched = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
+      assert.equal(unsearched.status, 200);
+      for (let index = 0; index < 10; index += 1) {
+        const response = await fetch(`${baseUrl}/api/boards/hoc-tap/threads?q=alpha`);
+        assert.equal(response.status, 200);
+      }
+      const limited = await fetch(`${baseUrl}/api/boards/hoc-tap/threads?search=alpha`);
+      assert.equal(limited.status, 429);
+    },
+    { rateLimitStore }
+  );
+
+  assert.equal(rateLimitStore.calls.length, 11);
+  assert.equal(rateLimitStore.calls.every((key) => key.includes(':search:board:hoc-tap')), true);
+});
+
 
 test('http rate limits can share counters across server instances', async () => {
   const rateLimitStore = createCountingRateLimitStore();

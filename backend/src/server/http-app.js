@@ -358,8 +358,22 @@ function requireAccountJwt(jwtSecret) {
   }
 }
 
-function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
-  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method) || parts[0] !== 'api') {
+function rateLimitForRequest({ method, pathname, searchParams, parts, ip, limiters }) {
+  if (parts[0] !== 'api') {
+    return null;
+  }
+
+  if (method === 'GET') {
+    if (parts[1] === 'search') {
+      return { limiter: limiters.search, key: `${ip}:search:${pathname}` };
+    }
+    if (parts[1] === 'boards' && parts[3] === 'threads' && (searchParams.has('q') || searchParams.has('search'))) {
+      return { limiter: limiters.search, key: `${ip}:search:board:${parts[2]}` };
+    }
+    return null;
+  }
+
+  if (!['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
     return null;
   }
 
@@ -377,9 +391,6 @@ function rateLimitForRequest({ method, pathname, parts, ip, limiters }) {
   }
   if (method === 'POST' && parts[1] === 'ai') {
     return { limiter: limiters.ai, key: `${ip}:ai:${parts[2] ?? 'generic'}` };
-  }
-  if (method === 'GET' && parts[1] === 'search') {
-    return { limiter: limiters.search, key: `${ip}:search:${pathname}` };
   }
   if (parts[1] === 'account') {
     return { limiter: limiters.account, key: `${ip}:account:${method}:${pathname}` };
@@ -793,7 +804,9 @@ export function createHttpServer({
         return;
       }
 
-      await enforceRateLimit(rateLimitForRequest({ method: request.method, pathname: routePath, parts, ip, limiters }));
+      await enforceRateLimit(
+        rateLimitForRequest({ method: request.method, pathname: routePath, searchParams: url.searchParams, parts, ip, limiters })
+      );
 
       if (request.method === 'GET' && routePath === '/api/config') {
         ok(response, publicConfig());
