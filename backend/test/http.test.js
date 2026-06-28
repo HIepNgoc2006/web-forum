@@ -2072,11 +2072,18 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
 
     const json = await fetch(`${baseUrl}/feeds/latest.json?limit=1`);
     const jsonBody = await json.json();
+    const forwardedJson = await fetch(`${baseUrl}/feeds/latest.json?limit=1`, {
+      headers: { 'x-forwarded-proto': 'https, http' }
+    });
+    const forwardedJsonBody = await forwardedJson.json();
     assert.equal(json.status, 200);
     assert.equal(json.headers.get('content-type')?.includes('application/json'), true);
     assert.equal(jsonBody.version, 'https://jsonfeed.org/version/1.1');
     assert.equal(jsonBody.items.length, 1);
     assert.equal(jsonBody.items[0].title.includes('/an-uong/'), true);
+    assert.equal(forwardedJson.status, 200);
+    assert.equal(forwardedJsonBody.feed_url.startsWith('https://'), true);
+    assert.equal(forwardedJsonBody.items[0].url.startsWith('https://'), true);
 
     const rss = await fetch(`${baseUrl}/feeds/latest.rss?limit=1`);
     const rssBody = await rss.text();

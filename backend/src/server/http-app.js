@@ -453,10 +453,20 @@ function requestOrigin(request) {
   }
 }
 
+function requestProtocol(request) {
+  const forwardedProto = String(request.headers['x-forwarded-proto'] || '')
+    .split(',')[0]
+    .trim()
+    .toLowerCase();
+  if (forwardedProto === 'http' || forwardedProto === 'https') {
+    return forwardedProto;
+  }
+  return 'http';
+}
+
 function absoluteUrl(request, pathName) {
-  const protocol = request.headers['x-forwarded-proto'] || 'http';
   const host = request.headers.host || 'localhost';
-  return `${protocol}://${host}${pathName}`;
+  return `${requestProtocol(request)}://${host}${pathName}`;
 }
 
 function feedLimit(value, fallback = 20, max = 50) {
