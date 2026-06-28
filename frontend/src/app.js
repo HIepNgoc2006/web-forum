@@ -458,6 +458,38 @@ function defaultDeletePassword() {
   return next;
 }
 
+function normalizeDeletePassword(value = '') {
+  return String(value ?? '').trim().slice(0, 120);
+}
+
+function syncDeletePasswordInputs(value = defaultDeletePassword()) {
+  const password = String(value ?? '');
+  els.deletePasswordInputs.forEach((input) => {
+    if (input.value !== password) {
+      input.value = password;
+    }
+  });
+}
+
+function updateDeletePassword(value) {
+  const password = normalizeDeletePassword(value);
+  if (password) {
+    localStorage.setItem(deletePasswordKey, password);
+  } else {
+    localStorage.removeItem(deletePasswordKey);
+  }
+  syncDeletePasswordInputs(password);
+  return password;
+}
+
+function deletePasswordValue(form) {
+  const typedPassword = normalizeDeletePassword(formValue(form, 'deletePassword'));
+  const password = typedPassword || defaultDeletePassword();
+  localStorage.setItem(deletePasswordKey, password);
+  syncDeletePasswordInputs(password);
+  return password;
+}
+
 function draftKey(kind, id) {
   return `draft:${kind}:${id}`;
 }
@@ -1015,6 +1047,7 @@ const els = {
   useAccountNameInputs: document.querySelectorAll('[data-use-account-name]'),
   capcodeOptions: document.querySelectorAll('[data-capcode-option]'),
   capcodeInputs: document.querySelectorAll('[data-capcode-input]'),
+  deletePasswordInputs: document.querySelectorAll('[data-delete-password-input]'),
   toast: document.querySelector('#toast'),
   refPreview: document.querySelector('#refPreview'),
   quickReply: document.querySelector('#quickReply'),
@@ -5321,7 +5354,7 @@ async function submitThread(event) {
         .filter(Boolean),
       options,
       displayName: displayNameValue(els.threadForm),
-      deletePassword: defaultDeletePassword(),
+      deletePassword: deletePasswordValue(els.threadForm),
       captchaToken,
       posterToken: state.posterToken,
       capcode: capcodeValue(els.threadForm),
@@ -5469,7 +5502,7 @@ async function createComment(body, captchaToken) {
       posterToken: state.posterToken,
       displayName: displayNameValue(form),
       options: formValue(form, 'options'),
-      deletePassword: defaultDeletePassword(),
+      deletePassword: deletePasswordValue(form),
       capcode: capcodeValue(form)
     })
   });
@@ -6598,6 +6631,9 @@ function bindEvents() {
   els.appealForm?.addEventListener('submit', submitAppeal);
   els.commentForm.addEventListener('submit', submitComment);
   els.quickReplyForm.addEventListener('submit', submitQuickReply);
+  els.deletePasswordInputs.forEach((input) => {
+    input.addEventListener('input', () => updateDeletePassword(input.value));
+  });
   els.threadBody.addEventListener('input', () => {
     writeDraft(draftKey('thread', state.boardSlug), els.threadBody.value);
     updatePrivacyWarning(els.threadBody.value, els.threadPrivacyWarning);
@@ -7678,6 +7714,7 @@ function bindEvents() {
 
 async function init() {
   bindEvents();
+  syncDeletePasswordInputs();
   applyTheme();
   applyDisplayPreferences();
   applyNotificationPreferences();

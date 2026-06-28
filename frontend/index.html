@@ -327,6 +327,10 @@
               <input name="options" autocomplete="off" placeholder="sage, noko" />
             </label>
             <label class="field-row">
+              <span>Mật khẩu xóa</span>
+              <input name="deletePassword" type="password" autocomplete="new-password" maxlength="120" placeholder="để xóa bài/tệp sau khi đăng" data-delete-password-input />
+            </label>
+            <label class="field-row">
               <span>Chủ đề</span>
               <input name="subject" maxlength="120" autocomplete="off" />
             </label>
@@ -531,6 +535,10 @@
                 <input name="options" autocomplete="off" placeholder="sage" />
               </div>
             </div>
+            <label class="field-row">
+              <span>Mật khẩu xóa</span>
+              <input name="deletePassword" type="password" autocomplete="new-password" maxlength="120" placeholder="để xóa bài/tệp sau khi đăng" data-delete-password-input />
+            </label>
             <label class="field-row">
               <span>Bình luận</span>
               <textarea id="commentBody" rows="4" maxlength="5000" placeholder="Viết bình luận..."></textarea>
@@ -1053,6 +1061,7 @@
           <input name="useAccountName" type="checkbox" data-use-account-name /> @username
         </label>
         <input id="quickReplyOptions" name="options" aria-label="Tùy chọn" placeholder="Tùy chọn" autocomplete="off" />
+        <input id="quickReplyDeletePassword" name="deletePassword" type="password" aria-label="Mật khẩu xóa" placeholder="Mật khẩu xóa" autocomplete="new-password" maxlength="120" data-delete-password-input />
         <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>
         <div id="quickReplyPrivacyWarning" class="privacy-warning quick-privacy-warning hidden" role="status"></div>
         <div class="quick-reply-captcha">
