@@ -773,6 +773,81 @@ function removePosterNote(id) {
   return writePosterNotes(readPosterNotes().filter((note) => note.id !== id));
 }
 
+function posterNoteForPost(post = {}) {
+  const poster = normalizeSearchValue(posterId(post));
+  const posterHash = normalizeSearchValue(post.posterHash || '');
+  if (!poster || poster === 'id:????') {
+    return null;
+  }
+  const boardSlug = String(post.boardSlug || state.boardSlug || '');
+  const notes = readPosterNotes();
+  const matchesPoster = (note) => {
+    const notePoster = normalizeSearchValue(note.posterId);
+    return notePoster === poster || (posterHash && notePoster === posterHash);
+  };
+  return (
+    notes.find((note) => matchesPoster(note) && note.boardSlug === boardSlug) ||
+    notes.find((note) => matchesPoster(note) && !note.boardSlug) ||
+    null
+  );
+}
+
+function postPlainText(post = {}) {
+  return [
+    post.subject,
+    post.body,
+    post.preview,
+    plainPreview(post.bodyLines, ''),
+    postDisplayName(post),
+    post.tripcode,
+    post.capcode,
+    posterId(post),
+    post.globalNumber ? 'No.' + post.globalNumber : ''
+  ]
+    .filter(Boolean)
+    .join(' ');
+}
+
+function contentFilterMatch(post = {}) {
+  const filters = readContentFilters();
+  if (!filters.length || !post) {
+    return null;
+  }
+  const boardSlug = String(post.boardSlug || state.boardSlug || '');
+  const haystack = normalizeSearchValue(postPlainText(post));
+  const poster = normalizeSearchValue(posterId(post));
+  const threadId = String(post.threadId || post.id || '');
+  const globalNumber = String(post.globalNumber || '');
+  return (
+    filters.find((filter) => {
+      if (filter.boardSlug && filter.boardSlug !== boardSlug) {
+        return false;
+      }
+      const value = normalizeSearchValue(filter.value);
+      if (!value) {
+        return false;
+      }
+      if (filter.type === 'keyword') {
+        return haystack.includes(value);
+      }
+      if (filter.type === 'poster') {
+        return poster === value || poster.includes(value);
+      }
+      if (filter.type === 'thread') {
+        return threadId === filter.value || globalNumber === filter.value;
+      }
+      if (filter.type === 'post') {
+        return globalNumber === filter.value;
+      }
+      return false;
+    }) || null
+  );
+}
+
+function isPostFiltered(post) {
+  return Boolean(contentFilterMatch(post));
+}
+
 function parseDraftKey(key = '') {
   const [, kind = '', id = ''] = String(key).split(':');
   return { kind, id };
@@ -2962,7 +3037,17 @@ function sortWatchedThreads(left, right, sort = localDisplayPreferences().watche
 
 function visibleWatchedThreadSummaries(watchedThreads = state.watchedThreadSummaries) {
   const preferences = localDisplayPreferences();
-  return [...watchedThreads].sort((left, right) => sortWatchedThreads(left, right, preferences.watchedSort));
+  return watchedThreads
+    .filter(
+      (item) =>
+        !isPostFiltered({
+          ...item,
+          id: item.threadId,
+          body: item.preview,
+          globalNumber: item.globalNumber
+        })
+    )
+    .sort((left, right) => sortWatchedThreads(left, right, preferences.watchedSort));
 }
 
 function firstUnreadPostNumber(posts = [], lastSeen = 0) {
@@ -3168,7 +3253,8 @@ function popularThumbnailHtml(firstMedia, initials) {
 }
 
 function renderPopularThreads(threads) {
-  if (!threads.length) {
+  const visibleThreads = threads.filter((thread) => !isPostFiltered(thread));
+  if (!visibleThreads.length) {
     els.popularThreads.classList.add('popular-empty');
     els.popularThreads.innerHTML = `
       <p>
@@ -3179,7 +3265,7 @@ function renderPopularThreads(threads) {
   }
 
   els.popularThreads.classList.remove('popular-empty');
-  els.popularThreads.innerHTML = threads
+  els.popularThreads.innerHTML = visibleThreads
     .map((thread) => {
       const board = state.boards.find((item) => item.slug === thread.boardSlug);
       const href = `#thread/${thread.id}`;
@@ -3207,12 +3293,13 @@ function latestPostHref(post) {
 }
 
 function renderLatestPosts(posts) {
-  if (!posts.length) {
+  const visiblePosts = posts.filter((post) => !isPostFiltered(post));
+  if (!visiblePosts.length) {
     els.latestPosts.innerHTML = '<p class="latest-empty">Chưa có bài công khai.</p>';
     return;
   }
 
-  els.latestPosts.innerHTML = posts
+  els.latestPosts.innerHTML = visiblePosts
     .map((post) => {
       const board = state.boards.find((item) => item.slug === post.boardSlug);
       const preview = plainPreview(post.bodyLines, 'Không có nội dung').slice(0, 140);
@@ -4746,6 +4833,14 @@ function meta(post, options = {}) {
     (post.isOp || (options.opPosterHash && post.posterHash === options.opPosterHash));
   const opMarker = isOpReply ? '<span class="op-post-marker">(OP)</span>' : '';
   const youMarker = isMyPost(post) ? '<span class="you-marker" title="Bài của bạn">(You)</span>' : '';
+  const posterNote = posterNoteForPost(post);
+  const posterNoteBadge = posterNote
+    ? '<span class="poster-note-badge" title="' +
+      escapeHtml(posterNote.note || posterNote.label) +
+      '">Ghi chú: ' +
+      escapeHtml(posterNote.label || posterNote.note) +
+      '</span>'
+    : '';
   const posterIdentity = canReply
     ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
     : `<span class="hash">${escapeHtml(posterId(post))}</span>`;
@@ -4758,6 +4853,7 @@ function meta(post, options = {}) {
       ${posterIdentity}
       ${opMarker}
       ${youMarker}
+      ${posterNoteBadge}
       ${stickyLabelHtml(post)}
       <span class="status">${labels}</span>
       ${voteControlHtml(post)}
@@ -5185,7 +5281,7 @@ function catalogThreadMatchesFilter(thread) {
 function renderCatalogThreads(threads) {
   const term = els.catalogSearchInput.value.trim();
   const visibleThreads = sortedCatalogThreads(
-    threads.filter((thread) => catalogThreadMatchesFilter(thread) && threadMatchesSearch(thread, term))
+    threads.filter((thread) => !isPostFiltered(thread) && catalogThreadMatchesFilter(thread) && threadMatchesSearch(thread, term))
   );
   els.catalogGrid.classList.toggle('catalog-grid-large', state.catalogImageSize === 'large');
   document.querySelectorAll('[data-catalog-sort]').forEach((button) => {
@@ -5292,7 +5388,9 @@ function omittedRepliesHtml(thread) {
 }
 
 function boardReplyPreviewsHtml(thread) {
-  const comments = Array.isArray(thread.previewComments) ? thread.previewComments : [];
+  const comments = (Array.isArray(thread.previewComments) ? thread.previewComments : []).filter(
+    (comment) => !isPostFiltered(comment)
+  );
   if (!comments.length && !thread.omittedReplyCount && !thread.omittedImageCount) return "";
   return `
     <div class="board-reply-previews">
@@ -5320,7 +5418,9 @@ function renderBoardThreads(threads) {
     button.setAttribute('aria-pressed', String(active));
   });
   const hidden = hiddenThreadIds();
-  const visibleThreads = threads.filter((thread) => !hidden.has(String(thread.id)) && threadMatchesSearch(thread, term));
+  const visibleThreads = threads.filter(
+    (thread) => !hidden.has(String(thread.id)) && !isPostFiltered(thread) && threadMatchesSearch(thread, term)
+  );
   if (!visibleThreads.length) {
     els.threadList.innerHTML = term
       ? '<p class="muted">Không có OP khớp tìm kiếm.</p>'
@@ -5504,7 +5604,9 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
     : '';
   const canReply = !detail.thread.isArchived && !detail.thread.isLocked;
   const hiddenPosts = hiddenPostNumbers();
-  const visibleComments = detail.comments.filter((comment) => !hiddenPosts.has(String(comment.globalNumber)));
+  const visibleComments = detail.comments.filter(
+    (comment) => !hiddenPosts.has(String(comment.globalNumber)) && !isPostFiltered(comment)
+  );
   els.threadDetail.innerHTML = `
     ${archivedNotice}
     ${lockedNotice}

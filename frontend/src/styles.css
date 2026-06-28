@@ -1331,6 +1331,18 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   font-weight: bold;
 }
 
+.poster-note-badge {
+  display: inline-block;
+  max-width: min(280px, 100%);
+  overflow: hidden;
+  margin-left: 4px;
+  color: #064f1f;
+  font-weight: bold;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+  white-space: nowrap;
+}
+
 .post-meta .number,
 .post-meta .hash,
 .post-meta .date,
