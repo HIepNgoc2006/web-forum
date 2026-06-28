@@ -191,8 +191,8 @@ function showReportModal(globalNumber) {
     const overlay = document.createElement('div');
     overlay.className = 'reason-modal-overlay';
     overlay.innerHTML = `
-      <div class="reason-modal">
-        <div class="reason-modal-title">Báo cáo No.${escapeHtml(globalNumber)}</div>
+      <div class="reason-modal" role="dialog" aria-modal="true" aria-labelledby="reportModalTitle">
+        <div class="reason-modal-title" id="reportModalTitle">Báo cáo No.${escapeHtml(globalNumber)}</div>
         <label class="reason-modal-label" for="reportCategorySelect">Loại báo cáo:</label>
         <select class="reason-macro-select" id="reportCategorySelect">
           ${REPORT_CATEGORIES.map((category) => `<option value="${category.value}">${category.label}</option>`).join('')}
@@ -211,29 +211,40 @@ function showReportModal(globalNumber) {
     const textarea = overlay.querySelector('#reportReasonTextarea');
     const confirmBtn = overlay.querySelector('#reportConfirmBtn');
     const cancelBtn = overlay.querySelector('#reportCancelBtn');
+    let settled = false;
 
-    function cleanup() {
+    function finish(value) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      document.removeEventListener('keydown', onKeyDown);
       overlay.remove();
+      resolve(value);
     }
 
     confirmBtn.addEventListener('click', () => {
       const reason = textarea.value.trim();
-      cleanup();
-      resolve(reason ? { category: select.value, reason } : null);
+      finish(reason ? { category: select.value, reason } : null);
     });
 
     cancelBtn.addEventListener('click', () => {
-      cleanup();
-      resolve(null);
+      finish(null);
     });
 
     overlay.addEventListener('click', (event) => {
       if (event.target === overlay) {
-        cleanup();
-        resolve(null);
+        finish(null);
       }
     });
 
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        finish(null);
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown);
     textarea.focus();
   });
 }
@@ -244,8 +255,8 @@ function showReasonModal(title, context) {
     const overlay = document.createElement('div');
     overlay.className = 'reason-modal-overlay';
     overlay.innerHTML = `
-      <div class="reason-modal">
-        <div class="reason-modal-title">${title}</div>
+      <div class="reason-modal" role="dialog" aria-modal="true" aria-labelledby="reasonModalTitle">
+        <div class="reason-modal-title" id="reasonModalTitle">${title}</div>
         <label class="reason-modal-label" for="reasonMacroSelect">Chọn mẫu lý do:</label>
         <select class="reason-macro-select" id="reasonMacroSelect">
           <option value="">-- Tùy chỉnh --</option>
@@ -265,6 +276,7 @@ function showReasonModal(title, context) {
     const textarea = overlay.querySelector('#reasonTextarea');
     const confirmBtn = overlay.querySelector('#reasonConfirmBtn');
     const cancelBtn = overlay.querySelector('#reasonCancelBtn');
+    let settled = false;
 
     select.addEventListener('change', () => {
       const index = select.value;
@@ -276,35 +288,38 @@ function showReasonModal(title, context) {
       textarea.focus();
     });
 
-    function cleanup() {
+    function finish(value) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      document.removeEventListener('keydown', onKeyDown);
       overlay.remove();
+      resolve(value);
     }
 
     confirmBtn.addEventListener('click', () => {
       const value = textarea.value.trim();
-      cleanup();
-      resolve(value);
+      finish(value);
     });
 
     cancelBtn.addEventListener('click', () => {
-      cleanup();
-      resolve(null);
+      finish(null);
     });
 
     overlay.addEventListener('click', (e) => {
       if (e.target === overlay) {
-        cleanup();
-        resolve(null);
+        finish(null);
       }
     });
 
-    document.addEventListener('keydown', function onKey(e) {
+    function onKeyDown(e) {
       if (e.key === 'Escape') {
-        document.removeEventListener('keydown', onKey);
-        cleanup();
-        resolve(null);
+        finish(null);
       }
-    });
+    }
+
+    document.addEventListener('keydown', onKeyDown);
 
     textarea.focus();
   });
