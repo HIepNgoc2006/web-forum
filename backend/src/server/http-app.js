@@ -1582,7 +1582,7 @@ export function createHttpServer({
         }
 
         if (request.method === 'GET' && routePath === '/api/admin/pending') {
-          ok(response, await service.listPending(filters));
+          ok(response, await service.listPending(filters, url.searchParams.get('limit') ?? 100));
           return;
         }
 
