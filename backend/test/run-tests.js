@@ -9,6 +9,7 @@ import './backup-scheduler.test.js';
 import './seed-data.test.js';
 import './totp.test.js';
 import './webauthn.test.js';
+import './webauthn-origin.test.js';
 import './security-regression.test.js';
 import './board-digest.test.js';
 import './duplicate-check.test.js';

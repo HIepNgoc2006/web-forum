@@ -442,6 +442,17 @@ function postPreview(post = {}) {
     .slice(0, 300);
 }
 
+function requestOrigin(request) {
+  const origin = request.headers.origin || request.headers.referer || 'http://localhost:3000';
+  try {
+    return new URL(origin).origin;
+  } catch {
+    const error = new Error('Origin đăng nhập không hợp lệ');
+    error.statusCode = 400;
+    throw error;
+  }
+}
+
 function absoluteUrl(request, pathName) {
   const protocol = request.headers['x-forwarded-proto'] || 'http';
   const host = request.headers.host || 'localhost';
@@ -1051,12 +1062,10 @@ export function createHttpServer({
         const body = await readJson(request, 20_000);
         const hostHeader = request.headers.host || 'localhost';
         const rpID = hostHeader.split(':')[0];
-        const origin = request.headers.origin || request.headers.referer || 'http://localhost:3000';
-        const cleanOrigin = new URL(origin).origin;
         const { account } = await service.verifyWebAuthnLoginResponse({
           username: body.username,
           body: body.assertionResponse,
-          origin: cleanOrigin,
+          origin: requestOrigin(request),
           rpID
         });
         // A passkey requires user verification (biometric/PIN), so it is a
@@ -1103,9 +1112,7 @@ export function createHttpServer({
           const body = await readJson(request, 20_000);
           const hostHeader = request.headers.host || 'localhost';
           const rpID = hostHeader.split(':')[0];
-          const origin = request.headers.origin || request.headers.referer || 'http://localhost:3000';
-          const cleanOrigin = new URL(origin).origin;
-          ok(response, await service.verifyWebAuthnRegisterResponse(accountSession.sub, { body, origin: cleanOrigin, rpID }));
+          ok(response, await service.verifyWebAuthnRegisterResponse(accountSession.sub, { body, origin: requestOrigin(request), rpID }));
           return;
         }
 
