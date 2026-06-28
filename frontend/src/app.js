@@ -17,6 +17,7 @@ const state = {
   token: localStorage.getItem('adminToken') || '',
   accountToken: localStorage.getItem('accountToken') || '',
   account: null,
+  accountPostNumbers: new Set(),
   temp2FAToken: null,
   adminTemp2FAToken: null,
   accountPrivateData: null,
@@ -335,6 +336,146 @@ function showReasonModal(title, context) {
     document.addEventListener('keydown', onKeyDown);
 
     textarea.focus();
+  });
+}
+
+function showPostEditModal(globalNumber, initialBody = '', options = {}) {
+  return new Promise((resolve) => {
+    const allowMedia = Boolean(options.allowMedia);
+    const showReason = !allowMedia && options.showReason !== false;
+    const currentMediaHtml = allowMedia && options.currentMediaHtml ? options.currentMediaHtml : '';
+    const overlay = document.createElement('div');
+    overlay.className = 'reason-modal-overlay';
+    overlay.innerHTML = `
+      <div class="reason-modal post-edit-modal" role="dialog" aria-modal="true" aria-labelledby="postEditModalTitle">
+        <div class="reason-modal-title" id="postEditModalTitle">Sửa bài No.${escapeHtml(globalNumber)}</div>
+        <label class="reason-modal-label" for="postEditTextarea">Nội dung:</label>
+        <textarea class="reason-textarea" id="postEditTextarea" rows="8" maxlength="5000" placeholder="Nội dung bài viết...">${escapeHtml(initialBody)}</textarea>
+        ${
+          allowMedia
+            ? `
+              <label class="reason-modal-label">Tệp đính kèm:</label>
+              ${currentMediaHtml ? `<div class="edit-current-media">${currentMediaHtml}</div>` : '<p class="muted">Bài này chưa có tệp đính kèm.</p>'}
+              <label class="reason-modal-label"><input id="postEditKeepImages" type="checkbox" checked> Giữ tệp hiện tại nếu không chọn tệp mới</label>
+              <input id="postEditFileInput" type="file" accept="image/*,video/mp4,video/webm" multiple>
+              <label class="reason-modal-label"><input id="postEditSpoiler" type="checkbox"> Ẩn ảnh mới</label>
+              <div class="image-preview hidden" id="postEditPreview"></div>
+            `
+            : `
+              ${
+                showReason
+                  ? `
+                    <label class="reason-modal-label" for="postEditReasonTextarea">Lý do sửa:</label>
+                    <textarea class="reason-textarea" id="postEditReasonTextarea" rows="3" placeholder="Nhập lý do..."></textarea>
+                  `
+                  : ''
+              }
+            `
+        }
+        <div class="reason-modal-actions">
+          <button class="primary-button" id="postEditConfirmBtn" type="button">Lưu</button>
+          <button class="ghost-button" id="postEditCancelBtn" type="button">Hủy</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+
+    const bodyTextarea = overlay.querySelector('#postEditTextarea');
+    const reasonTextarea = overlay.querySelector('#postEditReasonTextarea');
+    const keepImagesInput = overlay.querySelector('#postEditKeepImages');
+    const fileInput = overlay.querySelector('#postEditFileInput');
+    const spoilerInput = overlay.querySelector('#postEditSpoiler');
+    const preview = overlay.querySelector('#postEditPreview');
+    const confirmBtn = overlay.querySelector('#postEditConfirmBtn');
+    const cancelBtn = overlay.querySelector('#postEditCancelBtn');
+    let selectedMedia = [];
+    let settled = false;
+
+    function finish(value) {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      document.removeEventListener('keydown', onKeyDown);
+      overlay.remove();
+      resolve(value);
+    }
+
+    function resetSelectedMedia() {
+      selectedMedia = [];
+      fileInput.value = '';
+      preview.innerHTML = '';
+      preview.classList.add('hidden');
+    }
+
+    fileInput?.addEventListener('change', async () => {
+      const files = Array.from(fileInput.files || []);
+      if (!files.length) {
+        resetSelectedMedia();
+        return;
+      }
+      if (files.length > MAX_MEDIA_PER_POST) {
+        showToast(`Tối đa ${MAX_MEDIA_PER_POST} tệp mỗi bài viết.`);
+        resetSelectedMedia();
+        return;
+      }
+      if (files.some((file) => !isSupportedMediaFile(file))) {
+        showToast('Chỉ hỗ trợ ảnh, MP4 hoặc WebM.');
+        resetSelectedMedia();
+        return;
+      }
+      try {
+        selectedMedia = await Promise.all(files.map((file) => fileToDataUrl(file)));
+        preview.innerHTML = imagePreviewHtml(selectedMedia);
+        preview.classList.remove('hidden');
+        if (keepImagesInput) {
+          keepImagesInput.checked = false;
+        }
+      } catch (error) {
+        resetSelectedMedia();
+        showToast(error.message);
+      }
+    });
+
+    confirmBtn.addEventListener('click', () => {
+      const body = bodyTextarea.value.trim();
+      if (!body) {
+        bodyTextarea.focus();
+        return;
+      }
+      if (!allowMedia) {
+        finish({ body, reason: reasonTextarea?.value.trim() || '' });
+        return;
+      }
+      const replaceImages = selectedMedia.length > 0 || !keepImagesInput?.checked;
+      finish({
+        body,
+        replaceImages,
+        images: replaceImages
+          ? selectedMedia.map((item) => ({ ...item, spoiler: Boolean(spoilerInput?.checked) }))
+          : undefined
+      });
+    });
+
+    cancelBtn.addEventListener('click', () => {
+      finish(null);
+    });
+
+    overlay.addEventListener('click', (event) => {
+      if (event.target === overlay) {
+        finish(null);
+      }
+    });
+
+    function onKeyDown(event) {
+      if (event.key === 'Escape') {
+        finish(null);
+      }
+    }
+
+    document.addEventListener('keydown', onKeyDown);
+
+    bodyTextarea.focus();
   });
 }
 
@@ -1074,6 +1215,31 @@ function isMyPost(post) {
   return Number.isFinite(number) && myPostNumberSet().has(number);
 }
 
+function isAccountPost(post) {
+  const number = Number(post?.globalNumber);
+  return Boolean(state.accountToken && state.account && Number.isFinite(number) && state.accountPostNumbers.has(number));
+}
+
+async function refreshAccountPostNumbers() {
+  if (!state.accountToken || !state.account) {
+    state.accountPostNumbers = new Set();
+    return;
+  }
+  try {
+    const items = await api('/api/account/posts', { auth: 'account' });
+    state.accountPostNumbers = new Set(
+      (items || [])
+        .map((item) => Number((item.post || item)?.globalNumber))
+        .filter(Number.isFinite)
+    );
+  } catch (error) {
+    if (/đăng nhập|Phiên/.test(error.message)) {
+      setAccountSession();
+      return;
+    }
+    console.warn('Không tải được danh sách bài của tài khoản:', error);
+  }
+}
 function rememberMyPost(post, type) {
   if (!post?.globalNumber) {
     return;
@@ -1089,6 +1255,9 @@ function rememberMyPost(post, type) {
   });
   writeJsonLocal(myPostsKey, items.slice(0, 50));
   myPostNumberCache = null;
+  if (state.accountToken && state.account) {
+    state.accountPostNumbers.add(Number(post.globalNumber));
+  }
 }
 
 function hiddenThreadIds() {
@@ -1686,6 +1855,7 @@ async function persistAccountSettings({ silent = false } = {}) {
 function setAccountSession({ token = '', account = null } = {}) {
   state.accountToken = token;
   state.account = account;
+  state.accountPostNumbers = new Set();
   state.accountPrivateData = token ? state.accountPrivateData : null;
   window.clearTimeout(state.accountPrivateSaveTimer);
   if (token) {
@@ -1796,6 +1966,18 @@ async function loadAccountPrivateData({ mergeLocal = false } = {}) {
   return state.accountPrivateData;
 }
 
+async function finishAccountLogin(result, { mergeLocal = true } = {}) {
+  setAccountSession({ token: result.token, account: result.account });
+  state.accountPrivateData = mergeLocal ? mergeAccountPrivateData() : normalizeAccountPrivateData();
+  renderAccountPrivateData();
+  try {
+    await loadAccountPrivateData({ mergeLocal });
+    await refreshAccountPostNumbers();
+  } catch (error) {
+    console.warn('Unable to sync account data after login', error);
+    showToast('Đã đăng nhập, nhưng chưa đồng bộ được dữ liệu cá nhân. Vui lòng thử lại sau.');
+  }
+}
 async function clearAccountPrivateData(section = '') {
   if (!state.accountToken) {
     return;
@@ -2095,7 +2277,7 @@ async function loginWithPasskey() {
       body: JSON.stringify({ username, assertionResponse })
     });
 
-    setAccountSession({ token: result.token, account: result.account });
+    await finishAccountLogin(result);
     showToast(`Chào mừng trở lại, @${result.account.username}!`);
     window.location.hash = '#home';
   } catch (error) {
@@ -2447,6 +2629,7 @@ async function loadAccountSession() {
     applyAccountSyncedSettings(account);
     updateAccountNav();
     await loadAccountPrivateData({ mergeLocal: true });
+    await refreshAccountPostNumbers();
     return account;
   } catch {
     setAccountSession();
@@ -4818,6 +5001,14 @@ function capcodeBadgeHtml(post) {
   return `<span class="capcode capcode-${post.capcode}" title="Chức danh đã xác minh">${label}</span>`;
 }
 
+function accountPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
+  if (!isAccountPost(post) || !post?.globalNumber) {
+    return '';
+  }
+  const encodedBody = encodeURIComponent(post.body || '');
+  return `<button class="${className}" data-account-edit-post="${post.globalNumber}" data-account-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
+}
+
 function meta(post, options = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -4825,6 +5016,8 @@ function meta(post, options = {}) {
   const showCheckbox = options.checkbox !== false;
   const showReplyAction = options.replyAction !== false;
   const canReply = options.canReply !== false;
+  const showPostActions = options.actions !== false;
+  const accountEditAction = showPostActions ? accountPostEditButtonHtml(post) : '';
   const permalink = postPermalink(post, options);
   const opNumber = Number(options.opNumber || 0);
   const isOpReply =
@@ -4863,6 +5056,7 @@ function meta(post, options = {}) {
           ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
           : ''
       }
+      ${accountEditAction}
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
       <button class="quote-button" data-translate-post="${post.globalNumber}" type="button">[Dịch]</button>
@@ -7025,8 +7219,7 @@ async function submitAccountRegister(event) {
     });
     els.registerPassword.value = '';
     resetHcaptcha(els.registerCaptcha);
-    setAccountSession({ token: result.token, account: result.account });
-    await loadAccountPrivateData({ mergeLocal: true });
+    await finishAccountLogin(result);
     showToast('Đã đăng ký và đăng nhập tài khoản.');
     // Reveal the one-time recovery code before sending the user to settings.
     if (result.recoveryCode) {
@@ -7167,8 +7360,7 @@ async function submitAccountLogin(event) {
       showToast('Vui lòng nhập mã 2FA để hoàn tất đăng nhập.');
       return;
     }
-    setAccountSession({ token: result.token, account: result.account });
-    await loadAccountPrivateData({ mergeLocal: true });
+    await finishAccountLogin(result);
     showToast('Đã đăng nhập tài khoản.');
     window.location.hash = '#account';
   } catch (error) {
@@ -7194,8 +7386,7 @@ async function submitAccount2FAVerify(event) {
     });
     els.account2FAVerifyForm.classList.add('hidden');
     state.temp2FAToken = null;
-    setAccountSession({ token: result.token, account: result.account });
-    await loadAccountPrivateData({ mergeLocal: true });
+    await finishAccountLogin(result);
     showToast('Xác thực 2FA thành công. Đã đăng nhập.');
     window.location.hash = '#account';
   } catch (error) {
@@ -7217,8 +7408,7 @@ async function submitBackupCodeLogin() {
     });
     els.account2FAVerifyForm.classList.add('hidden');
     state.temp2FAToken = null;
-    setAccountSession({ token: result.token, account: result.account });
-    await loadAccountPrivateData({ mergeLocal: true });
+    await finishAccountLogin(result);
     showToast('Đăng nhập bằng mã dự phòng thành công.');
     window.location.hash = '#account';
   } catch (error) {
@@ -7794,6 +7984,42 @@ function bindEvents() {
       return;
     }
 
+    const accountEditPostButton = event.target.closest('[data-account-edit-post]');
+    if (accountEditPostButton) {
+      const globalNumber = accountEditPostButton.dataset.accountEditPost;
+      const currentBody = decodeURIComponent(accountEditPostButton.dataset.accountEditBody || '');
+      const postElement = document.getElementById(`p${globalNumber}`);
+      const currentMediaHtml = postElement?.querySelector('.post-media-gallery')?.innerHTML || '';
+      const edit = await showPostEditModal(globalNumber, currentBody, {
+        allowMedia: true,
+        currentMediaHtml
+      });
+      if (!edit) {
+        return;
+      }
+      const payload = { body: edit.body };
+      if (edit.replaceImages) {
+        payload.images = edit.images || [];
+      }
+      try {
+        const result = await api(`/api/posts/${globalNumber}`, {
+          auth: 'account',
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+        rememberMyPost(result.post, result.type || 'thread');
+        await refreshAccountPostNumbers();
+        showToast(result.status === 'pending' ? 'Đã sửa bài. Nội dung đang chờ duyệt lại.' : 'Đã sửa bài.');
+        if ((window.location.hash || '#home').startsWith('#home')) {
+          renderMyPosts();
+        } else {
+          await refreshCurrentScreen();
+        }
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
     const refreshButton = event.target.closest('[data-thread-refresh]');
     if (refreshButton) {
       await loadThread().catch((error) => showToast(error.message));

@@ -2196,6 +2196,22 @@ body.display-compact .post-body {
   resize: vertical;
 }
 
+.edit-current-media {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  padding: 4px;
+}
+
+.post-edit-modal {
+  width: min(520px, calc(100vw - 24px));
+}
+
+.post-edit-modal .image-preview {
+  width: auto;
+  margin: 6px 0;
+}
 .reason-modal-actions {
   display: flex;
   gap: 6px;
