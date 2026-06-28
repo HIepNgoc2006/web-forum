@@ -853,6 +853,59 @@ function composerTextarea(target) {
   return null;
 }
 
+function insertComposerBlock(target, text) {
+  const textarea = composerTextarea(target);
+  const body = String(text || '').trim();
+  if (!textarea || !body) {
+    return;
+  }
+  const value = textarea.value;
+  const start = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : value.length;
+  const end = Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : start;
+  const prefix = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
+  const suffix = value[end] && value[end] !== '\n' ? '\n' : '';
+  const insertText = `${prefix}${body}${suffix}`;
+  const maxLength = Number(textarea.maxLength);
+  if (Number.isFinite(maxLength) && maxLength > 0 && value.length - (end - start) + insertText.length > maxLength) {
+    showToast('Nội dung đã đạt giới hạn ký tự.');
+    textarea.focus();
+    return;
+  }
+  textarea.setRangeText(insertText, start, end, 'end');
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.focus();
+}
+
+function insertReplyTemplate(target, id) {
+  const template = readReplyTemplates().find((item) => item.id === id);
+  if (!template) {
+    showToast('Không tìm thấy mẫu trả lời.');
+    return;
+  }
+  insertComposerBlock(target, template.body);
+}
+
+function defaultReplyTemplateTitle(body = '') {
+  return safePrivateText(String(body).split(/\n/).find(Boolean) || 'Mẫu trả lời', 48);
+}
+
+function saveComposerReplyTemplate(target) {
+  const textarea = composerTextarea(target);
+  const body = textarea?.value.trim() || '';
+  if (!body) {
+    showToast('Nhập nội dung trước khi lưu mẫu.');
+    textarea?.focus();
+    return;
+  }
+  addReplyTemplate({
+    title: defaultReplyTemplateTitle(body),
+    body,
+    boardSlug: state.boardSlug || ''
+  });
+  renderReplyTemplatePickers();
+  showToast('Đã lưu mẫu trả lời.');
+}
+
 function insertComposerToken(target, token) {
   const textarea = composerTextarea(target);
   if (!textarea || !token) {
@@ -2213,14 +2266,37 @@ function renderPosterNotes() {
   `;
 }
 
+function renderReplyTemplatePickers() {
+  const templates = readReplyTemplates();
+  document.querySelectorAll('[data-reply-template-picker]').forEach((root) => {
+    const target = root.dataset.replyTemplatePicker;
+    const scopedTemplates = templates.filter((template) => !template.boardSlug || template.boardSlug === state.boardSlug);
+    const options = scopedTemplates
+      .map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.title)}</option>`)
+      .join('');
+    root.innerHTML = `
+      <span>Mẫu đã lưu</span>
+      <select data-reply-template-select ${scopedTemplates.length ? '' : 'disabled'} aria-label="Mẫu đã lưu">
+        ${scopedTemplates.length ? options : '<option value="">Chưa có mẫu</option>'}
+      </select>
+      <button class="link-button" data-insert-reply-template="${escapeHtml(target)}" type="button" ${
+        scopedTemplates.length ? '' : 'disabled'
+      }>[Chèn]</button>
+      <button class="link-button" data-save-reply-template="${escapeHtml(target)}" type="button">[Lưu mẫu]</button>
+    `;
+  });
+}
+
 function renderAccountPrivateData() {
   if (!els.accountPrivateDataPanel || !els.accountPrivateDataSummary) {
+    renderReplyTemplatePickers();
     return;
   }
   const loggedIn = Boolean(state.accountToken && state.account);
   els.accountPrivateDataPanel.classList.toggle('hidden', !loggedIn);
   if (!loggedIn) {
     els.accountPrivateDataSummary.innerHTML = '';
+    renderReplyTemplatePickers();
     return;
   }
   const data = state.accountPrivateData || defaultAccountPrivateData();
@@ -2250,6 +2326,7 @@ function renderAccountPrivateData() {
       ${renderPosterNotes()}
     </section>
   `;
+  renderReplyTemplatePickers();
 }
 
 function saveCurrentBoardSearch() {
@@ -7564,6 +7641,20 @@ function bindEvents() {
     if (composerInsertButton) {
       const pickerRoot = composerInsertButton.closest('[data-composer-picker]');
       insertComposerToken(pickerRoot?.dataset.composerPicker, composerInsertButton.dataset.composerInsert);
+      return;
+    }
+
+    const insertReplyTemplateButton = event.target.closest('[data-insert-reply-template]');
+    if (insertReplyTemplateButton) {
+      const picker = insertReplyTemplateButton.closest('[data-reply-template-picker]');
+      const selectedId = picker?.querySelector('[data-reply-template-select]')?.value || '';
+      insertReplyTemplate(insertReplyTemplateButton.dataset.insertReplyTemplate, selectedId);
+      return;
+    }
+
+    const saveReplyTemplateButton = event.target.closest('[data-save-reply-template]');
+    if (saveReplyTemplateButton) {
+      saveComposerReplyTemplate(saveReplyTemplateButton.dataset.saveReplyTemplate);
       return;
     }
 

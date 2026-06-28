@@ -2885,7 +2885,8 @@ body.theme-yotsuba.board-page .topbar {
   min-height: 70px;
 }
 
-.board-page .composer-picker {
+.board-page .composer-picker,
+.board-page .reply-template-picker {
   display: flex;
   flex-wrap: wrap;
   gap: 2px 4px;
@@ -2893,16 +2894,24 @@ body.theme-yotsuba.board-page .topbar {
   margin-left: 84px;
 }
 
-.board-page .composer-picker > span {
+.board-page .composer-picker > span,
+.board-page .reply-template-picker > span {
   color: #800000;
   font-weight: bold;
 }
 
-.board-page .composer-picker button {
+.board-page .composer-picker button,
+.board-page .reply-template-picker button,
+.board-page .reply-template-picker select {
   min-height: 22px;
   border: 1px solid #b7a5a0;
   background: #fff4ee;
   padding: 1px 5px;
+  line-height: 1.2;
+}
+
+.board-page .reply-template-picker select {
+  max-width: min(260px, 100%);
 }
 
 .quick-composer-picker {
@@ -2915,6 +2924,26 @@ body.theme-yotsuba.board-page .topbar {
   min-height: 22px;
   border: 1px solid #b7a5a0;
   background: #fff4ee;
+}
+
+.quick-template-picker {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 3px;
+  border-top: 1px solid #aaa;
+  background: #eef2ff;
+  padding: 3px;
+  font-size: 12px;
+}
+
+.quick-template-picker select {
+  min-width: 0;
+  height: 24px;
+  border: 1px solid #999;
+  background: #fff;
+  color: #000;
+  font-size: 12px;
 }
 
 .board-page .form-actions {
