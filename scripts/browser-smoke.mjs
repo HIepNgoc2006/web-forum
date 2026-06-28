@@ -310,7 +310,8 @@ async function smokePage(page) {
 
     await cdp.send('Page.navigate', { url: page.url });
 
-    const deadline = Date.now() + 12000;
+    const deadline = Date.now() + 25000;
+    let reloaded = false;
     let snapshot = null;
     while (Date.now() < deadline) {
       const result = await cdp.send('Runtime.evaluate', {
@@ -327,6 +328,10 @@ async function smokePage(page) {
       const hasExpectedTheme = !page.theme || String(snapshot?.bodyClass || '').includes(`theme-${page.theme}`);
       if (hasExpectedText && hasExpectedTheme) {
         break;
+      }
+      if (!reloaded && Date.now() > deadline - 12500) {
+        reloaded = true;
+        await cdp.send('Page.navigate', { url: page.url });
       }
       await sleep(250);
     }

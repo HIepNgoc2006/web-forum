@@ -2040,6 +2040,35 @@ test('http api toggles post reactions by poster fingerprint', async () => {
     assert.equal(removed.status, 200);
     assert.equal(removedBody.data.reactions.laugh, 0);
     assert.equal(removedBody.data.myReaction, null);
+
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'reaction_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const registeredBody = await registered.json();
+    const accountHeaders = {
+      authorization: `Bearer ${registeredBody.data.token}`,
+      'content-type': 'application/json'
+    };
+    const accountReacted = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
+      method: 'POST',
+      headers: accountHeaders,
+      body: JSON.stringify({ reaction: 'like', posterToken: 'account-token-a' })
+    });
+    const accountReactedBody = await accountReacted.json();
+    const accountRemoved = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
+      method: 'POST',
+      headers: accountHeaders,
+      body: JSON.stringify({ reaction: 'like', posterToken: 'account-token-b' })
+    });
+    const accountRemovedBody = await accountRemoved.json();
+    assert.equal(accountReacted.status, 200);
+    assert.equal(accountReactedBody.data.reactions.like, 1);
+    assert.equal(accountReactedBody.data.myReaction, 'like');
+    assert.equal(accountRemoved.status, 200);
+    assert.equal(accountRemovedBody.data.reactions.like, 0);
+    assert.equal(accountRemovedBody.data.myReaction, null);
   });
 });
 

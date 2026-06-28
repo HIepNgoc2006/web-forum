@@ -313,7 +313,8 @@ function getOptionalAccount(request, jwtSecret, service) {
   try {
     const payload = verifyJwt(token, jwtSecret);
     if (service?.isSessionRevoked?.(token)) return undefined;
-    if (payload.role === 'user' && payload.sub) return payload.sub;
+    const role = String(payload.role || '').toLowerCase();
+    if ((role === 'user' || PRIVILEGED_ACCOUNT_ROLES.has(role)) && payload.sub) return payload.sub;
   } catch {}
   return undefined;
 }
