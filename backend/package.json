@@ -8,7 +8,7 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "test": "node test/run-tests.js",
-    "check": "node --check server.js",
+    "check": "node scripts/check-syntax.js",
     "migrate:images": "node scripts/migrate-inline-images.js",
     "cleanup:uploads": "node scripts/cleanup-orphan-uploads.js",
     "backup:run": "node scripts/backup-scheduler.js run",
