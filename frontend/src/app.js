@@ -9,6 +9,7 @@ const state = {
   boardSlug: 'confession',
   threadId: '',
   threadDetail: null,
+  threadLoadRequestId: 0,
   threadGlobalNumber: '',
   threadPosterHash: '',
   threadLastSeenBefore: 0,
@@ -40,6 +41,7 @@ const state = {
   threadCommentPage: 1,
   threadCommentPageSize: 50,
   threadCommentPageMeta: null,
+  threadSearchTerm: '',
   commentsSort: 'old',
   autoUpdate: true,
   autoCountdown: 7,
@@ -3993,6 +3995,33 @@ function commentSortHtml(current = 'old') {
   `;
 }
 
+function normalizeThreadSearchTerm(value = '') {
+  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 160);
+}
+
+function threadSearchHtml(detail = {}) {
+  const term = state.threadSearchTerm;
+  const total = Number(detail.commentPage?.total ?? 0);
+  const status = term
+    ? `${total.toLocaleString()} phản hồi khớp trong thread`
+    : 'Tìm theo nội dung, số bài hoặc ID poster';
+  return `
+    <form class="thread-search" id="threadSearchForm">
+      <label>
+        <span>Tìm trong thread</span>
+        <input id="threadSearchInput" name="q" value="${escapeHtml(term)}" placeholder="từ khóa, No. hoặc ID" autocomplete="off">
+      </label>
+      <button class="ghost-button" type="submit">[Tìm]</button>
+      ${
+        term
+          ? '<button class="link-button" data-clear-thread-search type="button">[Xóa]</button>'
+          : ''
+      }
+      <span class="thread-search-status">${escapeHtml(status)}</span>
+    </form>
+  `;
+}
+
 const CAPCODE_LABELS = {
   admin: '## Quản trị viên',
   moderator: '## Điều hành viên'
@@ -4687,11 +4716,21 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
     commentsPageSize: String(state.threadCommentPageSize),
     commentsSort: state.commentsSort
   });
+  const threadSearchTerm = normalizeThreadSearchTerm(state.threadSearchTerm);
+  state.threadSearchTerm = threadSearchTerm;
+  if (threadSearchTerm) {
+    query.set('commentsSearch', threadSearchTerm);
+  }
   const requestedPost = focusPost || currentPermalinkPost();
   if (requestedPost) {
     query.set('focusGlobalNumber', requestedPost);
   }
-  const detail = await api(`/api/threads/${state.threadId}?${query.toString()}`);
+  const requestedThreadId = state.threadId;
+  const requestId = ++state.threadLoadRequestId;
+  const detail = await api(`/api/threads/${requestedThreadId}?${query.toString()}`);
+  if (requestId !== state.threadLoadRequestId || state.threadId !== requestedThreadId) {
+    return;
+  }
   state.threadDetail = detail;
   const previousLastSeen = readThreadLastSeen(state.threadId);
   const currentMaxNumber = detail.commentPage?.currentMaxGlobalNumber || maxThreadPostNumber(detail);
@@ -4699,6 +4738,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   state.threadCurrentMaxNumber = currentMaxNumber;
   state.threadCommentPageMeta = detail.commentPage || null;
   state.threadCommentPage = detail.commentPage?.page || state.threadCommentPage;
+  state.threadSearchTerm = state.threadSearchTerm || detail.commentPage?.search || detail.commentsSearch || '';
   state.commentsSort = detail.commentPage?.sort || detail.commentsSort || state.commentsSort;
   writeThreadLastSeen(state.threadId, currentMaxNumber);
   syncWatchedThreadFromDetail(detail);
@@ -4744,6 +4784,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
       opPosterHash: detail.thread.posterHash,
       canReply
     })}
+    ${threadSearchHtml(detail)}
     ${commentSortHtml(state.commentsSort)}
     <div class="comment-list">
       ${
@@ -4757,7 +4798,9 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
                 })
               )
               .join('')
-          : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>'
+          : state.threadSearchTerm
+            ? '<p class="muted">Không có bình luận khớp tìm kiếm trong thread.</p>'
+            : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>'
       }
     </div>
   `;
@@ -4859,7 +4902,11 @@ function route() {
     loadAccountSettings().catch((error) => showToast(error.message));
   } else if (name === 'thread' && id) {
     const params = new URLSearchParams(hashQuery);
-    state.threadId = decodeURIComponent(id);
+    const nextThreadId = decodeURIComponent(id);
+    if (state.threadId !== nextThreadId) {
+      state.threadSearchTerm = '';
+    }
+    state.threadId = nextThreadId;
     state.threadCommentPage = Math.max(1, Number(params.get('cp')) || 1);
     loadThread({ resetReply: true, focusPost: params.get('p') || '' }).catch((error) => showToast(error.message));
   } else if (name === 'catalog') {
@@ -6604,7 +6651,26 @@ function bindEvents() {
     mediaToggle.click();
   });
 
+  document.body.addEventListener('submit', (event) => {
+    const threadSearchForm = event.target.closest('#threadSearchForm');
+    if (!threadSearchForm) {
+      return;
+    }
+    event.preventDefault();
+    state.threadSearchTerm = normalizeThreadSearchTerm(new FormData(threadSearchForm).get('q'));
+    state.threadCommentPage = 1;
+    loadThread().catch((error) => showToast(error.message));
+  });
+
   document.body.addEventListener('click', async (event) => {
+    const clearThreadSearchButton = event.target.closest('[data-clear-thread-search]');
+    if (clearThreadSearchButton) {
+      state.threadSearchTerm = '';
+      state.threadCommentPage = 1;
+      await loadThread().catch((error) => showToast(error.message));
+      return;
+    }
+
     const imageToggle = event.target.closest('[data-image-toggle]');
     if (imageToggle) {
       if (imageToggle.classList.contains('expanded') && event.target.closest('video')) {

@@ -143,7 +143,7 @@ async function createSeedThread() {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      body: '>>1 phản hồi kiểm thử',
+      body: '>>1 phản hồi kiểm thử smoke-thread-search-token',
       captchaToken: 'dev-pass',
       posterToken: 'ci-poster'
     })
@@ -603,6 +603,38 @@ async function main() {
               while (notifications.length === 0 && Date.now() < notificationDeadline) {
                 await new Promise((resolve) => setTimeout(resolve, 50));
               }
+              const threadSearchInput = document.querySelector('#threadSearchInput');
+              if (!threadSearchInput) {
+                throw new Error('thread search input missing');
+              }
+              threadSearchInput.value = 'smoke-thread-search-token';
+              threadSearchInput.dispatchEvent(new Event('input', { bubbles: true }));
+              document.querySelector('#threadSearchForm button[type="submit"]')?.click();
+              const threadSearchDeadline = Date.now() + 3000;
+              let threadSearchStatus = '';
+              let threadSearchPreviewVisible = false;
+              let threadSearchOtherHidden = false;
+              while (Date.now() < threadSearchDeadline) {
+                const detailText = document.querySelector('#threadDetail')?.innerText || '';
+                threadSearchStatus = document.querySelector('#threadDetail .thread-search-status')?.textContent || '';
+                threadSearchPreviewVisible = detailText.includes('smoke-thread-search-token');
+                threadSearchOtherHidden = !detailText.includes('browser notification smoke');
+                if (threadSearchStatus.includes('1 phản hồi khớp') && threadSearchPreviewVisible && threadSearchOtherHidden) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              document.querySelector('[data-clear-thread-search]')?.click();
+              const threadSearchClearDeadline = Date.now() + 3000;
+              let threadSearchCleared = false;
+              while (Date.now() < threadSearchClearDeadline) {
+                const detailText = document.querySelector('#threadDetail')?.innerText || '';
+                threadSearchCleared = detailText.includes('browser notification smoke') && !document.querySelector('[data-clear-thread-search]');
+                if (threadSearchCleared) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
               const watched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
               const diceRollText = document.querySelector('.dice-roll')?.textContent || '';
               return {
@@ -610,6 +642,10 @@ async function main() {
                 first: notifications[0] || null,
                 watched,
                 diceRollText,
+                threadSearchStatus,
+                threadSearchPreviewVisible,
+                threadSearchOtherHidden,
+                threadSearchCleared,
                 preferences: JSON.parse(localStorage.getItem('notificationPreferences') || '{}')
               };
             })()`,
@@ -628,6 +664,16 @@ async function main() {
           }
           if (!payload.diceRollText?.includes('1d6')) {
             throw new Error(`thread desktop did not render dice roll result: ${payload.diceRollText || 'missing'}`);
+          }
+          if (
+            !payload.threadSearchStatus?.includes('1 phản hồi khớp') ||
+            !payload.threadSearchPreviewVisible ||
+            !payload.threadSearchOtherHidden ||
+            !payload.threadSearchCleared
+          ) {
+            throw new Error(
+              `thread desktop search failed: status=${payload.threadSearchStatus || 'missing'} visible=${Boolean(payload.threadSearchPreviewVisible)} hidden=${Boolean(payload.threadSearchOtherHidden)} cleared=${Boolean(payload.threadSearchCleared)}`
+            );
           }
           if (!Number.isFinite(Number(payload.watched.maxNumber))) {
             throw new Error('thread desktop did not keep watched thread metadata.');
