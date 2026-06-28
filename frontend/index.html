@@ -781,7 +781,16 @@
             <span>Hiển thị</span>
             <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
             <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn thumbnail</label>
+            <label><input id="accountWatchedUnreadOnly" type="checkbox" /> Watchlist: chỉ chưa đọc</label>
           </div>
+          <label class="field-row">
+            <span>Sắp xếp watchlist</span>
+            <select id="accountWatchedSort">
+              <option value="unread">Chưa đọc trước</option>
+              <option value="recent">Mới cập nhật</option>
+              <option value="board">Theo bảng</option>
+            </select>
+          </label>
           <div class="field-row checkbox-row">
             <span>Thông báo</span>
             <label><input id="accountEmailNotifications" type="checkbox" /> Thông báo email</label>

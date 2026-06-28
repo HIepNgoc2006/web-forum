@@ -135,6 +135,8 @@ const THREAD_TEMPLATES = [
   }
 ];
 
+const WATCHED_THREAD_SORTS = new Set(['unread', 'recent', 'board']);
+
 const AUDIO_RECORDING_TYPES = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -432,21 +434,30 @@ function writeJsonLocal(key, value) {
 }
 
 function readLocalList(key) {
-  return Array.isArray(readJsonLocal(key, [])) ? readJsonLocal(key, []) : [];
+  const value = readJsonLocal(key, []);
+  return Array.isArray(value) ? value : [];
+}
+
+function normalizeWatchedSort(value) {
+  return WATCHED_THREAD_SORTS.has(value) ? value : 'unread';
 }
 
 function localDisplayPreferences() {
   const value = readJsonLocal(displayPreferencesKey, {});
   return {
     compactThreads: Boolean(value.compactThreads),
-    hideThumbnails: Boolean(value.hideThumbnails)
+    hideThumbnails: Boolean(value.hideThumbnails),
+    watchedUnreadOnly: Boolean(value.watchedUnreadOnly),
+    watchedSort: normalizeWatchedSort(value.watchedSort)
   };
 }
 
 function writeLocalDisplayPreferences(preferences = {}) {
   const safe = {
     compactThreads: Boolean(preferences.compactThreads),
-    hideThumbnails: Boolean(preferences.hideThumbnails)
+    hideThumbnails: Boolean(preferences.hideThumbnails),
+    watchedUnreadOnly: Boolean(preferences.watchedUnreadOnly),
+    watchedSort: normalizeWatchedSort(preferences.watchedSort)
   };
   writeJsonLocal(displayPreferencesKey, safe);
   return safe;
@@ -764,6 +775,12 @@ function applyDisplayPreferences(preferences = localDisplayPreferences()) {
   if (els?.accountHideThumbnails) {
     els.accountHideThumbnails.checked = safe.hideThumbnails;
   }
+  if (els?.accountWatchedUnreadOnly) {
+    els.accountWatchedUnreadOnly.checked = safe.watchedUnreadOnly;
+  }
+  if (els?.accountWatchedSort) {
+    els.accountWatchedSort.value = safe.watchedSort;
+  }
   return safe;
 }
 
@@ -1053,6 +1070,8 @@ const els = {
   accountSyncDrafts: document.querySelector('#accountSyncDrafts'),
   accountCompactThreads: document.querySelector('#accountCompactThreads'),
   accountHideThumbnails: document.querySelector('#accountHideThumbnails'),
+  accountWatchedUnreadOnly: document.querySelector('#accountWatchedUnreadOnly'),
+  accountWatchedSort: document.querySelector('#accountWatchedSort'),
   accountEmailNotifications: document.querySelector('#accountEmailNotifications'),
   accountNotifyWatchedThreads: document.querySelector('#accountNotifyWatchedThreads'),
   accountNotifyBoardSubscriptions: document.querySelector('#accountNotifyBoardSubscriptions'),
@@ -1508,6 +1527,8 @@ function fillAccountSettings(account = state.account) {
   els.accountSyncDrafts.checked = settings.syncDrafts !== false;
   els.accountCompactThreads.checked = Boolean(displayPreferences.compactThreads);
   els.accountHideThumbnails.checked = Boolean(displayPreferences.hideThumbnails);
+  els.accountWatchedUnreadOnly.checked = Boolean(displayPreferences.watchedUnreadOnly);
+  els.accountWatchedSort.value = normalizeWatchedSort(displayPreferences.watchedSort);
   els.accountEmailNotifications.checked = Boolean(notificationPreferences.email ?? settings.emailNotifications);
   els.accountNotifyWatchedThreads.checked = notificationPreferences.watchedThreads !== false;
   els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
@@ -2436,12 +2457,33 @@ function toggleCurrentThreadWatch() {
   els.threadToolbarBottom.innerHTML = threadToolbarHtml(state.threadDetail, 'bottom');
 }
 
-function sortWatchedThreads(left, right) {
+function sortWatchedThreads(left, right, sort = localDisplayPreferences().watchedSort) {
+  const unavailableCompare = Number(Boolean(left.unavailable)) - Number(Boolean(right.unavailable));
+  if (unavailableCompare !== 0) {
+    return unavailableCompare;
+  }
+  if (sort === 'board') {
+    const boardCompare = String(left.boardSlug || '').localeCompare(String(right.boardSlug || ''));
+    if (boardCompare !== 0) {
+      return boardCompare;
+    }
+    return Number(left.globalNumber || 0) - Number(right.globalNumber || 0);
+  }
+  if (sort === 'recent') {
+    return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''));
+  }
   const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0);
   if (unreadDelta !== 0) {
     return unreadDelta;
   }
   return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''));
+}
+
+function visibleWatchedThreadSummaries(watchedThreads) {
+  const preferences = localDisplayPreferences();
+  return watchedThreads
+    .filter((item) => !preferences.watchedUnreadOnly || Number(item.unreadCount || 0) > 0)
+    .sort((left, right) => sortWatchedThreads(left, right, preferences.watchedSort));
 }
 
 async function loadWatchedThreadSummaries() {
@@ -2491,7 +2533,7 @@ async function loadWatchedThreadSummaries() {
     }
   });
   writeWatchedThreads(watchedThreads);
-  return results.sort(sortWatchedThreads);
+  return visibleWatchedThreadSummaries(results);
 }
 
 async function loadHomeThreadsByBoard() {
@@ -6313,7 +6355,9 @@ async function submitAccountSettings(event) {
   const restoreButton = setButtonLoading(button, 'Đang lưu...');
   const displayPreferences = writeLocalDisplayPreferences({
     compactThreads: els.accountCompactThreads.checked,
-    hideThumbnails: els.accountHideThumbnails.checked
+    hideThumbnails: els.accountHideThumbnails.checked,
+    watchedUnreadOnly: els.accountWatchedUnreadOnly.checked,
+    watchedSort: els.accountWatchedSort.value
   });
   const browserWatchedThreads = await resolveBrowserWatchedThreadPreference(els.accountBrowserNotifyWatchedThreads.checked);
   const notificationPreferences = writeLocalNotificationPreferences({
