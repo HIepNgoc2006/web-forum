@@ -68,6 +68,7 @@ const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails'];
 const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions', 'browserWatchedThreads'];
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
+const THREAD_PREVIEW_REPLY_LIMIT = 3;
 const MAX_DICE_ROLLS_PER_POST = 6;
 const MAX_DICE_COUNT = 20;
 const MAX_DICE_SIDES = 1_000;
@@ -1413,6 +1414,15 @@ async function saveMediaList(imageStorage, safeMedia) {
 
 function serializeThread(thread, comments) {
   const publicComments = comments.filter((comment) => comment.threadId === thread.id && publicPost(comment));
+  const orderedComments = [...publicComments].sort((left, right) => {
+    const createdCompare = String(left.createdAt ?? '').localeCompare(String(right.createdAt ?? ''));
+    if (createdCompare !== 0) {
+      return createdCompare;
+    }
+    return Number(left.globalNumber || 0) - Number(right.globalNumber || 0);
+  });
+  const previewComments = orderedComments.slice(-THREAD_PREVIEW_REPLY_LIMIT);
+  const omittedComments = orderedComments.slice(0, Math.max(0, orderedComments.length - previewComments.length));
   const images = mediaItems(thread);
   return {
     ...stripPrivatePostFields(thread),
@@ -1435,7 +1445,10 @@ function serializeThread(thread, comments) {
     votes: publicVotes(thread),
     reactions: publicReactions(thread),
     diceRolls: Array.isArray(thread.diceRolls) ? thread.diceRolls : [],
-    replyCount: publicComments.length
+    replyCount: publicComments.length,
+    previewComments: previewComments.map((comment) => serializeComment(comment, thread)),
+    omittedReplyCount: omittedComments.length,
+    omittedImageCount: omittedComments.reduce((total, comment) => total + mediaItems(comment).length, 0)
   };
 }
 
@@ -1480,6 +1493,65 @@ function compareBoardThreads(left, right) {
     return bumpedCompare;
   }
   return Number(right.globalNumber) - Number(left.globalNumber);
+}
+
+function compareBoardThreadsBySort(sort, state) {
+  if (sort === 'created') {
+    return (left, right) => {
+      const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+      if (stickyCompare !== 0) return stickyCompare;
+      const createdCompare = String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''));
+      if (createdCompare !== 0) return createdCompare;
+      return Number(right.globalNumber) - Number(left.globalNumber);
+    };
+  }
+  if (sort === 'replies') {
+    return (left, right) => {
+      const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+      if (stickyCompare !== 0) return stickyCompare;
+      const replyCompare = publicReplyCount(state, right.id) - publicReplyCount(state, left.id);
+      if (replyCompare !== 0) return replyCompare;
+      return compareBoardThreads(left, right);
+    };
+  }
+  return compareBoardThreads;
+}
+
+function normalizeBoardThreadSort(value) {
+  const sort = String(value || '').trim().toLowerCase();
+  return ['created', 'replies'].includes(sort) ? sort : 'bump';
+}
+
+function normalizeBoardThreadFilter(value) {
+  const filter = String(value || '').trim().toLowerCase();
+  return ['media', 'video', 'poll', 'unanswered'].includes(filter) ? filter : 'all';
+}
+
+function postHasVideo(post = {}) {
+  return mediaItems(post).some((item) => String(item.type || '').startsWith('video/'));
+}
+
+function threadHasPublicMedia(state, thread) {
+  return (
+    mediaItems(thread).length > 0 ||
+    state.comments.some((comment) => comment.threadId === thread.id && publicPost(comment) && mediaItems(comment).length > 0)
+  );
+}
+
+function threadHasPublicVideo(state, thread) {
+  return (
+    postHasVideo(thread) ||
+    state.comments.some((comment) => comment.threadId === thread.id && publicPost(comment) && postHasVideo(comment))
+  );
+}
+
+function threadMatchesBoardFilter(state, thread, filter) {
+  const normalizedFilter = normalizeBoardThreadFilter(filter);
+  if (normalizedFilter === 'media') return threadHasPublicMedia(state, thread);
+  if (normalizedFilter === 'video') return threadHasPublicVideo(state, thread);
+  if (normalizedFilter === 'poll') return Boolean(thread.poll?.options?.length);
+  if (normalizedFilter === 'unanswered') return publicReplyCount(state, thread.id) === 0;
+  return true;
 }
 
 function dateValue(value) {
@@ -3217,10 +3289,13 @@ export function createForumService({
         await store.write(state);
       }
       const term = normalizeSearchTerm(options.q);
+      const sort = normalizeBoardThreadSort(options.sort);
+      const filter = normalizeBoardThreadFilter(options.filter);
       const threads = state.threads
         .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
         .filter((thread) => threadMatchesSearch(state, thread, term))
-        .sort(compareBoardThreads)
+        .filter((thread) => threadMatchesBoardFilter(state, thread, filter))
+        .sort(compareBoardThreadsBySort(sort, state))
         .map((thread) => serializeThread(thread, state.comments));
       if (options.paged) {
         return pagedResult(threads, { page: options.page, pageSize: options.pageSize, maxPageSize: 50 });

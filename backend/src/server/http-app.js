@@ -1295,14 +1295,18 @@ export function createHttpServer({
           url.searchParams.has('page') ||
           url.searchParams.has('pageSize') ||
           url.searchParams.has('q') ||
-          url.searchParams.has('search');
+          url.searchParams.has('search') ||
+          url.searchParams.has('sort') ||
+          url.searchParams.has('filter');
         ok(
           response,
           await service.listThreads(params.boardSlug, {
             paged,
             page: url.searchParams.get('page'),
             pageSize: url.searchParams.get('pageSize'),
-            q: url.searchParams.get('q') || url.searchParams.get('search') || ''
+            q: url.searchParams.get('q') || url.searchParams.get('search') || '',
+            sort: url.searchParams.get('sort') || '',
+            filter: url.searchParams.get('filter') || ''
           })
         );
         return;

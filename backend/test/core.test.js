@@ -1391,6 +1391,104 @@ test('reactPost toggles anonymous and account reactions without leaking voters',
   );
 });
 
+
+test('board thread list includes latest reply previews and omitted media counts', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread can xem preview',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  const first = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Reply preview 1',
+    image: { name: 'omitted.png', type: 'image/png', dataUrl: 'data:image/png;base64,AAAA', sizeBytes: 3 },
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8'
+  });
+  const second = await service.createComment({ threadId: created.thread.id, body: 'Reply preview 2', captchaToken: 'dev-pass', ip: '203.0.113.9' });
+  const third = await service.createComment({ threadId: created.thread.id, body: 'Reply preview 3', captchaToken: 'dev-pass', ip: '203.0.113.10' });
+  const fourth = await service.createComment({ threadId: created.thread.id, body: 'Reply preview 4', captchaToken: 'dev-pass', ip: '203.0.113.11' });
+
+  const [listed] = await service.listThreads('hoc-tap');
+
+  assert.equal(listed.replyCount, 4);
+  assert.equal(listed.omittedReplyCount, 1);
+  assert.equal(listed.omittedImageCount, 1);
+  assert.deepEqual(
+    listed.previewComments.map((comment) => comment.globalNumber),
+    [second.comment.globalNumber, third.comment.globalNumber, fourth.comment.globalNumber]
+  );
+  assert.equal(listed.previewComments.some((comment) => comment.globalNumber === first.comment.globalNumber), false);
+  assert.equal(listed.previewComments[0].bodyLines[0].text, 'Reply preview 2');
+  assert.equal(listed.previewComments[0].deletePasswordHash, undefined);
+});
+
+test('board thread list supports server-side sort and filter modes before pagination', async () => {
+  const dates = [
+    new Date('2026-05-22T08:00:00.000Z'),
+    new Date('2026-05-22T08:01:00.000Z'),
+    new Date('2026-05-22T08:02:00.000Z'),
+    new Date('2026-05-22T08:03:00.000Z'),
+    new Date('2026-05-22T08:04:00.000Z'),
+    new Date('2026-05-22T08:05:00.000Z'),
+    new Date('2026-05-22T08:06:00.000Z'),
+    new Date('2026-05-22T08:07:00.000Z')
+  ];
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => dates.shift() ?? new Date('2026-05-22T08:07:00.000Z')
+  });
+
+  const first = await service.createThread({ boardSlug: 'hoc-tap', body: 'Thread dau', captchaToken: 'dev-pass', ip: '203.0.113.7' });
+  const second = await service.createThread({ boardSlug: 'hoc-tap', body: 'Thread hai', captchaToken: 'dev-pass', ip: '203.0.113.8' });
+  const third = await service.createThread({ boardSlug: 'hoc-tap', body: 'Thread ba', captchaToken: 'dev-pass', ip: '203.0.113.9' });
+  await service.createComment({ threadId: first.thread.id, body: 'Reply mot', captchaToken: 'dev-pass', ip: '203.0.113.10' });
+  await service.createComment({ threadId: first.thread.id, body: 'Reply hai', captchaToken: 'dev-pass', ip: '203.0.113.11' });
+  const image = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread co anh',
+    image: { name: 'filter.png', type: 'image/png', dataUrl: 'data:image/png;base64,AAAA', sizeBytes: 3 },
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.12'
+  });
+  const video = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread co video',
+    image: { name: 'filter.webm', type: 'video/webm', dataUrl: 'data:video/webm;base64,AAAA', sizeBytes: 3 },
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.13'
+  });
+  const poll = await service.createThread({ boardSlug: 'hoc-tap', body: 'Thread co poll', pollOptions: ['Co', 'Khong'], captchaToken: 'dev-pass', ip: '203.0.113.14' });
+
+  const created = await service.listThreads('hoc-tap', { sort: 'created' });
+  const replies = await service.listThreads('hoc-tap', { sort: 'replies' });
+  const pagedReplies = await service.listThreads('hoc-tap', { paged: true, page: 1, pageSize: 1, sort: 'replies' });
+  const media = await service.listThreads('hoc-tap', { filter: 'media' });
+  const videos = await service.listThreads('hoc-tap', { filter: 'video' });
+  const polls = await service.listThreads('hoc-tap', { filter: 'poll' });
+  const unanswered = await service.listThreads('hoc-tap', { filter: 'unanswered' });
+
+  assert.deepEqual(created.slice(0, 3).map((thread) => thread.id), [poll.thread.id, video.thread.id, image.thread.id]);
+  assert.equal(replies[0].id, first.thread.id);
+  assert.deepEqual(pagedReplies.items.map((thread) => thread.id), [first.thread.id]);
+  assert.equal(pagedReplies.total, 6);
+  assert.deepEqual(new Set(media.map((thread) => thread.id)), new Set([image.thread.id, video.thread.id]));
+  assert.deepEqual(videos.map((thread) => thread.id), [video.thread.id]);
+  assert.deepEqual(polls.map((thread) => thread.id), [poll.thread.id]);
+  assert.equal(unanswered.some((thread) => thread.id === first.thread.id), false);
+  assert.equal(unanswered.some((thread) => thread.id === second.thread.id), true);
+});
+
 test('getThread sorts comments by best/top/new/controversial/old', async () => {
   const service = createForumService({
     store: createMemoryStore(),
