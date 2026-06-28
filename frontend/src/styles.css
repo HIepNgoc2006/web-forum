@@ -1322,6 +1322,18 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   text-decoration: underline;
 }
 
+.post-sticker {
+  display: inline-grid;
+  min-width: 34px;
+  min-height: 34px;
+  place-items: center;
+  border: 1px solid rgba(128, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.65);
+  font-size: 24px;
+  line-height: 1;
+  vertical-align: middle;
+}
+
 .permalink-target {
   outline: 2px solid rgba(221, 0, 0, 0.38);
   outline-offset: 2px;
@@ -2771,6 +2783,38 @@ body.theme-yotsuba.board-page .topbar {
 
 .board-page textarea {
   min-height: 70px;
+}
+
+.board-page .composer-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 4px;
+  align-items: center;
+  margin-left: 84px;
+}
+
+.board-page .composer-picker > span {
+  color: #800000;
+  font-weight: bold;
+}
+
+.board-page .composer-picker button {
+  min-height: 22px;
+  border: 1px solid #b7a5a0;
+  background: #fff4ee;
+  padding: 1px 5px;
+}
+
+.quick-composer-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+}
+
+.quick-composer-picker button {
+  min-height: 22px;
+  border: 1px solid #b7a5a0;
+  background: #fff4ee;
 }
 
 .board-page .form-actions {

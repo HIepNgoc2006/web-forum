@@ -136,6 +136,12 @@ const THREAD_TEMPLATES = [
 ];
 
 const WATCHED_THREAD_SORTS = new Set(['unread', 'recent', 'board']);
+const STICKERS = {
+  cheer: { icon: '🎉', label: 'Cổ vũ' },
+  panic: { icon: '😱', label: 'Hoảng' },
+  study: { icon: '📚', label: 'Học' },
+  thanks: { icon: '🙏', label: 'Cảm ơn' }
+};
 
 const AUDIO_RECORDING_TYPES = [
   'audio/webm;codecs=opus',
@@ -629,6 +635,41 @@ function removeDraft(key) {
 function writeTextareaValue(textarea, value) {
   textarea.value = value;
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
+}
+
+function composerTextarea(target) {
+  if (target === 'thread') {
+    return els.threadBody;
+  }
+  if (target === 'comment') {
+    return els.commentBody;
+  }
+  if (target === 'quickReply') {
+    return els.quickReplyBody;
+  }
+  return null;
+}
+
+function insertComposerToken(target, token) {
+  const textarea = composerTextarea(target);
+  if (!textarea || !token) {
+    return;
+  }
+  const value = textarea.value;
+  const start = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : value.length;
+  const end = Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : start;
+  const prefix = start > 0 && !/\s/.test(value[start - 1]) ? ' ' : '';
+  const suffix = value[end] && !/\s/.test(value[end]) ? ' ' : '';
+  const insertText = `${prefix}${token}${suffix}`;
+  const maxLength = Number(textarea.maxLength);
+  if (Number.isFinite(maxLength) && maxLength > 0 && value.length - (end - start) + insertText.length > maxLength) {
+    showToast('Nội dung đã đạt giới hạn ký tự.');
+    textarea.focus();
+    return;
+  }
+  textarea.setRangeText(insertText, start, end, 'end');
+  textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  textarea.focus();
 }
 
 function insertThreadTemplate(key) {
@@ -3890,6 +3931,7 @@ function renderPostLines(lines, options = {}) {
       });
       html = renderInlineMarkup(html);
       html = renderSpoilerText(html);
+      html = renderStickerText(html);
       return `<div class="post-line ${line.type === 'greentext' ? 'greentext' : ''}">${html || '&nbsp;'}</div>`;
     })
     .join('');
@@ -3913,6 +3955,16 @@ function renderSpoilerText(html) {
     /\[spoiler\]([\s\S]*?)\[\/spoiler\]/gi,
     (_match, inner) => `<span class="spoiler-text" data-spoiler tabindex="0" title="Bấm để hiện">${inner}</span>`
   );
+}
+
+function renderStickerText(html) {
+  return String(html).replace(/\[sticker:([a-z0-9-]+)\]/gi, (match, key) => {
+    const sticker = STICKERS[String(key).toLowerCase()];
+    if (!sticker) {
+      return match;
+    }
+    return `<span class="post-sticker" role="img" aria-label="${escapeHtml(sticker.label)}">${escapeHtml(sticker.icon)}</span>`;
+  });
 }
 
 function formatPostDate(value) {
@@ -6849,6 +6901,13 @@ function bindEvents() {
   });
 
   document.body.addEventListener('click', async (event) => {
+    const composerInsertButton = event.target.closest('[data-composer-insert]');
+    if (composerInsertButton) {
+      const pickerRoot = composerInsertButton.closest('[data-composer-picker]');
+      insertComposerToken(pickerRoot?.dataset.composerPicker, composerInsertButton.dataset.composerInsert);
+      return;
+    }
+
     const clearThreadSearchButton = event.target.closest('[data-clear-thread-search]');
     if (clearThreadSearchButton) {
       state.threadSearchTerm = '';
