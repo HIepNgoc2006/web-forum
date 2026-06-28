@@ -1513,7 +1513,8 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        body: 'Alpha can tim kiem',
+        subject: 'Mon alpha',
+        body: 'Noi dung khong chua tu khoa',
         displayName: '  OP <Hai>  ',
         captchaToken: 'dev-pass',
         deletePassword: 'owner-pass',
@@ -1540,6 +1541,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
     assert.equal(searchedBody.data.items.length, 1);
     assert.equal(searchedBody.data.total, 1);
     assert.equal(searchedBody.data.items[0].globalNumber, firstBody.data.thread.globalNumber);
+    assert.equal(searchedBody.data.items[0].subject, 'Mon alpha');
     assert.equal(searchedBody.data.items[0].deletePasswordHash, undefined);
 
     const comment = await fetch(`${baseUrl}/api/threads/${firstBody.data.thread.id}/comments`, {
@@ -2093,6 +2095,7 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
+        subject: 'Tin feed XML',
         body: 'Feed test & XML',
         captchaToken: 'dev-pass'
       })
@@ -2109,7 +2112,7 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
     assert.equal(json.headers.get('content-type')?.includes('application/json'), true);
     assert.equal(jsonBody.version, 'https://jsonfeed.org/version/1.1');
     assert.equal(jsonBody.items.length, 1);
-    assert.equal(jsonBody.items[0].title.includes('/an-uong/'), true);
+    assert.equal(jsonBody.items[0].title, 'Tin feed XML /an-uong/');
     assert.equal(forwardedJson.status, 200);
     assert.equal(forwardedJsonBody.feed_url.startsWith('https://'), true);
     assert.equal(forwardedJsonBody.items[0].url.startsWith('https://'), true);
@@ -2119,6 +2122,7 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
     assert.equal(rss.status, 200);
     assert.equal(rss.headers.get('content-type')?.includes('application/rss+xml'), true);
     assert.equal(rssBody.includes('<rss version="2.0">'), true);
+    assert.equal(rssBody.includes('Tin feed XML /an-uong/'), true);
     assert.equal(rssBody.includes('Feed test &amp; XML'), true);
   });
 });

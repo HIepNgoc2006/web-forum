@@ -85,6 +85,7 @@ const RECOMMENDED_THREAD_WINDOW_HOURS = 7 * 24;
 const RECOMMENDED_THREAD_MAX_LIMIT = 50;
 const RECOMMENDED_THREAD_HIGH_RISK_LABELS = new Set(['PII Risk', 'PII', 'Illegal', 'Hate Speech', 'Toxic']);
 const RECOMMENDED_THREAD_MEDIUM_RISK_LABELS = new Set(['Spam', 'Fake News']);
+const MAX_THREAD_SUBJECT_LENGTH = 120;
 
 function publicPost(post) {
   return !post.isPending && !post.isDeleted;
@@ -119,6 +120,9 @@ function stripPrivatePostFields(post) {
   } = post;
   if (publicFields.body) {
     publicFields.body = sanitizeText(publicFields.body);
+  }
+  if (publicFields.subject) {
+    publicFields.subject = sanitizeText(publicFields.subject);
   }
   return publicFields;
 }
@@ -302,6 +306,9 @@ function threadMatchesSearch(state, thread, term) {
   if (!term || postMatchesSearch(thread, term)) {
     return true;
   }
+  if (normalizeSearchTerm(thread.subject).includes(term)) {
+    return true;
+  }
   return state.comments.some((comment) => comment.threadId === thread.id && publicPost(comment) && postMatchesSearch(comment, term));
 }
 
@@ -318,6 +325,10 @@ function parsePostingOptions(value = '') {
     sage: tokens.has('sage'),
     noko: tokens.has('noko')
   };
+}
+
+function normalizeThreadSubject(value = '') {
+  return normalizeBody(value).replace(/\s+/g, ' ').slice(0, MAX_THREAD_SUBJECT_LENGTH);
 }
 
 function normalizeDisplayName(value = '') {
@@ -3239,6 +3250,7 @@ export function createForumService({
 
     async createThread({
       boardSlug,
+      subject = '',
       body,
       image,
       images,
@@ -3263,6 +3275,7 @@ export function createForumService({
       await requireCaptcha(captchaToken, ip);
       assertPostBodySize(body);
       const normalizedBody = normalizeBody(body);
+      const normalizedSubject = normalizeThreadSubject(subject);
       if (!normalizedBody) {
         const error = new Error('Nội dung là bắt buộc');
         error.statusCode = 400;
@@ -3293,6 +3306,7 @@ export function createForumService({
         const thread = {
           id,
           boardSlug,
+          subject: normalizedSubject,
           body: normalizedBody,
           displayName: normalizedDisplayName,
           tripcode,

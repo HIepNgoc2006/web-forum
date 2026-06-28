@@ -1011,15 +1011,21 @@ test('safe thread is public, gets global number, and emits realtime event', asyn
 
   const result = await service.createThread({
     boardSlug: 'hoc-tap',
+    subject: '  <Lich thi giua ky>  ',
     body: 'Xin tips qua mon',
     captchaToken: 'dev-pass',
     ip: '203.0.113.7'
   });
   const threads = await service.listThreads('hoc-tap');
+  const searched = await service.listThreads('hoc-tap', { paged: true, q: 'lich thi' });
 
   assert.equal(result.thread.isPending, false);
   assert.equal(result.thread.globalNumber, 1);
+  assert.equal(result.thread.subject, '&lt;Lich thi giua ky&gt;');
   assert.equal(threads.length, 1);
+  assert.equal(threads[0].subject, '&lt;Lich thi giua ky&gt;');
+  assert.equal(searched.total, 1);
+  assert.equal(searched.items[0].globalNumber, result.thread.globalNumber);
   assert.equal(realtime.events[0].event, 'thread:created');
   assert.equal(logs[0].event, 'post.create');
   assert.equal(logs[0].postType, 'thread');
