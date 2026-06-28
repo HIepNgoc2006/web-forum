@@ -58,6 +58,7 @@ if (productionMode && storeDriver !== 'mongo') {
   throw new Error('Production requires STORE_DRIVER=mongo. JSON is only for local/dev/demo fallback.');
 }
 const imageStorageDriver = String(process.env.IMAGE_STORAGE_DRIVER ?? 'local').toLowerCase();
+const forceConnectionClose = String(process.env.HTTP_FORCE_CONNECTION_CLOSE ?? (productionMode ? 'true' : 'false')).toLowerCase() === 'true';
 const logger = (entry) => {
   console.log(
     JSON.stringify({
@@ -95,7 +96,8 @@ const server = createHttpServer({
     level: 'warn',
     event: 'rate_limit.store.failure',
     message: error?.message ?? String(error)
-  })
+  }),
+  forceConnectionClose
 });
 server.on('close', () => {
   rateLimit.close().catch((error) => {

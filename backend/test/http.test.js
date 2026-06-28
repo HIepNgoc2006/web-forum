@@ -69,7 +69,8 @@ async function withServer(
     realtime = { publish() {} },
     rateLimitStore,
     rateLimitFailureMode,
-    rateLimitLogger
+    rateLimitLogger,
+    forceConnectionClose
   } = {}
 ) {
   const service = createForumService({
@@ -89,7 +90,8 @@ async function withServer(
     uploadRoot,
     rateLimitStore,
     rateLimitFailureMode,
-    rateLimitLogger
+    rateLimitLogger,
+    forceConnectionClose
   });
   server.listen(0);
   await once(server, 'listening');
@@ -174,6 +176,20 @@ async function withFakeHcaptcha(responses, callback) {
     https.request = originalRequest;
   }
 }
+
+test('http server can force non-SSE responses to close the connection', async () => {
+  await withServer(
+    async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/config`);
+      const body = await response.json();
+
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('connection'), 'close');
+      assert.equal(typeof body.data.maxImageBytes, 'number');
+    },
+    { forceConnectionClose: true }
+  );
+});
 
 test('http api creates public thread and protects admin pending queue', async () => {
   await withServer(async (baseUrl) => {

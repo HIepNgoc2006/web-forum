@@ -729,7 +729,8 @@ export function createHttpServer({
   uploadRoot = path.resolve('data/uploads'),
   rateLimitStore,
   rateLimitFailureMode = 'closed',
-  rateLimitLogger = (error) => console.error('RATE LIMIT STORE ERROR:', error)
+  rateLimitLogger = (error) => console.error('RATE LIMIT STORE ERROR:', error),
+  forceConnectionClose = false
 }) {
   const sharedLimiterOptions = {
     store: rateLimitStore,
@@ -751,9 +752,14 @@ export function createHttpServer({
     const routePath = url.pathname.startsWith('/api/v1/') ? url.pathname.replace('/api/v1', '/api') : url.pathname;
     const parts = routePath.split('/').filter(Boolean);
     const ip = getClientIp(request);
+    const isEventStream = request.method === 'GET' && url.pathname === '/events';
+    if (forceConnectionClose && !isEventStream) {
+      response.shouldKeepAlive = false;
+      response.setHeader('connection', 'close');
+    }
 
     try {
-      if (request.method === 'GET' && url.pathname === '/events' && realtime.handle) {
+      if (isEventStream && realtime.handle) {
         realtime.handle(request, response);
         return;
       }
