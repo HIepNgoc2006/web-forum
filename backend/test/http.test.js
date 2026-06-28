@@ -2101,7 +2101,7 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
       })
     });
     assert.equal(created.status, 201);
-
+    const createdBody = await created.json();
     const json = await fetch(`${baseUrl}/feeds/latest.json?limit=1`);
     const jsonBody = await json.json();
     const forwardedJson = await fetch(`${baseUrl}/feeds/latest.json?limit=1`, {
@@ -2124,6 +2124,42 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
     assert.equal(rssBody.includes('<rss version="2.0">'), true);
     assert.equal(rssBody.includes('Tin feed XML /an-uong/'), true);
     assert.equal(rssBody.includes('Feed test &amp; XML'), true);
+
+    const comment = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Reply feed item',
+        captchaToken: 'dev-pass'
+      })
+    });
+    assert.equal(comment.status, 201);
+
+    const boardJson = await fetch(`${baseUrl}/feeds/boards/an-uong/threads.json?limit=1`);
+    const boardJsonBody = await boardJson.json();
+    assert.equal(boardJson.status, 200);
+    assert.equal(boardJsonBody.title, '36chan - /an-uong/');
+    assert.equal(boardJsonBody.items.length, 1);
+    assert.equal(boardJsonBody.items[0].title, 'Tin feed XML /an-uong/');
+
+    const boardRss = await fetch(`${baseUrl}/feeds/boards/an-uong/threads.rss?limit=1`);
+    const boardRssBody = await boardRss.text();
+    assert.equal(boardRss.status, 200);
+    assert.equal(boardRss.headers.get('content-type')?.includes('application/rss+xml'), true);
+    assert.equal(boardRssBody.includes('36chan - /an-uong/'), true);
+
+    const threadJson = await fetch(`${baseUrl}/feeds/threads/${createdBody.data.thread.id}/posts.json?limit=2`);
+    const threadJsonBody = await threadJson.json();
+    assert.equal(threadJson.status, 200);
+    assert.equal(threadJsonBody.items.length, 2);
+    assert.equal(threadJsonBody.items[0].content_text, 'Reply feed item');
+    assert.equal(threadJsonBody.items[1].content_text, 'Feed test & XML');
+
+    const threadRss = await fetch(`${baseUrl}/feeds/threads/${createdBody.data.thread.id}/posts.rss?limit=2`);
+    const threadRssBody = await threadRss.text();
+    assert.equal(threadRss.status, 200);
+    assert.equal(threadRss.headers.get('content-type')?.includes('application/rss+xml'), true);
+    assert.equal(threadRssBody.includes('Reply feed item'), true);
   });
 });
 

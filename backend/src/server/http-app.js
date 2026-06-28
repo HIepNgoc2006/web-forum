@@ -633,6 +633,60 @@ function hotBoardsRssFeed(request, boards = []) {
   });
 }
 
+function boardThreadJsonFeed(request, boardSlug, threads = []) {
+  return jsonFeed({
+    request,
+    title: `36chan - /${boardSlug}/`,
+    feedPath: `/feeds/boards/${encodeURIComponent(boardSlug)}/threads.json`,
+    items: threads.map((thread) => postFeedItem(request, thread))
+  });
+}
+
+function boardThreadRssFeed(request, boardSlug, threads = []) {
+  return rssFeed({
+    request,
+    title: `36chan - /${boardSlug}/`,
+    description: `Chủ đề công khai đang hoạt động trên /${boardSlug}/`,
+    items: threads.map((thread) => postFeedItem(request, thread))
+  });
+}
+
+function threadFeedPosts(detail = {}) {
+  return [detail.thread, ...(detail.comments || [])]
+    .filter(Boolean)
+    .sort((left, right) => {
+      const createdCompare = String(right.createdAt ?? '').localeCompare(String(left.createdAt ?? ''));
+      if (createdCompare !== 0) {
+        return createdCompare;
+      }
+      return Number(right.globalNumber || 0) - Number(left.globalNumber || 0);
+    });
+}
+
+function threadFeedTitle(detail = {}) {
+  const thread = detail.thread || {};
+  return `36chan - ${postFeedTitle(thread, 'Thread ')}`;
+}
+
+function threadPostJsonFeed(request, detail = {}, limit = 20) {
+  const threadId = detail.thread?.id || '';
+  return jsonFeed({
+    request,
+    title: threadFeedTitle(detail),
+    feedPath: `/feeds/threads/${encodeURIComponent(threadId)}/posts.json`,
+    items: threadFeedPosts(detail).slice(0, limit).map((post) => postFeedItem(request, post))
+  });
+}
+
+function threadPostRssFeed(request, detail = {}, limit = 20) {
+  return rssFeed({
+    request,
+    title: threadFeedTitle(detail),
+    description: `Bài công khai trong ${postFeedTitle(detail.thread || {}, 'thread ')}`,
+    items: threadFeedPosts(detail).slice(0, limit).map((post) => postFeedItem(request, post))
+  });
+}
+
 function archivedThreadFeedItem(request, thread = {}) {
   const url = absoluteUrl(request, `/#thread/${encodeURIComponent(thread.id)}?p=${encodeURIComponent(thread.globalNumber)}`);
   return {
@@ -661,6 +715,7 @@ function archiveRssFeed(request, boardSlug, threads = []) {
     items: threads.map((thread) => archivedThreadFeedItem(request, thread))
   });
 }
+
 function safeDecodePath(value) {
   try {
     return decodeURIComponent(value);
@@ -1298,6 +1353,31 @@ export function createHttpServer({
         return;
       }
 
+      params = match(parts, ['feeds', 'boards', ':boardSlug', 'threads.json']);
+      if (params && request.method === 'GET') {
+        const threads = (await service.listThreads(params.boardSlug)).slice(
+          0,
+          feedLimit(url.searchParams.get('limit'))
+        );
+        sendJson(response, 200, boardThreadJsonFeed(request, params.boardSlug, threads));
+        return;
+      }
+
+      params = match(parts, ['feeds', 'boards', ':boardSlug', 'threads.rss']);
+      if (params && request.method === 'GET') {
+        const threads = (await service.listThreads(params.boardSlug)).slice(
+          0,
+          feedLimit(url.searchParams.get('limit'))
+        );
+        sendText(
+          response,
+          200,
+          boardThreadRssFeed(request, params.boardSlug, threads),
+          'application/rss+xml; charset=utf-8'
+        );
+        return;
+      }
+
       params = match(parts, ['feeds', 'boards', ':boardSlug', 'archive.json']);
       if (params && request.method === 'GET') {
         const threads = (await service.listArchivedThreads(params.boardSlug)).slice(
@@ -1318,6 +1398,25 @@ export function createHttpServer({
           response,
           200,
           archiveRssFeed(request, params.boardSlug, threads),
+          'application/rss+xml; charset=utf-8'
+        );
+        return;
+      }
+
+      params = match(parts, ['feeds', 'threads', ':threadId', 'posts.json']);
+      if (params && request.method === 'GET') {
+        const detail = await service.getThread(params.threadId);
+        sendJson(response, 200, threadPostJsonFeed(request, detail, feedLimit(url.searchParams.get('limit'))));
+        return;
+      }
+
+      params = match(parts, ['feeds', 'threads', ':threadId', 'posts.rss']);
+      if (params && request.method === 'GET') {
+        const detail = await service.getThread(params.threadId);
+        sendText(
+          response,
+          200,
+          threadPostRssFeed(request, detail, feedLimit(url.searchParams.get('limit'))),
           'application/rss+xml; charset=utf-8'
         );
         return;
