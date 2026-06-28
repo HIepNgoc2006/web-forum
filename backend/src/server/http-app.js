@@ -1439,7 +1439,9 @@ export function createHttpServer({
           url.searchParams.has('commentsPage') ||
           url.searchParams.has('commentsPageSize') ||
           url.searchParams.has('page') ||
-          url.searchParams.has('pageSize');
+          url.searchParams.has('pageSize') ||
+          url.searchParams.has('commentsSearch') ||
+          url.searchParams.has('q');
         ok(
           response,
           await service.getThread(params.threadId, {
@@ -1447,6 +1449,7 @@ export function createHttpServer({
             commentsPage: url.searchParams.get('commentsPage') || url.searchParams.get('page'),
             commentsPageSize: url.searchParams.get('commentsPageSize') || url.searchParams.get('pageSize'),
             commentsSort: url.searchParams.get('commentsSort') || '',
+            commentsSearch: url.searchParams.get('commentsSearch') || url.searchParams.get('q') || '',
             focusGlobalNumber: url.searchParams.get('focusGlobalNumber') || ''
           })
         );

@@ -1553,6 +1553,47 @@ test('getThread sorts comments by best/top/new/controversial/old', async () => {
   assert.equal(controversial.comments[0].globalNumber, c);
 });
 
+test('getThread filters comments by search term before pagination', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread tim kiem binh luan',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  const matching = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Noi dung co kim chi',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8'
+  });
+  const other = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Noi dung pho bo',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9'
+  });
+
+  const result = await service.getThread(created.thread.id, {
+    paged: true,
+    commentsPage: 1,
+    commentsPageSize: 1,
+    commentsSearch: 'kim'
+  });
+
+  assert.equal(result.commentPage.total, 1);
+  assert.equal(result.commentPage.search, 'kim');
+  assert.equal(result.comments[0].globalNumber, matching.comment.globalNumber);
+  assert.equal(result.comments.some((comment) => comment.globalNumber === other.comment.globalNumber), false);
+  assert.equal(result.commentPage.currentMaxGlobalNumber, other.comment.globalNumber);
+});
+
 test('thread image metadata is sanitized and returned with public thread data', async () => {
   const service = createForumService({
     store: createMemoryStore(),

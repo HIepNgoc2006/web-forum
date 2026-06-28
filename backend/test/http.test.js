@@ -1628,6 +1628,55 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
   });
 });
 
+test('http thread detail filters paged comments by search query', async () => {
+  await withServer(async (baseUrl) => {
+    const created = await fetch(baseUrl + '/api/boards/hoc-tap/threads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Thread co tim kiem phan hoi',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const createdBody = await created.json();
+    assert.equal(created.status, 201);
+
+    const first = await fetch(baseUrl + '/api/threads/' + createdBody.data.thread.id + '/comments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'mon kim chi can tim',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const firstBody = await first.json();
+    assert.equal(first.status, 201);
+
+    const second = await fetch(baseUrl + '/api/threads/' + createdBody.data.thread.id + '/comments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'pho khong khop',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const secondBody = await second.json();
+    assert.equal(second.status, 201);
+
+    const searched = await fetch(
+      baseUrl + '/api/threads/' + createdBody.data.thread.id + '?commentsPage=1&commentsPageSize=1&commentsSearch=kim'
+    );
+    const searchedBody = await searched.json();
+
+    assert.equal(searched.status, 200);
+    assert.equal(searchedBody.data.commentPage.total, 1);
+    assert.equal(searchedBody.data.commentPage.search, 'kim');
+    assert.equal(searchedBody.data.comments[0].globalNumber, firstBody.data.comment.globalNumber);
+    assert.equal(searchedBody.data.comments.some((comment) => comment.globalNumber === secondBody.data.comment.globalNumber), false);
+    assert.equal(searchedBody.data.commentPage.currentMaxGlobalNumber, secondBody.data.comment.globalNumber);
+  });
+});
+
 test('http api supports anonymous thread poll voting once per fingerprint', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {

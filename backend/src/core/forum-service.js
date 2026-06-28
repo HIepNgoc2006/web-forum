@@ -3568,7 +3568,11 @@ export function createForumService({
         0
       );
       const commentsSort = normalizeCommentSort(options.commentsSort);
-      const commentsWithBacklinks = sortComments(chronologicalComments, commentsSort);
+      const commentsSearch = normalizeSearchTerm(options.commentsSearch || options.q);
+      const searchedComments = commentsSearch
+        ? chronologicalComments.filter((comment) => postMatchesSearch(comment, commentsSearch))
+        : chronologicalComments;
+      const commentsWithBacklinks = sortComments(searchedComments, commentsSort);
       if (options.paged) {
         const firstPageOptions = paginationOptions({
           page: options.commentsPage || options.page,
@@ -3596,14 +3600,16 @@ export function createForumService({
             totalPages: page.totalPages,
             hasMore: page.hasMore,
             currentMaxGlobalNumber,
-            sort: commentsSort
+            sort: commentsSort,
+            search: commentsSearch
           }
         };
       }
       return {
         thread: threadWithBacklinks,
         comments: commentsWithBacklinks,
-        commentsSort
+        commentsSort,
+        commentsSearch
       };
     },
 
