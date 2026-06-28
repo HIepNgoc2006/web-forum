@@ -1678,6 +1678,17 @@ function threadMatchesBoardFilter(state, thread, filter) {
   return true;
 }
 
+function threadNavigationItem(thread) {
+  if (!thread) {
+    return null;
+  }
+  return {
+    id: thread.id,
+    globalNumber: thread.globalNumber,
+    subject: thread.subject ? sanitizeText(thread.subject) : ''
+  };
+}
+
 function dateValue(value) {
   const timestamp = new Date(value).getTime();
   return Number.isFinite(timestamp) ? timestamp : 0;
@@ -3782,6 +3793,17 @@ export function createForumService({
         .map((comment) => serializeComment(comment, thread));
       const withBacklinks = addBacklinks([serializedThread, ...serializedComments]);
       const [threadWithBacklinks, ...chronologicalComments] = withBacklinks;
+      const boardThreads = state.threads
+        .filter((item) => item.boardSlug === thread.boardSlug && activePublicThread(item))
+        .sort(compareBoardThreads);
+      const boardThreadIndex = boardThreads.findIndex((item) => item.id === thread.id);
+      const threadNavigation = {
+        previous: boardThreadIndex > 0 ? threadNavigationItem(boardThreads[boardThreadIndex - 1]) : null,
+        next:
+          boardThreadIndex >= 0 && boardThreadIndex < boardThreads.length - 1
+            ? threadNavigationItem(boardThreads[boardThreadIndex + 1])
+            : null
+      };
       const currentMaxGlobalNumber = withBacklinks.reduce(
         (maxNumber, post) => Math.max(maxNumber, Number(post.globalNumber) || 0),
         0
@@ -3812,6 +3834,7 @@ export function createForumService({
         return {
           thread: threadWithBacklinks,
           comments: page.items,
+          threadNavigation,
           commentPage: {
             page: page.page,
             pageSize: page.pageSize,
@@ -3827,6 +3850,7 @@ export function createForumService({
       return {
         thread: threadWithBacklinks,
         comments: commentsWithBacklinks,
+        threadNavigation,
         commentsSort,
         commentsSearch
       };

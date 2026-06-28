@@ -4137,6 +4137,22 @@ function postHtml(post, type = 'post', options = {}) {
   `;
 }
 
+function threadNavigationLinksHtml(detail) {
+  const navigation = detail.threadNavigation || {};
+  const links = [];
+  if (navigation.previous?.id) {
+    const label = navigation.previous.globalNumber ? `Trước No.${navigation.previous.globalNumber}` : 'Trước';
+    links.push(
+      `[<a data-thread-nav="previous" href="#thread/${encodeURIComponent(navigation.previous.id)}">${escapeHtml(label)}</a>]`
+    );
+  }
+  if (navigation.next?.id) {
+    const label = navigation.next.globalNumber ? `Sau No.${navigation.next.globalNumber}` : 'Sau';
+    links.push(`[<a data-thread-nav="next" href="#thread/${encodeURIComponent(navigation.next.id)}">${escapeHtml(label)}</a>]`);
+  }
+  return links.join('\n      ');
+}
+
 function threadToolbarHtml(detail, position) {
   const posts = [detail.thread, ...detail.comments];
   const fileCount = posts.reduce((total, post) => total + postMediaCount(post), 0);
@@ -4158,6 +4174,7 @@ function threadToolbarHtml(detail, position) {
     <div class="toolbar-links">
       [<a href="#board/${state.boardSlug}">Quay lại</a>]
       [<a href="#catalog/${state.boardSlug}">Danh mục</a>]
+      ${threadNavigationLinksHtml(detail)}
       [<button class="link-button" data-toggle-watch type="button">${watchLabel}</button>]
       [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
       [<button class="link-button" data-thread-refresh type="button">Cập nhật</button>]

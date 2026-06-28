@@ -1594,6 +1594,50 @@ test('getThread filters comments by search term before pagination', async () => 
   assert.equal(result.commentPage.currentMaxGlobalNumber, other.comment.globalNumber);
 });
 
+test('getThread returns previous and next active board threads', async () => {
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const first = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread dau tien',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  const second = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread thu hai',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8'
+  });
+  const third = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread thu ba',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9'
+  });
+
+  const middle = await service.getThread(second.thread.id);
+  assert.equal(middle.threadNavigation.previous.id, third.thread.id);
+  assert.equal(middle.threadNavigation.previous.globalNumber, third.thread.globalNumber);
+  assert.equal(middle.threadNavigation.next.id, first.thread.id);
+  assert.equal(middle.threadNavigation.next.globalNumber, first.thread.globalNumber);
+
+  await service.archiveThread(third.thread.id);
+
+  const afterArchive = await service.getThread(second.thread.id);
+  assert.equal(afterArchive.threadNavigation.previous, null);
+  assert.equal(afterArchive.threadNavigation.next.id, first.thread.id);
+
+  const archived = await service.getThread(third.thread.id);
+  assert.deepEqual(archived.threadNavigation, { previous: null, next: null });
+});
+
+
 test('thread image metadata is sanitized and returned with public thread data', async () => {
   const service = createForumService({
     store: createMemoryStore(),
