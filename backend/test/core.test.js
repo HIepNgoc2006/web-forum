@@ -4580,8 +4580,16 @@ test('getAnalytics calculates board-level counts, AI usage, and moderation healt
   });
 
   let analytics = await service.getAnalytics();
-  assert.equal(typeof analytics.boardActivity, 'object');
-  assert.equal(analytics.boardActivity['hoc-tap'].activeThreads, 0);
+  const initialHocTapActivity = analytics.boardActivity.find((board) => board.slug === 'hoc-tap');
+  assert.ok(initialHocTapActivity);
+  assert.equal(initialHocTapActivity.name, 'Học tập');
+  assert.equal(initialHocTapActivity.threads.active, 0);
+  assert.equal(initialHocTapActivity.threads.pending, 0);
+  assert.equal(initialHocTapActivity.threads.deleted, 0);
+  assert.equal(initialHocTapActivity.comments.active, 0);
+  assert.equal(initialHocTapActivity.comments.pending, 0);
+  assert.equal(initialHocTapActivity.comments.deleted, 0);
+  assert.equal(initialHocTapActivity.reportsCount, 0);
   assert.equal(analytics.aiUsage.byKind.moderation, 0);
   assert.equal(analytics.aiUsage.total, 0);
   assert.equal(analytics.moderationQueue.pendingCount, 0);
@@ -4609,10 +4617,12 @@ test('getAnalytics calculates board-level counts, AI usage, and moderation healt
   });
 
   analytics = await service.getAnalytics();
+  const hocTapActivity = analytics.boardActivity.find((board) => board.slug === 'hoc-tap');
+  assert.ok(hocTapActivity);
   assert.equal(analytics.aiUsage.total, 1);
   assert.deepEqual(Object.keys(analytics.aiUsage.byKind).sort(), ['moderation', 'rewrite', 'suggestion', 'summary']);
   assert.equal(analytics.aiUsage.byKind.rewrite, 1);
-  assert.equal(analytics.boardActivity['hoc-tap'].pendingThreads, 1);
+  assert.equal(hocTapActivity.threads.pending, 1);
   assert.equal(analytics.moderationQueue.pendingCount, 1);
   assert.equal(analytics.moderationQueue.pendingThreads, 1);
   assert.equal(analytics.moderationQueue.oldestPendingAgeMinutes, 0);

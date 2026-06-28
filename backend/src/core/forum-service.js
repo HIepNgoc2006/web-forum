@@ -5353,20 +5353,26 @@ export function createForumService({
 
     async getAnalytics() {
       const state = await store.read();
-      const boardActivity = {};
+      const boardActivity = [];
       for (const board of state.boards) {
         const boardThreads = state.threads.filter((t) => t.boardSlug === board.slug);
         const boardComments = state.comments.filter((c) => c.boardSlug === board.slug);
         const boardReports = state.reports.filter((r) => r.boardSlug === board.slug);
-        boardActivity[board.slug] = {
-          activeThreads: boardThreads.filter((t) => !t.isPending && !t.isDeleted).length,
-          activeComments: boardComments.filter((c) => !c.isPending && !c.isDeleted).length,
-          pendingThreads: boardThreads.filter((t) => t.isPending && !t.isDeleted).length,
-          pendingComments: boardComments.filter((c) => c.isPending && !c.isDeleted).length,
-          deletedThreads: boardThreads.filter((t) => t.isDeleted).length,
-          deletedComments: boardComments.filter((c) => c.isDeleted).length,
-          totalReports: boardReports.length
-        };
+        boardActivity.push({
+          slug: board.slug,
+          name: board.name,
+          threads: {
+            active: boardThreads.filter((t) => !t.isPending && !t.isDeleted).length,
+            pending: boardThreads.filter((t) => t.isPending && !t.isDeleted).length,
+            deleted: boardThreads.filter((t) => t.isDeleted).length
+          },
+          comments: {
+            active: boardComments.filter((c) => !c.isPending && !c.isDeleted).length,
+            pending: boardComments.filter((c) => c.isPending && !c.isDeleted).length,
+            deleted: boardComments.filter((c) => c.isDeleted).length
+          },
+          reportsCount: boardReports.length
+        });
       }
 
       let totalAiUsage = 0;

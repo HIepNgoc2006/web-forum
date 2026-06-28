@@ -1030,7 +1030,9 @@ test('http admin analytics returns aggregate metrics without poster identifiers'
     const serialized = JSON.stringify(analyticsBody.data);
 
     assert.equal(analytics.status, 200);
-    assert.equal(analyticsBody.data.boardActivity['hoc-tap'].activeThreads, 1);
+    const hocTapActivity = analyticsBody.data.boardActivity.find((board) => board.slug === 'hoc-tap');
+    assert.ok(hocTapActivity);
+    assert.equal(hocTapActivity.threads.active, 1);
     assert.equal(serialized.includes('poster-secret-token'), false);
     assert.equal(serialized.includes('authorFingerprint'), false);
     assert.equal(serialized.includes('posterHash'), false);
