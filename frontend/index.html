@@ -165,6 +165,7 @@
             [<a href="#policy/rules">Nội quy & riêng tư</a>]
             [<a href="#policy/feedback">Góp ý</a>]
             [<a href="#policy/report">Cách báo cáo</a>]
+            [<a href="#policy/appeal">Kháng nghị</a>]
             [<a href="#policy/contact">Liên hệ</a>]
           </nav>
         </div>
@@ -204,6 +205,27 @@
               <li>Báo cáo đi vào hàng đợi admin; người báo cáo chỉ được lưu dưới dạng hash, không lộ poster token.</li>
               <li>Nếu có nguy cơ khẩn cấp ngoài đời thật, hãy liên hệ nhà trường hoặc cơ quan chức năng trước.</li>
             </ul>
+          </section>
+
+
+          <section id="policy-appeal" class="policy-box" aria-labelledby="policyAppealTitle">
+            <h2 id="policyAppealTitle">Kháng nghị bài bị xóa</h2>
+            <p>Dán mã kháng nghị đã nhận khi đăng bài và viết lý do ngắn để admin xem lại quyết định xóa.</p>
+            <form id="appealForm" class="policy-form stack">
+              <div id="appealError" class="form-error hidden" role="alert"></div>
+              <label class="field-row">
+                <span>Mã kháng nghị</span>
+                <input id="appealToken" autocomplete="off" placeholder="appeal_..." />
+              </label>
+              <label class="field-row">
+                <span>Lý do</span>
+                <textarea id="appealReason" rows="4" maxlength="2000" placeholder="Vì sao bài nên được xem lại?"></textarea>
+              </label>
+              <div class="form-actions">
+                <button class="primary-button" type="submit">Gửi kháng nghị</button>
+              </div>
+              <p id="appealResult" class="account-note hidden" role="status"></p>
+            </form>
           </section>
 
           <section id="policy-feedback" class="policy-box" aria-labelledby="policyFeedbackTitle">

@@ -904,6 +904,16 @@ button {
   line-height: 1.5;
 }
 
+.policy-form {
+  padding: 8px 12px 12px;
+}
+
+.policy-form .form-error,
+.policy-form .form-actions,
+.policy-form .account-note {
+  margin-left: 0;
+}
+
 .policy-pii {
   margin-top: 8px;
 }

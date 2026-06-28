@@ -792,6 +792,11 @@ async function resolveBrowserWatchedThreadPreference(requested) {
 const els = {
   homeScreen: document.querySelector('#homeScreen'),
   policyScreen: document.querySelector('#policyScreen'),
+  appealForm: document.querySelector('#appealForm'),
+  appealToken: document.querySelector('#appealToken'),
+  appealReason: document.querySelector('#appealReason'),
+  appealError: document.querySelector('#appealError'),
+  appealResult: document.querySelector('#appealResult'),
   homeBoards: document.querySelector('#homeBoards'),
   homeBoardSearchForm: document.querySelector('#homeBoardSearchForm'),
   homeBoardSearchInput: document.querySelector('#homeBoardSearchInput'),
@@ -4882,6 +4887,7 @@ function loadPolicy(section = '') {
     privacy: 'policy-rules',
     feedback: 'policy-feedback',
     report: 'policy-report',
+    appeal: 'policy-appeal',
     contact: 'policy-contact'
   }[section];
   if (sectionId) {
@@ -5357,6 +5363,38 @@ async function submitThread(event) {
     }
   } catch (error) {
     showToast(error.message);
+  } finally {
+    restoreButton();
+  }
+}
+
+async function submitAppeal(event) {
+  event.preventDefault();
+  setFormError(els.appealError);
+  els.appealResult?.classList.add('hidden');
+  const token = els.appealToken?.value.trim() || '';
+  const reason = els.appealReason?.value.trim() || '';
+  if (!token || !reason) {
+    setFormError(els.appealError, 'Nhập mã kháng nghị và lý do.');
+    return;
+  }
+
+  const button = event.submitter || els.appealForm?.querySelector('[type="submit"]');
+  const restoreButton = setButtonLoading(button, 'Đang gửi...');
+  try {
+    const result = await api('/api/appeals', {
+      method: 'POST',
+      body: JSON.stringify({ token, reason, posterToken: state.posterToken })
+    });
+    if (els.appealResult) {
+      els.appealResult.textContent = `Đã gửi kháng nghị No.${result.globalNumber}. Trạng thái: ${result.status}.`;
+      els.appealResult.classList.remove('hidden');
+    }
+    els.appealToken.value = '';
+    els.appealReason.value = '';
+    showToast('Đã gửi kháng nghị.');
+  } catch (error) {
+    setFormError(els.appealError, error.message);
   } finally {
     restoreButton();
   }
@@ -6557,6 +6595,7 @@ function bindEvents() {
     window.location.hash = `#board/${state.boardSlug}`;
   });
   els.threadForm.addEventListener('submit', submitThread);
+  els.appealForm?.addEventListener('submit', submitAppeal);
   els.commentForm.addEventListener('submit', submitComment);
   els.quickReplyForm.addEventListener('submit', submitQuickReply);
   els.threadBody.addEventListener('input', () => {
