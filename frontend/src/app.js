@@ -52,6 +52,7 @@ const state = {
   realtimeSource: null,
   realtimeContextKey: '',
   browserNotificationIds: new Set(),
+  watchedThreadSummaries: [],
   boardThreads: [],
   boardThreadsCache: new Map(),
   catalogThreads: [],
@@ -452,6 +453,29 @@ function normalizeWatchedSort(value) {
   return WATCHED_THREAD_SORTS.has(value) ? value : 'unread';
 }
 
+function syncWatchedControls({
+  unreadOnly = localDisplayPreferences().watchedUnreadOnly,
+  unreadCount = state.watchedThreadSummaries.filter((item) => Number(item.unreadCount || 0) > 0).length
+} = {}) {
+  if (!els?.watchedUnreadToggle && !els?.watchedMarkAllRead && !els?.watchedSortSelect) {
+    return;
+  }
+  if (els.watchedSortSelect) {
+    els.watchedSortSelect.value = localDisplayPreferences().watchedSort;
+  }
+  if (els.watchedUnreadToggle) {
+    els.watchedUnreadToggle.textContent = unreadCount ? `chưa đọc ${unreadCount}` : 'chưa đọc';
+    els.watchedUnreadToggle.classList.toggle('active', unreadOnly);
+    els.watchedUnreadToggle.setAttribute('aria-pressed', String(unreadOnly));
+  }
+  if (els.watchedMarkAllRead) {
+    els.watchedMarkAllRead.disabled = unreadCount === 0;
+    els.watchedMarkAllRead.title = unreadCount
+      ? `Đánh dấu ${unreadCount} chủ đề là đã đọc`
+      : 'Không có chủ đề chưa đọc';
+  }
+}
+
 function localDisplayPreferences() {
   const value = readJsonLocal(displayPreferencesKey, {});
   return {
@@ -826,6 +850,7 @@ function applyDisplayPreferences(preferences = localDisplayPreferences()) {
   if (els?.accountWatchedSort) {
     els.accountWatchedSort.value = safe.watchedSort;
   }
+  syncWatchedControls({ unreadOnly: safe.watchedUnreadOnly });
   return safe;
 }
 
@@ -928,6 +953,9 @@ const els = {
   popularThreads: document.querySelector('#popularThreads'),
   latestPosts: document.querySelector('#latestPosts'),
   watchedThreads: document.querySelector('#watchedThreads'),
+  watchedSortSelect: document.querySelector('#watchedSortSelect'),
+  watchedUnreadToggle: document.querySelector('#watchedUnreadToggle'),
+  watchedMarkAllRead: document.querySelector('#watchedMarkAllRead'),
   myPosts: document.querySelector('#myPosts'),
   subscribedBoards: document.querySelector('#subscribedBoards'),
   hotBoards: document.querySelector('#hotBoards'),
@@ -2524,16 +2552,25 @@ function sortWatchedThreads(left, right, sort = localDisplayPreferences().watche
   return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''));
 }
 
-function visibleWatchedThreadSummaries(watchedThreads) {
+function visibleWatchedThreadSummaries(watchedThreads = state.watchedThreadSummaries) {
   const preferences = localDisplayPreferences();
-  return watchedThreads
-    .filter((item) => !preferences.watchedUnreadOnly || Number(item.unreadCount || 0) > 0)
-    .sort((left, right) => sortWatchedThreads(left, right, preferences.watchedSort));
+  return [...watchedThreads].sort((left, right) => sortWatchedThreads(left, right, preferences.watchedSort));
+}
+
+function firstUnreadPostNumber(posts = [], lastSeen = 0) {
+  const seenNumber = Number(lastSeen || 0);
+  const firstUnread = posts
+    .map((post) => Number(post.globalNumber || 0))
+    .filter((globalNumber) => Number.isFinite(globalNumber) && globalNumber > seenNumber)
+    .sort((left, right) => left - right)[0];
+  return firstUnread || 0;
 }
 
 async function loadWatchedThreadSummaries() {
   const watchedEntries = Object.values(readWatchedThreads());
   if (!watchedEntries.length) {
+    state.watchedThreadSummaries = [];
+    syncWatchedControls({ unreadCount: 0 });
     return [];
   }
 
@@ -2546,6 +2583,7 @@ async function loadWatchedThreadSummaries() {
         return {
           ...watchedThreadEntryFromDetail(detail, entry),
           unreadCount,
+          firstUnreadNumber: firstUnreadPostNumber(posts, entry.lastSeen),
           unavailable: false
         };
       } catch {
@@ -2578,7 +2616,63 @@ async function loadWatchedThreadSummaries() {
     }
   });
   writeWatchedThreads(watchedThreads);
-  return visibleWatchedThreadSummaries(results);
+  state.watchedThreadSummaries = visibleWatchedThreadSummaries(results);
+  return state.watchedThreadSummaries;
+}
+
+function markWatchedThreadRead(threadId) {
+  if (!threadId) {
+    return false;
+  }
+  const watchedThreads = readWatchedThreads();
+  const watched = watchedThreads[threadId];
+  if (!watched) {
+    return false;
+  }
+
+  const summary = state.watchedThreadSummaries.find((item) => item.threadId === threadId);
+  const maxNumber = Math.max(
+    Number(watched.maxNumber || 0),
+    Number(watched.lastSeen || 0),
+    Number(summary?.maxNumber || 0)
+  );
+  watchedThreads[threadId] = {
+    ...watched,
+    maxNumber,
+    lastSeen: maxNumber
+  };
+  writeWatchedThreads(watchedThreads);
+  writeThreadLastSeen(threadId, maxNumber);
+  state.watchedThreadSummaries = state.watchedThreadSummaries.map((item) => {
+    if (item.threadId !== threadId) {
+      return item;
+    }
+    return {
+      ...item,
+      lastSeen: Math.max(Number(item.maxNumber || 0), maxNumber),
+      unreadCount: 0,
+      firstUnreadNumber: 0
+    };
+  });
+  return true;
+}
+
+function markAllWatchedThreadsRead() {
+  const unreadThreadIds = state.watchedThreadSummaries
+    .filter((item) => Number(item.unreadCount || 0) > 0 && !item.unavailable)
+    .map((item) => item.threadId)
+    .filter(Boolean);
+  unreadThreadIds.forEach((threadId) => markWatchedThreadRead(threadId));
+  return unreadThreadIds.length;
+}
+
+function watchedThreadHref(item = {}) {
+  if (item.unavailable || !item.threadId) {
+    return '#home';
+  }
+  const threadPath = `#thread/${encodeURIComponent(item.threadId)}`;
+  const firstUnreadNumber = Number(item.firstUnreadNumber || 0);
+  return firstUnreadNumber > 0 ? `${threadPath}?p=${encodeURIComponent(firstUnreadNumber)}` : threadPath;
 }
 
 async function loadHomeThreadsByBoard() {
@@ -2715,20 +2809,29 @@ function renderLatestPosts(posts) {
     .join('');
 }
 
-function renderWatchedThreads(watchedThreads) {
-  if (!watchedThreads.length) {
-    els.watchedThreads.innerHTML =
-      '<p class="latest-empty">Chưa theo dõi chủ đề nào. Vào một thread và bấm [Theo dõi].</p>';
+function renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
+  const allVisibleThreads = visibleWatchedThreadSummaries(watchedThreads);
+  const unreadOnly = localDisplayPreferences().watchedUnreadOnly;
+  const unreadCount = allVisibleThreads.filter((item) => Number(item.unreadCount || 0) > 0).length;
+  const visibleThreads = unreadOnly
+    ? allVisibleThreads.filter((item) => Number(item.unreadCount || 0) > 0)
+    : allVisibleThreads;
+  syncWatchedControls({ unreadOnly, unreadCount });
+
+  if (!visibleThreads.length) {
+    els.watchedThreads.innerHTML = allVisibleThreads.length
+      ? '<p class="latest-empty">Không có chủ đề chưa đọc trong watchlist.</p>'
+      : '<p class="latest-empty">Chưa theo dõi chủ đề nào. Vào một thread và bấm [Theo dõi].</p>';
     return;
   }
 
-  els.watchedThreads.innerHTML = watchedThreads
+  els.watchedThreads.innerHTML = visibleThreads
     .map((item) => {
       const boardLabel = item.boardPath || `/${item.boardSlug || '?'}/`;
       const preview = item.unavailable
         ? 'Chủ đề không còn truy cập được hoặc đã bị xóa.'
         : item.preview || 'Không có nội dung';
-      const href = item.unavailable ? '#home' : `#thread/${encodeURIComponent(item.threadId)}`;
+      const href = watchedThreadHref(item);
       const unreadBadge = item.unreadCount
         ? `<span class="watch-unread">+${Number(item.unreadCount).toLocaleString()} mới</span>`
         : '<span class="watch-seen">đã đọc</span>';
@@ -3898,7 +4001,8 @@ async function loadHome() {
   renderHomeBoards(threadsByBoard, stats);
   renderPopularThreads(popularThreadsFrom(threadsByBoard));
   renderLatestPosts(latestPosts);
-  renderWatchedThreads(watchedThreads);
+  state.watchedThreadSummaries = watchedThreads;
+  renderWatchedThreads();
   renderMyPosts();
   renderSubscribedBoards();
   renderHotBoards(hotBoards);
@@ -7169,7 +7273,32 @@ function bindEvents() {
       removeWatchedThread(unwatchThreadButton.dataset.unwatchThread);
       showToast('Đã bỏ theo dõi chủ đề.');
       if ((window.location.hash || '#home').startsWith('#home')) {
-        renderWatchedThreads(await loadWatchedThreadSummaries());
+        state.watchedThreadSummaries = await loadWatchedThreadSummaries();
+        renderWatchedThreads();
+      }
+      return;
+    }
+
+    const watchedUnreadToggle = event.target.closest('#watchedUnreadToggle');
+    if (watchedUnreadToggle) {
+      const preferences = localDisplayPreferences();
+      const displayPreferences = applyDisplayPreferences({
+        ...preferences,
+        watchedUnreadOnly: !preferences.watchedUnreadOnly
+      });
+      renderWatchedThreads();
+      persistAccountSettings({ silent: true });
+      showToast(displayPreferences.watchedUnreadOnly ? 'Đang chỉ hiện thread chưa đọc.' : 'Đang hiện toàn bộ watchlist.');
+      return;
+    }
+
+    const watchedMarkAllRead = event.target.closest('#watchedMarkAllRead');
+    if (watchedMarkAllRead) {
+      const count = markAllWatchedThreadsRead();
+      renderWatchedThreads();
+      if (count) {
+        persistAccountSettings({ silent: true });
+        showToast(`Đã đánh dấu ${count.toLocaleString()} chủ đề là đã đọc.`);
       }
       return;
     }
@@ -7942,6 +8071,17 @@ function bindEvents() {
       state.commentsSort = commentSort.value;
       state.threadCommentPage = 1;
       loadThread().catch((error) => showToast(error.message));
+    }
+
+    const watchedSortSelect = event.target.closest('#watchedSortSelect');
+    if (watchedSortSelect) {
+      applyDisplayPreferences({
+        ...localDisplayPreferences(),
+        watchedSort: normalizeWatchedSort(watchedSortSelect.value)
+      });
+      renderWatchedThreads();
+      persistAccountSettings({ silent: true });
+      showToast('Đã đổi cách sắp xếp watchlist.');
     }
   });
 

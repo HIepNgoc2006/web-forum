@@ -90,6 +90,15 @@
           <section class="portal-box" aria-labelledby="watchedThreadsTitle">
             <div class="portal-box-title portal-box-title-light">
               <h2 id="watchedThreadsTitle">Chủ đề đang theo dõi</h2>
+              <span class="portal-title-actions">
+                <select id="watchedSortSelect" class="portal-title-select" aria-label="Sắp xếp watchlist">
+                  <option value="unread">chưa đọc trước</option>
+                  <option value="recent">mới cập nhật</option>
+                  <option value="board">theo bảng</option>
+                </select>
+                <button id="watchedUnreadToggle" class="portal-title-button" type="button" aria-pressed="false">chưa đọc</button>
+                <button id="watchedMarkAllRead" class="portal-title-button" type="button" disabled>đã đọc hết</button>
+              </span>
             </div>
             <div id="watchedThreads" class="watch-list"></div>
           </section>
