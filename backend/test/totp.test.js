@@ -230,7 +230,7 @@ describe('HTTP 2FA Integration API', () => {
       assert.equal(verifyFailRes.status, 400);
 
       // 6. Verify 2FA Login with valid token
-      const verifySuccessRes = await fetch(`${baseUrl}/api/auth/2fa/verify`, {
+      const verifySuccessRes = await fetch(`${baseUrl}/api/auth/2fa/totp-login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tempToken: loginBody.data.tempToken, code: validCode })
@@ -303,7 +303,7 @@ describe('HTTP 2FA Integration API', () => {
       assert.equal(accessBlockedBody.error.requires2FA, true);
 
       // Verify and upgrade token
-      const verifyRes = await fetch(`${baseUrl}/api/auth/2fa/verify`, {
+      const verifyRes = await fetch(`${baseUrl}/api/auth/2fa/totp-login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tempToken, code: validCode })

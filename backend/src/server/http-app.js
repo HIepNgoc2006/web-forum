@@ -993,7 +993,10 @@ export function createHttpServer({
         return;
       }
 
-      if (request.method === 'POST' && routePath === '/api/auth/2fa/verify') {
+      if (
+        request.method === 'POST' &&
+        (routePath === '/api/auth/2fa/verify' || routePath === '/api/auth/2fa/totp-login')
+      ) {
         requireAccountJwt(jwtSecret);
         const body = await readJson(request, 20_000);
         let payload;
