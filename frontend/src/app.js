@@ -3880,6 +3880,27 @@ function writeVote(globalNumber, direction) {
   }
 }
 
+const REACTION_LABELS = [
+  ['like', 'Thích', '+'],
+  ['laugh', 'Cười', 'ha'],
+  ['surprise', 'Ngạc nhiên', '!'],
+  ['sad', 'Buồn', ':('],
+  ['angry', 'Giận', '>'],
+  ['thanks', 'Cảm ơn', 'ty']
+];
+
+function reactionControlHtml(post) {
+  const reactions = post.reactions || {};
+  return `
+    <span class="post-reactions" aria-label="Cảm xúc bài viết">
+      ${REACTION_LABELS.map(([type, label, shortLabel]) => {
+        const count = Math.max(0, Number(reactions[type]) || 0);
+        return `<button class="reaction-button" data-reaction="${type}" data-reaction-target="${post.globalNumber}" type="button" title="${label}" aria-label="${label}">${shortLabel}${count ? ` ${count}` : ''}</button>`;
+      }).join('')}
+    </span>
+  `;
+}
+
 function voteControlHtml(post) {
   const votes = post.votes || { up: 0, down: 0, score: 0 };
   const score = Number(votes.score ?? (Number(votes.up || 0) - Number(votes.down || 0)));
@@ -3955,6 +3976,7 @@ function meta(post, options = {}) {
       ${stickyLabelHtml(post)}
       <span class="status">${labels}</span>
       ${voteControlHtml(post)}
+      ${reactionControlHtml(post)}
       ${
         showReplyAction && canReply
           ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
@@ -6733,6 +6755,29 @@ function bindEvents() {
         });
         showToast('Đã vote thăm dò.');
         await loadThread();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const reactionButton = event.target.closest('[data-reaction]');
+    if (reactionButton) {
+      const globalNumber = reactionButton.dataset.reactionTarget;
+      const reaction = reactionButton.dataset.reaction;
+      try {
+        await api(`/api/posts/${globalNumber}/reactions`, {
+          auth: state.accountToken ? 'account' : 'none',
+          method: 'POST',
+          body: JSON.stringify({ reaction, posterToken: state.posterToken })
+        });
+        if (state.screen === 'thread') {
+          await loadThread();
+        } else if (state.screen === 'board') {
+          await loadBoard();
+        } else {
+          await loadHome();
+        }
       } catch (error) {
         showToast(error.message);
       }

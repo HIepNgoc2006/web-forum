@@ -1351,6 +1351,28 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   color: #d00;
 }
 
+.post-reactions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: 6px;
+  vertical-align: middle;
+}
+
+.reaction-button {
+  border: none;
+  background: none;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--dead);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.reaction-button:hover {
+  color: var(--text);
+}
+
 .vote-score {
   min-width: 1.2em;
   text-align: center;

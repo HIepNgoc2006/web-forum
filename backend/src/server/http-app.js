@@ -1510,6 +1510,23 @@ export function createHttpServer({
         return;
       }
 
+      params = match(parts, ['api', 'posts', ':globalNumber', 'reactions']);
+      if (params && request.method === 'POST') {
+        const body = await readJson(request, 20_000);
+        const account = getOptionalAccount(request, jwtSecret, service);
+        ok(
+          response,
+          await service.reactPost({
+            globalNumber: params.globalNumber,
+            reaction: body.reaction,
+            accountId: account?.sub,
+            ip,
+            posterToken: body.posterToken
+          })
+        );
+        return;
+      }
+
       params = match(parts, ['api', 'posts', ':globalNumber', 'vote']);
       if (params && request.method === 'POST') {
         const account = requireAccount(request, jwtSecret, service);

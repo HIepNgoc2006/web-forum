@@ -1347,6 +1347,50 @@ test('votePost toggles upvote/downvote on a comment without leaking voters', asy
   );
 });
 
+test('reactPost toggles anonymous and account reactions without leaking voters', async () => {
+  const realtime = createEvents();
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime,
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread de react',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    posterToken: 'author'
+  });
+  const target = created.thread.globalNumber;
+
+  const liked = await service.reactPost({ globalNumber: target, reaction: 'like', posterToken: 'reader-a', ip: '203.0.113.8' });
+  assert.equal(liked.reactions.like, 1);
+  assert.equal(liked.myReaction, 'like');
+  assert.equal(realtime.events.at(-1).event, 'thread:updated');
+
+  const switched = await service.reactPost({ globalNumber: target, reaction: 'thanks', posterToken: 'reader-a', ip: '203.0.113.8' });
+  assert.equal(switched.reactions.like, 0);
+  assert.equal(switched.reactions.thanks, 1);
+  assert.equal(switched.myReaction, 'thanks');
+
+  const account = await service.reactPost({ globalNumber: target, reaction: 'thanks', accountId: 'reader-account' });
+  assert.equal(account.reactions.thanks, 2);
+
+  const off = await service.reactPost({ globalNumber: target, reaction: 'thanks', posterToken: 'reader-a', ip: '203.0.113.8' });
+  assert.equal(off.reactions.thanks, 1);
+  assert.equal(off.myReaction, null);
+
+  const detail = await service.getThread(created.thread.id);
+  assert.equal(detail.thread.reactions.thanks, 1);
+  assert.equal(JSON.stringify(detail.thread).includes('reactionVoters'), false);
+
+  await assert.rejects(
+    () => service.reactPost({ globalNumber: target, reaction: 'invalid', posterToken: 'reader-a' }),
+    /Reaction không hợp lệ/
+  );
+});
+
 test('getThread sorts comments by best/top/new/controversial/old', async () => {
   const service = createForumService({
     store: createMemoryStore(),
