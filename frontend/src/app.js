@@ -34,6 +34,8 @@ const state = {
   boardPage: 1,
   boardPageSize: 15,
   boardSearchTerm: '',
+  boardSort: 'bump',
+  boardFilter: 'all',
   boardPageMeta: null,
   threadCommentPage: 1,
   threadCommentPageSize: 50,
@@ -1938,15 +1940,27 @@ function normalizeSearchValue(value = '') {
     .trim();
 }
 
+function normalizeBoardSort(value) {
+  const sort = String(value || '').trim().toLowerCase();
+  return ['bump', 'created', 'replies'].includes(sort) ? sort : 'bump';
+}
+
+function normalizeBoardFilter(value) {
+  const filter = String(value || '').trim().toLowerCase();
+  return ['all', 'media', 'video', 'poll', 'unanswered'].includes(filter) ? filter : 'all';
+}
+
 function boardThreadsCacheKey({
   boardSlug = state.boardSlug,
   page = state.boardPage,
   pageSize = state.boardPageSize,
-  q = state.boardSearchTerm
+  q = state.boardSearchTerm,
+  sort = state.boardSort,
+  filter = state.boardFilter
 } = {}) {
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safePageSize = Math.max(1, Math.floor(Number(pageSize) || state.boardPageSize));
-  return [boardSlug, safePage, safePageSize, normalizeSearchValue(q)].join('|');
+  return [boardSlug, safePage, safePageSize, normalizeSearchValue(q), normalizeBoardSort(sort), normalizeBoardFilter(filter)].join('|');
 }
 
 function firstBoardPageFromThreads(threads = [], { page = 1, pageSize = state.boardPageSize } = {}) {
@@ -1984,7 +1998,9 @@ function writeBoardThreadsCache(boardSlug, payload, options = {}) {
     boardSlug,
     page: pagePayload.page,
     pageSize: pagePayload.pageSize,
-    q: options.q || ''
+    q: options.q || '',
+    sort: options.sort || state.boardSort,
+    filter: options.filter || state.boardFilter
   });
   state.boardThreadsCache.set(key, entry);
   try {
@@ -4279,24 +4295,45 @@ function threadMatchesSearch(thread, term) {
   return haystack.includes(normalizedTerm);
 }
 
+function catalogThreadFileCount(thread = {}) {
+  const previewFileCount = (Array.isArray(thread.previewComments) ? thread.previewComments : []).reduce(
+    (total, comment) => total + postMediaCount(comment),
+    0
+  );
+  return postMediaCount(thread) + previewFileCount + Number(thread.omittedImageCount || 0);
+}
+
+function catalogThreadMediaItems(thread = {}) {
+  const previewMedia = (Array.isArray(thread.previewComments) ? thread.previewComments : []).flatMap((comment) =>
+    mediaItemsFromPost(comment)
+  );
+  return [...mediaItemsFromPost(thread), ...previewMedia];
+}
+
+function catalogThreadHasVideo(thread = {}) {
+  return catalogThreadMediaItems(thread).some((media) => mediaKind(media) === 'video');
+}
+
 function catalogThreadHtml(thread) {
-  const title = threadTitle(thread).slice(0, 260);
+  const title = threadTitle(thread, 'Chưa có nội dung').slice(0, 260);
+  const bodyPreview = plainPreview(thread.bodyLines, '').slice(0, 260);
   const stickyPrefix = thread.isSticky ? '[Ghim] ' : '';
   const images = mediaItemsFromPost(thread);
+  const fileCount = catalogThreadFileCount(thread);
   const firstMedia = images[0];
   const thumbnailSrc = mediaThumbnailSrc(firstMedia);
   const image = firstMedia && thumbnailSrc
     ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(firstMedia.name)}">`
     : firstMedia
       ? `<span class="catalog-placeholder">${mediaKind(firstMedia) === 'video' ? 'Video' : 'Có tệp'}</span>`
-    : '<span class="catalog-placeholder">Không có tệp</span>';
+      : '<span class="catalog-placeholder">Không có tệp</span>';
 
   return `
     <a class="catalog-thread" href="#thread/${thread.id}">
       <span class="catalog-thumb">${image}</span>
       <strong>${escapeHtml(`${stickyPrefix}${title.slice(0, 70)}`)}${title.length >= 70 ? '...' : ''}</strong>
-      <span class="catalog-thread-stats">R: ${thread.replyCount} / I: ${images.length} / No.${thread.globalNumber}</span>
-      <p>${escapeHtml(title)}${title.length >= 260 ? '...' : ''}</p>
+      <span class="catalog-thread-stats">R: ${thread.replyCount} / I: ${fileCount} / No.${thread.globalNumber}</span>
+      <p>${escapeHtml(bodyPreview || title)}${bodyPreview.length >= 260 ? '...' : ''}</p>
     </a>
   `;
 }
@@ -4317,7 +4354,7 @@ function hoursSince(value) {
 function catalogRecommendationScore(thread) {
   const activityAgeHours = hoursSince(thread.bumpedAt || thread.createdAt);
   const replyCount = Number(thread.replyCount || 0);
-  const mediaCount = mediaItemsFromPost(thread).length;
+  const mediaCount = catalogThreadFileCount(thread);
   const voteScore = Number(thread.votes?.score || 0);
   const recencyScore = Math.exp(-activityAgeHours / 18) * 40;
   const replyScore = Math.log1p(replyCount) * 8;
@@ -4328,31 +4365,42 @@ function catalogRecommendationScore(thread) {
   return recencyScore + replyScore + mediaScore + positiveVoteScore + stickyScore - negativeVotePenalty;
 }
 
+function normalizeCatalogSort(value) {
+  const sort = String(value || '').trim().toLowerCase();
+  return ['recommended', 'bump', 'latest-reply', 'created', 'replies', 'files'].includes(sort) ? sort : 'bump';
+}
+
 function sortedCatalogThreads(threads) {
   const copy = [...threads];
-  if (state.catalogSort === 'recommended') {
+  const sort = normalizeCatalogSort(state.catalogSort);
+  if (sort === 'recommended') {
     return copy.sort((left, right) => {
       const scoreCompare = catalogRecommendationScore(right) - catalogRecommendationScore(left);
-      if (scoreCompare !== 0) {
-        return scoreCompare;
-      }
+      if (scoreCompare !== 0) return scoreCompare;
       const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
       return stickyCompare || right.bumpedAt.localeCompare(left.bumpedAt);
     });
   }
-  if (state.catalogSort === 'created') {
+  if (sort === 'created') {
     return copy.sort((left, right) => {
       const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
       return stickyCompare || right.createdAt.localeCompare(left.createdAt);
     });
   }
-  if (state.catalogSort === 'replies') {
+  if (sort === 'replies') {
     return copy.sort((left, right) => {
       const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
       return stickyCompare || Number(right.replyCount || 0) - Number(left.replyCount || 0);
     });
   }
-  if (state.catalogSort === 'latest-reply') {
+  if (sort === 'files') {
+    return copy.sort((left, right) => {
+      const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
+      const fileCompare = catalogThreadFileCount(right) - catalogThreadFileCount(left);
+      return stickyCompare || fileCompare || right.bumpedAt.localeCompare(left.bumpedAt);
+    });
+  }
+  if (sort === 'latest-reply') {
     return copy.sort((left, right) => {
       const stickyCompare = Number(Boolean(right.isSticky)) - Number(Boolean(left.isSticky));
       return stickyCompare || right.bumpedAt.localeCompare(left.bumpedAt);
@@ -4366,7 +4414,10 @@ function sortedCatalogThreads(threads) {
 
 function catalogThreadMatchesFilter(thread) {
   if (state.catalogFilter === 'image') {
-    return mediaItemsFromPost(thread).length > 0;
+    return catalogThreadFileCount(thread) > 0;
+  }
+  if (state.catalogFilter === 'video') {
+    return catalogThreadHasVideo(thread);
   }
   if (state.catalogFilter === 'poll') {
     return Boolean(thread.poll?.options?.length);
@@ -4384,13 +4435,19 @@ function renderCatalogThreads(threads) {
   );
   els.catalogGrid.classList.toggle('catalog-grid-large', state.catalogImageSize === 'large');
   document.querySelectorAll('[data-catalog-sort]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.catalogSort === state.catalogSort);
+    const active = button.dataset.catalogSort === normalizeCatalogSort(state.catalogSort);
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
   document.querySelectorAll('[data-catalog-filter]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.catalogFilter === state.catalogFilter);
+    const active = button.dataset.catalogFilter === state.catalogFilter;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
   document.querySelectorAll('[data-catalog-size]').forEach((button) => {
-    button.classList.toggle('active', button.dataset.catalogSize === state.catalogImageSize);
+    const active = button.dataset.catalogSize === state.catalogImageSize;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
   });
   if (!visibleThreads.length) {
     els.catalogGrid.innerHTML = '<p class="muted">Không có OP khớp tìm kiếm.</p>';
@@ -4471,8 +4528,43 @@ async function loadArchive() {
   renderArchiveThreads(threads);
 }
 
+function omittedRepliesHtml(thread) {
+  const replyCount = Number(thread.omittedReplyCount || 0);
+  const imageCount = Number(thread.omittedImageCount || 0);
+  if (replyCount <= 0 && imageCount <= 0) return "";
+  const replyText = replyCount > 0 ? `${replyCount} phản hồi` : '';
+  const imageText = imageCount > 0 ? `${imageCount} tệp` : '';
+  return `<div class="omitted-replies">Bỏ qua ${[replyText, imageText].filter(Boolean).join(' và ')}.</div>`;
+}
+
+function boardReplyPreviewsHtml(thread) {
+  const comments = Array.isArray(thread.previewComments) ? thread.previewComments : [];
+  if (!comments.length && !thread.omittedReplyCount && !thread.omittedImageCount) return "";
+  return `
+    <div class="board-reply-previews">
+      ${omittedRepliesHtml(thread)}
+      ${comments.map((comment) => `
+        <article class="reply-preview" id="p${comment.globalNumber}">
+          ${meta(comment, { replyAction: false })}
+          <div class="post-body">${renderPostLines(comment.bodyLines || [], { opNumber: thread.globalNumber })}</div>
+        </article>
+      `).join('')}
+    </div>
+  `;
+}
+
 function renderBoardThreads(threads) {
   const term = els.boardSearchInput.value.trim();
+  document.querySelectorAll('[data-board-sort]').forEach((button) => {
+    const active = button.dataset.boardSort === state.boardSort;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  document.querySelectorAll('[data-board-filter]').forEach((button) => {
+    const active = button.dataset.boardFilter === state.boardFilter;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
   const hidden = hiddenThreadIds();
   const visibleThreads = threads.filter((thread) => !hidden.has(String(thread.id)) && threadMatchesSearch(thread, term));
   if (!visibleThreads.length) {
@@ -4498,6 +4590,7 @@ function renderBoardThreads(threads) {
             ${threadSubjectHtml(thread)}
             <div class="post-body">${renderPostLines(thread.bodyLines || [], { opNumber: thread.globalNumber })}</div>
             ${diceRollsHtml(thread.diceRolls)}
+            ${boardReplyPreviewsHtml(thread)}
             <div class="thread-meta">
               <span>${thread.replyCount} trả lời</span>
               <span>đẩy lúc ${new Date(thread.bumpedAt).toLocaleTimeString()}</span>
@@ -4544,7 +4637,9 @@ async function loadBoard() {
     boardSlug: board.slug,
     page: state.boardPage,
     pageSize: state.boardPageSize,
-    q: state.boardSearchTerm
+    q: state.boardSearchTerm,
+    sort: state.boardSort,
+    filter: state.boardFilter
   };
   const requestKey = boardThreadsCacheKey(cacheOptions);
   const cached = readBoardThreadsCache(cacheOptions);
@@ -4561,8 +4656,12 @@ async function loadBoard() {
 
   const query = new URLSearchParams({
     page: String(state.boardPage),
-    pageSize: String(state.boardPageSize)
+    pageSize: String(state.boardPageSize),
+    sort: state.boardSort
   });
+  if (state.boardFilter !== 'all') {
+    query.set('filter', state.boardFilter);
+  }
   if (state.boardSearchTerm.trim()) {
     query.set('q', state.boardSearchTerm.trim());
   }
@@ -4571,7 +4670,7 @@ async function loadBoard() {
   const stillOnBoard =
     (window.location.hash || '').startsWith('#board/') &&
     state.boardSlug === board.slug &&
-    boardThreadsCacheKey() === requestKey;
+    boardThreadsCacheKey(cacheOptions) === requestKey;
   if (!stillOnBoard) {
     return;
   }
@@ -4779,6 +4878,8 @@ function route() {
     const params = new URLSearchParams(hashQuery);
     state.boardSlug = id || 'confession';
     state.boardSearchTerm = params.get('q') || '';
+    state.boardSort = normalizeBoardSort(params.get('sort') || state.boardSort);
+    state.boardFilter = normalizeBoardFilter(params.get('filter') || 'all');
     state.boardPage = 1;
     loadBoard().catch((error) => showToast(error.message));
   }
@@ -6661,8 +6762,24 @@ function bindEvents() {
 
     const catalogSortButton = event.target.closest('[data-catalog-sort]');
     if (catalogSortButton) {
-      state.catalogSort = catalogSortButton.dataset.catalogSort;
+      state.catalogSort = normalizeCatalogSort(catalogSortButton.dataset.catalogSort);
       renderCatalogThreads(state.catalogThreads);
+      return;
+    }
+
+    const boardSortButton = event.target.closest('[data-board-sort]');
+    if (boardSortButton) {
+      state.boardSort = normalizeBoardSort(boardSortButton.dataset.boardSort);
+      state.boardPage = 1;
+      await loadBoard().catch((error) => showToast(error.message));
+      return;
+    }
+
+    const boardFilterButton = event.target.closest('[data-board-filter]');
+    if (boardFilterButton) {
+      state.boardFilter = normalizeBoardFilter(boardFilterButton.dataset.boardFilter);
+      state.boardPage = 1;
+      await loadBoard().catch((error) => showToast(error.message));
       return;
     }
 

@@ -640,7 +640,7 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-catalog-desktop.png'),
-        checks: ['Danh mục', 'Sắp xếp theo:', 'Lọc:', 'Có ảnh', 'Bài kiểm thử browser smoke cho CI']
+        checks: ['Danh mục', 'Sắp xếp theo:', 'Lọc:', 'Có tệp', 'Có video', 'Số tệp', 'Bài kiểm thử browser smoke cho CI']
       },
       {
         label: 'archive desktop',

@@ -1700,6 +1700,112 @@ test('http api toggles post reactions by poster fingerprint', async () => {
   });
 });
 
+
+test('http board thread list supports sort query with pagination', async () => {
+  const dates = [
+    new Date('2026-05-22T08:00:00.000Z'),
+    new Date('2026-05-22T08:01:00.000Z'),
+    new Date('2026-05-22T08:02:00.000Z'),
+    new Date('2026-05-22T08:03:00.000Z'),
+    new Date('2026-05-22T08:04:00.000Z')
+  ];
+  await withServer(
+    async (baseUrl) => {
+      const createThread = async (body) => {
+        const response = await fetch(baseUrl + '/api/boards/hoc-tap/threads', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ body, captchaToken: 'dev-pass' })
+        });
+        const payload = await response.json();
+        assert.equal(response.status, 201);
+        return payload.data.thread;
+      };
+      const first = await createThread('Thread mot');
+      const second = await createThread('Thread hai');
+      const third = await createThread('Thread ba');
+      await fetch(baseUrl + '/api/threads/' + first.id + '/comments', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'Reply mot', captchaToken: 'dev-pass' })
+      });
+      await fetch(baseUrl + '/api/threads/' + first.id + '/comments', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ body: 'Reply hai', captchaToken: 'dev-pass' })
+      });
+
+      const created = await fetch(baseUrl + '/api/boards/hoc-tap/threads?sort=created&page=1&pageSize=2');
+      const createdBody = await created.json();
+      const replies = await fetch(baseUrl + '/api/boards/hoc-tap/threads?sort=replies&page=1&pageSize=1');
+      const repliesBody = await replies.json();
+      const fallback = await fetch(baseUrl + '/api/boards/hoc-tap/threads?sort=unknown&page=1&pageSize=3');
+      const fallbackBody = await fallback.json();
+
+      assert.equal(created.status, 200);
+      assert.deepEqual(createdBody.data.items.map((thread) => thread.id), [third.id, second.id]);
+      assert.equal(createdBody.data.total, 3);
+      assert.equal(replies.status, 200);
+      assert.deepEqual(repliesBody.data.items.map((thread) => thread.id), [first.id]);
+      assert.equal(repliesBody.data.total, 3);
+      assert.equal(fallback.status, 200);
+      assert.deepEqual(fallbackBody.data.items.map((thread) => thread.id), [first.id, third.id, second.id]);
+    },
+    { now: () => dates.shift() ?? new Date('2026-05-22T08:04:00.000Z') }
+  );
+});
+
+test('http board thread list supports filter query with pagination', async () => {
+  await withServer(async (baseUrl) => {
+    const createThread = async (body) => {
+      const response = await fetch(baseUrl + '/api/boards/hoc-tap/threads', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ captchaToken: 'dev-pass', ...body })
+      });
+      const payload = await response.json();
+      assert.equal(response.status, 201);
+      return payload.data.thread;
+    };
+
+    const plain = await createThread({ body: 'Thread plain co reply' });
+    await fetch(baseUrl + '/api/threads/' + plain.id + '/comments', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ body: 'Reply plain', captchaToken: 'dev-pass' })
+    });
+    const image = await createThread({
+      body: 'Thread co anh',
+      image: { name: 'filter-image.png', type: 'image/png', dataUrl: 'data:image/png;base64,AAAA', sizeBytes: 3 }
+    });
+    const video = await createThread({
+      body: 'Thread co video',
+      image: { name: 'filter-video.webm', type: 'video/webm', dataUrl: 'data:video/webm;base64,AAAA', sizeBytes: 3 }
+    });
+    const poll = await createThread({ body: 'Thread co tham do', pollOptions: ['Co', 'Khong'] });
+
+    const media = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=media&page=1&pageSize=1');
+    const mediaBody = await media.json();
+    const videos = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=video&page=1&pageSize=10');
+    const videosBody = await videos.json();
+    const polls = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=poll&page=1&pageSize=10');
+    const pollsBody = await polls.json();
+    const unanswered = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=unanswered&page=1&pageSize=10');
+    const unansweredBody = await unanswered.json();
+
+    assert.equal(media.status, 200);
+    assert.equal(mediaBody.data.total, 2);
+    assert.equal(mediaBody.data.items.length, 1);
+    assert.equal(videos.status, 200);
+    assert.deepEqual(videosBody.data.items.map((thread) => thread.id), [video.id]);
+    assert.equal(polls.status, 200);
+    assert.deepEqual(pollsBody.data.items.map((thread) => thread.id), [poll.id]);
+    assert.equal(unanswered.status, 200);
+    assert.deepEqual(new Set(unansweredBody.data.items.map((thread) => thread.id)), new Set([image.id, video.id, poll.id]));
+    assert.equal(unansweredBody.data.items.some((thread) => thread.id === plain.id), false);
+  });
+});
+
 test('http rate limits thread creation separately from comments', async () => {
   await withServer(async (baseUrl) => {
     let firstThreadId = '';

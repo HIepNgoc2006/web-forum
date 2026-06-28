@@ -2353,7 +2353,8 @@ body.display-compact .post-body {
     justify-self: start;
   }
 
-  .board-search-row {
+  .board-search-row,
+.board-sort-row {
     justify-content: center;
   }
 
@@ -2528,6 +2529,18 @@ body.theme-yotsuba.board-page .topbar {
   color: #34345c;
 }
 
+.board-sort-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+  align-items: center;
+  margin: -2px 0 7px;
+  padding: 0 6px;
+  color: #000;
+  font-size: 13px;
+  line-height: 18px;
+}
+
 .board-search-row {
   display: flex;
   flex-wrap: wrap;
@@ -2558,6 +2571,7 @@ body.theme-yotsuba.board-page .topbar {
 
 .board-search-row a,
 .board-search-row button,
+.board-sort-row button,
 .board-toolbar-bottom a,
 .board-toolbar-bottom button {
   color: #00005f;
@@ -4243,4 +4257,21 @@ body.theme-burichan .recovery-code {
 body.theme-burichan .admin-tab.active {
   background: #cfd4f6;
   color: #1f2333;
+}
+
+.board-reply-previews {
+  display: grid;
+  gap: 4px;
+  margin-top: 6px;
+  padding-left: 12px;
+  border-left: 2px solid #d6daf0;
+}
+
+.reply-preview {
+  padding: 3px 0;
+}
+
+.omitted-replies {
+  color: var(--muted);
+  font-size: 12px;
 }
