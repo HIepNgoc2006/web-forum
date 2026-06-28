@@ -1082,7 +1082,9 @@ test('http account api registers, logs in and saves private settings', async () 
           emailNotifications: true,
           displayPreferences: {
             compactThreads: true,
-            hideThumbnails: false
+            hideThumbnails: false,
+            watchedUnreadOnly: true,
+            watchedSort: 'recent'
           },
           notificationPreferences: {
             email: true,
@@ -1102,7 +1104,9 @@ test('http account api registers, logs in and saves private settings', async () 
     assert.equal(settingsBody.data.settings.emailNotifications, true);
     assert.deepEqual(settingsBody.data.settings.displayPreferences, {
       compactThreads: true,
-      hideThumbnails: false
+      hideThumbnails: false,
+      watchedUnreadOnly: true,
+      watchedSort: 'recent'
     });
     assert.deepEqual(settingsBody.data.settings.notificationPreferences, {
       email: true,
@@ -1135,7 +1139,7 @@ test('http account api registers, logs in and saves private settings', async () 
   });
 });
 
-test('http account api syncs and clears private watchlist drafts and saved searches', async () => {
+test('http account api syncs and clears private watchlist drafts saved searches content filters reply templates and poster notes', async () => {
   await withServer(async (baseUrl) => {
     const registered = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
@@ -1177,6 +1181,33 @@ test('http account api syncs and clears private watchlist drafts and saved searc
             query: 'lich thi',
             label: 'lich thi'
           }
+        ],
+        contentFilters: [
+          {
+            type: 'keyword',
+            value: 'spoiler',
+            label: 'An spoiler'
+          },
+          {
+            type: 'poster',
+            value: 'ID:ABCD1234',
+            boardSlug: 'hoc-tap'
+          }
+        ],
+        replyTemplates: [
+          {
+            title: 'Hoi them',
+            body: 'Ban noi them ve van de nay duoc khong?',
+            boardSlug: 'hoc-tap'
+          }
+        ],
+        posterNotes: [
+          {
+            posterId: 'ID:ABCD1234',
+            label: 'Nguoi quen',
+            note: 'Theo doi trao doi nay',
+            boardSlug: 'hoc-tap'
+          }
         ]
       })
     });
@@ -1185,6 +1216,12 @@ test('http account api syncs and clears private watchlist drafts and saved searc
     assert.equal(savedBody.data.watchlist[0].threadId, 'thread-1');
     assert.equal(savedBody.data.drafts[0].body, 'Noi dung draft rieng tu');
     assert.equal(savedBody.data.savedSearches[0].query, 'lich thi');
+    assert.equal(savedBody.data.contentFilters.length, 2);
+    assert.equal(savedBody.data.contentFilters[0].type, 'keyword');
+    assert.equal(savedBody.data.replyTemplates.length, 1);
+    assert.equal(savedBody.data.replyTemplates[0].title, 'Hoi them');
+    assert.equal(savedBody.data.posterNotes.length, 1);
+    assert.equal(savedBody.data.posterNotes[0].posterId, 'ID:ABCD1234');
 
     const fetched = await fetch(`${baseUrl}/api/account/private-data`, {
       headers: { authorization: `Bearer ${token}` }
@@ -1201,13 +1238,50 @@ test('http account api syncs and clears private watchlist drafts and saved searc
     assert.equal(clearedDraftsBody.data.watchlist.length, 1);
     assert.equal(clearedDraftsBody.data.drafts.length, 0);
     assert.equal(clearedDraftsBody.data.savedSearches.length, 1);
+    assert.equal(clearedDraftsBody.data.contentFilters.length, 2);
+    assert.equal(clearedDraftsBody.data.replyTemplates.length, 1);
+    assert.equal(clearedDraftsBody.data.posterNotes.length, 1);
+
+    const clearedFilters = await fetch(`${baseUrl}/api/account/private-data?section=contentFilters`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const clearedFiltersBody = await clearedFilters.json();
+    assert.equal(clearedFilters.status, 200);
+    assert.equal(clearedFiltersBody.data.watchlist.length, 1);
+    assert.equal(clearedFiltersBody.data.contentFilters.length, 0);
+
+    const clearedTemplates = await fetch(`${baseUrl}/api/account/private-data?section=replyTemplates`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const clearedTemplatesBody = await clearedTemplates.json();
+    assert.equal(clearedTemplates.status, 200);
+    assert.equal(clearedTemplatesBody.data.watchlist.length, 1);
+    assert.equal(clearedTemplatesBody.data.replyTemplates.length, 0);
+
+    const clearedPosterNotes = await fetch(`${baseUrl}/api/account/private-data?section=posterNotes`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const clearedPosterNotesBody = await clearedPosterNotes.json();
+    assert.equal(clearedPosterNotes.status, 200);
+    assert.equal(clearedPosterNotesBody.data.watchlist.length, 1);
+    assert.equal(clearedPosterNotesBody.data.posterNotes.length, 0);
 
     const clearedAll = await fetch(`${baseUrl}/api/account/private-data`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${token}` }
     });
     const clearedAllBody = await clearedAll.json();
-    assert.deepEqual(clearedAllBody.data, { watchlist: [], drafts: [], savedSearches: [] });
+    assert.deepEqual(clearedAllBody.data, {
+      watchlist: [],
+      drafts: [],
+      savedSearches: [],
+      contentFilters: [],
+      replyTemplates: [],
+      posterNotes: []
+    });
   });
 });
 
@@ -1247,7 +1321,10 @@ test('http ai rewrite does not receive account private data', async () => {
         body: JSON.stringify({
           watchlist: [{ threadId: 'secret-thread', preview: 'khong gui AI' }],
           drafts: [{ key: 'draft:thread:hoc-tap', body: 'draft server secret' }],
-          savedSearches: [{ boardSlug: 'hoc-tap', query: 'secret search' }]
+          savedSearches: [{ boardSlug: 'hoc-tap', query: 'secret search' }],
+          contentFilters: [{ type: 'keyword', value: 'secret filter' }],
+          replyTemplates: [{ title: 'secret template', body: 'private template text' }],
+          posterNotes: [{ posterId: 'ID:SECRET', label: 'private note', note: 'do not send this' }]
         })
       });
 

@@ -251,7 +251,9 @@ describe('Account settings', () => {
       theme: 'burichan',
       displayPreferences: {
         compactThreads: true,
-        hideThumbnails: true
+        hideThumbnails: true,
+        watchedUnreadOnly: true,
+        watchedSort: 'board'
       },
       notificationPreferences: {
         email: true,
@@ -264,7 +266,9 @@ describe('Account settings', () => {
     assert.strictEqual(updated.settings.theme, 'burichan');
     assert.deepStrictEqual(updated.settings.displayPreferences, {
       compactThreads: true,
-      hideThumbnails: true
+      hideThumbnails: true,
+      watchedUnreadOnly: true,
+      watchedSort: 'board'
     });
     assert.deepStrictEqual(updated.settings.notificationPreferences, {
       email: true,
@@ -286,7 +290,7 @@ describe('Account settings', () => {
 });
 
 describe('Account private data', () => {
-  it('syncs watchlist, drafts and saved searches for existing user', async () => {
+  it('syncs watchlist, drafts, saved searches, content filters, reply templates and poster notes for existing user', async () => {
     const service = createTestService();
     const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const data = await service.updateAccountPrivateData(account.id, {
@@ -320,6 +324,49 @@ describe('Account private data', () => {
           query: 'lich thi',
           label: 'hoc tap: lich thi'
         }
+      ],
+      contentFilters: [
+        {
+          id: 'filter-1',
+          type: 'keyword',
+          value: 'spoiler exam',
+          label: 'exam spoiler'
+        },
+        {
+          type: 'poster',
+          value: 'ID:ABCD1234',
+          label: 'noisy poster',
+          boardSlug: 'hoc-tap'
+        },
+        {
+          type: 'invalid',
+          value: 'drop me'
+        }
+      ],
+      replyTemplates: [
+        {
+          id: 'template-1',
+          title: 'Can hoi them',
+          body: 'Ban co the noi ro hon khong?',
+          boardSlug: 'hoc-tap'
+        },
+        {
+          title: 'Bo trong',
+          body: ''
+        }
+      ],
+      posterNotes: [
+        {
+          id: 'note-1',
+          posterId: 'ID:ABCD1234',
+          label: 'Nguoi hay spam',
+          note: 'Thuong lap lai mot noi dung',
+          boardSlug: 'hoc-tap'
+        },
+        {
+          posterId: '',
+          label: 'Bo qua'
+        }
       ]
     });
 
@@ -328,6 +375,14 @@ describe('Account private data', () => {
     assert.equal(data.drafts.length, 1);
     assert.equal(data.drafts[0].body, 'Ban nhap rieng tu');
     assert.equal(data.savedSearches.length, 1);
+    assert.equal(data.contentFilters.length, 2);
+    assert.equal(data.contentFilters[0].type, 'keyword');
+    assert.equal(data.contentFilters[1].boardSlug, 'hoc-tap');
+    assert.equal(data.replyTemplates.length, 1);
+    assert.equal(data.replyTemplates[0].title, 'Can hoi them');
+    assert.equal(data.posterNotes.length, 1);
+    assert.equal(data.posterNotes[0].posterId, 'ID:ABCD1234');
+    assert.equal(data.posterNotes[0].boardSlug, 'hoc-tap');
 
     const retrieved = await service.getAccountPrivateData(account.id);
     assert.deepEqual(retrieved, data);
@@ -339,16 +394,34 @@ describe('Account private data', () => {
     await service.updateAccountPrivateData(account.id, {
       watchlist: [{ threadId: 'thread-1' }],
       drafts: [{ key: 'draft:thread:hoc-tap', body: 'Draft' }],
-      savedSearches: [{ boardSlug: 'hoc-tap', query: 'exam' }]
+      savedSearches: [{ boardSlug: 'hoc-tap', query: 'exam' }],
+      contentFilters: [{ type: 'keyword', value: 'spoiler' }],
+      replyTemplates: [{ title: 'Hoi them', body: 'Ban noi them duoc khong?' }],
+      posterNotes: [{ posterId: 'ID:ABCD1234', label: 'Nguoi quen' }]
     });
 
     const withoutDrafts = await service.clearAccountPrivateData(account.id, 'drafts');
     assert.equal(withoutDrafts.watchlist.length, 1);
     assert.equal(withoutDrafts.drafts.length, 0);
     assert.equal(withoutDrafts.savedSearches.length, 1);
+    assert.equal(withoutDrafts.contentFilters.length, 1);
+    assert.equal(withoutDrafts.replyTemplates.length, 1);
+    assert.equal(withoutDrafts.posterNotes.length, 1);
+
+    const withoutFilters = await service.clearAccountPrivateData(account.id, 'contentFilters');
+    assert.equal(withoutFilters.watchlist.length, 1);
+    assert.equal(withoutFilters.contentFilters.length, 0);
+
+    const withoutTemplates = await service.clearAccountPrivateData(account.id, 'replyTemplates');
+    assert.equal(withoutTemplates.watchlist.length, 1);
+    assert.equal(withoutTemplates.replyTemplates.length, 0);
+
+    const withoutPosterNotes = await service.clearAccountPrivateData(account.id, 'posterNotes');
+    assert.equal(withoutPosterNotes.watchlist.length, 1);
+    assert.equal(withoutPosterNotes.posterNotes.length, 0);
 
     const empty = await service.clearAccountPrivateData(account.id);
-    assert.deepEqual(empty, { watchlist: [], drafts: [], savedSearches: [] });
+    assert.deepEqual(empty, { watchlist: [], drafts: [], savedSearches: [], contentFilters: [], replyTemplates: [], posterNotes: [] });
   });
 });
 

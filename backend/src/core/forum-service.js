@@ -63,8 +63,13 @@ const ACCOUNT_THEMES = new Set(['yotsuba-b', 'yotsuba', 'tomorrow', 'burichan'])
 const MAX_ACCOUNT_WATCHLIST_ITEMS = 100;
 const MAX_ACCOUNT_DRAFTS = 40;
 const MAX_ACCOUNT_SAVED_SEARCHES = 50;
+const MAX_ACCOUNT_CONTENT_FILTERS = 80;
+const MAX_ACCOUNT_REPLY_TEMPLATES = 40;
+const MAX_ACCOUNT_POSTER_NOTES = 120;
 const MAX_ACCOUNT_DRAFT_LENGTH = 12_000;
-const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails'];
+const MAX_ACCOUNT_REPLY_TEMPLATE_LENGTH = 5_000;
+const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails', 'watchedUnreadOnly'];
+const ACCOUNT_WATCHED_SORTS = new Set(['unread', 'recent', 'board']);
 const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions', 'browserWatchedThreads'];
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
@@ -608,7 +613,9 @@ function defaultAccountSettings() {
     emailNotifications: false,
     displayPreferences: {
       compactThreads: false,
-      hideThumbnails: false
+      hideThumbnails: false,
+      watchedUnreadOnly: false,
+      watchedSort: 'unread'
     },
     notificationPreferences: {
       email: false,
@@ -676,6 +683,9 @@ function normalizeAccountSettings(state, settings = {}, current = defaultAccount
         safe.displayPreferences[key] = settings.displayPreferences[key];
       }
     }
+    if (ACCOUNT_WATCHED_SORTS.has(settings.displayPreferences.watchedSort)) {
+      safe.displayPreferences.watchedSort = settings.displayPreferences.watchedSort;
+    }
   }
   if (settings.notificationPreferences && typeof settings.notificationPreferences === 'object') {
     for (const key of ACCOUNT_NOTIFICATION_PREFS) {
@@ -703,6 +713,13 @@ function safeDraftBody(value = '') {
   return String(value ?? '')
     .replace(/\u0000/g, '')
     .slice(0, MAX_ACCOUNT_DRAFT_LENGTH);
+}
+
+function safeReplyTemplateBody(value = '') {
+  return String(value ?? '')
+    .replace(/\u0000/g, '')
+    .trim()
+    .slice(0, MAX_ACCOUNT_REPLY_TEMPLATE_LENGTH);
 }
 
 function normalizePrivateItems(value) {
@@ -789,11 +806,95 @@ function normalizeAccountSavedSearches(value = []) {
     .slice(0, MAX_ACCOUNT_SAVED_SEARCHES);
 }
 
+function normalizeAccountContentFilters(value = []) {
+  const seen = new Set();
+  const allowedTypes = new Set(['keyword', 'poster', 'thread', 'post']);
+  return normalizePrivateItems(value)
+    .map((item) => {
+      const type = safePrivateString(item.type, 40).toLowerCase();
+      const value = safePrivateString(item.value || item.keyword || item.posterHash || item.id || item.key, 160);
+      return {
+        id: safePrivateString(item.id || item.key || crypto.randomUUID(), 120),
+        type,
+        value,
+        label: safePrivateString(item.label, 180),
+        boardSlug: safePrivateString(item.boardSlug, 80),
+        createdAt: safePrivateString(item.createdAt, 80)
+      };
+    })
+    .filter((item) => allowedTypes.has(item.type) && item.value)
+    .filter((item) => {
+      const key = `${item.type}:${item.boardSlug}:${item.value.toLowerCase()}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_ACCOUNT_CONTENT_FILTERS);
+}
+
+function normalizeAccountReplyTemplates(value = []) {
+  const seen = new Set();
+  return normalizePrivateItems(value)
+    .map((item) => {
+      const body = safeReplyTemplateBody(item.body || item.text || item.value);
+      return {
+        id: safePrivateString(item.id || item.key || crypto.randomUUID(), 120),
+        title: safePrivateString(item.title || item.label || body.split('\n')[0], 120),
+        body,
+        boardSlug: safePrivateString(item.boardSlug, 80),
+        createdAt: safePrivateString(item.createdAt, 80),
+        updatedAt: safePrivateString(item.updatedAt || item.createdAt, 80)
+      };
+    })
+    .filter((item) => item.body)
+    .filter((item) => {
+      const key = `${item.boardSlug}:${item.title.toLowerCase()}:${item.body}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_ACCOUNT_REPLY_TEMPLATES);
+}
+
+function normalizeAccountPosterNotes(value = []) {
+  const seen = new Set();
+  return normalizePrivateItems(value)
+    .map((item) => {
+      const posterId = safePrivateString(item.posterId || item.poster || item.value || item.key, 80);
+      return {
+        id: safePrivateString(item.id || item.key || crypto.randomUUID(), 120),
+        posterId,
+        boardSlug: safePrivateString(item.boardSlug, 80),
+        label: safePrivateString(item.label || item.title, 120),
+        note: safePrivateString(item.note || item.body || item.text, 500),
+        createdAt: safePrivateString(item.createdAt, 80),
+        updatedAt: safePrivateString(item.updatedAt || item.createdAt, 80)
+      };
+    })
+    .filter((item) => item.posterId && (item.label || item.note))
+    .filter((item) => {
+      const key = `${item.boardSlug}:${item.posterId.toLowerCase()}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    })
+    .slice(0, MAX_ACCOUNT_POSTER_NOTES);
+}
+
 function defaultAccountPrivateData() {
   return {
     watchlist: [],
     drafts: [],
-    savedSearches: []
+    savedSearches: [],
+    contentFilters: [],
+    replyTemplates: [],
+    posterNotes: []
   };
 }
 
@@ -803,7 +904,10 @@ function normalizeAccountPrivateData(value = {}, current = defaultAccountPrivate
   const safe = {
     watchlist: normalizeAccountWatchlist(previous.watchlist),
     drafts: normalizeAccountDrafts(previous.drafts),
-    savedSearches: normalizeAccountSavedSearches(previous.savedSearches)
+    savedSearches: normalizeAccountSavedSearches(previous.savedSearches),
+    contentFilters: normalizeAccountContentFilters(previous.contentFilters),
+    replyTemplates: normalizeAccountReplyTemplates(previous.replyTemplates),
+    posterNotes: normalizeAccountPosterNotes(previous.posterNotes)
   };
   if (Object.hasOwn(input, 'watchlist')) {
     safe.watchlist = normalizeAccountWatchlist(input.watchlist);
@@ -813,6 +917,15 @@ function normalizeAccountPrivateData(value = {}, current = defaultAccountPrivate
   }
   if (Object.hasOwn(input, 'savedSearches')) {
     safe.savedSearches = normalizeAccountSavedSearches(input.savedSearches);
+  }
+  if (Object.hasOwn(input, 'contentFilters')) {
+    safe.contentFilters = normalizeAccountContentFilters(input.contentFilters);
+  }
+  if (Object.hasOwn(input, 'replyTemplates')) {
+    safe.replyTemplates = normalizeAccountReplyTemplates(input.replyTemplates);
+  }
+  if (Object.hasOwn(input, 'posterNotes')) {
+    safe.posterNotes = normalizeAccountPosterNotes(input.posterNotes);
   }
   return safe;
 }
@@ -2694,7 +2807,7 @@ export function createForumService({
     },
 
     async clearAccountPrivateData(userId, section = '') {
-      const allowedSections = new Set(['watchlist', 'drafts', 'savedSearches']);
+      const allowedSections = new Set(['watchlist', 'drafts', 'savedSearches', 'contentFilters', 'replyTemplates', 'posterNotes']);
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
