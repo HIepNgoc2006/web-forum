@@ -1783,6 +1783,49 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   margin: 0;
 }
 
+.content-filter-manager,
+.reply-template-manager,
+.poster-note-manager {
+  display: grid;
+  gap: 6px;
+}
+
+.content-filter-form {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.8fr) minmax(160px, 1.6fr) minmax(120px, 1fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.reply-template-form {
+  display: grid;
+  grid-template-columns: minmax(96px, 0.8fr) minmax(120px, 1fr) minmax(160px, 1.8fr) auto;
+  gap: 6px;
+  align-items: start;
+}
+
+.poster-note-form {
+  display: grid;
+  grid-template-columns: minmax(100px, 0.8fr) minmax(120px, 1fr) minmax(120px, 0.9fr) minmax(160px, 1.4fr) auto;
+  gap: 6px;
+  align-items: center;
+}
+
+.content-filter-form input,
+.content-filter-form select,
+.reply-template-form input,
+.reply-template-form select,
+.reply-template-form textarea,
+.poster-note-form input,
+.poster-note-form select {
+  min-width: 0;
+}
+
+.reply-template-form textarea {
+  min-height: 64px;
+  resize: vertical;
+}
+
 .account-actions {
   display: flex;
   flex-wrap: wrap;
@@ -2361,6 +2404,12 @@ body.display-compact .post-body {
 
   .login-panel .otp-field-row + .form-actions {
     margin-left: min(40%, 138px);
+  }
+
+  .content-filter-form,
+  .reply-template-form,
+  .poster-note-form {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   .privacy-warning {

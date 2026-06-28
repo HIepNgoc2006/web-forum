@@ -686,6 +686,93 @@ function writeSavedSearches(savedSearches) {
   }
 }
 
+function privateItemId() {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+}
+
+function readContentFilters() {
+  if (state.accountToken && state.accountPrivateData) {
+    return normalizeContentFilters(state.accountPrivateData.contentFilters);
+  }
+  return normalizeContentFilters(readLocalList(contentFiltersKey));
+}
+
+function writeContentFilters(filters) {
+  const items = normalizeContentFilters(filters);
+  writeJsonLocal(contentFiltersKey, items);
+  if (state.accountToken && state.accountPrivateData) {
+    state.accountPrivateData.contentFilters = items;
+    scheduleAccountPrivateDataSave();
+  }
+  return items;
+}
+
+function addContentFilter(filter) {
+  return writeContentFilters([{ id: privateItemId(), createdAt: new Date().toISOString(), ...filter }, ...readContentFilters()]);
+}
+
+function removeContentFilter(id) {
+  return writeContentFilters(readContentFilters().filter((filter) => filter.id !== id));
+}
+
+function readReplyTemplates() {
+  if (state.accountToken && state.accountPrivateData) {
+    return normalizeReplyTemplates(state.accountPrivateData.replyTemplates);
+  }
+  return normalizeReplyTemplates(readLocalList(replyTemplatesKey));
+}
+
+function writeReplyTemplates(templates) {
+  const items = normalizeReplyTemplates(templates);
+  writeJsonLocal(replyTemplatesKey, items);
+  if (state.accountToken && state.accountPrivateData) {
+    state.accountPrivateData.replyTemplates = items;
+    scheduleAccountPrivateDataSave();
+  }
+  return items;
+}
+
+function addReplyTemplate(template) {
+  return writeReplyTemplates([
+    { id: privateItemId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...template },
+    ...readReplyTemplates()
+  ]);
+}
+
+function removeReplyTemplate(id) {
+  return writeReplyTemplates(readReplyTemplates().filter((template) => template.id !== id));
+}
+
+function readPosterNotes() {
+  if (state.accountToken && state.accountPrivateData) {
+    return normalizePosterNotes(state.accountPrivateData.posterNotes);
+  }
+  return normalizePosterNotes(readLocalList(posterNotesKey));
+}
+
+function writePosterNotes(notes) {
+  const items = normalizePosterNotes(notes);
+  writeJsonLocal(posterNotesKey, items);
+  if (state.accountToken && state.accountPrivateData) {
+    state.accountPrivateData.posterNotes = items;
+    scheduleAccountPrivateDataSave();
+  }
+  return items;
+}
+
+function addPosterNote(note) {
+  return writePosterNotes([
+    { id: privateItemId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...note },
+    ...readPosterNotes()
+  ]);
+}
+
+function removePosterNote(id) {
+  return writePosterNotes(readPosterNotes().filter((note) => note.id !== id));
+}
+
 function parseDraftKey(key = '') {
   const [, kind = '', id = ''] = String(key).split(':');
   return { kind, id };
@@ -2009,6 +2096,123 @@ function renderSavedSearches() {
     .join('');
 }
 
+function privateBoardOptions() {
+  return [
+    '<option value="">Tất cả bảng</option>',
+    ...state.boards.map((board) => `<option value="${escapeHtml(board.slug)}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</option>`)
+  ].join('');
+}
+
+function filterTypeLabel(type = '') {
+  if (type === 'poster') return 'Poster ID';
+  if (type === 'thread') return 'Thread';
+  if (type === 'post') return 'Bài';
+  return 'Từ khóa';
+}
+
+function renderContentFilters() {
+  const filters = readContentFilters();
+  const list = filters.length
+    ? filters
+        .map((filter) => {
+          const board = filter.boardSlug ? `/${filter.boardSlug}/` : 'Tất cả';
+          const label = filter.label || filter.value;
+          return `
+            <div class="watch-item">
+              <div class="watch-thread-link">
+                <span class="watch-board">${escapeHtml(filterTypeLabel(filter.type))}</span>
+                <span class="watch-preview">${escapeHtml(label)}</span>
+                <span class="watch-stats">${escapeHtml(board)}</span>
+              </div>
+              <button class="link-button watch-remove" data-remove-content-filter="${escapeHtml(filter.id)}" type="button">[Xóa]</button>
+            </div>
+          `;
+        })
+        .join('')
+    : '<p class="latest-empty">Chưa có bộ lọc nội dung nào.</p>';
+  return `
+    <div class="content-filter-manager">
+      ${list}
+      <div class="content-filter-form">
+        <select data-content-filter-type aria-label="Loại bộ lọc">
+          <option value="keyword">Từ khóa</option>
+          <option value="poster">Poster ID</option>
+        </select>
+        <input data-content-filter-value maxlength="160" placeholder="từ khóa hoặc ID" />
+        <select data-content-filter-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
+        <button class="ghost-button" data-add-content-filter type="button">[Thêm]</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderReplyTemplates() {
+  const templates = readReplyTemplates();
+  const list = templates.length
+    ? templates
+        .map((template) => {
+          const board = template.boardSlug ? `/${template.boardSlug}/` : 'Tất cả';
+          const preview = template.body.length > 140 ? `${template.body.slice(0, 140)}...` : template.body;
+          return `
+            <div class="watch-item">
+              <div class="watch-thread-link">
+                <span class="watch-board">${escapeHtml(template.title)}</span>
+                <span class="watch-preview">${escapeHtml(preview)}</span>
+                <span class="watch-stats">${escapeHtml(board)}</span>
+              </div>
+              <button class="link-button watch-remove" data-remove-reply-template="${escapeHtml(template.id)}" type="button">[Xóa]</button>
+            </div>
+          `;
+        })
+        .join('')
+    : '<p class="latest-empty">Chưa có mẫu trả lời nào.</p>';
+  return `
+    <div class="reply-template-manager">
+      ${list}
+      <div class="reply-template-form">
+        <input data-reply-template-title maxlength="120" placeholder="tên mẫu" />
+        <select data-reply-template-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
+        <textarea data-reply-template-body maxlength="5000" rows="3" placeholder="nội dung mẫu"></textarea>
+        <button class="ghost-button" data-add-reply-template type="button">[Thêm]</button>
+      </div>
+    </div>
+  `;
+}
+
+function renderPosterNotes() {
+  const notes = readPosterNotes();
+  const list = notes.length
+    ? notes
+        .map((note) => {
+          const board = note.boardSlug ? `/${note.boardSlug}/` : 'Tất cả';
+          const label = note.label || note.note || note.posterId;
+          return `
+            <div class="watch-item">
+              <div class="watch-thread-link">
+                <span class="watch-board">${escapeHtml(note.posterId)}</span>
+                <span class="watch-preview">${escapeHtml(label)}</span>
+                <span class="watch-stats">${escapeHtml(board)}</span>
+              </div>
+              <button class="link-button watch-remove" data-remove-poster-note="${escapeHtml(note.id)}" type="button">[Xóa]</button>
+            </div>
+          `;
+        })
+        .join('')
+    : '<p class="latest-empty">Chưa có ghi chú Poster ID nào.</p>';
+  return `
+    <div class="poster-note-manager">
+      ${list}
+      <div class="poster-note-form">
+        <input data-poster-note-id maxlength="80" placeholder="ID:ABCD1234" />
+        <input data-poster-note-label maxlength="120" placeholder="nhãn ngắn" />
+        <select data-poster-note-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
+        <input data-poster-note-text maxlength="500" placeholder="ghi chú" />
+        <button class="ghost-button" data-add-poster-note type="button">[Thêm]</button>
+      </div>
+    </div>
+  `;
+}
+
 function renderAccountPrivateData() {
   if (!els.accountPrivateDataPanel || !els.accountPrivateDataSummary) {
     return;
@@ -2035,15 +2239,15 @@ function renderAccountPrivateData() {
     </section>
     <section>
       <h3>Bộ lọc nội dung</h3>
-      <p>${Number(data.contentFilters?.length || 0).toLocaleString()} bộ lọc đang đồng bộ.</p>
+      ${renderContentFilters()}
     </section>
     <section>
       <h3>Mẫu trả lời</h3>
-      <p>${Number(data.replyTemplates?.length || 0).toLocaleString()} mẫu trả lời đang đồng bộ.</p>
+      ${renderReplyTemplates()}
     </section>
     <section>
       <h3>Ghi chú Poster ID</h3>
-      <p>${Number(data.posterNotes?.length || 0).toLocaleString()} ghi chú đang đồng bộ.</p>
+      ${renderPosterNotes()}
     </section>
   `;
 }
@@ -7465,6 +7669,79 @@ function bindEvents() {
     const removeSavedSearchButton = event.target.closest('[data-remove-saved-search]');
     if (removeSavedSearchButton) {
       removeSavedSearch(removeSavedSearchButton.dataset.removeSavedSearch);
+      return;
+    }
+
+    const addContentFilterButton = event.target.closest('[data-add-content-filter]');
+    if (addContentFilterButton) {
+      const form = addContentFilterButton.closest('.content-filter-form');
+      const type = form?.querySelector('[data-content-filter-type]')?.value || 'keyword';
+      const value = form?.querySelector('[data-content-filter-value]')?.value.trim() || '';
+      const boardSlug = form?.querySelector('[data-content-filter-board]')?.value || '';
+      if (!value) {
+        showToast('Nhập giá trị bộ lọc trước.');
+        return;
+      }
+      addContentFilter({ type, value, boardSlug });
+      renderAccountPrivateData();
+      showToast('Đã thêm bộ lọc nội dung.');
+      return;
+    }
+
+    const removeContentFilterButton = event.target.closest('[data-remove-content-filter]');
+    if (removeContentFilterButton) {
+      removeContentFilter(removeContentFilterButton.dataset.removeContentFilter);
+      renderAccountPrivateData();
+      showToast('Đã xóa bộ lọc nội dung.');
+      return;
+    }
+
+    const addReplyTemplateButton = event.target.closest('[data-add-reply-template]');
+    if (addReplyTemplateButton) {
+      const form = addReplyTemplateButton.closest('.reply-template-form');
+      const title = form?.querySelector('[data-reply-template-title]')?.value.trim() || '';
+      const body = form?.querySelector('[data-reply-template-body]')?.value.trim() || '';
+      const boardSlug = form?.querySelector('[data-reply-template-board]')?.value || '';
+      if (!body) {
+        showToast('Nhập nội dung mẫu trước.');
+        return;
+      }
+      addReplyTemplate({ title: title || body.slice(0, 40), body, boardSlug });
+      renderAccountPrivateData();
+      showToast('Đã thêm mẫu trả lời.');
+      return;
+    }
+
+    const removeReplyTemplateButton = event.target.closest('[data-remove-reply-template]');
+    if (removeReplyTemplateButton) {
+      removeReplyTemplate(removeReplyTemplateButton.dataset.removeReplyTemplate);
+      renderAccountPrivateData();
+      showToast('Đã xóa mẫu trả lời.');
+      return;
+    }
+
+    const addPosterNoteButton = event.target.closest('[data-add-poster-note]');
+    if (addPosterNoteButton) {
+      const form = addPosterNoteButton.closest('.poster-note-form');
+      const posterId = form?.querySelector('[data-poster-note-id]')?.value.trim() || '';
+      const label = form?.querySelector('[data-poster-note-label]')?.value.trim() || '';
+      const note = form?.querySelector('[data-poster-note-text]')?.value.trim() || '';
+      const boardSlug = form?.querySelector('[data-poster-note-board]')?.value || '';
+      if (!posterId) {
+        showToast('Nhập Poster ID trước.');
+        return;
+      }
+      addPosterNote({ posterId, label, note, boardSlug });
+      renderAccountPrivateData();
+      showToast('Đã thêm ghi chú Poster ID.');
+      return;
+    }
+
+    const removePosterNoteButton = event.target.closest('[data-remove-poster-note]');
+    if (removePosterNoteButton) {
+      removePosterNote(removePosterNoteButton.dataset.removePosterNote);
+      renderAccountPrivateData();
+      showToast('Đã xóa ghi chú Poster ID.');
       return;
     }
 
