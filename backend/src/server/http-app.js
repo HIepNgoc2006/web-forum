@@ -111,6 +111,22 @@ function fail(response, error) {
     }
   });
 }
+function logRequestFailure(request, routePath, error) {
+  const statusCode = error.statusCode ?? 500;
+  const details = {
+    method: request.method,
+    url: request.url,
+    routePath,
+    statusCode,
+    message: error.message
+  };
+  if (statusCode >= 500) {
+    console.error('API ERROR:', details, error);
+    return;
+  }
+  console.warn('API REQUEST FAILED:', details);
+}
+
 
 function metricNumber(value) {
   const number = Number(value);
@@ -1813,7 +1829,7 @@ export function createHttpServer({
       error.statusCode = 404;
       throw error;
     } catch (error) {
-      console.error('API ERROR:', error);
+      logRequestFailure(request, routePath, error);
       fail(response, error);
     }
   });

@@ -548,9 +548,14 @@ test('http admin role demotion and disable affect existing tokens', async () => 
 test('http static serving treats missing assets as 404 without 500 logging', async () => {
   const staticRoot = path.resolve('backend/test/tmp-static');
   const originalError = console.error;
+  const originalWarn = console.warn;
   const logs = [];
+  const warnings = [];
   console.error = (...args) => {
     logs.push(args);
+  };
+  console.warn = (...args) => {
+    warnings.push(args);
   };
 
   try {
@@ -577,12 +582,15 @@ test('http static serving treats missing assets as 404 without 500 logging', asy
       { staticRoot }
     );
 
+    assert.equal(logs.length, 0);
+    assert.equal(warnings.length, 4);
     assert.equal(
-      logs.some((args) => String(args[0]).includes('HTTP 500 ERROR')),
-      false
+      warnings.every((args) => String(args[0]).includes('API REQUEST FAILED:') && args[1]?.statusCode === 404),
+      true
     );
   } finally {
     console.error = originalError;
+    console.warn = originalWarn;
     await fs.rm(staticRoot, { recursive: true, force: true });
   }
 });
