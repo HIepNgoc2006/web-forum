@@ -661,6 +661,35 @@ button {
   color: var(--muted);
 }
 
+.dice-rolls {
+  clear: both;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 12px;
+}
+
+.dice-roll::before {
+  content: "Xúc xắc: ";
+  color: var(--muted);
+}
+
+.dice-roll {
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.42);
+  padding: 2px 5px;
+}
+
+.dice-expression {
+  font-family: monospace;
+  font-weight: bold;
+}
+
+.dice-values {
+  color: var(--muted);
+}
+
 .hot-board-list {
   padding: 4px 8px 8px;
   overflow-x: auto;

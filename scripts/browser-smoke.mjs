@@ -128,7 +128,7 @@ async function createSeedThread() {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      body: 'Bài kiểm thử browser smoke cho CI',
+      body: 'Bài kiểm thử browser smoke cho CI\n#dice 1d6',
       captchaToken: 'dev-pass',
       posterToken: 'ci-poster'
     })
@@ -604,10 +604,12 @@ async function main() {
                 await new Promise((resolve) => setTimeout(resolve, 50));
               }
               const watched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
+              const diceRollText = document.querySelector('.dice-roll')?.textContent || '';
               return {
                 count: notifications.length,
                 first: notifications[0] || null,
                 watched,
+                diceRollText,
                 preferences: JSON.parse(localStorage.getItem('notificationPreferences') || '{}')
               };
             })()`,
@@ -623,6 +625,9 @@ async function main() {
           }
           if (!payload.preferences.browserWatchedThreads) {
             throw new Error('thread desktop did not persist browser notification opt-in.');
+          }
+          if (!payload.diceRollText?.includes('1d6')) {
+            throw new Error(`thread desktop did not render dice roll result: ${payload.diceRollText || 'missing'}`);
           }
           if (!Number.isFinite(Number(payload.watched.maxNumber))) {
             throw new Error('thread desktop did not keep watched thread metadata.');

@@ -1026,6 +1026,59 @@ test('safe thread is public, gets global number, and emits realtime event', asyn
   assert.equal(logs[0].moderationStatus, 'Safe');
 });
 
+test('posts store immutable dice rolls from imageboard roll commands', async () => {
+  const randomValues = [3, 4, 2, 12];
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z'),
+    randomInt: () => randomValues.shift() ?? 1
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Gieo thu #dice 2d6+1\nThem [dice]1d4[/dice]',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  const comment = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Reply roll /roll 1d20 - 2',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8'
+  });
+  const detail = await service.getThread(created.thread.id);
+  const listed = await service.listThreads('hoc-tap');
+
+  assert.deepEqual(created.thread.diceRolls, [
+    {
+      id: '1',
+      expression: '2d6+1',
+      dice: 2,
+      sides: 6,
+      modifier: 1,
+      rolls: [3, 4],
+      total: 8
+    },
+    {
+      id: '2',
+      expression: '1d4',
+      dice: 1,
+      sides: 4,
+      modifier: 0,
+      rolls: [2],
+      total: 2
+    }
+  ]);
+  assert.equal(comment.comment.diceRolls[0].expression, '1d20-2');
+  assert.deepEqual(comment.comment.diceRolls[0].rolls, [12]);
+  assert.equal(comment.comment.diceRolls[0].total, 10);
+  assert.deepEqual(detail.thread.diceRolls, created.thread.diceRolls);
+  assert.deepEqual(detail.comments[0].diceRolls, comment.comment.diceRolls);
+  assert.deepEqual(listed[0].diceRolls, created.thread.diceRolls);
+});
+
 test('display name is optional per post and separated from anonymous identity', async () => {
   const service = createForumService({
     store: createMemoryStore(),

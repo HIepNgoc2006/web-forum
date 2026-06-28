@@ -3968,6 +3968,30 @@ function backlinksHtml(backlinks = []) {
   `;
 }
 
+function diceRollsHtml(diceRolls = []) {
+  if (!Array.isArray(diceRolls) || diceRolls.length === 0) {
+    return '';
+  }
+  return `
+    <div class="dice-rolls" aria-label="Kết quả gieo xúc xắc">
+      ${diceRolls
+        .map((roll) => {
+          const rolls = Array.isArray(roll.rolls) ? roll.rolls.map((value) => Number(value)).filter(Number.isFinite) : [];
+          const modifier = Number(roll.modifier) || 0;
+          const modifierText = modifier > 0 ? ` + ${modifier}` : modifier < 0 ? ` - ${Math.abs(modifier)}` : '';
+          return `
+            <span class="dice-roll">
+              <span class="dice-expression">${escapeHtml(roll.expression || '')}</span>
+              <span class="dice-values">[${escapeHtml(rolls.join(', '))}${escapeHtml(modifierText)}]</span>
+              <strong>${escapeHtml(roll.total ?? '')}</strong>
+            </span>
+          `;
+        })
+        .join('')}
+    </div>
+  `;
+}
+
 function postHtml(post, type = 'post', options = {}) {
   const classes = String(type)
     .split(/\s+/)
@@ -3981,6 +4005,7 @@ function postHtml(post, type = 'post', options = {}) {
       ${imageHtml(post)}
       ${meta(post, options)}
       <div class="post-body">${renderPostLines(post.bodyLines || [], options)}</div>
+      ${diceRollsHtml(post.diceRolls)}
       ${backlinksHtml(post.backlinks)}
       ${classes.includes('op') ? pollHtml(post.poll, options.canReply !== false) : ''}
     </article>
@@ -4391,6 +4416,7 @@ function renderBoardThreads(threads) {
             ${meta(thread, { replyAction: false })}
             <a class="thread-open" href="#thread/${thread.id}">[Trả lời]</a>
             <div class="post-body">${renderPostLines(thread.bodyLines || [], { opNumber: thread.globalNumber })}</div>
+            ${diceRollsHtml(thread.diceRolls)}
             <div class="thread-meta">
               <span>${thread.replyCount} trả lời</span>
               <span>đẩy lúc ${new Date(thread.bumpedAt).toLocaleTimeString()}</span>

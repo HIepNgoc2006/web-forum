@@ -67,6 +67,10 @@ const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails'];
 const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions', 'browserWatchedThreads'];
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
+const MAX_DICE_ROLLS_PER_POST = 6;
+const MAX_DICE_COUNT = 20;
+const MAX_DICE_SIDES = 1_000;
+const MAX_DICE_MODIFIER = 999;
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 const REPORT_CATEGORIES = new Set(['Spam', 'Toxic', 'PII', 'Fake News', 'Illegal', 'Other']);
 const APPEAL_RESOLUTION_STATUSES = new Set(['accepted', 'rejected']);
@@ -836,6 +840,78 @@ function publicVotes(post) {
   return { up, down, score: up - down };
 }
 
+function rollDie(randomInt, sides) {
+  const value = Number(randomInt(1, sides + 1));
+  if (Number.isInteger(value) && value >= 1 && value <= sides) {
+    return value;
+  }
+  return crypto.randomInt(1, sides + 1);
+}
+
+function normalizeDiceModifier(sign, value) {
+  const modifier = Math.min(Number(value) || 0, MAX_DICE_MODIFIER);
+  return sign === '-' ? -modifier : modifier;
+}
+
+function diceExpression({ dice, sides, modifier }) {
+  const suffix = modifier > 0 ? `+${modifier}` : modifier < 0 ? String(modifier) : '';
+  return `${dice}d${sides}${suffix}`;
+}
+
+function createDiceRoll({ dice, sides, modifier }, randomInt, id) {
+  const rolls = Array.from({ length: dice }, () => rollDie(randomInt, sides));
+  return {
+    id: String(id),
+    expression: diceExpression({ dice, sides, modifier }),
+    dice,
+    sides,
+    modifier,
+    rolls,
+    total: rolls.reduce((sum, value) => sum + value, modifier)
+  };
+}
+
+function parseDiceMatches(body, pattern, randomInt, rolls) {
+  for (const match of String(body).matchAll(pattern)) {
+    if (rolls.length >= MAX_DICE_ROLLS_PER_POST) {
+      break;
+    }
+    const dice = Number(match.groups?.dice);
+    const sides = Number(match.groups?.sides);
+    if (!Number.isInteger(dice) || !Number.isInteger(sides) || dice < 1 || dice > MAX_DICE_COUNT || sides < 2 || sides > MAX_DICE_SIDES) {
+      continue;
+    }
+    rolls.push(
+      createDiceRoll(
+        {
+          dice,
+          sides,
+          modifier: normalizeDiceModifier(match.groups?.sign, match.groups?.modifier)
+        },
+        randomInt,
+        rolls.length + 1
+      )
+    );
+  }
+}
+
+function createDiceRolls(body, randomInt) {
+  const rolls = [];
+  parseDiceMatches(
+    body,
+    /(?:^|\s)(?:#dice|\/roll)\s+(?<dice>\d{1,2})d(?<sides>\d{1,4})(?:\s*(?<sign>[+-])\s*(?<modifier>\d{1,4}))?/gi,
+    randomInt,
+    rolls
+  );
+  parseDiceMatches(
+    body,
+    /\[dice\]\s*(?<dice>\d{1,2})d(?<sides>\d{1,4})(?:\s*(?<sign>[+-])\s*(?<modifier>\d{1,4}))?\s*\[\/dice\]/gi,
+    randomInt,
+    rolls
+  );
+  return rolls;
+}
+
 const COMMENT_SORTS = new Set(['best', 'top', 'new', 'controversial', 'old']);
 
 function normalizeCommentSort(value) {
@@ -1263,6 +1339,7 @@ function serializeThread(thread, comments) {
     slowModeSeconds: Number(thread.slowModeSeconds || 0),
     bodyLines: parsePostText(thread.body),
     votes: publicVotes(thread),
+    diceRolls: Array.isArray(thread.diceRolls) ? thread.diceRolls : [],
     replyCount: publicComments.length
   };
 }
@@ -1278,7 +1355,8 @@ function serializeComment(comment, thread = null) {
     capcode: normalizeCapcode(comment.capcode),
     isOp: Boolean(thread?.opProofHash && comment.opProofHash && thread.opProofHash === comment.opProofHash),
     bodyLines: parsePostText(comment.body),
-    votes: publicVotes(comment)
+    votes: publicVotes(comment),
+    diceRolls: Array.isArray(comment.diceRolls) ? comment.diceRolls : []
   };
 }
 
@@ -1949,7 +2027,8 @@ export function createForumService({
   imageStorage = createInlineImageStorage(),
   totp = defaultTotp,
   webauthn = defaultWebAuthn,
-  moderationConfidenceThreshold = readModerationConfidenceThreshold()
+  moderationConfidenceThreshold = readModerationConfidenceThreshold(),
+  randomInt = crypto.randomInt
 }) {
   // In-memory token blacklist for session revocation (logout).
   // Each entry maps jti/token → revokedAt timestamp string.
@@ -3146,6 +3225,7 @@ export function createForumService({
       const safeImages = validateMediaList({ image, images });
       const poll = createPoll(pollOptions);
       const postingOptions = parsePostingOptions(options);
+      const diceRolls = createDiceRolls(normalizedBody, randomInt);
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
       const createdAt = now().toISOString();
       assertEventBoardOpen(board, createdAt);
@@ -3176,6 +3256,7 @@ export function createForumService({
           images: storedImages,
           poll,
           pollVotes: poll ? {} : undefined,
+          diceRolls,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId: id, salt: daySalt(new Date(createdAt)), posterToken }),
@@ -3335,6 +3416,7 @@ export function createForumService({
       const safeImages = validateMediaList({ image, images });
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
+      const diceRolls = createDiceRolls(normalizedBody, randomInt);
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
       const postCreateDelta = {
         comment: null,
@@ -3383,6 +3465,7 @@ export function createForumService({
           accountId,
           image: storedImages[0] ?? null,
           images: storedImages,
+          diceRolls,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),

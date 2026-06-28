@@ -181,16 +181,23 @@ test('http api creates public thread and protects admin pending queue', async ()
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
-        body: 'Xin tips qua mon',
+        body: 'Xin tips qua mon\n#dice 1d6',
         captchaToken: 'dev-pass'
       })
     });
+    const createdBody = await created.json();
     assert.equal(created.status, 201);
+    assert.equal(createdBody.data.thread.diceRolls.length, 1);
+    assert.equal(createdBody.data.thread.diceRolls[0].expression, '1d6');
+    assert.equal(createdBody.data.thread.diceRolls[0].rolls.length, 1);
+    assert.equal(createdBody.data.thread.diceRolls[0].rolls[0] >= 1, true);
+    assert.equal(createdBody.data.thread.diceRolls[0].rolls[0] <= 6, true);
 
     const listed = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
     const listedBody = await listed.json();
     assert.equal(listedBody.data.length, 1);
     assert.equal(listedBody.data[0].displayName, 'Anonymous');
+    assert.deepEqual(listedBody.data[0].diceRolls, createdBody.data.thread.diceRolls);
 
     const unauthorized = await fetch(`${baseUrl}/api/admin/pending`);
     assert.equal(unauthorized.status, 401);
