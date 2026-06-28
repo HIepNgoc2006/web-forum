@@ -3390,6 +3390,17 @@ function adminBoardPayload(root, { includeSlug = false } = {}) {
     name: root.querySelector('[data-admin-board-name]')?.value || '',
     category: root.querySelector('[data-admin-board-category]')?.value || '',
     description: root.querySelector('[data-admin-board-description]')?.value || '',
+    rules: (root.querySelector('[data-admin-board-rules]')?.value || '')
+      .split(/\r?\n/)
+      .map((rule) => rule.trim())
+      .filter(Boolean),
+    banner: {
+      text: root.querySelector('[data-admin-board-banner-text]')?.value || '',
+      imageUrl: root.querySelector('[data-admin-board-banner-image-url]')?.value || '',
+      altText: root.querySelector('[data-admin-board-banner-alt]')?.value || ''
+    },
+    temporary: Boolean(root.querySelector('[data-admin-board-temporary]')?.checked),
+    eventEndsAt: root.querySelector('[data-admin-board-event-ends-at]')?.value || '',
     isHidden: Boolean(root.querySelector('[data-admin-board-hidden]')?.checked),
     isArchived: Boolean(root.querySelector('[data-admin-board-archived]')?.checked),
     retentionPolicy
@@ -3398,6 +3409,19 @@ function adminBoardPayload(root, { includeSlug = false } = {}) {
     payload.slug = root.querySelector('[data-admin-board-slug]')?.value || '';
   }
   return payload;
+}
+
+function formatDateTimeLocal(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const pad = (number) => String(number).padStart(2, '0');
+  return [
+    date.getFullYear(),
+    pad(date.getMonth() + 1),
+    pad(date.getDate())
+  ].join('-') + 'T' + [pad(date.getHours()), pad(date.getMinutes())].join(':');
 }
 
 function adminUserPayload(root, { includeUsername = false } = {}) {
@@ -3421,12 +3445,23 @@ function adminBoardsHtml(boards) {
   const rows = boards
     .map((board) => {
       const retentionPolicy = board.retentionPolicy || {};
+      const eventEndsAt = formatDateTimeLocal(board.eventEndsAt);
+      const rulesText = Array.isArray(board.rules) ? board.rules.join('\n') : '';
+      const banner = board.banner || {};
       return `
         <tr data-admin-board-row="${escapeHtml(board.slug)}">
           <td class="admin-board-slug-cell" data-label="Board"><code>/${escapeHtml(board.slug)}/</code></td>
           <td data-label="Tên"><input data-admin-board-name aria-label="Tên board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.name)}" maxlength="80" /></td>
           <td data-label="Danh mục"><input data-admin-board-category aria-label="Danh mục board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.category)}" maxlength="80" /></td>
           <td data-label="Mô tả"><input data-admin-board-description aria-label="Mô tả board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.description)}" maxlength="240" /></td>
+          <td data-label="Metadata">
+            <div class="admin-board-metadata">
+              <label><span>Nội quy</span><textarea data-admin-board-rules aria-label="Nội quy board /${escapeHtml(board.slug)}/" rows="3" maxlength="2000">${escapeHtml(rulesText)}</textarea></label>
+              <label><span>Banner</span><input data-admin-board-banner-text aria-label="Banner board /${escapeHtml(board.slug)}/" value="${escapeHtml(banner.text || '')}" maxlength="180" /></label>
+              <label><span>Ảnh banner</span><input data-admin-board-banner-image-url aria-label="URL ảnh banner board /${escapeHtml(board.slug)}/" value="${escapeHtml(banner.imageUrl || '')}" maxlength="300" /></label>
+              <label><span>Alt ảnh</span><input data-admin-board-banner-alt aria-label="Alt ảnh banner board /${escapeHtml(board.slug)}/" value="${escapeHtml(banner.altText || '')}" maxlength="140" /></label>
+            </div>
+          </td>
           <td data-label="Retention">
             <div class="admin-board-retention">
               <label><span>Active</span><input data-admin-board-retention-max aria-label="Giới hạn chủ đề active board /${escapeHtml(board.slug)}/" type="number" min="1" step="1" value="${escapeHtml(retentionPolicy.maxActiveThreadsPerBoard ?? '')}" /></label>
@@ -3439,6 +3474,8 @@ function adminBoardsHtml(boards) {
             <div class="admin-board-flags">
               <label><input data-admin-board-hidden type="checkbox" ${board.isHidden ? 'checked' : ''} /> Ẩn</label>
               <label><input data-admin-board-archived type="checkbox" ${board.isArchived ? 'checked' : ''} /> Lưu trữ</label>
+              <label><input data-admin-board-temporary type="checkbox" ${board.temporary ? 'checked' : ''} /> Tạm thời</label>
+              <label><span>Kết thúc</span><input data-admin-board-event-ends-at aria-label="Thời điểm kết thúc board /${escapeHtml(board.slug)}/" type="datetime-local" value="${escapeHtml(eventEndsAt)}" /></label>
             </div>
           </td>
           <td data-label="Thao tác">
@@ -3461,11 +3498,17 @@ function adminBoardsHtml(boards) {
           <label><span>Tên</span><input data-admin-board-name placeholder="Ăn uống" maxlength="80" /></label>
           <label><span>Danh mục</span><input data-admin-board-category placeholder="Đời sống" maxlength="80" /></label>
           <label><span>Mô tả</span><input data-admin-board-description placeholder="Chia sẻ quán ăn, căn tin, deal sinh viên" maxlength="240" /></label>
+          <label><span>Nội quy</span><textarea data-admin-board-rules rows="3" maxlength="2000" placeholder="Mỗi dòng là một nội quy"></textarea></label>
+          <label><span>Banner</span><input data-admin-board-banner-text maxlength="180" placeholder="Thông báo ngắn trên board" /></label>
+          <label><span>Ảnh banner</span><input data-admin-board-banner-image-url maxlength="300" placeholder="/uploads/banner.png hoặc https://..." /></label>
+          <label><span>Alt ảnh</span><input data-admin-board-banner-alt maxlength="140" placeholder="Mô tả ảnh banner" /></label>
           <label><span>Active cap</span><input data-admin-board-retention-max type="number" min="1" step="1" value="${escapeHtml(lifecycle.maxActiveThreadsPerBoard ?? 150)}" /></label>
           <label><span>Bump limit</span><input data-admin-board-retention-bump type="number" min="1" step="1" value="${escapeHtml(lifecycle.bumpLimit ?? 300)}" /></label>
           <label><span>Reply limit</span><input data-admin-board-retention-reply type="number" min="1" step="1" value="${escapeHtml(lifecycle.replyLimit ?? 500)}" /></label>
           <label><input data-admin-board-hidden type="checkbox" /> Ẩn khỏi public</label>
           <label><input data-admin-board-archived type="checkbox" /> Lưu trữ</label>
+          <label><input data-admin-board-temporary type="checkbox" /> Board sự kiện tạm thời</label>
+          <label><span>Kết thúc</span><input data-admin-board-event-ends-at type="datetime-local" /></label>
           <label><input data-admin-board-retention-public-archive type="checkbox" checked /> Public archive</label>
           <button class="primary-button" data-admin-board-create type="button">Tạo bảng</button>
         </div>
@@ -3478,12 +3521,13 @@ function adminBoardsHtml(boards) {
               <th>Tên</th>
               <th>Danh mục</th>
               <th>Mô tả</th>
+              <th>Metadata</th>
               <th>Retention</th>
               <th>Trạng thái</th>
               <th>Thao tác</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="7">Chưa có board.</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="8">Chưa có board.</td></tr>'}</tbody>
         </table>
       </div>
       <p class="muted">Xóa chỉ áp dụng cho board rỗng. Board đã có nội dung nên dùng Ẩn hoặc Lưu trữ.</p>

@@ -1734,8 +1734,12 @@ export function createHttpServer({
                 name: body.name,
                 category: body.category,
                 description: body.description,
+                rules: body.rules,
+                banner: body.banner,
                 isHidden: body.isHidden,
                 isArchived: body.isArchived,
+                temporary: body.temporary,
+                eventEndsAt: body.eventEndsAt,
                 retentionPolicy: body.retentionPolicy
               },
               { actor: admin.username ?? 'admin' }
@@ -1756,8 +1760,12 @@ export function createHttpServer({
                 name: body.name,
                 category: body.category,
                 description: body.description,
+                rules: body.rules,
+                banner: body.banner,
                 isHidden: body.isHidden,
                 isArchived: body.isArchived,
+                temporary: body.temporary,
+                eventEndsAt: body.eventEndsAt,
                 retentionPolicy: body.retentionPolicy
               },
               { actor: admin.username ?? 'admin' }

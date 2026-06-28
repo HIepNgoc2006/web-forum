@@ -668,7 +668,15 @@ test('http admin boards support dynamic create update and public filtering', asy
         name: 'Tin lab',
         category: 'Truong hoc',
         description: 'Thong bao phong lab',
+        rules: ['Chi thong bao lab', 'Khong dang thong tin rieng tu'],
+        banner: {
+          text: 'Tin lab moi nhat',
+          imageUrl: '/uploads/lab-banner.png',
+          altText: 'Banner phong lab'
+        },
         isHidden: true,
+        temporary: true,
+        eventEndsAt: '2026-08-15T23:00:00.000Z',
         retentionPolicy: {
           maxActiveThreadsPerBoard: 25,
           bumpLimit: 50,
@@ -681,6 +689,12 @@ test('http admin boards support dynamic create update and public filtering', asy
     assert.equal(created.status, 201);
     assert.equal(createdBody.data.board.slug, 'lab-news');
     assert.equal(createdBody.data.board.isHidden, true);
+    assert.equal(createdBody.data.board.temporary, true);
+    assert.equal(createdBody.data.board.eventEndsAt, '2026-08-15T23:00:00.000Z');
+    assert.deepEqual(createdBody.data.board.rules, ['Chi thong bao lab', 'Khong dang thong tin rieng tu']);
+    assert.equal(createdBody.data.board.banner.text, 'Tin lab moi nhat');
+    assert.equal(createdBody.data.board.banner.imageUrl, '/uploads/lab-banner.png');
+    assert.equal(createdBody.data.board.banner.altText, 'Banner phong lab');
     assert.equal(createdBody.data.board.retentionPolicy.maxActiveThreadsPerBoard, 25);
     assert.equal(createdBody.data.board.retentionPolicy.bumpLimit, 50);
     assert.equal(createdBody.data.board.retentionPolicy.replyLimit, 75);
@@ -695,10 +709,14 @@ test('http admin boards support dynamic create update and public filtering', asy
     });
     const adminBoardsBody = await adminBoards.json();
     assert.equal(adminBoards.status, 200);
-    assert.equal(adminBoardsBody.data.some((board) => board.slug === 'lab-news' && board.isHidden), true);
+    assert.equal(adminBoardsBody.data.some((board) => board.slug === 'lab-news' && board.isHidden && board.temporary), true);
     assert.equal(
       adminBoardsBody.data.find((board) => board.slug === 'lab-news')?.retentionPolicy.publicArchive,
       false
+    );
+    assert.deepEqual(
+      adminBoardsBody.data.find((board) => board.slug === 'lab-news')?.rules,
+      ['Chi thong bao lab', 'Khong dang thong tin rieng tu']
     );
 
     const shown = await fetch(`${baseUrl}/api/admin/boards/lab-news`, {
@@ -706,6 +724,13 @@ test('http admin boards support dynamic create update and public filtering', asy
       headers,
       body: JSON.stringify({
         isHidden: false,
+        temporary: false,
+        rules: ['Rule cap nhat <script>bad</script>'],
+        banner: {
+          text: 'Banner cap nhat',
+          imageUrl: 'http://unsafe.example/banner.png',
+          altText: 'Alt cap nhat'
+        },
         retentionPolicy: {
           maxActiveThreadsPerBoard: 30,
           publicArchive: true
@@ -714,6 +739,11 @@ test('http admin boards support dynamic create update and public filtering', asy
     });
     const shownBody = await shown.json();
     assert.equal(shown.status, 200);
+    assert.equal(shownBody.data.board.temporary, false);
+    assert.equal(shownBody.data.board.eventEndsAt, null);
+    assert.deepEqual(shownBody.data.board.rules, ['Rule cap nhat bad']);
+    assert.equal(shownBody.data.board.banner.text, 'Banner cap nhat');
+    assert.equal(shownBody.data.board.banner.imageUrl, undefined);
     assert.equal(shownBody.data.board.retentionPolicy.maxActiveThreadsPerBoard, 30);
     assert.equal(shownBody.data.board.retentionPolicy.publicArchive, true);
 
@@ -769,6 +799,19 @@ test('http admin boards support dynamic create update and public filtering', asy
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
     assert.equal(blockedDelete.status, 409);
+
+    const invalidEvent = await fetch(`${baseUrl}/api/admin/boards`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        slug: 'bad-event-board',
+        name: 'Bad event',
+        category: 'Bad',
+        description: 'Missing event end date',
+        temporary: true
+      })
+    });
+    assert.equal(invalidEvent.status, 400);
 
     const invalid = await fetch(`${baseUrl}/api/admin/boards`, {
       method: 'POST',
