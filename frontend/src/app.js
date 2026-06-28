@@ -1679,20 +1679,53 @@ function loadHcaptchaScript() {
     return state.hcaptchaReady;
   }
   state.hcaptchaReady = new Promise((resolve, reject) => {
+    const onloadName = '__chan36HcaptchaOnLoad';
+    let settled = false;
+    const cleanup = (callback) => {
+      if (window[onloadName] === callback) {
+        delete window[onloadName];
+      }
+    };
+    const finish = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup(finish);
+      if (window.hcaptcha?.render) {
+        resolve();
+      } else {
+        reject(new Error('Không tải được hCaptcha'));
+      }
+    };
+    const fail = (error) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      cleanup(finish);
+      reject(error);
+    };
+    window[onloadName] = finish;
+
     const existing = document.querySelector('script[data-hcaptcha-script]');
     if (existing) {
-      existing.addEventListener('load', resolve, { once: true });
-      existing.addEventListener('error', reject, { once: true });
+      if (window.hcaptcha?.render) {
+        finish();
+      } else {
+        existing.addEventListener('load', () => window.setTimeout(finish, 0), { once: true });
+        existing.addEventListener('error', fail, { once: true });
+      }
       return;
     }
 
     const script = document.createElement('script');
-    script.src = 'https://js.hcaptcha.com/1/api.js?render=explicit';
+    script.src = `https://js.hcaptcha.com/1/api.js?render=explicit&onload=${onloadName}`;
     script.async = true;
     script.defer = true;
     script.dataset.hcaptchaScript = 'true';
-    script.addEventListener('load', resolve, { once: true });
-    script.addEventListener('error', reject, { once: true });
+    script.addEventListener('load', () => window.setTimeout(finish, 0), { once: true });
+    script.addEventListener('error', fail, { once: true });
     document.head.appendChild(script);
   });
   return state.hcaptchaReady;
