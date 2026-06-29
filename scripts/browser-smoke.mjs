@@ -852,6 +852,53 @@ async function main() {
               ) {
                 throw new Error('thread desktop did not expose thread JSON/RSS feed links.');
               }
+              const mediaButton = document.querySelector('[data-thread-media-toggle]');
+              if (!mediaButton) {
+                throw new Error('thread media toolbar button missing');
+              }
+              mediaButton.click();
+              const mediaExpandDeadline = Date.now() + 3000;
+              let mediaExpandedCount = 0;
+              let mediaButtonAfterExpand = '';
+              let firstMediaLoaded = false;
+              while (Date.now() < mediaExpandDeadline) {
+                const mediaToggles = [...document.querySelectorAll('#threadDetail [data-image-toggle]')];
+                mediaExpandedCount = mediaToggles.filter((toggle) => toggle.classList.contains('expanded')).length;
+                mediaButtonAfterExpand = document.querySelector('[data-thread-media-toggle]')?.textContent?.trim() || '';
+                firstMediaLoaded = mediaToggles.some((toggle) => toggle.querySelector('img')?.dataset.fullLoaded === 'true');
+                if (mediaToggles.length > 0 && mediaExpandedCount === mediaToggles.length && mediaButtonAfterExpand === 'Thu media' && firstMediaLoaded) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              document.querySelector('[data-thread-media-toggle]')?.click();
+              const mediaCollapseDeadline = Date.now() + 3000;
+              let mediaCollapsedCount = -1;
+              let mediaButtonAfterCollapse = '';
+              while (Date.now() < mediaCollapseDeadline) {
+                const mediaToggles = [...document.querySelectorAll('#threadDetail [data-image-toggle]')];
+                mediaCollapsedCount = mediaToggles.filter((toggle) => !toggle.classList.contains('expanded')).length;
+                mediaButtonAfterCollapse = document.querySelector('[data-thread-media-toggle]')?.textContent?.trim() || '';
+                if (mediaToggles.length > 0 && mediaCollapsedCount === mediaToggles.length && mediaButtonAfterCollapse === 'Mở media') {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              const mediaIndex = document.querySelector('#threadDetail .thread-media-index');
+              const mediaIndexItems = [...document.querySelectorAll('#threadDetail [data-thread-media-jump]')];
+              const mediaIndexFirst = mediaIndexItems[0];
+              const mediaIndexHref = mediaIndexFirst?.getAttribute('href') || '';
+              const mediaIndexLabel = mediaIndex?.innerText || '';
+              mediaIndexFirst?.click();
+              const mediaIndexFocusDeadline = Date.now() + 3000;
+              let mediaIndexFocusedPost = '';
+              while (Date.now() < mediaIndexFocusDeadline) {
+                mediaIndexFocusedPost = document.querySelector('#threadDetail .permalink-target')?.id || '';
+                if (mediaIndexFocusedPost) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
               localStorage.setItem('notificationPreferences', JSON.stringify({
                 email: false,
                 watchedThreads: true,
@@ -922,6 +969,15 @@ async function main() {
                 first: notifications[0] || null,
                 watched,
                 diceRollText,
+                mediaExpandedCount,
+                mediaButtonAfterExpand,
+                firstMediaLoaded,
+                mediaCollapsedCount,
+                mediaButtonAfterCollapse,
+                mediaIndexCount: mediaIndexItems.length,
+                mediaIndexLabel,
+                mediaIndexHref,
+                mediaIndexFocusedPost,
                 threadSearchStatus,
                 threadSearchPreviewVisible,
                 threadSearchOtherHidden,
@@ -944,6 +1000,27 @@ async function main() {
           }
           if (!payload.diceRollText?.includes('1d6')) {
             throw new Error(`thread desktop did not render dice roll result: ${payload.diceRollText || 'missing'}`);
+          }
+          if (
+            payload.mediaExpandedCount < 2 ||
+            payload.mediaButtonAfterExpand !== 'Thu media' ||
+            !payload.firstMediaLoaded ||
+            payload.mediaCollapsedCount < 2 ||
+            payload.mediaButtonAfterCollapse !== 'Mở media'
+          ) {
+            throw new Error(
+              `thread desktop media toolbar failed: expanded=${payload.mediaExpandedCount || 0} expandedLabel=${payload.mediaButtonAfterExpand || 'missing'} loaded=${Boolean(payload.firstMediaLoaded)} collapsed=${payload.mediaCollapsedCount || 0} collapsedLabel=${payload.mediaButtonAfterCollapse || 'missing'}`
+            );
+          }
+          if (
+            payload.mediaIndexCount < 2 ||
+            !payload.mediaIndexLabel?.includes('Media trong thread') ||
+            !payload.mediaIndexHref?.includes(`#thread/${threadId}?p=`) ||
+            !payload.mediaIndexFocusedPost
+          ) {
+            throw new Error(
+              `thread desktop media index failed: count=${payload.mediaIndexCount || 0} label=${payload.mediaIndexLabel || 'missing'} href=${payload.mediaIndexHref || 'missing'} focus=${payload.mediaIndexFocusedPost || 'missing'}`
+            );
           }
           if (
             !payload.threadSearchStatus?.includes('1 phản hồi khớp') ||
