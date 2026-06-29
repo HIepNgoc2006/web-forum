@@ -1086,6 +1086,56 @@ async function main() {
               const threadExpandedCollapsedCount = postsAfterThreadExpand.filter((post) => post.classList.contains('post-collapsed')).length;
               const threadExpandLabel = threadCollapseButton.textContent.trim();
               const threadExpandPressed = threadCollapseButton.getAttribute('aria-pressed');
+              const refLink = document.querySelector('#threadDetail .post.comment .post-body .ref-link[data-ref]');
+              if (!refLink) {
+                throw new Error('thread quote reference link missing');
+              }
+              const originalFetch = window.fetch.bind(window);
+              let refPreviewFetchCount = 0;
+              window.fetch = (input, init) => {
+                const requestUrl = String(input?.url || input || '');
+                if (requestUrl.includes('/api/posts/')) {
+                  refPreviewFetchCount += 1;
+                }
+                return originalFetch(input, init);
+              };
+              refLink.dispatchEvent(
+                new MouseEvent('mouseover', {
+                  bubbles: true,
+                  clientX: 80,
+                  clientY: 140
+                })
+              );
+              const refPreviewDeadline = Date.now() + 3000;
+              let refPreviewText = '';
+              while (Date.now() < refPreviewDeadline) {
+                const preview = document.querySelector('#refPreview');
+                refPreviewText = preview?.innerText || '';
+                if (preview && !preview.classList.contains('hidden') && refPreviewText.includes('Bài kiểm thử browser smoke cho CI')) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+              await new Promise((resolve) => setTimeout(resolve, 50));
+              const refPreviewHiddenAfterEscape = document.querySelector('#refPreview')?.classList.contains('hidden') || false;
+              refLink.dispatchEvent(
+                new MouseEvent('mouseover', {
+                  bubbles: true,
+                  clientX: 84,
+                  clientY: 144
+                })
+              );
+              const refPreviewCacheDeadline = Date.now() + 1000;
+              let refPreviewCachedText = '';
+              while (Date.now() < refPreviewCacheDeadline) {
+                refPreviewCachedText = document.querySelector('#refPreview')?.innerText || '';
+                if (refPreviewCachedText.includes('Bài kiểm thử browser smoke cho CI')) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              window.fetch = originalFetch;
               return {
                 count: notifications.length,
                 first: notifications[0] || null,
@@ -1108,6 +1158,10 @@ async function main() {
                 threadExpandedCollapsedCount,
                 threadExpandLabel,
                 threadExpandPressed,
+                refPreviewText,
+                refPreviewCachedText,
+                refPreviewHiddenAfterEscape,
+                refPreviewFetchCount,
                 mediaExpandedCount,
                 mediaButtonAfterExpand,
                 firstMediaLoaded,
@@ -1181,6 +1235,16 @@ async function main() {
           ) {
             throw new Error(
               `thread desktop post collapse toolbar failed: posts=${payload.threadPostCount || 0} collapsed=${payload.threadCollapsedPostCount || 0} collapseLabel=${payload.threadCollapseLabel || 'missing'} collapsePressed=${payload.threadCollapsePressed || 'missing'} remaining=${payload.threadExpandedCollapsedCount || 0} expandLabel=${payload.threadExpandLabel || 'missing'} expandPressed=${payload.threadExpandPressed || 'missing'}`
+            );
+          }
+          if (
+            !payload.refPreviewText?.includes('Bài kiểm thử browser smoke cho CI') ||
+            !payload.refPreviewCachedText?.includes('Bài kiểm thử browser smoke cho CI') ||
+            !payload.refPreviewHiddenAfterEscape ||
+            payload.refPreviewFetchCount !== 1
+          ) {
+            throw new Error(
+              `thread desktop reference preview failed: first=${payload.refPreviewText || 'missing'} cached=${payload.refPreviewCachedText || 'missing'} hidden=${Boolean(payload.refPreviewHiddenAfterEscape)} fetches=${payload.refPreviewFetchCount ?? 'missing'}`
             );
           }
           if (
