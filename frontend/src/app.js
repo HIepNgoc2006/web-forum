@@ -740,25 +740,53 @@ function defaultAccountPrivateData() {
   };
 }
 
+function privateItemId() {
+  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
+}
+
+function normalizePrivateItems(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value && typeof value === 'object') {
+    return Object.entries(value).map(([key, item]) => ({
+      key,
+      ...(item && typeof item === 'object' ? item : {})
+    }));
+  }
+  return [];
+}
+
 function safePrivateText(value = '', maxLength = 160) {
   return [...String(value ?? '')]
-    .filter((char) => {
+    .map((char) => {
       const code = char.charCodeAt(0);
-      return code >= 32 && code !== 127;
+      return code < 32 || code === 127 ? ' ' : char;
     })
     .join('')
+    .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLength);
+}
+
+function safeReplyTemplateBody(value = '') {
+  return [...String(value ?? '')]
+    .filter((char) => char.charCodeAt(0) !== 0)
+    .join('')
+    .trim()
+    .slice(0, 5000);
 }
 
 function normalizeContentFilters(value = []) {
   const allowedTypes = new Set(['keyword', 'poster', 'thread', 'post']);
   const seen = new Set();
-  return (Array.isArray(value) ? value : [])
+  return normalizePrivateItems(value)
     .map((item) => ({
-      id: safePrivateText(item?.id || item?.key || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 120),
+      id: safePrivateText(item?.id || item?.key || privateItemId(), 120),
       type: safePrivateText(item?.type, 40).toLowerCase(),
-      value: safePrivateText(item?.value || item?.keyword || item?.posterHash || item?.threadId || item?.globalNumber, 160),
+      value: safePrivateText(item?.value || item?.keyword || item?.posterHash || item?.threadId || item?.globalNumber || item?.key, 160),
       label: safePrivateText(item?.label, 180),
       boardSlug: safePrivateText(item?.boardSlug, 80),
       createdAt: safePrivateText(item?.createdAt || new Date().toISOString(), 80)
@@ -777,15 +805,18 @@ function normalizeContentFilters(value = []) {
 
 function normalizeReplyTemplates(value = []) {
   const seen = new Set();
-  return (Array.isArray(value) ? value : [])
-    .map((item) => ({
-      id: safePrivateText(item?.id || item?.key || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 120),
-      title: safePrivateText(item?.title || item?.label || 'Mẫu trả lời', 120),
-      body: safePrivateText(item?.body || item?.text, 5000),
-      boardSlug: safePrivateText(item?.boardSlug, 80),
-      createdAt: safePrivateText(item?.createdAt || new Date().toISOString(), 80),
-      updatedAt: safePrivateText(item?.updatedAt || item?.createdAt || new Date().toISOString(), 80)
-    }))
+  return normalizePrivateItems(value)
+    .map((item) => {
+      const body = safeReplyTemplateBody(item?.body || item?.text || item?.value);
+      return {
+        id: safePrivateText(item?.id || item?.key || privateItemId(), 120),
+        title: safePrivateText(item?.title || item?.label || body.split('\n').find((line) => line.trim()) || 'Mẫu trả lời', 120),
+        body,
+        boardSlug: safePrivateText(item?.boardSlug, 80),
+        createdAt: safePrivateText(item?.createdAt || new Date().toISOString(), 80),
+        updatedAt: safePrivateText(item?.updatedAt || item?.createdAt || new Date().toISOString(), 80)
+      };
+    })
     .filter((item) => item.body)
     .filter((item) => {
       const key = `${item.boardSlug}:${item.title.toLowerCase()}:${item.body}`;
@@ -795,22 +826,22 @@ function normalizeReplyTemplates(value = []) {
       seen.add(key);
       return true;
     })
-    .slice(0, 60);
+    .slice(0, 40);
 }
 
 function normalizePosterNotes(value = []) {
   const seen = new Set();
-  return (Array.isArray(value) ? value : [])
+  return normalizePrivateItems(value)
     .map((item) => ({
-      id: safePrivateText(item?.id || item?.key || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`, 120),
-      posterId: safePrivateText(item?.posterId || item?.posterHash || item?.idText, 80),
-      label: safePrivateText(item?.label, 120),
+      id: safePrivateText(item?.id || item?.key || privateItemId(), 120),
+      posterId: safePrivateText(item?.posterId || item?.posterHash || item?.poster || item?.value || item?.idText || item?.key, 80),
+      label: safePrivateText(item?.label || item?.title, 120),
       note: safePrivateText(item?.note || item?.body || item?.text, 500),
       boardSlug: safePrivateText(item?.boardSlug, 80),
       createdAt: safePrivateText(item?.createdAt || new Date().toISOString(), 80),
       updatedAt: safePrivateText(item?.updatedAt || item?.createdAt || new Date().toISOString(), 80)
     }))
-    .filter((item) => item.posterId)
+    .filter((item) => item.posterId && (item.label || item.note))
     .filter((item) => {
       const key = `${item.boardSlug}:${item.posterId.toLowerCase()}`;
       if (seen.has(key)) {
@@ -842,11 +873,7 @@ function writeSavedSearches(savedSearches) {
   }
 }
 
-function privateItemId() {
-  return typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-    ? crypto.randomUUID()
-    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-}
+
 
 function readContentFilters() {
   if (state.accountToken && state.accountPrivateData) {
@@ -866,11 +893,15 @@ function writeContentFilters(filters) {
 }
 
 function addContentFilter(filter) {
-  return writeContentFilters([{ id: privateItemId(), createdAt: new Date().toISOString(), ...filter }, ...readContentFilters()]);
+  const next = writeContentFilters([{ id: privateItemId(), createdAt: new Date().toISOString(), ...filter }, ...readContentFilters()]);
+  renderAccountPrivateData();
+  return next;
 }
 
 function removeContentFilter(id) {
-  return writeContentFilters(readContentFilters().filter((filter) => filter.id !== id));
+  const next = writeContentFilters(readContentFilters().filter((filter) => filter.id !== id));
+  renderAccountPrivateData();
+  return next;
 }
 
 function readReplyTemplates() {
@@ -891,14 +922,20 @@ function writeReplyTemplates(templates) {
 }
 
 function addReplyTemplate(template) {
-  return writeReplyTemplates([
+  const next = writeReplyTemplates([
     { id: privateItemId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...template },
     ...readReplyTemplates()
   ]);
+  renderAccountPrivateData();
+  renderReplyTemplatePickers();
+  return next;
 }
 
 function removeReplyTemplate(id) {
-  return writeReplyTemplates(readReplyTemplates().filter((template) => template.id !== id));
+  const next = writeReplyTemplates(readReplyTemplates().filter((template) => template.id !== id));
+  renderAccountPrivateData();
+  renderReplyTemplatePickers();
+  return next;
 }
 
 function readPosterNotes() {
@@ -919,14 +956,22 @@ function writePosterNotes(notes) {
 }
 
 function addPosterNote(note) {
-  return writePosterNotes([
-    { id: privateItemId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...note },
-    ...readPosterNotes()
+  const posterIdValue = safePrivateText(note.posterId, 80);
+  const boardSlug = safePrivateText(note.boardSlug, 80);
+  const next = writePosterNotes([
+    { id: privateItemId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...note, posterId: posterIdValue, boardSlug },
+    ...readPosterNotes().filter(
+      (item) => item.boardSlug !== boardSlug || normalizeSearchValue(item.posterId) !== normalizeSearchValue(posterIdValue)
+    )
   ]);
+  renderAccountPrivateData();
+  return next;
 }
 
 function removePosterNote(id) {
-  return writePosterNotes(readPosterNotes().filter((note) => note.id !== id));
+  const next = writePosterNotes(readPosterNotes().filter((note) => note.id !== id));
+  renderAccountPrivateData();
+  return next;
 }
 
 function posterNoteForPost(post = {}) {
