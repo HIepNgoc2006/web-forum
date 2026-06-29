@@ -161,7 +161,8 @@ async function createSeedThread() {
     })
   });
   if (!threadResponse.ok) {
-    throw new Error(`Could not create smoke thread: ${threadResponse.status}`);
+    const body = await threadResponse.text().catch(() => '');
+    throw new Error(`Could not create smoke thread: ${threadResponse.status} ${body}`);
   }
   const threadPayload = await threadResponse.json();
   const threadId = threadPayload.data.thread.id;
@@ -176,7 +177,8 @@ async function createSeedThread() {
     })
   });
   if (!commentResponse.ok) {
-    throw new Error(`Could not create smoke comment: ${commentResponse.status}`);
+    const body = await commentResponse.text().catch(() => '');
+    throw new Error(`Could not create smoke comment: ${commentResponse.status} ${body}`);
   }
 
   return threadId;
@@ -193,7 +195,8 @@ async function createPendingThread(body, posterToken) {
     })
   });
   if (!threadResponse.ok) {
-    throw new Error(`Could not create pending smoke thread: ${threadResponse.status}`);
+    const responseBody = await threadResponse.text().catch(() => '');
+    throw new Error(`Could not create pending smoke thread: ${threadResponse.status} ${responseBody}`);
   }
   const threadPayload = await threadResponse.json();
   return threadPayload.data.thread;
