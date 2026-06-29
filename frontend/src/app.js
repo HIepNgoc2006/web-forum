@@ -5208,6 +5208,51 @@ function postHtml(post, type = 'post', options = {}) {
   `;
 }
 
+function threadMediaGalleryItems(detail = {}) {
+  return [detail.thread, ...(detail.comments || [])]
+    .filter(Boolean)
+    .flatMap((post) =>
+      mediaItemsFromPost(post).map((image, index) => ({
+        image,
+        index,
+        post
+      }))
+    );
+}
+
+function threadMediaGalleryHtml(detail) {
+  const items = threadMediaGalleryItems(detail);
+  if (!items.length) {
+    return '';
+  }
+
+  return `
+    <nav class="thread-media-index" aria-label="Media trong thread">
+      <div class="thread-media-index-title">Media trong thread (${items.length})</div>
+      <div class="thread-media-index-list">
+        ${items
+          .map(({ image, index, post }) => {
+            const thumbnailSrc = mediaThumbnailSrc(image, { fallbackOriginal: mediaKind(image) !== 'video' });
+            const href = postPermalink(post, { threadId: detail.thread.id });
+            const postNumber = escapeHtml(post.globalNumber);
+            const name = escapeHtml(image?.name || 'tai-len');
+            const kind = mediaKind(image) === 'video' ? 'Video' : 'Ảnh';
+            const preview = thumbnailSrc
+              ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${kind} ${name} trong bài số ${postNumber}">`
+              : `<span>${escapeHtml(kind)}</span>`;
+            return `
+              <a class="thread-media-index-item" href="${escapeHtml(href)}" data-thread-media-jump="${postNumber}" title="${name}">
+                ${preview}
+                <span>No.${postNumber}${index > 0 ? `.${index + 1}` : ''}</span>
+              </a>
+            `;
+          })
+          .join('')}
+      </div>
+    </nav>
+  `;
+}
+
 function threadFeedLinksHtml(detail) {
   if (!detail.thread?.id) {
     return '';
@@ -5895,6 +5940,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
       opPosterHash: detail.thread.posterHash,
       canReply
     })}
+    ${threadMediaGalleryHtml(detail)}
     ${threadSearchHtml(detail)}
     ${commentSortHtml(state.commentsSort)}
     <div class="comment-list">
@@ -8083,6 +8129,13 @@ function bindEvents() {
       state.threadSearchTerm = '';
       state.threadCommentPage = 1;
       await loadThread().catch((error) => showToast(error.message));
+      return;
+    }
+
+    const threadMediaJump = event.target.closest('[data-thread-media-jump]');
+    if (threadMediaJump) {
+      event.preventDefault();
+      focusPermalinkPost(threadMediaJump.dataset.threadMediaJump, { scroll: true });
       return;
     }
 

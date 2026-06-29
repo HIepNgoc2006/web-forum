@@ -1197,6 +1197,62 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   display: none;
 }
 
+.thread-media-index {
+  clear: both;
+  margin: 4px 0 6px;
+  border-top: 1px solid #b7c5d9;
+  border-bottom: 1px solid #b7c5d9;
+  background: rgba(214, 218, 240, 0.55);
+  padding: 4px;
+  color: #34345c;
+  font-size: 11px;
+}
+
+.thread-media-index-title {
+  margin-bottom: 4px;
+  font-weight: 700;
+}
+
+.thread-media-index-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.thread-media-index-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  max-width: 180px;
+  overflow: hidden;
+  color: var(--link);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.thread-media-index-item img,
+.thread-media-index-item > span:first-child {
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(128, 0, 0, 0.28);
+  background: rgba(255, 255, 255, 0.65);
+  object-fit: cover;
+}
+
+.thread-media-index-item > span:first-child {
+  display: grid;
+  place-items: center;
+}
+
+.thread-media-index-item:hover span:last-child,
+.thread-media-index-item:focus-visible span:last-child {
+  text-decoration: underline;
+}
+
+body.display-hide-thumbnails .thread-media-index {
+  display: none;
+}
+
 .thumb,
 .post-image {
   display: block;
