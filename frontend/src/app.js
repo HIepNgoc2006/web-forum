@@ -4769,6 +4769,26 @@ function renderPostLines(lines, options = {}) {
     .join('');
 }
 
+function selectedPostQuoteText(postElement) {
+  const selection = window.getSelection?.();
+  const body = postElement?.querySelector('.post-body');
+  if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !body) {
+    return '';
+  }
+  const range = selection.getRangeAt(0);
+  if (!range.intersectsNode(body)) {
+    return '';
+  }
+  const lines = selection
+    .toString()
+    .replace(/\r/g, '')
+    .slice(0, 800)
+    .split('\n')
+    .map((line) => line.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  return lines.map((line) => `>${line}`).join('\n');
+}
+
 // Inline text markup on already-sanitized, ref-linked HTML. Bold is matched
 // before italic so the single-asterisk pass does not split `**`. The class
 // names emitted by the ref/spoiler passes contain no `*`/`~`, so generated
@@ -8392,9 +8412,11 @@ function bindEvents() {
     const quoteButton = event.target.closest('[data-quote]');
     if (quoteButton) {
       const quote = quoteButton.dataset.quote;
+      const selectedQuote = selectedPostQuoteText(quoteButton.closest('.post'));
+      const quoteBlock = selectedQuote ? `${quote}\n${selectedQuote}\n` : `${quote}\n`;
       openReplyComposer({ focus: false });
       const spacer = els.commentBody.value && !els.commentBody.value.endsWith('\n') ? '\n' : '';
-      els.commentBody.value = `${els.commentBody.value}${spacer}${quote}\n`;
+      els.commentBody.value = `${els.commentBody.value}${spacer}${quoteBlock}`;
       updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
       els.commentBody.focus();
       return;
