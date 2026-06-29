@@ -162,6 +162,7 @@ const AUDIO_RECORDING_TYPES = [
 const AI_TRANSCRIBE_TIMEOUT_MS = 60_000;
 const AI_SPEAK_TIMEOUT_MS = 60_000;
 const AI_TTS_PROVIDER_COOLDOWN_MS = 60_000;
+const ADMIN_LOAD_TIMEOUT_MS = 60_000;
 
 function reportCategoryLabel(value) {
   return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
@@ -2712,7 +2713,13 @@ async function loadAccountSettings() {
 }
 
 async function api(path, options = {}) {
-  const { auth = 'admin', timeoutMs, signal, ...fetchOptions } = options;
+  const {
+    auth = 'admin',
+    timeoutMs,
+    timeoutMessage = 'AI phản hồi quá lâu, vui lòng thử lại.',
+    signal,
+    ...fetchOptions
+  } = options;
   const headers = { ...(options.headers || {}) };
   if (options.body && !headers['content-type']) {
     headers['content-type'] = 'application/json';
@@ -2750,7 +2757,9 @@ async function api(path, options = {}) {
     response = await fetch(withUrlBase(path, API_BASE_URL), { ...fetchOptions, headers });
   } catch (error) {
     if (timedOut) {
-      throw new Error('AI phản hồi quá lâu, vui lòng thử lại.', { cause: error });
+      const timeoutError = new Error(timeoutMessage, { cause: error });
+      timeoutError.timedOut = true;
+      throw timeoutError;
     }
     throw error;
   } finally {
@@ -4401,8 +4410,12 @@ function syncAdminModerationSettings(settings = {}) {
   }
 }
 
-async function loadAdminModerationSettings() {
-  const settings = await api('/api/admin/moderation-settings');
+async function loadAdminModerationSettings({ signal } = {}) {
+  const settings = await api('/api/admin/moderation-settings', {
+    signal,
+    timeoutMs: ADMIN_LOAD_TIMEOUT_MS,
+    timeoutMessage: 'Thiết lập kiểm duyệt phản hồi quá lâu, vui lòng thử lại.'
+  });
   syncAdminModerationSettings(settings);
 }
 
@@ -4412,6 +4425,8 @@ async function saveAdminModerationSettings() {
   try {
     const settings = await api('/api/admin/moderation-settings', {
       method: 'PUT',
+      timeoutMs: ADMIN_LOAD_TIMEOUT_MS,
+      timeoutMessage: 'Lưu thiết lập kiểm duyệt phản hồi quá lâu, vui lòng thử lại.',
       body: JSON.stringify({
         moderationConfidenceThreshold: els.adminQueueThresholdInput?.value || 0
       })
@@ -4486,6 +4501,31 @@ function adminEndpoint() {
     return '/api/admin/health';
   }
   return `/api/admin/pending${suffix}`;
+}
+
+function isAdminSessionError(error) {
+  return error?.statusCode === 401 || error?.requires2FA;
+}
+
+function isAbortError(error) {
+  return error?.name === 'AbortError';
+}
+
+function adminLoadingHtml() {
+  return '<p class="muted">Đang tải dữ liệu quản trị...</p>';
+}
+
+function adminLoadErrorHtml(error) {
+  const status = error?.timedOut ? 'hết thời gian chờ' : error?.statusCode ? `HTTP ${error.statusCode}` : 'lỗi kết nối';
+  const message = error?.message || 'Không tải được dữ liệu quản trị.';
+  const suffix = message.includes(status) ? '' : ` (${escapeHtml(status)})`;
+  return `
+    <div class="form-error" role="alert">
+      <strong>Không tải được dữ liệu quản trị.</strong>
+      <p>${escapeHtml(message)}${suffix}.</p>
+      <button class="ghost-button" data-admin-retry type="button">[Thử lại]</button>
+    </div>
+  `;
 }
 
 function renderAdminTabs() {
@@ -6136,7 +6176,17 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   resetAutoUpdateTimer();
 }
 
+let adminLoadRequestId = 0;
+let adminLoadController = null;
+
 async function loadAdmin() {
+  const requestId = ++adminLoadRequestId;
+  const requestedTab = state.adminTab;
+  if (adminLoadController) {
+    adminLoadController.abort();
+  }
+  adminLoadController = window.AbortController ? new AbortController() : null;
+  const adminLoadSignal = adminLoadController?.signal;
   setScreen('admin');
   const loggedIn = Boolean(state.token);
   updateAccountNav();
@@ -6147,6 +6197,7 @@ async function loadAdmin() {
   els.adminTools.classList.toggle('hidden', !loggedIn);
   els.adminPasskeysPanel?.classList.add('hidden');
   if (!loggedIn) {
+    adminLoadController = null;
     els.pendingList.innerHTML = '';
     els.reportList.innerHTML = '';
     els.moderationActions.innerHTML = '';
@@ -6156,18 +6207,30 @@ async function loadAdmin() {
   }
 
   renderAdminPasskeys();
+  renderAdminTabs();
+  els.pendingList.innerHTML = adminLoadingHtml();
 
   try {
-    await loadAdminModerationSettings();
-    const data = await api(adminEndpoint());
-    if (state.adminTab === 'analytics') {
+    await loadAdminModerationSettings({ signal: adminLoadSignal });
+    const data = await api(adminEndpoint(), {
+      signal: adminLoadSignal,
+      timeoutMs: ADMIN_LOAD_TIMEOUT_MS,
+      timeoutMessage: 'Dữ liệu quản trị phản hồi quá lâu, vui lòng thử lại.'
+    });
+    if (requestId !== adminLoadRequestId || requestedTab !== state.adminTab) {
+      return;
+    }
+    if (requestedTab === 'analytics') {
       renderAdminAnalytics(data);
-    } else if (state.adminTab === 'health') {
+    } else if (requestedTab === 'health') {
       renderAdminHealth(data);
     } else {
       renderAdminItems(data);
     }
   } catch (error) {
+    if (isAbortError(error)) {
+      return;
+    }
     if (error.setupRequired) {
       els.loginForm.classList.add('hidden');
       els.adminTools.classList.add('hidden');
@@ -6177,10 +6240,23 @@ async function loadAdmin() {
       showToast(error.message);
       return;
     }
+    if (requestId !== adminLoadRequestId || requestedTab !== state.adminTab) {
+      return;
+    }
+    if (!isAdminSessionError(error)) {
+      renderAdminTabs();
+      els.pendingList.innerHTML = adminLoadErrorHtml(error);
+      showToast('Không tải được dữ liệu quản trị. Vui lòng thử cập nhật lại.');
+      return;
+    }
     state.token = '';
     localStorage.removeItem('adminToken');
     showToast(error.message);
     loadAdmin();
+  } finally {
+    if (requestId === adminLoadRequestId) {
+      adminLoadController = null;
+    }
   }
 }
 
@@ -8914,7 +8990,7 @@ function bindEvents() {
       return;
     }
 
-    if (event.target.closest('#adminRefresh')) {
+    if (event.target.closest('#adminRefresh, [data-admin-retry]')) {
       await loadAdmin();
       return;
     }
