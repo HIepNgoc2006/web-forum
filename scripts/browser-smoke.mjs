@@ -923,6 +923,39 @@ async function main() {
               while (!localStorage.getItem('watchedThreads')?.includes(threadId) && Date.now() < deadline) {
                 await new Promise((resolve) => setTimeout(resolve, 50));
               }
+              const sortThreadResponse = await fetch('/api/boards/an-uong/threads', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  body: 'watchlist sort smoke',
+                  captchaToken: 'dev-pass',
+                  posterToken: 'ci-poster-watch-sort'
+                })
+              });
+              if (!sortThreadResponse.ok) {
+                throw new Error('watchlist sort smoke thread failed: ' + sortThreadResponse.status);
+              }
+              const sortThreadBody = await sortThreadResponse.json();
+              const sortThread = sortThreadBody?.data?.thread || {};
+              if (!sortThread.id) {
+                throw new Error('watchlist sort smoke thread did not return an id');
+              }
+              const sortWatchedMap = JSON.parse(localStorage.getItem('watchedThreads') || '{}');
+              sortWatchedMap[sortThread.id] = {
+                threadId: sortThread.id,
+                boardSlug: sortThread.boardSlug || 'an-uong',
+                boardPath: '/an-uong/',
+                boardName: 'Ăn uống',
+                globalNumber: sortThread.globalNumber,
+                preview: 'watchlist sort smoke',
+                lastSeen: Number(sortThread.globalNumber || 0),
+                maxNumber: Number(sortThread.globalNumber || 0),
+                replyCount: 0,
+                fileCount: 0,
+                isArchived: false,
+                updatedAt: sortThread.bumpedAt || sortThread.createdAt || new Date().toISOString()
+              };
+              localStorage.setItem('watchedThreads', JSON.stringify(sortWatchedMap));
               const response = await fetch('/api/threads/' + encodeURIComponent(threadId) + '/comments', {
                 method: 'POST',
                 headers: { 'content-type': 'application/json' },
@@ -1036,6 +1069,27 @@ async function main() {
                 markAllHref = watchedThreadLink()?.getAttribute('href') || '';
                 markAllDisabledAfter = Boolean(document.querySelector('#watchedMarkAllRead')?.disabled);
                 if (Number(markAllWatched.lastSeen || 0) >= allReadNumber && !markAllHref.includes('?p=') && markAllDisabledAfter) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              const sortSelect = document.querySelector('#watchedSortSelect');
+              if (!sortSelect) {
+                throw new Error('watchlist sort select missing');
+              }
+              sortSelect.value = 'recent';
+              sortSelect.dispatchEvent(new Event('change', { bubbles: true }));
+              await new Promise((resolve) => setTimeout(resolve, 150));
+              const recentFirstBoard = document.querySelector('#watchedThreads .watch-board')?.textContent?.trim() || '';
+              sortSelect.value = 'board';
+              sortSelect.dispatchEvent(new Event('change', { bubbles: true }));
+              const boardSortDeadline = Date.now() + 3000;
+              let boardFirstBoard = '';
+              let storedWatchedSort = '';
+              while (Date.now() < boardSortDeadline) {
+                boardFirstBoard = document.querySelector('#watchedThreads .watch-board')?.textContent?.trim() || '';
+                storedWatchedSort = JSON.parse(localStorage.getItem('displayPreferences') || '{}').watchedSort || '';
+                if (boardFirstBoard === '/an-uong/' && storedWatchedSort === 'board') {
                   break;
                 }
                 await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1262,6 +1316,9 @@ async function main() {
                 markAllWatched,
                 markAllHref,
                 markAllDisabledAfter,
+                recentFirstBoard,
+                boardFirstBoard,
+                storedWatchedSort,
                 selectedQuoteComposerValue,
                 selectedQuoteNumber,
                 copiedPostLink: clipboardWrites[0] || '',
@@ -1333,6 +1390,11 @@ async function main() {
           }
           if (payload.markAllHref?.includes('?p=') || !payload.markAllDisabledAfter) {
             throw new Error(`thread desktop watchlist mark-all did not clear unread UI: ${payload.markAllHref || 'missing href'}`);
+          }
+          if (payload.recentFirstBoard !== '/confession/' || payload.boardFirstBoard !== '/an-uong/' || payload.storedWatchedSort !== 'board') {
+            throw new Error(
+              `thread desktop watchlist sort controls failed: recent=${payload.recentFirstBoard || 'missing'} board=${payload.boardFirstBoard || 'missing'} stored=${payload.storedWatchedSort || 'missing'}`
+            );
           }
           if (!payload.selfEditPromptDefault || !payload.selfEditBodyUpdated || !payload.selfEditMarkerVisible) {
             throw new Error(
