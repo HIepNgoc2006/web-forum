@@ -5625,6 +5625,9 @@ function threadToolbarHtml(detail, position) {
   const archivedLabel = detail.thread.isArchived ? '<span class="archived-label">Đã lưu trữ</span>' : '';
   const lockedLabel = detail.thread.isLocked ? '<span class="locked-label">🔒 Đã khóa</span>' : '';
   const watchLabel = isThreadWatched(detail.thread.id) ? 'Bỏ theo dõi' : 'Theo dõi';
+  const mediaToggle = fileCount
+    ? '[<button class="link-button" data-thread-media-toggle type="button" aria-pressed="false">Mở media</button>]'
+    : '';
   const slowModeLabel = detail.thread.slowModeUntil
     ? `<span class="archived-label">Chế độ chậm ${Number(detail.thread.slowModeSeconds || 0)}s</span>`
     : '';
@@ -5636,9 +5639,10 @@ function threadToolbarHtml(detail, position) {
       ${threadNavigationLinksHtml(detail)}
       ${threadFeedLinksHtml(detail)}
       [<button class="link-button" data-toggle-watch type="button">${watchLabel}</button>]
+      ${mediaToggle}
       [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
       [<button class="link-button" data-thread-refresh type="button">Cập nhật</button>]
-      [<button class="link-button" data-thread-collapse-posts type="button">Thu bài</button>]
+      [<button class="link-button" data-thread-collapse-posts type="button" aria-pressed="false">Thu bài</button>]
       [<label title="Tự lấy phản hồi mới"><input type="checkbox" data-auto-update ${checked}> Tự động</label>]
       <span class="auto-countdown">${state.autoUpdate ? state.autoCountdown : ''}</span>
       ${archivedLabel}
@@ -6312,6 +6316,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
     </div>
   `;
   els.threadPagination.innerHTML = pageControlsHtml(state.threadCommentPageMeta, 'thread-comments');
+  syncThreadMediaToolbarState();
   const focusedPost = requestedPost;
   focusPermalinkPost(focusedPost, { scroll: Boolean(focusPost) });
   syncThreadPostCollapseToolbarState();
@@ -8313,6 +8318,50 @@ function loadFullMediaForToggle(imageToggle) {
   }
 }
 
+function threadMediaToggles() {
+  return els.threadDetail ? [...els.threadDetail.querySelectorAll('[data-image-toggle]')] : [];
+}
+
+function setMediaToggleExpanded(imageToggle, expanded, { revealSpoiler = false } = {}) {
+  if (!imageToggle) {
+    return;
+  }
+  if (revealSpoiler && imageToggle.hasAttribute('data-spoiler-image')) {
+    imageToggle.classList.add('spoiler-revealed');
+    imageToggle.closest('.thread-thumb-wrap')?.classList.remove('spoiler-image');
+  }
+  imageToggle.classList.toggle('expanded', expanded);
+  if (expanded) {
+    loadFullMediaForToggle(imageToggle);
+  }
+  imageToggle.closest('.thread-thumb-wrap')?.classList.toggle('image-expanded', expanded);
+  imageToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+}
+
+function syncThreadMediaToolbarState() {
+  const toggles = threadMediaToggles();
+  const buttons = document.querySelectorAll('[data-thread-media-toggle]');
+  const expandedCount = toggles.filter((toggle) => toggle.classList.contains('expanded')).length;
+  const allExpanded = toggles.length > 0 && expandedCount === toggles.length;
+  buttons.forEach((button) => {
+    button.disabled = toggles.length === 0;
+    button.textContent = allExpanded ? 'Thu media' : 'Mở media';
+    button.setAttribute('aria-pressed', allExpanded ? 'true' : 'false');
+    button.title = allExpanded ? 'Thu toàn bộ ảnh và video trong thread' : 'Mở toàn bộ ảnh và video trong thread';
+  });
+}
+
+function toggleAllThreadMedia() {
+  const toggles = threadMediaToggles();
+  if (!toggles.length) {
+    return false;
+  }
+  const shouldExpand = toggles.some((toggle) => !toggle.classList.contains('expanded'));
+  toggles.forEach((toggle) => setMediaToggleExpanded(toggle, shouldExpand, { revealSpoiler: shouldExpand }));
+  syncThreadMediaToolbarState();
+  return shouldExpand;
+}
+
 function threadPosts() {
   return els.threadDetail ? [...els.threadDetail.querySelectorAll('article.post')] : [];
 }
@@ -8592,14 +8641,18 @@ function bindEvents() {
       if (imageToggle.hasAttribute('data-spoiler-image') && !imageToggle.classList.contains('spoiler-revealed')) {
         imageToggle.classList.add('spoiler-revealed');
         imageToggle.closest('.thread-thumb-wrap')?.classList.remove('spoiler-image');
+        syncThreadMediaToolbarState();
         return;
       }
-      const expanded = imageToggle.classList.toggle('expanded');
-      if (expanded) {
-        loadFullMediaForToggle(imageToggle);
-      }
-      imageToggle.closest('.thread-thumb-wrap')?.classList.toggle('image-expanded', expanded);
-      imageToggle.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+      setMediaToggleExpanded(imageToggle, !imageToggle.classList.contains('expanded'));
+      syncThreadMediaToolbarState();
+      return;
+    }
+
+    const threadMediaButton = event.target.closest('[data-thread-media-toggle]');
+    if (threadMediaButton) {
+      const expanded = toggleAllThreadMedia();
+      showToast(expanded ? 'Đã mở toàn bộ media trong thread.' : 'Đã thu toàn bộ media trong thread.');
       return;
     }
 
