@@ -1612,6 +1612,93 @@ async function main() {
         }
       },
       {
+        label: 'thread file-delete desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'yotsuba',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'yotsuba-thread-file-delete-desktop.png'),
+        checks: ['Smoke subject title', 'Bài kiểm thử browser smoke cho CI đã sửa', '[Xóa tệp]'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const inputDeadline = Date.now() + 5000;
+              while (!document.querySelector('#commentForm [name="deletePassword"]') && Date.now() < inputDeadline) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              const commentDeletePasswordInput = document.querySelector('#commentForm [name="deletePassword"]');
+              if (!commentDeletePasswordInput) {
+                throw new Error('comment delete password field missing');
+              }
+              commentDeletePasswordInput.value = 'smoke-delete-pass';
+              commentDeletePasswordInput.dispatchEvent(new Event('input', { bubbles: true }));
+              const originalPrompt = window.prompt;
+              const originalConfirm = window.confirm;
+              let promptDefault = '';
+              let confirmMessage = '';
+              try {
+                window.prompt = (message, defaultValue) => {
+                  promptDefault = String(defaultValue || '');
+                  return 'smoke-delete-pass';
+                };
+                window.confirm = (message) => {
+                  confirmMessage = String(message || '');
+                  return true;
+                };
+                const fileDeleteButton = document.querySelector('#threadDetail [data-self-delete-post][data-file-only="true"]');
+                if (!fileDeleteButton) {
+                  throw new Error('self delete file button missing');
+                }
+                fileDeleteButton.click();
+                const deleteDeadline = Date.now() + 3000;
+                let postStillVisible = false;
+                let mediaGone = false;
+                let wholePostButtonVisible = false;
+                let deletePasswordSynced = false;
+                while (Date.now() < deleteDeadline) {
+                  postStillVisible = Boolean(document.querySelector('#threadDetail article.post.op'));
+                  mediaGone = !document.querySelector('#threadDetail article.post.op [data-image-toggle]');
+                  wholePostButtonVisible = Boolean(document.querySelector('#threadDetail [data-self-delete-post]:not([data-file-only])'));
+                  deletePasswordSynced = [...document.querySelectorAll('[data-delete-password-input]')].every(
+                    (input) => input.value === 'smoke-delete-pass'
+                  );
+                  if (postStillVisible && mediaGone && wholePostButtonVisible && deletePasswordSynced) {
+                    break;
+                  }
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                return {
+                  promptDefault,
+                  confirmMessage,
+                  postStillVisible,
+                  mediaGone,
+                  wholePostButtonVisible,
+                  deletePasswordSynced
+                };
+              } finally {
+                window.prompt = originalPrompt;
+                window.confirm = originalConfirm;
+              }
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          if (payload.promptDefault !== 'smoke-delete-pass' || !payload.deletePasswordSynced) {
+            throw new Error(
+              `thread file-delete desktop delete password prompt sync failed: default=${payload.promptDefault || 'missing'} synced=${Boolean(payload.deletePasswordSynced)}`
+            );
+          }
+          if (!payload.confirmMessage?.includes('Chỉ xóa tệp')) {
+            throw new Error(`thread file-delete desktop did not use file-only confirmation: ${payload.confirmMessage || 'missing'}`);
+          }
+          if (!payload.postStillVisible || !payload.mediaGone || !payload.wholePostButtonVisible) {
+            throw new Error(
+              `thread file-delete desktop failed: post=${Boolean(payload.postStillVisible)} mediaGone=${Boolean(payload.mediaGone)} deleteButton=${Boolean(payload.wholePostButtonVisible)}`
+            );
+          }
+        }
+      },
+      {
         label: 'archive desktop',
         url: `${baseUrl}/#archive/confession`,
         theme: 'burichan',
