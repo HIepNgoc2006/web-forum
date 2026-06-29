@@ -985,6 +985,10 @@ async function main() {
                 await new Promise((resolve) => setTimeout(resolve, 50));
               }
               const notificationPreferencesAfterNotify = JSON.parse(localStorage.getItem('notificationPreferences') || '{}');
+              const renderedCommentDeadline = Date.now() + 3000;
+              while (!document.querySelector('#p' + CSS.escape(String(commentNumber))) && Date.now() < renderedCommentDeadline) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
               const watchedMap = JSON.parse(localStorage.getItem('watchedThreads') || '{}');
               const currentWatched = watchedMap[threadId] || {};
               watchedMap[threadId] = {

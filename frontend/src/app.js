@@ -3502,7 +3502,10 @@ function watchedThreadHref(item = {}) {
   }
   const threadPath = `#thread/${encodeURIComponent(item.threadId)}`;
   const firstUnreadNumber = Number(item.firstUnreadNumber || 0);
-  return firstUnreadNumber > 0 ? `${threadPath}?p=${encodeURIComponent(firstUnreadNumber)}` : threadPath;
+  const fallbackUnreadNumber =
+    Number(item.maxNumber || 0) > Number(item.lastSeen || 0) ? Number(item.maxNumber || 0) : 0;
+  const unreadNumber = firstUnreadNumber || fallbackUnreadNumber;
+  return unreadNumber > 0 ? `${threadPath}?p=${encodeURIComponent(unreadNumber)}` : threadPath;
 }
 
 async function loadHomeThreadsByBoard() {
