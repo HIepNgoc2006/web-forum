@@ -5247,7 +5247,7 @@ function fileTextHtml(image) {
   const name = escapeHtml(image?.name || 'tai-len');
   const src = escapeHtml(mediaOriginalSrc(image));
   const info = escapeHtml(imageInfoText(image));
-  return `Tệp: <a href="${src}" target="_blank" rel="noopener">${name}</a> (${info})`;
+  return `Tệp: <a href="${src}" target="_blank" rel="noopener noreferrer">${name}</a> (${info})`;
 }
 
 function mediaToggleHtml(image, className = 'post-image') {
