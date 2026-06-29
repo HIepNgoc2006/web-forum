@@ -929,7 +929,8 @@ async function main() {
                 body: JSON.stringify({
                   body: 'browser notification smoke',
                   captchaToken: 'dev-pass',
-                  posterToken: 'ci-poster-notify'
+                  posterToken: 'ci-poster-notify',
+                  options: 'sage'
                 })
               });
               if (!response.ok) {
@@ -973,6 +974,7 @@ async function main() {
               }
               const watched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
               const diceRollText = document.querySelector('.dice-roll')?.textContent || '';
+              const sageMarkerVisible = Boolean([...document.querySelectorAll('.sage-marker')].find((item) => item.textContent.trim() === 'sage'));
               const commentDeletePasswordInput = document.querySelector('#commentForm [name="deletePassword"]');
               if (!commentDeletePasswordInput) {
                 throw new Error('comment delete password field missing');
@@ -1175,6 +1177,7 @@ async function main() {
                 threadSearchPreviewVisible,
                 threadSearchOtherHidden,
                 threadSearchCleared,
+                sageMarkerVisible,
                 preferences: JSON.parse(localStorage.getItem('notificationPreferences') || '{}')
               };
             })()`,
@@ -1193,6 +1196,9 @@ async function main() {
           }
           if (!payload.diceRollText?.includes('1d6')) {
             throw new Error(`thread desktop did not render dice roll result: ${payload.diceRollText || 'missing'}`);
+          }
+          if (!payload.sageMarkerVisible) {
+            throw new Error('thread desktop did not render sage marker for sage reply.');
           }
           if (!payload.selfEditPromptDefault || !payload.selfEditBodyUpdated || !payload.selfEditMarkerVisible) {
             throw new Error(
