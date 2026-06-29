@@ -1215,6 +1215,24 @@ function isMyPost(post) {
   return Number.isFinite(number) && myPostNumberSet().has(number);
 }
 
+function myPostEntry(globalNumber) {
+  const number = Number(globalNumber);
+  if (!Number.isFinite(number)) {
+    return null;
+  }
+  return myPosts().find((item) => Number(item.globalNumber) === number) || null;
+}
+
+function isAnonymousMyPost(post) {
+  const entry = myPostEntry(post?.globalNumber);
+  return Boolean(entry && entry.owner === 'anonymous' && entry.deletePassword);
+}
+
+function myPostDeletePassword(globalNumber) {
+  const entry = myPostEntry(globalNumber);
+  return normalizeDeletePassword(entry?.deletePassword) || defaultDeletePassword();
+}
+
 function isAccountPost(post) {
   const number = Number(post?.globalNumber);
   return Boolean(state.accountToken && state.account && Number.isFinite(number) && state.accountPostNumbers.has(number));
@@ -1244,9 +1262,12 @@ function rememberMyPost(post, type) {
   if (!post?.globalNumber) {
     return;
   }
+  const accountOwned = Boolean(state.accountToken && state.account);
   const items = myPosts().filter((item) => Number(item.globalNumber) !== Number(post.globalNumber));
   items.unshift({
     type,
+    owner: accountOwned ? 'account' : 'anonymous',
+    deletePassword: accountOwned ? undefined : defaultDeletePassword(),
     threadId: post.threadId || post.id || state.threadId,
     boardSlug: post.boardSlug || state.boardSlug,
     globalNumber: post.globalNumber,
@@ -5088,6 +5109,21 @@ function accountPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
   return `<button class="${className}" data-account-edit-post="${post.globalNumber}" data-account-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
 }
 
+function anonymousPostActionsHtml(post, { className = 'quote-button' } = {}) {
+  if (!isAnonymousMyPost(post) || !post?.globalNumber || post.isDeleted) {
+    return '';
+  }
+  const encodedBody = encodeURIComponent(post.body || '');
+  const deleteFileAction = postMediaCount(post)
+    ? `<button class="${className}" data-self-delete-file-post="${post.globalNumber}" type="button">[Xóa tệp]</button>`
+    : '';
+  return `
+    <button class="${className}" data-self-edit-post="${post.globalNumber}" data-self-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa]</button>
+    <button class="${className}" data-self-delete-post="${post.globalNumber}" type="button">[Xóa]</button>
+    ${deleteFileAction}
+  `;
+}
+
 function meta(post, options = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -5097,6 +5133,7 @@ function meta(post, options = {}) {
   const canReply = options.canReply !== false;
   const showPostActions = options.actions !== false;
   const accountEditAction = showPostActions ? accountPostEditButtonHtml(post) : '';
+  const anonymousActions = showPostActions ? anonymousPostActionsHtml(post) : '';
   const permalink = postPermalink(post, options);
   const opNumber = Number(options.opNumber || 0);
   const isOpReply =
@@ -5141,6 +5178,7 @@ function meta(post, options = {}) {
       }
       ${showPostActions ? `<button class="quote-button" data-copy-post-link="${escapeHtml(permalink)}" type="button">[Link]</button>` : ''}
       ${showPostActions ? `<button class="quote-button" data-collapse-post="${post.globalNumber}" type="button" aria-expanded="true">[Thu]</button>` : ''}
+      ${anonymousActions}
       ${accountEditAction}
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
@@ -8162,6 +8200,69 @@ function bindEvents() {
     const quickReplyNumber = event.target.closest('[data-quick-reply]');
     if (quickReplyNumber) {
       openQuickReply(quickReplyNumber.dataset.quickReply, event);
+      return;
+    }
+
+    const selfEditPostButton = event.target.closest('[data-self-edit-post]');
+    if (selfEditPostButton) {
+      const globalNumber = selfEditPostButton.dataset.selfEditPost;
+      const currentBody = decodeURIComponent(selfEditPostButton.dataset.selfEditBody || '');
+      const edit = await showPostEditModal(globalNumber, currentBody, { showReason: false });
+      if (!edit) {
+        return;
+      }
+      try {
+        const result = await api(`/api/posts/${globalNumber}`, {
+          auth: 'none',
+          method: 'PUT',
+          body: JSON.stringify({ body: edit.body, password: myPostDeletePassword(globalNumber) })
+        });
+        rememberMyPost(result.post, result.type || 'thread');
+        showToast(result.status === 'pending' ? 'Đã sửa bài. Nội dung đang chờ duyệt lại.' : 'Đã sửa bài.');
+        await refreshCurrentScreen();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const selfDeletePostButton = event.target.closest('[data-self-delete-post]');
+    if (selfDeletePostButton) {
+      const globalNumber = selfDeletePostButton.dataset.selfDeletePost;
+      if (!window.confirm(`Xóa bài No.${globalNumber}?`)) {
+        return;
+      }
+      try {
+        await api(`/api/posts/${globalNumber}`, {
+          auth: 'none',
+          method: 'DELETE',
+          body: JSON.stringify({ password: myPostDeletePassword(globalNumber) })
+        });
+        showToast('Đã xóa bài.');
+        await refreshCurrentScreen();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const selfDeleteFileButton = event.target.closest('[data-self-delete-file-post]');
+    if (selfDeleteFileButton) {
+      const globalNumber = selfDeleteFileButton.dataset.selfDeleteFilePost;
+      if (!window.confirm(`Xóa tệp đính kèm của bài No.${globalNumber}?`)) {
+        return;
+      }
+      try {
+        await api(`/api/posts/${globalNumber}`, {
+          auth: 'none',
+          method: 'DELETE',
+          body: JSON.stringify({ password: myPostDeletePassword(globalNumber), fileOnly: true })
+        });
+        showToast('Đã xóa tệp đính kèm.');
+        await refreshCurrentScreen();
+      } catch (error) {
+        showToast(error.message);
+      }
       return;
     }
 
