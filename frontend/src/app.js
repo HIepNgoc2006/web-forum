@@ -2704,6 +2704,10 @@ function saveCurrentBoardSearch() {
     return;
   }
   const board = currentBoard();
+  if (!board) {
+    showToast('Không tìm thấy bảng để lưu tìm kiếm.');
+    return;
+  }
   const key = `${board.slug}:${query}`;
   const searches = readSavedSearches().filter((item) => `${item.boardSlug}:${item.query}` !== key);
   searches.unshift({
@@ -2883,7 +2887,38 @@ function setScreen(name) {
 }
 
 function currentBoard() {
-  return state.boards.find((board) => board.slug === state.boardSlug) || state.boards[0];
+  return state.boards.find((board) => board.slug === state.boardSlug) || null;
+}
+
+function renderMissingBoard(screen = 'board') {
+  const slug = state.boardSlug || 'unknown';
+  setScreen(screen);
+  renderBoards();
+  updateBoardPresentation(null);
+  if (screen === 'catalog') {
+    els.catalogTitle.textContent = 'Không tìm thấy bảng';
+    els.catalogDescription.textContent = `Không có bảng /${slug}/.`;
+    els.catalogReturnTop.href = '#home';
+    els.catalogReturnBottom.href = '#home';
+    els.catalogGrid.innerHTML = '<p class="muted">Hãy chọn một bảng khác từ thanh điều hướng.</p>';
+    return;
+  }
+
+  els.boardTitle.textContent = 'Không tìm thấy bảng';
+  els.boardPath.textContent = `/${slug}/`;
+  els.boardDescription.textContent = 'Bảng này không tồn tại hoặc đã bị ẩn.';
+  els.boardCatalogLink.href = '#home';
+  els.boardArchiveLink.href = '#home';
+  els.boardCatalogLinkBottom.href = '#home';
+  els.boardArchiveLinkBottom.href = '#home';
+  els.boardJsonFeedLink.href = '#home';
+  els.boardRssFeedLink.href = '#home';
+  els.boardJsonFeedLinkBottom.href = '#home';
+  els.boardRssFeedLinkBottom.href = '#home';
+  els.boardSummary.classList.add('hidden');
+  els.threadList.innerHTML = '<p class="muted">Hãy chọn một bảng khác từ thanh điều hướng.</p>';
+  els.boardPagination.innerHTML = '';
+  closeThreadComposer();
 }
 
 function normalizeSearchValue(value = '') {
@@ -5988,6 +6023,7 @@ function renderCatalogThreads(threads) {
 async function loadCatalog() {
   const board = currentBoard();
   if (!board) {
+    renderMissingBoard('catalog');
     return;
   }
   setScreen('catalog');
@@ -6140,6 +6176,7 @@ function renderBoardThreads(threads) {
 async function loadBoard() {
   const board = currentBoard();
   if (!board) {
+    renderMissingBoard('board');
     return;
   }
   setScreen('board');
