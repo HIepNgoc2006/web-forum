@@ -1346,8 +1346,14 @@ body.display-hide-thumbnails .thread-thumb-wrap {
 .post-meta .number,
 .post-meta .hash,
 .post-meta .date,
-.post-meta .status {
+.post-meta .status,
+.post-meta .last-edited {
   margin-left: 4px;
+}
+
+.post-meta .last-edited {
+  color: #707070;
+  white-space: nowrap;
 }
 
 .post-number {
@@ -1578,6 +1584,13 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   margin-left: 4px;
   color: #d00;
   font-weight: bold;
+}
+
+.sage-marker {
+  margin-left: 4px;
+  color: #707070;
+  font-style: italic;
+  white-space: nowrap;
 }
 
 /* Verified staff capcode badge (## Quản trị viên / ## Điều hành viên). */

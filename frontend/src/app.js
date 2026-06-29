@@ -4829,6 +4829,15 @@ function formatPostDate(value) {
   return `${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${String(date.getFullYear()).slice(-2)}(${days[date.getDay()]})${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
 }
 
+function formatEditedDate(value) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
+  const pad = (number) => String(number).padStart(2, '0');
+  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
 function dataUrlBytes(dataUrl = '') {
   const base64 = String(dataUrl).split(',')[1] || '';
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
@@ -5096,6 +5105,8 @@ function meta(post, options = {}) {
     (post.isOp || (options.opPosterHash && post.posterHash === options.opPosterHash));
   const opMarker = isOpReply ? '<span class="op-post-marker">(OP)</span>' : '';
   const youMarker = isMyPost(post) ? '<span class="you-marker" title="Bài của bạn">(You)</span>' : '';
+  const sageMarker = post.sage ? '<span class="sage-marker" title="Bài trả lời này không bump thread">sage</span>' : '';
+  const lastEdited = post.editedAt ? `<span class="last-edited" title="Sửa lần cuối">Đã sửa ${formatEditedDate(post.editedAt)}</span>` : '';
   const posterNote = posterNoteForPost(post);
   const posterNoteBadge = posterNote
     ? '<span class="poster-note-badge" title="' +
@@ -5116,6 +5127,8 @@ function meta(post, options = {}) {
       ${posterIdentity}
       ${opMarker}
       ${youMarker}
+      ${sageMarker}
+      ${lastEdited}
       ${posterNoteBadge}
       ${stickyLabelHtml(post)}
       <span class="status">${labels}</span>
