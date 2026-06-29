@@ -4941,6 +4941,23 @@ function postPermalink(post, options = {}) {
   return `#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`;
 }
 
+function absolutePostPermalink(permalink) {
+  if (!permalink || permalink === '#') {
+    return window.location.href;
+  }
+  return `${window.location.origin}${window.location.pathname}${permalink}`;
+}
+
+async function copyPostPermalink(permalink) {
+  const absolutePermalink = absolutePostPermalink(permalink);
+  try {
+    await navigator.clipboard.writeText(absolutePermalink);
+    showToast('Đã sao chép link bài viết.');
+  } catch {
+    showToast(absolutePermalink);
+  }
+}
+
 function readVote(globalNumber) {
   try {
     return localStorage.getItem(`vote:${globalNumber}`) || '';
@@ -5109,6 +5126,7 @@ function meta(post, options = {}) {
           ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
           : ''
       }
+      ${showPostActions ? `<button class="quote-button" data-copy-post-link="${escapeHtml(permalink)}" type="button">[Link]</button>` : ''}
       ${accountEditAction}
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
@@ -8399,6 +8417,12 @@ function bindEvents() {
     const ttsPostButton = event.target.closest('[data-tts-post]');
     if (ttsPostButton) {
       await speakPost(ttsPostButton);
+      return;
+    }
+
+    const copyPostLinkButton = event.target.closest('[data-copy-post-link]');
+    if (copyPostLinkButton) {
+      await copyPostPermalink(copyPostLinkButton.dataset.copyPostLink);
       return;
     }
 
