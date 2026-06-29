@@ -951,6 +951,7 @@ async function main() {
               while (notifications.length === 0 && Date.now() < notificationDeadline) {
                 await new Promise((resolve) => setTimeout(resolve, 50));
               }
+              const notificationPreferencesAfterNotify = JSON.parse(localStorage.getItem('notificationPreferences') || '{}');
               const watchedMap = JSON.parse(localStorage.getItem('watchedThreads') || '{}');
               const currentWatched = watchedMap[threadId] || {};
               watchedMap[threadId] = {
@@ -979,6 +980,62 @@ async function main() {
                 readHref = watchedThreadLink()?.getAttribute('href') || '';
                 markReadButtonStillVisible = Boolean(watchedThreadMarkReadButton());
                 if (Number(readWatched.lastSeen || 0) >= commentNumber && !readHref.includes('?p=') && !markReadButtonStillVisible) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              localStorage.setItem('notificationPreferences', JSON.stringify({
+                email: false,
+                watchedThreads: true,
+                boardSubscriptions: false,
+                browserWatchedThreads: false
+              }));
+              const allReadResponse = await fetch('/api/threads/' + encodeURIComponent(threadId) + '/comments', {
+                method: 'POST',
+                headers: { 'content-type': 'application/json' },
+                body: JSON.stringify({
+                  body: 'watchlist mark all read smoke',
+                  captchaToken: 'dev-pass',
+                  posterToken: 'ci-poster-mark-all'
+                })
+              });
+              if (!allReadResponse.ok) {
+                throw new Error('mark-all smoke comment failed: ' + allReadResponse.status);
+              }
+              const allReadBody = await allReadResponse.json();
+              const allReadNumber = Number(allReadBody?.data?.comment?.globalNumber || allReadBody?.data?.globalNumber || 0);
+              if (!Number.isFinite(allReadNumber) || allReadNumber <= 0) {
+                throw new Error('mark-all smoke comment did not return a global number');
+              }
+              const allReadMap = JSON.parse(localStorage.getItem('watchedThreads') || '{}');
+              allReadMap[threadId] = {
+                ...(allReadMap[threadId] || {}),
+                maxNumber: allReadNumber,
+                lastSeen: Math.max(0, allReadNumber - 1)
+              };
+              localStorage.setItem('watchedThreads', JSON.stringify(allReadMap));
+              window.location.hash = '#home?markAll=' + encodeURIComponent(allReadNumber);
+              const allReadDeadline = Date.now() + 5000;
+              let allReadHref = '';
+              let markAllDisabledBefore = true;
+              while (Date.now() < allReadDeadline) {
+                allReadHref = watchedThreadLink()?.getAttribute('href') || '';
+                markAllDisabledBefore = Boolean(document.querySelector('#watchedMarkAllRead')?.disabled);
+                if (allReadHref.includes('?p=' + encodeURIComponent(allReadNumber)) && !markAllDisabledBefore) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              document.querySelector('#watchedMarkAllRead')?.click();
+              const markAllDeadline = Date.now() + 3000;
+              let markAllWatched = {};
+              let markAllHref = '';
+              let markAllDisabledAfter = false;
+              while (Date.now() < markAllDeadline) {
+                markAllWatched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
+                markAllHref = watchedThreadLink()?.getAttribute('href') || '';
+                markAllDisabledAfter = Boolean(document.querySelector('#watchedMarkAllRead')?.disabled);
+                if (Number(markAllWatched.lastSeen || 0) >= allReadNumber && !markAllHref.includes('?p=') && markAllDisabledAfter) {
                   break;
                 }
                 await new Promise((resolve) => setTimeout(resolve, 100));
@@ -1199,6 +1256,12 @@ async function main() {
                 readWatched,
                 readHref,
                 markReadButtonStillVisible,
+                allReadNumber,
+                allReadHref,
+                markAllDisabledBefore,
+                markAllWatched,
+                markAllHref,
+                markAllDisabledAfter,
                 selectedQuoteComposerValue,
                 selectedQuoteNumber,
                 copiedPostLink: clipboardWrites[0] || '',
@@ -1231,7 +1294,7 @@ async function main() {
                 threadSearchOtherHidden,
                 threadSearchCleared,
                 sageMarkerVisible,
-                preferences: JSON.parse(localStorage.getItem('notificationPreferences') || '{}')
+                preferences: notificationPreferencesAfterNotify
               };
             })()`,
             awaitPromise: true,
@@ -1261,6 +1324,15 @@ async function main() {
           }
           if (payload.readHref?.includes('?p=') || payload.markReadButtonStillVisible) {
             throw new Error(`thread desktop watchlist mark-read did not clear unread UI: ${payload.readHref || 'missing href'}`);
+          }
+          if (!payload.allReadHref?.includes(`?p=${payload.allReadNumber}`) || payload.markAllDisabledBefore) {
+            throw new Error(`thread desktop watchlist mark-all setup did not expose unread state: ${payload.allReadHref || 'missing href'}`);
+          }
+          if (Number(payload.markAllWatched?.lastSeen || 0) < Number(payload.allReadNumber || 0)) {
+            throw new Error('thread desktop watchlist mark-all did not advance lastSeen.');
+          }
+          if (payload.markAllHref?.includes('?p=') || !payload.markAllDisabledAfter) {
+            throw new Error(`thread desktop watchlist mark-all did not clear unread UI: ${payload.markAllHref || 'missing href'}`);
           }
           if (!payload.selfEditPromptDefault || !payload.selfEditBodyUpdated || !payload.selfEditMarkerVisible) {
             throw new Error(
