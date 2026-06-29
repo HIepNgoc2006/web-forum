@@ -4126,8 +4126,44 @@ function historyActionsHtml(actions) {
   return moderationActionsHtml(actions);
 }
 
-function adminAnalyticsHtml(analytics) {
-  const boardRows = (analytics.boardActivity || [])
+function analyticsCount(value) {
+  const count = Number(value);
+  return Number.isFinite(count) && count >= 0 ? Math.round(count) : 0;
+}
+
+function normalizeAnalyticsBoard(slug, board = {}) {
+  const boardMeta = state.boards.find((item) => item.slug === (board.slug || slug));
+  const threads = board.threads || {};
+  const comments = board.comments || {};
+  return {
+    slug: board.slug || slug || '',
+    name: board.name || boardMeta?.name || board.slug || slug || 'Board',
+    threads: {
+      active: analyticsCount(threads.active ?? board.activeThreads),
+      pending: analyticsCount(threads.pending ?? board.pendingThreads),
+      deleted: analyticsCount(threads.deleted ?? board.deletedThreads)
+    },
+    comments: {
+      active: analyticsCount(comments.active ?? board.activeComments),
+      pending: analyticsCount(comments.pending ?? board.pendingComments),
+      deleted: analyticsCount(comments.deleted ?? board.deletedComments)
+    },
+    reportsCount: analyticsCount(board.reportsCount ?? board.totalReports)
+  };
+}
+
+function analyticsBoardActivityRows(boardActivity) {
+  if (Array.isArray(boardActivity)) {
+    return boardActivity.map((board) => normalizeAnalyticsBoard(board?.slug, board));
+  }
+  if (boardActivity && typeof boardActivity === 'object') {
+    return Object.entries(boardActivity).map(([slug, board]) => normalizeAnalyticsBoard(slug, board));
+  }
+  return [];
+}
+
+function adminAnalyticsHtml(analytics = {}) {
+  const boardRows = analyticsBoardActivityRows(analytics.boardActivity)
     .map((board) => {
       return `
         <tr>
