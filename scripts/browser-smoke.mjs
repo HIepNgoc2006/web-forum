@@ -184,14 +184,15 @@ async function createSeedThread() {
   return threadId;
 }
 
-async function createPendingThread(body, posterToken) {
+async function createPendingThread(body, posterToken, media = {}) {
   const threadResponse = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
       body,
       captchaToken: 'dev-pass',
-      posterToken
+      posterToken,
+      ...media
     })
   });
   if (!threadResponse.ok) {
@@ -856,7 +857,25 @@ async function main() {
         async before() {
           approvePendingThread = await createPendingThread(
             'Admin visual pass pending approval PII 0912345678',
-            'ci-poster-admin-approve'
+            'ci-poster-admin-approve',
+            {
+              image: {
+                name: 'admin-detail.png',
+                type: 'image/png',
+                dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+                sizeBytes: 68,
+                width: 1,
+                height: 1,
+                thumbnail: {
+                  name: 'admin-detail-thumb.png',
+                  type: 'image/png',
+                  dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+                  sizeBytes: 68,
+                  width: 1,
+                  height: 1
+                }
+              }
+            }
           );
           deletePendingThread = await createPendingThread(
             'Admin visual pass pending bulk delete PII 0987654321',
@@ -889,6 +908,14 @@ async function main() {
               const approveItem = await waitFor(() => document.querySelector('.pending-item[data-id="' + approveId + '"]'), 'approve pending item');
               approveItem.querySelector('[data-admin-detail]')?.click();
               await waitFor(() => approveItem.querySelector('.admin-detail-host')?.innerText.includes('Admin visual pass pending approval'), 'detail panel');
+              await waitFor(() => {
+                const image = approveItem.querySelector('.admin-detail-host .post-media-gallery img');
+                return image?.complete && image.naturalWidth > 0 ? image : null;
+              }, 'admin detail image preview');
+              const imageName = approveItem.querySelector('.admin-detail-host .file-text')?.innerText || '';
+              if (!imageName.includes('admin-detail.png')) {
+                throw new Error('admin detail panel did not render uploaded image metadata.');
+              }
               approveItem.querySelector('[data-action="approve"]')?.click();
               await submitReason('Visual pass approved');
               await waitFor(() => !document.querySelector('.pending-item[data-id="' + approveId + '"]'), 'approved item removal');
