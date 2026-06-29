@@ -1539,6 +1539,10 @@ body.display-hide-thumbnails .thread-media-index {
 }
 
 .reaction-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 20px;
   border: none;
   background: none;
   padding: 0 2px;
@@ -1548,8 +1552,16 @@ body.display-hide-thumbnails .thread-media-index {
   line-height: 1;
 }
 
-.reaction-button:hover {
+.reaction-button:hover,
+.reaction-button.active {
+  border-color: var(--reply-border);
+  background: var(--reply);
   color: var(--text);
+}
+
+.reaction-count {
+  min-width: 0.8em;
+  font-size: 10px;
 }
 
 .vote-score {

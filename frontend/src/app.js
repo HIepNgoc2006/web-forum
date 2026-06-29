@@ -153,6 +153,15 @@ const STICKERS = {
   thanks: { icon: '🙏', label: 'Cảm ơn' }
 };
 
+const POST_REACTIONS = [
+  { type: 'like', icon: '👍', label: 'Thích' },
+  { type: 'laugh', icon: '😂', label: 'Cười' },
+  { type: 'surprise', icon: '😮', label: 'Ngạc nhiên' },
+  { type: 'sad', icon: '😢', label: 'Buồn' },
+  { type: 'angry', icon: '😠', label: 'Bực' },
+  { type: 'thanks', icon: '🙏', label: 'Cảm ơn' }
+];
+
 const AUDIO_RECORDING_TYPES = [
   'audio/webm;codecs=opus',
   'audio/webm',
@@ -5204,27 +5213,43 @@ function writeVote(globalNumber, direction) {
   }
 }
 
-const REACTION_LABELS = [
-  ['like', 'Thích', '+'],
-  ['laugh', 'Cười', 'ha'],
-  ['surprise', 'Ngạc nhiên', '!'],
-  ['sad', 'Buồn', ':('],
-  ['angry', 'Giận', '>'],
-  ['thanks', 'Cảm ơn', 'ty']
-];
+function readReaction(globalNumber) {
+  try {
+    return localStorage.getItem(`reaction:${globalNumber}`) || '';
+  } catch {
+    return '';
+  }
+}
+
+function writeReaction(globalNumber, reaction) {
+  try {
+    if (reaction) {
+      localStorage.setItem(`reaction:${globalNumber}`, reaction);
+    } else {
+      localStorage.removeItem(`reaction:${globalNumber}`);
+    }
+  } catch {
+    /* ignore storage errors */
+  }
+}
 
 function reactionControlHtml(post) {
-  const reactions = post.reactions || {};
+  const reactions = post.reactions && typeof post.reactions === 'object' ? post.reactions : {};
+  const myReaction = readReaction(post.globalNumber);
   return `
     <span class="post-reactions" aria-label="Cảm xúc bài viết">
-      ${REACTION_LABELS.map(([type, label, shortLabel]) => {
-        const count = Math.max(0, Number(reactions[type]) || 0);
-        return `<button class="reaction-button" data-reaction="${type}" data-reaction-target="${post.globalNumber}" type="button" title="${label}" aria-label="${label}">${shortLabel}${count ? ` ${count}` : ''}</button>`;
+      ${POST_REACTIONS.map((item) => {
+        const count = Math.max(0, Number(reactions[item.type]) || 0);
+        const active = myReaction === item.type ? ' active' : '';
+        return `
+          <button class="reaction-button${active}" data-reaction="${item.type}" data-reaction-target="${post.globalNumber}" type="button" title="${escapeHtml(item.label)}" aria-label="${escapeHtml(item.label)}">
+            <span aria-hidden="true">${item.icon}</span>${count ? `<span class="reaction-count">${count}</span>` : ''}
+          </button>
+        `;
       }).join('')}
     </span>
   `;
 }
-
 function voteControlHtml(post) {
   const votes = post.votes || { up: 0, down: 0, score: 0 };
   const score = Number(votes.score ?? (Number(votes.up || 0) - Number(votes.down || 0)));
@@ -8984,18 +9009,13 @@ function bindEvents() {
       const globalNumber = reactionButton.dataset.reactionTarget;
       const reaction = reactionButton.dataset.reaction;
       try {
-        await api(`/api/posts/${globalNumber}/reactions`, {
+        const result = await api(`/api/posts/${globalNumber}/reactions`, {
           auth: state.accountToken ? 'account' : 'none',
           method: 'POST',
           body: JSON.stringify({ reaction, posterToken: state.posterToken })
         });
-        if (state.screen === 'thread') {
-          await loadThread();
-        } else if (state.screen === 'board') {
-          await loadBoard();
-        } else {
-          await loadHome();
-        }
+        writeReaction(globalNumber, result.myReaction || '');
+        await refreshCurrentScreen();
       } catch (error) {
         showToast(error.message);
       }
