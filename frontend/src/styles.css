@@ -2305,6 +2305,10 @@ body.display-compact .post-body {
   text-align: left;
 }
 
+.moderation-log-table [aria-expanded="true"] {
+  font-weight: bold;
+}
+
 .toast,
 .ref-preview {
   position: fixed;
