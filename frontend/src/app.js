@@ -172,6 +172,7 @@ const AI_TRANSCRIBE_TIMEOUT_MS = 60_000;
 const AI_SPEAK_TIMEOUT_MS = 60_000;
 const AI_TTS_PROVIDER_COOLDOWN_MS = 60_000;
 const ADMIN_LOAD_TIMEOUT_MS = 60_000;
+const ADMIN_SETTINGS_REFRESH_MS = 60_000;
 
 function reportCategoryLabel(value) {
   return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
@@ -4480,6 +4481,8 @@ function renderAdminHealth(data) {
   }
 }
 
+let adminModerationSettingsLoadedAt = 0;
+
 function syncAdminModerationSettings(settings = {}) {
   const threshold = Number(settings.moderationConfidenceThreshold ?? state.moderationConfidenceThreshold ?? 0);
   state.moderationConfidenceThreshold = Number.isFinite(threshold) ? Math.min(1, Math.max(0, threshold)) : 0;
@@ -4488,13 +4491,17 @@ function syncAdminModerationSettings(settings = {}) {
   }
 }
 
-async function loadAdminModerationSettings({ signal } = {}) {
+async function loadAdminModerationSettings({ signal, force = false } = {}) {
+  if (!force && Date.now() - adminModerationSettingsLoadedAt < ADMIN_SETTINGS_REFRESH_MS) {
+    return;
+  }
   const settings = await api('/api/admin/moderation-settings', {
     signal,
     timeoutMs: ADMIN_LOAD_TIMEOUT_MS,
     timeoutMessage: 'Thiết lập kiểm duyệt phản hồi quá lâu, vui lòng thử lại.'
   });
   syncAdminModerationSettings(settings);
+  adminModerationSettingsLoadedAt = Date.now();
 }
 
 async function saveAdminModerationSettings() {
@@ -4510,6 +4517,7 @@ async function saveAdminModerationSettings() {
       })
     });
     syncAdminModerationSettings(settings);
+    adminModerationSettingsLoadedAt = Date.now();
     showToast('Đã lưu ngưỡng kiểm duyệt.');
   } catch (error) {
     showToast(error.message);
