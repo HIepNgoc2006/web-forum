@@ -964,11 +964,61 @@ async function main() {
               }
               const watched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
               const diceRollText = document.querySelector('.dice-roll')?.textContent || '';
+              const commentDeletePasswordInput = document.querySelector('#commentForm [name="deletePassword"]');
+              if (!commentDeletePasswordInput) {
+                throw new Error('comment delete password field missing');
+              }
+              commentDeletePasswordInput.value = 'smoke-delete-pass';
+              commentDeletePasswordInput.dispatchEvent(new Event('input', { bubbles: true }));
+              const originalPrompt = window.prompt;
+              let selfEditPromptDefault = '';
+              window.prompt = (message, defaultValue) => {
+                if (String(message || '').includes('sửa bài')) {
+                  selfEditPromptDefault = String(defaultValue || '');
+                }
+                return 'smoke-delete-pass';
+              };
+              const selfEditButton = document.querySelector('#threadDetail [data-self-edit-post]');
+              if (!selfEditButton) {
+                throw new Error('self edit button missing');
+              }
+              selfEditButton.click();
+              const editModalDeadline = Date.now() + 3000;
+              let editTextarea = null;
+              while (Date.now() < editModalDeadline) {
+                editTextarea = document.querySelector('#postEditTextarea');
+                if (editTextarea) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              if (!editTextarea) {
+                throw new Error('self edit modal missing');
+              }
+              editTextarea.value = 'Bài kiểm thử browser smoke cho CI đã sửa';
+              editTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+              document.querySelector('#postEditConfirmBtn')?.click();
+              const selfEditDeadline = Date.now() + 3000;
+              let selfEditBodyUpdated = false;
+              let selfEditMarkerVisible = false;
+              while (Date.now() < selfEditDeadline) {
+                const op = document.querySelector('#threadDetail article.post.op');
+                selfEditBodyUpdated = Boolean(op?.innerText.includes('Bài kiểm thử browser smoke cho CI đã sửa'));
+                selfEditMarkerVisible = Boolean(op?.querySelector('.last-edited'));
+                if (selfEditBodyUpdated && selfEditMarkerVisible) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              window.prompt = originalPrompt;
               return {
                 count: notifications.length,
                 first: notifications[0] || null,
                 watched,
                 diceRollText,
+                selfEditPromptDefault,
+                selfEditBodyUpdated,
+                selfEditMarkerVisible,
                 mediaExpandedCount,
                 mediaButtonAfterExpand,
                 firstMediaLoaded,
@@ -1000,6 +1050,11 @@ async function main() {
           }
           if (!payload.diceRollText?.includes('1d6')) {
             throw new Error(`thread desktop did not render dice roll result: ${payload.diceRollText || 'missing'}`);
+          }
+          if (!payload.selfEditPromptDefault || !payload.selfEditBodyUpdated || !payload.selfEditMarkerVisible) {
+            throw new Error(
+              `thread desktop self edit failed: promptDefault=${payload.selfEditPromptDefault || 'missing'} updated=${Boolean(payload.selfEditBodyUpdated)} marker=${Boolean(payload.selfEditMarkerVisible)}`
+            );
           }
           if (
             payload.mediaExpandedCount < 2 ||
