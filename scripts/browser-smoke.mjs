@@ -255,6 +255,21 @@ async function createSeedThread() {
     }
   }
 
+  const neighborResponse = await fetch(`${baseUrl}/api/boards/confession/threads`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      subject: 'Smoke neighboring thread',
+      body: 'Chủ đề kề bên để kiểm thử điều hướng thread',
+      captchaToken: 'dev-pass',
+      posterToken: 'ci-poster-neighbor'
+    })
+  });
+  if (!neighborResponse.ok) {
+    const body = await neighborResponse.text().catch(() => '');
+    throw new Error(`Could not create smoke neighbor thread: ${neighborResponse.status} ${body}`);
+  }
+
   return threadId;
 }
 
@@ -824,6 +839,19 @@ async function main() {
                 close() {}
               }
               Object.defineProperty(window, 'Notification', { configurable: true, value: FakeNotification });
+              const threadNavLink = document.querySelector('[data-thread-nav]');
+              const threadNavHref = threadNavLink?.getAttribute('href') || '';
+              if (!threadNavLink || !threadNavHref.startsWith('#thread/')) {
+                throw new Error('thread previous/next navigation link missing');
+              }
+              const threadJsonFeedHref = document.querySelector('[data-thread-json-feed]')?.getAttribute('href') || '';
+              const threadRssFeedHref = document.querySelector('[data-thread-rss-feed]')?.getAttribute('href') || '';
+              if (
+                threadJsonFeedHref !== '/feeds/threads/' + encodeURIComponent(threadId) + '/posts.json' ||
+                threadRssFeedHref !== '/feeds/threads/' + encodeURIComponent(threadId) + '/posts.rss'
+              ) {
+                throw new Error('thread desktop did not expose thread JSON/RSS feed links.');
+              }
               localStorage.setItem('notificationPreferences', JSON.stringify({
                 email: false,
                 watchedThreads: true,
