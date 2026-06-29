@@ -966,7 +966,93 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-catalog-desktop.png'),
-        checks: ['Danh mục', 'Sắp xếp theo:', 'Lọc:', 'Có tệp', 'Có video', 'Số tệp', 'Bài kiểm thử browser smoke cho CI']
+        checks: [
+          'Danh mục',
+          'Sắp xếp theo:',
+          'Lọc:',
+          'Có tệp',
+          'Có video',
+          'Số tệp',
+          'Smoke subject title',
+          'Bài kiểm thử browser smoke cho CI'
+        ],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              document.querySelector('[data-catalog-sort="files"]')?.click();
+              const deadline = Date.now() + 3000;
+              let filesSortActive = false;
+              let filesSortPressed = '';
+              let firstCatalogText = '';
+              while (Date.now() < deadline) {
+                const button = document.querySelector('[data-catalog-sort="files"]');
+                filesSortActive = button?.classList.contains('active') ?? false;
+                filesSortPressed = button?.getAttribute('aria-pressed') || '';
+                firstCatalogText = document.querySelector('#catalogGrid .catalog-thread')?.innerText || '';
+                if (filesSortActive && filesSortPressed === 'true' && firstCatalogText.includes('Smoke subject title') && firstCatalogText.includes('I: 2')) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              document.querySelector('[data-catalog-filter="video"]')?.click();
+              const videoFilterDeadline = Date.now() + 3000;
+              let videoFilterActive = false;
+              let videoFilterPressed = '';
+              let videoCatalogText = '';
+              let videoCatalogCount = 0;
+              while (Date.now() < videoFilterDeadline) {
+                const button = document.querySelector('[data-catalog-filter="video"]');
+                videoFilterActive = button?.classList.contains('active') ?? false;
+                videoFilterPressed = button?.getAttribute('aria-pressed') || '';
+                const cards = [...document.querySelectorAll('#catalogGrid .catalog-thread')];
+                videoCatalogCount = cards.length;
+                videoCatalogText = document.querySelector('#catalogGrid')?.innerText || '';
+                if (
+                  videoFilterActive &&
+                  videoFilterPressed === 'true' &&
+                  videoCatalogCount === 1 &&
+                  videoCatalogText.includes('Smoke video thread') &&
+                  videoCatalogText.includes('Video') &&
+                  !videoCatalogText.includes('Smoke subject title')
+                ) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              return {
+                filesSortActive,
+                filesSortPressed,
+                firstCatalogText,
+                videoFilterActive,
+                videoFilterPressed,
+                videoCatalogCount,
+                videoCatalogText
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          if (!payload.filesSortActive || payload.filesSortPressed !== 'true') {
+            throw new Error('catalog desktop did not activate file-count sort.');
+          }
+          if (!payload.firstCatalogText?.includes('Smoke subject title') || !payload.firstCatalogText?.includes('I: 2')) {
+            throw new Error(`catalog desktop file-count sort did not rank media-rich thread first: ${payload.firstCatalogText || 'missing first item'}`);
+          }
+          if (!payload.videoFilterActive || payload.videoFilterPressed !== 'true') {
+            throw new Error('catalog desktop did not activate video filter.');
+          }
+          if (
+            payload.videoCatalogCount !== 1 ||
+            !payload.videoCatalogText?.includes('Smoke video thread') ||
+            !payload.videoCatalogText?.includes('Video') ||
+            payload.videoCatalogText?.includes('Smoke subject title')
+          ) {
+            throw new Error(
+              `catalog desktop video filter failed: count=${payload.videoCatalogCount || 0} text=${payload.videoCatalogText || 'missing'}`
+            );
+          }
+        }
       },
       {
         label: 'archive desktop',
