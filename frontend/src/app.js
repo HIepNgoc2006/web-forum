@@ -3876,13 +3876,36 @@ function reportsHtml(reports) {
                 <td>${escapeHtml(reportCategoryLabel(report.category))}</td>
                 <td>${escapeHtml(report.reason || '-')}</td>
                 <td>${escapeHtml(posterId({ posterHash: report.reporterHash }))}</td>
-                <td><button class="ghost-button" data-admin-detail="${report.globalNumber}" type="button">[Chi tiết]</button></td>
+                <td><button class="ghost-button" data-admin-detail="${report.globalNumber}" type="button" aria-expanded="false">Mở</button></td>
               </tr>
             `
           )
           .join('')}
       </tbody>
     </table>
+  `;
+}
+
+function compactReportsHtml(reports) {
+  if (!reports.length) {
+    return '<p class="muted">Không có báo cáo.</p>';
+  }
+
+  return `
+    <div class="admin-report-stack">
+      ${reports
+        .map(
+          (report) => `
+            <div class="admin-report-chip">
+              <span>${formatPostDate(report.createdAt)}</span>
+              <span>${moderationPriorityHtml(report.moderationPriority)}</span>
+              <span>${escapeHtml(reportCategoryLabel(report.category))}</span>
+              <span>${escapeHtml(report.reason || '-')}</span>
+            </div>
+          `
+        )
+        .join('')}
+    </div>
   `;
 }
 
@@ -4082,13 +4105,14 @@ function editHistoryHtml(history = []) {
   `;
 }
 
-function adminPostDetailHtml(detail) {
+function adminPostDetailHtml(detail, options = {}) {
   const post = detail.post;
   const actions = detail.actions || [];
   const reports = detail.reports || [];
   const appeals = detail.appeals || [];
   const sanctions = detail.sanctions || [];
   const editHistory = detail.editHistory || [];
+  const reportsBlock = options.compactReports ? compactReportsHtml(reports) : reportsHtml(reports);
   return `
     <div class="admin-detail">
       <div class="post-meta">
@@ -4119,7 +4143,7 @@ function adminPostDetailHtml(detail) {
       </div>
       <h3>Báo cáo ${reports.length ? `<button class="ghost-button" data-admin-reports-summary="${post.globalNumber}" type="button">[Tóm tắt báo cáo AI]</button>` : ''}</h3>
       <div id="adminReportsSummaryBox-${post.globalNumber}" class="admin-reports-summary-box hidden"></div>
-      ${reports.length ? reportsHtml(reports) : '<p class="muted">Không có báo cáo.</p>'}
+      ${reportsBlock}
       <h3>Kháng nghị</h3>
       ${appeals.length ? appealsHtml(appeals) : '<p class="muted">Không có kháng nghị.</p>'}
       <h3>Làm chậm/Tạm khóa</h3>
@@ -4835,12 +4859,46 @@ function syncAdminBoardFilter() {
   `;
 }
 
-async function loadAdminDetail(globalNumber, host) {
-  const detail = await api(`/api/admin/posts/${globalNumber}`);
+async function loadAdminDetail(globalNumber, host, options = {}) {
+  const detail = await api(`/api/admin/posts/${globalNumber}`, {
+    timeoutMs: ADMIN_LOAD_TIMEOUT_MS,
+    timeoutMessage: 'Chi tiết bài viết phản hồi quá lâu, vui lòng thử lại.'
+  });
   const container = host.querySelector('.admin-detail-host') || document.createElement('div');
   container.className = 'admin-detail-host';
-  container.innerHTML = adminPostDetailHtml(detail);
+  container.innerHTML = adminPostDetailHtml(detail, options);
   host.appendChild(container);
+}
+
+function adminTableDetailHost(button) {
+  const row = button.closest('tr');
+  const table = row?.closest('.moderation-log-table');
+  if (!row || !table) {
+    return null;
+  }
+
+  const globalNumber = button.dataset.adminDetail;
+  const next = row.nextElementSibling;
+  if (next?.classList.contains('admin-detail-row') && next.dataset.detailFor === globalNumber) {
+    next.remove();
+    button.setAttribute('aria-expanded', 'false');
+    return null;
+  }
+
+  table.querySelectorAll('.admin-detail-row').forEach((detailRow) => detailRow.remove());
+  table.querySelectorAll('[data-admin-detail][aria-expanded="true"]').forEach((detailButton) => {
+    detailButton.setAttribute('aria-expanded', 'false');
+  });
+  const detailRow = document.createElement('tr');
+  detailRow.className = 'admin-detail-row';
+  detailRow.dataset.detailFor = globalNumber;
+  const cell = document.createElement('td');
+  cell.colSpan = row.cells.length || 1;
+  cell.innerHTML = '<div class="admin-detail-host"><p class="muted">Đang tải chi tiết...</p></div>';
+  detailRow.appendChild(cell);
+  row.after(detailRow);
+  button.setAttribute('aria-expanded', 'true');
+  return cell;
 }
 
 function selectedPendingIds() {
@@ -9159,10 +9217,23 @@ function bindEvents() {
 
     const adminDetailButton = event.target.closest('[data-admin-detail]');
     if (adminDetailButton) {
-      const host = adminDetailButton.closest('.pending-item') || adminDetailButton.closest('.moderation-log') || els.pendingList;
+      const isTableDetail = Boolean(adminDetailButton.closest('tr')?.closest('.moderation-log-table'));
+      const tableHost = isTableDetail ? adminTableDetailHost(adminDetailButton) : null;
+      if (isTableDetail && !tableHost) {
+        return;
+      }
+      const host = tableHost || adminDetailButton.closest('.pending-item') || els.pendingList;
+      if (!host) {
+        return;
+      }
       try {
-        await loadAdminDetail(adminDetailButton.dataset.adminDetail, host);
+        await loadAdminDetail(adminDetailButton.dataset.adminDetail, host, {
+          compactReports: Boolean(tableHost)
+        });
       } catch (error) {
+        if (tableHost) {
+          tableHost.innerHTML = `<div class="admin-detail-host"><p class="error">${escapeHtml(error.message)}</p></div>`;
+        }
         showToast(error.message);
       }
       return;

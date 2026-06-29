@@ -2178,6 +2178,21 @@ body.display-compact .post-body {
   padding: 6px;
 }
 
+.admin-detail-host {
+  min-width: 0;
+}
+
+.admin-detail-row > td {
+  padding: 0;
+  background: #f0e0d6;
+}
+
+.admin-detail-row .admin-detail {
+  margin: 0;
+  border-style: solid;
+  border-width: 0 0 1px;
+}
+
 .admin-detail h3 {
   margin: 7px 0 4px;
   color: #800;
@@ -2206,8 +2221,30 @@ body.display-compact .post-body {
   font-size: 12px;
 }
 
+.admin-report-stack {
+  display: grid;
+  gap: 4px;
+  margin: 4px 0 8px;
+}
+
+.admin-report-chip {
+  display: grid;
+  grid-template-columns: minmax(64px, max-content) minmax(130px, max-content) 1fr minmax(90px, max-content);
+  gap: 8px;
+  align-items: start;
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  padding: 4px 6px;
+}
+
+.admin-report-chip span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 720px) {
-  .admin-edit-history-grid {
+  .admin-edit-history-grid,
+  .admin-report-chip {
     grid-template-columns: 1fr;
   }
 }
