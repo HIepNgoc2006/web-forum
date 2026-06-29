@@ -4558,27 +4558,34 @@ async function saveAdminModerationSettings() {
 
 function adminQueryString() {
   const params = new URLSearchParams();
-  if (els.adminBoardFilter.value) {
-    params.set('boardSlug', els.adminBoardFilter.value);
+  const boardFilter = els.adminBoardFilter?.value || '';
+  if (boardFilter) {
+    params.set('boardSlug', boardFilter);
   }
-  if (state.adminTab !== 'reports' && els.adminLabelFilter.value) {
-    params.set('label', els.adminLabelFilter.value);
+  const labelFilter = els.adminLabelFilter?.value || '';
+  if (state.adminTab !== 'reports' && labelFilter) {
+    params.set('label', labelFilter);
   }
-  if (state.adminTab === 'reports' && els.adminReportCategoryFilter.value) {
-    params.set('category', els.adminReportCategoryFilter.value);
+  const reportCategoryFilter = els.adminReportCategoryFilter?.value || '';
+  if (state.adminTab === 'reports' && reportCategoryFilter) {
+    params.set('category', reportCategoryFilter);
   }
-  if (els.adminTimeFilter.value) {
-    const since = new Date(Date.now() - (els.adminTimeFilter.value === '24h' ? 24 : 24 * 7) * 60 * 60 * 1000);
+  const timeFilter = els.adminTimeFilter?.value || '';
+  if (timeFilter) {
+    const since = new Date(Date.now() - (timeFilter === '24h' ? 24 : 24 * 7) * 60 * 60 * 1000);
     params.set('since', since.toISOString());
   }
-  if ((state.adminTab === 'pending' || state.adminTab === 'reports') && els.adminPriorityFilter.value) {
-    params.set('priority', els.adminPriorityFilter.value);
+  const priorityFilter = els.adminPriorityFilter?.value || '';
+  if ((state.adminTab === 'pending' || state.adminTab === 'reports') && priorityFilter) {
+    params.set('priority', priorityFilter);
   }
-  if (state.adminTab === 'pending' && els.adminConfidenceFilter?.value) {
-    params.set('confidence', els.adminConfidenceFilter.value);
+  const confidenceFilter = els.adminConfidenceFilter?.value || '';
+  if (state.adminTab === 'pending' && confidenceFilter) {
+    params.set('confidence', confidenceFilter);
   }
-  if ((state.adminTab === 'pending' || state.adminTab === 'reports') && els.adminPrioritySort.value) {
-    params.set('sort', els.adminPrioritySort.value);
+  const prioritySort = els.adminPrioritySort?.value || '';
+  if ((state.adminTab === 'pending' || state.adminTab === 'reports') && prioritySort) {
+    params.set('sort', prioritySort);
   }
   return params.toString();
 }
@@ -4952,10 +4959,19 @@ function postSubmitToast(result, publishedMessage, pendingMessage) {
 }
 
 function syncAdminBoardFilter() {
+  if (!els.adminBoardFilter) {
+    return;
+  }
+  const selectedBoard = els.adminBoardFilter.value;
   els.adminBoardFilter.innerHTML = `
     <option value="">Tất cả</option>
-    ${state.boards.map((board) => `<option value="${board.slug}">${board.path} ${board.name}</option>`).join('')}
+    ${state.boards
+      .map((board) => `<option value="${escapeHtml(board.slug)}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</option>`)
+      .join('')}
   `;
+  if (selectedBoard && state.boards.some((board) => board.slug === selectedBoard)) {
+    els.adminBoardFilter.value = selectedBoard;
+  }
 }
 
 async function loadAdminDetail(globalNumber, host, options = {}) {
