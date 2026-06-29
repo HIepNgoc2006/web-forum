@@ -5388,7 +5388,7 @@ function meta(post, options = {}) {
       escapeHtml(posterNote.label || posterNote.note) +
       '</span>'
     : '';
-  const posterIdentity = canReply
+  const posterIdentity = canReply && showPostActions
     ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
     : `<span class="hash">${escapeHtml(posterId(post))}</span>`;
   return `
@@ -5405,10 +5405,10 @@ function meta(post, options = {}) {
       ${posterNoteBadge}
       ${stickyLabelHtml(post)}
       <span class="status">${labels}</span>
-      ${voteControlHtml(post)}
-      ${reactionControlHtml(post)}
+      ${showPostActions ? voteControlHtml(post) : ''}
+      ${showPostActions ? reactionControlHtml(post) : ''}
       ${
-        showReplyAction && canReply
+        showPostActions && showReplyAction && canReply
           ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
           : ''
       }
@@ -5416,10 +5416,14 @@ function meta(post, options = {}) {
       ${showPostActions ? `<button class="quote-button" data-collapse-post="${post.globalNumber}" type="button" aria-expanded="true">[Thu]</button>` : ''}
       ${anonymousActions}
       ${accountEditAction}
-      <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
+      ${
+        showPostActions
+          ? `<button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
       <button class="quote-button" data-translate-post="${post.globalNumber}" type="button">[Dịch]</button>
-      <button class="quote-button" data-tts-post="${post.globalNumber}" type="button">[Nghe]</button>
+      <button class="quote-button" data-tts-post="${post.globalNumber}" type="button">[Nghe]</button>`
+          : ''
+      }
     </div>
   `;
 }
@@ -7558,6 +7562,7 @@ function renderReferencePreviewPost(post, source) {
     actions: false,
     checkbox: false,
     replyAction: false,
+    canReply: false,
     opNumber: state.threadGlobalNumber,
     opPosterHash: state.threadPosterHash
   });
