@@ -8168,6 +8168,13 @@ function notifyWatchedThreadPost(payload = {}) {
   };
 }
 
+function handleRealtimeRefreshError(error) {
+  console.warn('Không cập nhật được màn hình từ realtime:', error);
+  els.socketStatus.textContent = 'cần cập nhật';
+  els.socketStatus.classList.add('offline');
+  els.socketStatus.classList.remove('live');
+}
+
 function setupRealtime() {
   const context = new URLSearchParams();
   if ((window.location.hash || '').startsWith('#board/') || (window.location.hash || '').startsWith('#thread/')) {
@@ -8202,20 +8209,24 @@ function setupRealtime() {
         notifyWatchedThreadPost(parseRealtimePayload(event));
       }
       const hash = window.location.hash || '#home';
+      let refresh = null;
       if (hash.startsWith('#home') || hash === '') {
-        loadHome().catch(() => {});
+        refresh = loadHome();
       } else if (hash.startsWith('#thread/')) {
         if (!audioWorkInProgress()) {
-          loadThread().catch(() => {});
+          refresh = loadThread();
         }
       } else if (hash.startsWith('#catalog/')) {
-        loadCatalog().catch(() => {});
+        refresh = loadCatalog();
       } else if (hash.startsWith('#archive/')) {
         if (eventName === 'thread:archived') {
-          loadArchive().catch(() => {});
+          refresh = loadArchive();
         }
       } else if (hash.startsWith('#board/')) {
-        loadBoard().catch(() => {});
+        refresh = loadBoard();
+      }
+      if (refresh) {
+        refresh.catch(handleRealtimeRefreshError);
       }
     });
   }
