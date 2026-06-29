@@ -151,13 +151,54 @@ async function waitForHealth() {
 }
 
 async function createSeedThread() {
+  const videoThreadResponse = await fetch(`${baseUrl}/api/boards/confession/threads`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      subject: 'Smoke video thread',
+      body: 'Chủ đề video kiểm thử catalog',
+      captchaToken: 'dev-pass',
+      posterToken: 'ci-poster-video',
+      image: {
+        name: 'catalog-video-smoke.webm',
+        type: 'video/webm',
+        dataUrl: 'data:video/webm;base64,AAAA',
+        sizeBytes: 3,
+        width: 1,
+        height: 1
+      }
+    })
+  });
+  if (!videoThreadResponse.ok) {
+    const body = await videoThreadResponse.text().catch(() => '');
+    throw new Error(`Could not create smoke video thread: ${videoThreadResponse.status} ${body}`);
+  }
+
   const threadResponse = await fetch(`${baseUrl}/api/boards/confession/threads`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
+      subject: 'Smoke subject title',
       body: 'Bài kiểm thử browser smoke cho CI\n#dice 1d6',
       captchaToken: 'dev-pass',
-      posterToken: 'ci-poster'
+      deletePassword: 'smoke-delete-pass',
+      posterToken: 'ci-poster',
+      image: {
+        name: 'thread-media-smoke.png',
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+        sizeBytes: 68,
+        width: 1,
+        height: 1,
+        thumbnail: {
+          name: 'thread-media-smoke-thumb.png',
+          type: 'image/png',
+          dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+          sizeBytes: 68,
+          width: 1,
+          height: 1
+        }
+      }
     })
   });
   if (!threadResponse.ok) {
@@ -166,19 +207,52 @@ async function createSeedThread() {
   }
   const threadPayload = await threadResponse.json();
   const threadId = threadPayload.data.thread.id;
+  const threadGlobalNumber = threadPayload.data.thread.globalNumber;
 
   const commentResponse = await fetch(`${baseUrl}/api/threads/${threadId}/comments`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({
-      body: '>>1 phản hồi kiểm thử smoke-thread-search-token',
+      body: `>>${threadGlobalNumber} phản hồi kiểm thử smoke-thread-search-token`,
       captchaToken: 'dev-pass',
-      posterToken: 'ci-poster'
+      posterToken: 'ci-poster',
+      image: {
+        name: 'omitted-reply-smoke.png',
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+        sizeBytes: 68,
+        width: 1,
+        height: 1,
+        thumbnail: {
+          name: 'omitted-reply-smoke-thumb.png',
+          type: 'image/png',
+          dataUrl: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII=',
+          sizeBytes: 68,
+          width: 1,
+          height: 1
+        }
+      }
     })
   });
   if (!commentResponse.ok) {
     const body = await commentResponse.text().catch(() => '');
     throw new Error(`Could not create smoke comment: ${commentResponse.status} ${body}`);
+  }
+
+  for (const index of [2, 3, 4]) {
+    const previewResponse = await fetch(`${baseUrl}/api/threads/${threadId}/comments`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: `board preview phản hồi ${index}`,
+        captchaToken: 'dev-pass',
+        posterToken: `ci-poster-preview-${index}`
+      })
+    });
+    if (!previewResponse.ok) {
+      const body = await previewResponse.text().catch(() => '');
+      throw new Error(`Could not create smoke preview comment ${index}: ${previewResponse.status} ${body}`);
+    }
   }
 
   return threadId;
@@ -590,25 +664,96 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-board-desktop.png'),
-        checks: ['Tạo chủ đề mới', 'Danh mục', 'Kho lưu trữ', 'Bài kiểm thử browser smoke cho CI'],
+        checks: [
+          'Tạo chủ đề mới',
+          'Danh mục',
+          'Kho lưu trữ',
+          'Sắp xếp theo',
+          'Có video',
+          'Smoke subject title',
+          'Bài kiểm thử browser smoke cho CI',
+          'Bỏ qua 1 phản hồi và 1 tệp.',
+          'board preview phản hồi 4'
+        ],
         async interaction(cdp) {
           const result = await cdp.send('Runtime.evaluate', {
             expression: `(async () => {
+              document.querySelector('[data-board-filter="video"]')?.click();
+              const videoFilterDeadline = Date.now() + 3000;
+              let boardVideoFilterActive = false;
+              let boardVideoFilterPressed = '';
+              let boardVideoFilterText = '';
+              while (Date.now() < videoFilterDeadline) {
+                const button = document.querySelector('[data-board-filter="video"]');
+                boardVideoFilterActive = button?.classList.contains('active') ?? false;
+                boardVideoFilterPressed = button?.getAttribute('aria-pressed') || '';
+                boardVideoFilterText = document.querySelector('#threadList')?.innerText || '';
+                if (
+                  boardVideoFilterActive &&
+                  boardVideoFilterPressed === 'true' &&
+                  boardVideoFilterText.includes('Smoke video thread') &&
+                  !boardVideoFilterText.includes('Smoke subject title')
+                ) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              document.querySelector('[data-board-filter="all"]')?.click();
+              const allFilterDeadline = Date.now() + 3000;
+              let boardAllFilterActive = false;
+              while (Date.now() < allFilterDeadline) {
+                boardAllFilterActive = document.querySelector('[data-board-filter="all"]')?.classList.contains('active') ?? false;
+                const text = document.querySelector('#threadList')?.innerText || '';
+                if (boardAllFilterActive && text.includes('Smoke subject title')) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              document.querySelector('[data-board-sort="replies"]')?.click();
+              await new Promise((resolve) => setTimeout(resolve, 350));
+              const boardSortActive = document.querySelector('[data-board-sort="replies"]')?.classList.contains('active') ?? false;
+              const boardSortPressed = document.querySelector('[data-board-sort="replies"]')?.getAttribute('aria-pressed') || '';
               document.querySelector('#startThreadButton')?.click();
               await new Promise((resolve) => setTimeout(resolve, 100));
               document.querySelector('[data-thread-template="study"]')?.click();
               const body = document.querySelector('#threadBody');
               body.value += '\\nSố điện thoại 0912345678';
               body.dispatchEvent(new Event('input', { bubbles: true }));
+              const deletePasswordInput = document.querySelector('#threadForm [name="deletePassword"]');
+              if (deletePasswordInput) {
+                deletePasswordInput.value = 'ui-delete-pass';
+                deletePasswordInput.dispatchEvent(new Event('input', { bubbles: true }));
+              }
               const draft = localStorage.getItem('draft:thread:confession') || '';
               const warning = document.querySelector('#threadPrivacyWarning');
               const listText = document.querySelector('#threadList')?.innerText || '';
+              const previewCount = document.querySelectorAll('#threadList .reply-preview').length;
+              const jsonFeedHref = document.querySelector('#boardJsonFeedLink')?.href || '';
+              const rssFeedHref = document.querySelector('#boardRssFeedLink')?.href || '';
+              const bottomJsonFeedHref = document.querySelector('#boardJsonFeedLinkBottom')?.href || '';
+              const bottomRssFeedHref = document.querySelector('#boardRssFeedLinkBottom')?.href || '';
               return {
                 value: body.value,
                 draft,
                 warningText: warning?.textContent || '',
                 warningHidden: warning?.classList.contains('hidden') ?? true,
-                postedAutomatically: listText.includes('Mình muốn chia sẻ chuyện học tập')
+                deletePasswordVisible: Boolean(deletePasswordInput),
+                deletePasswordStored: localStorage.getItem('deletePassword') || '',
+                deletePasswordSynced: [...document.querySelectorAll('[data-delete-password-input]')].every((input) => input.value === 'ui-delete-pass'),
+                postedAutomatically: listText.includes('Mình muốn chia sẻ chuyện học tập'),
+                boardVideoFilterActive,
+                boardVideoFilterPressed,
+                boardVideoFilterText,
+                boardAllFilterActive,
+                boardSortActive,
+                boardSortPressed,
+                previewCount,
+                hasOmittedReplies: listText.includes('Bỏ qua 1 phản hồi và 1 tệp.'),
+                hasLatestPreview: listText.includes('board preview phản hồi 4'),
+                jsonFeedHref,
+                rssFeedHref,
+                bottomJsonFeedHref,
+                bottomRssFeedHref
               };
             })()`,
             awaitPromise: true,
@@ -624,8 +769,38 @@ async function main() {
           if (payload.warningHidden || !payload.warningText.includes('số điện thoại')) {
             throw new Error('board desktop did not rescan privacy risk after template insertion.');
           }
+          if (!payload.deletePasswordVisible || payload.deletePasswordStored !== 'ui-delete-pass' || !payload.deletePasswordSynced) {
+            throw new Error(
+              `board desktop delete password sync failed: visible=${Boolean(payload.deletePasswordVisible)} stored=${payload.deletePasswordStored || 'missing'} synced=${Boolean(payload.deletePasswordSynced)}`
+            );
+          }
           if (payload.postedAutomatically) {
             throw new Error('board desktop template insertion posted automatically.');
+          }
+          if (!payload.boardVideoFilterActive || payload.boardVideoFilterPressed !== 'true') {
+            throw new Error('board desktop did not activate video filter.');
+          }
+          if (!payload.boardVideoFilterText?.includes('Smoke video thread') || payload.boardVideoFilterText?.includes('Smoke subject title')) {
+            throw new Error(`board desktop video filter failed: ${payload.boardVideoFilterText || 'missing list text'}`);
+          }
+          if (!payload.boardAllFilterActive) {
+            throw new Error('board desktop did not restore all filter.');
+          }
+          if (!payload.boardSortActive || payload.boardSortPressed !== 'true') {
+            throw new Error('board desktop did not activate the reply-count board sort control.');
+          }
+          if (payload.previewCount < 3 || !payload.hasOmittedReplies || !payload.hasLatestPreview) {
+            throw new Error(
+              `board desktop reply previews failed: count=${payload.previewCount || 0} omitted=${Boolean(payload.hasOmittedReplies)} latest=${Boolean(payload.hasLatestPreview)}`
+            );
+          }
+          if (
+            !payload.jsonFeedHref.endsWith('/feeds/boards/confession/threads.json') ||
+            !payload.rssFeedHref.endsWith('/feeds/boards/confession/threads.rss') ||
+            !payload.bottomJsonFeedHref.endsWith('/feeds/boards/confession/threads.json') ||
+            !payload.bottomRssFeedHref.endsWith('/feeds/boards/confession/threads.rss')
+          ) {
+            throw new Error('board desktop did not expose active board JSON/RSS feed links.');
           }
         }
       },
