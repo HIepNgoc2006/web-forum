@@ -3524,6 +3524,52 @@ test('bump limit allows replies but stops bumping after threshold', async () => 
   assert.equal(detail.thread.bumpedAt, '2026-05-22T08:01:00.000Z');
 });
 
+test('sage comments publish without bumping the thread', async () => {
+  const realtime = createEvents();
+  const dates = [
+    new Date('2026-05-22T08:00:00.000Z'),
+    new Date('2026-05-22T08:01:00.000Z'),
+    new Date('2026-05-22T08:02:00.000Z')
+  ];
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime,
+    now: () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread co sage',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  await service.createComment({
+    threadId: created.thread.id,
+    body: 'Bump binh thuong',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8'
+  });
+  const bumpsBeforeSage = realtime.events.filter((event) => event.event === 'thread:bumped').length;
+  const sage = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Tra loi sage',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.9',
+    options: 'sage'
+  });
+
+  const detail = await service.getThread(created.thread.id);
+  const bumpsAfterSage = realtime.events.filter((event) => event.event === 'thread:bumped').length;
+
+  assert.equal(sage.comment.sage, true);
+  assert.equal(detail.comments.length, 2);
+  assert.equal(detail.comments.at(-1).sage, true);
+  assert.equal(detail.thread.bumpedAt, '2026-05-22T08:01:00.000Z');
+  assert.equal(bumpsAfterSage, bumpsBeforeSage);
+  assert.equal(realtime.events.at(-1).event, 'comment:created');
+});
+
 test('reply limit rejects extra comments', async () => {
   const service = createForumService({
     store: createMemoryStore(),
