@@ -2316,9 +2316,10 @@ body.display-compact .post-body {
 
 .ref-preview {
   width: min(420px, calc(100% - 20px));
-  max-height: min(420px, calc(100vh - 20px));
+  max-height: min(420px, calc(100vh - 16px));
   overflow: auto;
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.24);
+  box-shadow: 2px 2px 8px rgba(0, 0, 0, 0.28);
+  pointer-events: auto;
 }
 
 .ref-preview-loading,
@@ -2327,11 +2328,27 @@ body.display-compact .post-body {
 }
 
 .ref-preview-error {
-  color: #800000;
+  color: #800;
 }
 
 .ref-preview .preview-post {
   margin: 0;
+  max-width: none;
+  box-shadow: none;
+}
+
+.ref-preview .post-meta {
+  font-size: 12px;
+}
+
+.ref-preview .post-body {
+  margin-top: 4px;
+  max-height: 240px;
+  overflow: auto;
+}
+
+.ref-preview .backlinks {
+  margin-top: 4px;
 }
 
 .reason-modal-overlay {
