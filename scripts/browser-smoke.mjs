@@ -1,14 +1,17 @@
 import { spawn } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const isWindows = process.platform === 'win32';
-const port = Number(process.env.E2E_PORT ?? 3210);
-const chromeDebugPort = Number(process.env.CHROME_DEBUG_PORT ?? 9223);
-const baseUrl = `http://127.0.0.1:${port}`;
+const requestedPort = process.env.E2E_PORT ? Number(process.env.E2E_PORT) : 0;
+const requestedChromeDebugPort = process.env.CHROME_DEBUG_PORT ? Number(process.env.CHROME_DEBUG_PORT) : 0;
+let port = requestedPort;
+let chromeDebugPort = requestedChromeDebugPort;
+let baseUrl = '';
 
 function sleep(ms) {
   return new Promise((resolve) => {
@@ -55,6 +58,30 @@ function spawnProcess(command, args, options = {}) {
     shell: false,
     ...options
   });
+}
+
+function freePort() {
+  return new Promise((resolve, reject) => {
+    const server = net.createServer();
+    server.unref();
+    server.on('error', reject);
+    server.listen(0, '127.0.0.1', () => {
+      const address = server.address();
+      const value = typeof address === 'object' && address ? address.port : 0;
+      server.close(() => resolve(value));
+    });
+  });
+}
+
+async function resolvePort(requested, label) {
+  if (Number.isInteger(requested) && requested > 0) {
+    return requested;
+  }
+  const value = await freePort();
+  if (!value) {
+    throw new Error(`Could not allocate a ${label} port.`);
+  }
+  return value;
 }
 
 function collectProcess(child) {
@@ -462,6 +489,10 @@ async function main() {
     console.log('Chrome/Chromium was not found; skipping browser smoke test outside CI.');
     return;
   }
+
+  port = await resolvePort(requestedPort, 'backend');
+  chromeDebugPort = await resolvePort(requestedChromeDebugPort, 'Chrome debugging');
+  baseUrl = `http://127.0.0.1:${port}`;
 
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), '36chan-browser-smoke-'));
   const screenshotRoot = process.env.VISUAL_SCREENSHOT_DIR
