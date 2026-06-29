@@ -7820,7 +7820,7 @@ function bindEvents() {
       if (!(img instanceof HTMLImageElement) || img.dataset.thumbBroken === '1') {
         return;
       }
-      if (!img.closest('.thread-thumb-wrap, .catalog-thumb')) {
+      if (!img.closest('.thread-thumb-wrap, .catalog-thumb, .popular-thumb')) {
         return;
       }
       img.dataset.thumbBroken = '1';
