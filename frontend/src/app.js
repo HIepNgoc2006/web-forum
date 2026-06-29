@@ -1284,11 +1284,6 @@ function myPostEntry(globalNumber) {
   return myPosts().find((item) => Number(item.globalNumber) === number) || null;
 }
 
-function isAnonymousMyPost(post) {
-  const entry = myPostEntry(post?.globalNumber);
-  return Boolean(entry && entry.owner === 'anonymous' && entry.deletePassword);
-}
-
 function myPostDeletePassword(globalNumber) {
   const entry = myPostEntry(globalNumber);
   return normalizeDeletePassword(entry?.deletePassword) || defaultDeletePassword();
@@ -5398,19 +5393,22 @@ function accountPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
   return `<button class="${className}" data-account-edit-post="${post.globalNumber}" data-account-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
 }
 
-function anonymousPostActionsHtml(post, { className = 'quote-button' } = {}) {
-  if (!isAnonymousMyPost(post) || !post?.globalNumber || post.isDeleted) {
+function selfDeletePostActionsHtml(post, { className = 'quote-button' } = {}) {
+  if (!post?.globalNumber || post.isDeleted) {
+    return '';
+  }
+  const deleteFileButton = postMediaCount(post)
+    ? `<button class="${className}" data-self-delete-post="${post.globalNumber}" data-file-only="true" type="button">[Xóa tệp]</button>`
+    : '';
+  return `${deleteFileButton}<button class="${className}" data-self-delete-post="${post.globalNumber}" type="button">[Xóa bài]</button>`;
+}
+
+function selfEditPostButtonHtml(post, { className = 'quote-button' } = {}) {
+  if (!post?.globalNumber || post.isDeleted) {
     return '';
   }
   const encodedBody = encodeURIComponent(post.body || '');
-  const deleteFileAction = postMediaCount(post)
-    ? `<button class="${className}" data-self-delete-file-post="${post.globalNumber}" type="button">[Xóa tệp]</button>`
-    : '';
-  return `
-    <button class="${className}" data-self-edit-post="${post.globalNumber}" data-self-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa]</button>
-    <button class="${className}" data-self-delete-post="${post.globalNumber}" type="button">[Xóa]</button>
-    ${deleteFileAction}
-  `;
+  return `<button class="${className}" data-self-edit-post="${post.globalNumber}" data-self-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
 }
 
 function meta(post, options = {}) {
@@ -5422,7 +5420,8 @@ function meta(post, options = {}) {
   const canReply = options.canReply !== false;
   const showPostActions = options.actions !== false;
   const accountEditAction = showPostActions ? accountPostEditButtonHtml(post) : '';
-  const anonymousActions = showPostActions ? anonymousPostActionsHtml(post) : '';
+  const selfEditAction = showPostActions ? selfEditPostButtonHtml(post) : '';
+  const selfDeleteActions = showPostActions ? selfDeletePostActionsHtml(post) : '';
   const permalink = postPermalink(post, options);
   const opNumber = Number(options.opNumber || 0);
   const isOpReply =
@@ -5467,7 +5466,8 @@ function meta(post, options = {}) {
       }
       ${showPostActions ? `<button class="quote-button" data-copy-post-link="${escapeHtml(permalink)}" type="button">[Link]</button>` : ''}
       ${showPostActions ? `<button class="quote-button" data-collapse-post="${post.globalNumber}" type="button" aria-expanded="true">[Thu]</button>` : ''}
-      ${anonymousActions}
+      ${selfEditAction}
+      ${selfDeleteActions}
       ${accountEditAction}
       ${
         showPostActions
@@ -6995,6 +6995,63 @@ async function createComment(body, captchaToken) {
       capcode: capcodeValue(form)
     })
   });
+}
+
+async function selfEditPost(globalNumber, currentBody = '') {
+  const edit = await showPostEditModal(globalNumber, currentBody, { showReason: false });
+  if (!edit) {
+    return;
+  }
+  const password = window.prompt(`Mật khẩu để sửa bài No.${globalNumber}:`, myPostDeletePassword(globalNumber));
+  if (password === null) {
+    return;
+  }
+  const result = await api(`/api/posts/${encodeURIComponent(globalNumber)}`, {
+    auth: 'none',
+    method: 'PUT',
+    body: JSON.stringify({
+      body: edit.body,
+      password
+    })
+  });
+  rememberMyPost(result.post, result.type || 'thread');
+  showToast(result.status === 'pending' ? 'Đã sửa bài. Nội dung đang chờ duyệt lại.' : 'Đã sửa bài.');
+  await refreshCurrentScreen();
+}
+
+async function selfDeletePost(globalNumber, { fileOnly = false, sourceElement = null } = {}) {
+  const label = fileOnly ? 'xóa tệp khỏi bài' : 'xóa bài';
+  const password = window.prompt(`Mật khẩu để ${label} No.${globalNumber}:`, myPostDeletePassword(globalNumber));
+  if (password === null) {
+    return;
+  }
+  const ok = window.confirm(fileOnly ? `Chỉ xóa tệp đính kèm khỏi No.${globalNumber}?` : `Xóa toàn bộ bài No.${globalNumber}?`);
+  if (!ok) {
+    return;
+  }
+  await api(`/api/posts/${encodeURIComponent(globalNumber)}`, {
+    auth: 'none',
+    method: 'DELETE',
+    body: JSON.stringify({
+      password,
+      fileOnly
+    })
+  });
+  showToast(fileOnly ? 'Đã xóa tệp đính kèm.' : 'Đã xóa bài.');
+  const deletingCurrentThread =
+    !fileOnly &&
+    state.threadId &&
+    String(globalNumber) === String(state.threadGlobalNumber) &&
+    (window.location.hash || '').startsWith('#thread/');
+  if (deletingCurrentThread) {
+    window.location.hash = `#board/${state.boardSlug}`;
+    return;
+  }
+  if ((window.location.hash || '').startsWith('#thread/') || sourceElement?.closest('#threadDetail')) {
+    await loadThread();
+  } else {
+    await refreshCurrentScreen();
+  }
 }
 
 function clamp(value, min, max) {
@@ -8552,63 +8609,26 @@ function bindEvents() {
       return;
     }
 
-    const selfEditPostButton = event.target.closest('[data-self-edit-post]');
-    if (selfEditPostButton) {
-      const globalNumber = selfEditPostButton.dataset.selfEditPost;
-      const currentBody = decodeURIComponent(selfEditPostButton.dataset.selfEditBody || '');
-      const edit = await showPostEditModal(globalNumber, currentBody, { showReason: false });
-      if (!edit) {
-        return;
-      }
-      try {
-        const result = await api(`/api/posts/${globalNumber}`, {
-          auth: 'none',
-          method: 'PUT',
-          body: JSON.stringify({ body: edit.body, password: myPostDeletePassword(globalNumber) })
-        });
-        rememberMyPost(result.post, result.type || 'thread');
-        showToast(result.status === 'pending' ? 'Đã sửa bài. Nội dung đang chờ duyệt lại.' : 'Đã sửa bài.');
-        await refreshCurrentScreen();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-
     const selfDeletePostButton = event.target.closest('[data-self-delete-post]');
     if (selfDeletePostButton) {
-      const globalNumber = selfDeletePostButton.dataset.selfDeletePost;
-      if (!window.confirm(`Xóa bài No.${globalNumber}?`)) {
-        return;
-      }
       try {
-        await api(`/api/posts/${globalNumber}`, {
-          auth: 'none',
-          method: 'DELETE',
-          body: JSON.stringify({ password: myPostDeletePassword(globalNumber) })
+        await selfDeletePost(selfDeletePostButton.dataset.selfDeletePost, {
+          fileOnly: selfDeletePostButton.dataset.fileOnly === 'true',
+          sourceElement: selfDeletePostButton
         });
-        showToast('Đã xóa bài.');
-        await refreshCurrentScreen();
       } catch (error) {
         showToast(error.message);
       }
       return;
     }
 
-    const selfDeleteFileButton = event.target.closest('[data-self-delete-file-post]');
-    if (selfDeleteFileButton) {
-      const globalNumber = selfDeleteFileButton.dataset.selfDeleteFilePost;
-      if (!window.confirm(`Xóa tệp đính kèm của bài No.${globalNumber}?`)) {
-        return;
-      }
+    const selfEditPostButton = event.target.closest('[data-self-edit-post]');
+    if (selfEditPostButton) {
       try {
-        await api(`/api/posts/${globalNumber}`, {
-          auth: 'none',
-          method: 'DELETE',
-          body: JSON.stringify({ password: myPostDeletePassword(globalNumber), fileOnly: true })
-        });
-        showToast('Đã xóa tệp đính kèm.');
-        await refreshCurrentScreen();
+        await selfEditPost(
+          selfEditPostButton.dataset.selfEditPost,
+          decodeURIComponent(selfEditPostButton.dataset.selfEditBody || '')
+        );
       } catch (error) {
         showToast(error.message);
       }
