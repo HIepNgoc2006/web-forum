@@ -1387,6 +1387,25 @@ body.display-hide-thumbnails .thread-thumb-wrap {
   vertical-align: middle;
 }
 
+.post.post-collapsed {
+  min-height: 0;
+  padding-bottom: 4px;
+}
+
+.post.post-collapsed .thread-thumb-wrap,
+.post.post-collapsed .post-body,
+.post.post-collapsed .backlinks,
+.post.post-collapsed .dice-rolls,
+.post.post-collapsed .poll-box {
+  display: none;
+}
+
+.post.post-collapsed .post-meta::after {
+  margin-left: 6px;
+  color: #707070;
+  content: "(đã thu gọn)";
+}
+
 .permalink-target {
   outline: 2px solid rgba(221, 0, 0, 0.38);
   outline-offset: 2px;

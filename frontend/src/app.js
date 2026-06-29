@@ -5140,6 +5140,7 @@ function meta(post, options = {}) {
           : ''
       }
       ${showPostActions ? `<button class="quote-button" data-copy-post-link="${escapeHtml(permalink)}" type="button">[Link]</button>` : ''}
+      ${showPostActions ? `<button class="quote-button" data-collapse-post="${post.globalNumber}" type="button" aria-expanded="true">[Thu]</button>` : ''}
       ${accountEditAction}
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
@@ -5259,6 +5260,7 @@ function threadToolbarHtml(detail, position) {
       [<button class="link-button" data-toggle-watch type="button">${watchLabel}</button>]
       [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
       [<button class="link-button" data-thread-refresh type="button">Cập nhật</button>]
+      [<button class="link-button" data-thread-collapse-posts type="button">Thu bài</button>]
       [<label title="Tự lấy phản hồi mới"><input type="checkbox" data-auto-update ${checked}> Tự động</label>]
       <span class="auto-countdown">${state.autoUpdate ? state.autoCountdown : ''}</span>
       ${archivedLabel}
@@ -5916,6 +5918,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   els.threadPagination.innerHTML = pageControlsHtml(state.threadCommentPageMeta, 'thread-comments');
   const focusedPost = requestedPost;
   focusPermalinkPost(focusedPost, { scroll: Boolean(focusPost) });
+  syncThreadPostCollapseToolbarState();
   resetAutoUpdateTimer();
 }
 
@@ -7820,6 +7823,47 @@ function loadFullMediaForToggle(imageToggle) {
   }
 }
 
+function threadPosts() {
+  return els.threadDetail ? [...els.threadDetail.querySelectorAll('article.post')] : [];
+}
+
+function setPostCollapsed(post, collapsed) {
+  if (!post) {
+    return;
+  }
+  post.classList.toggle('post-collapsed', collapsed);
+  const button = post.querySelector('[data-collapse-post]');
+  if (button) {
+    button.textContent = collapsed ? '[Mở]' : '[Thu]';
+    button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    button.title = collapsed ? 'Mở lại bài viết' : 'Thu gọn bài viết';
+  }
+}
+
+function syncThreadPostCollapseToolbarState() {
+  const posts = threadPosts();
+  const buttons = document.querySelectorAll('[data-thread-collapse-posts]');
+  const collapsedCount = posts.filter((post) => post.classList.contains('post-collapsed')).length;
+  const allCollapsed = posts.length > 0 && collapsedCount === posts.length;
+  buttons.forEach((button) => {
+    button.disabled = posts.length === 0;
+    button.textContent = allCollapsed ? 'Mở bài' : 'Thu bài';
+    button.setAttribute('aria-pressed', allCollapsed ? 'true' : 'false');
+    button.title = allCollapsed ? 'Mở toàn bộ bài trong thread' : 'Thu gọn toàn bộ bài trong thread';
+  });
+}
+
+function toggleAllThreadPostsCollapsed() {
+  const posts = threadPosts();
+  if (!posts.length) {
+    return false;
+  }
+  const shouldCollapse = posts.some((post) => !post.classList.contains('post-collapsed'));
+  posts.forEach((post) => setPostCollapsed(post, shouldCollapse));
+  syncThreadPostCollapseToolbarState();
+  return shouldCollapse;
+}
+
 function bindEvents() {
   window.addEventListener('hashchange', route);
   window.addEventListener('keydown', handleKeyboardShortcut);
@@ -8436,6 +8480,22 @@ function bindEvents() {
     const copyPostLinkButton = event.target.closest('[data-copy-post-link]');
     if (copyPostLinkButton) {
       await copyPostPermalink(copyPostLinkButton.dataset.copyPostLink);
+      return;
+    }
+
+    const collapsePostButton = event.target.closest('[data-collapse-post]');
+    if (collapsePostButton) {
+      const post = collapsePostButton.closest('article.post');
+      const collapsed = !post?.classList.contains('post-collapsed');
+      setPostCollapsed(post, collapsed);
+      syncThreadPostCollapseToolbarState();
+      return;
+    }
+
+    const collapseThreadPostsButton = event.target.closest('[data-thread-collapse-posts]');
+    if (collapseThreadPostsButton) {
+      const collapsed = toggleAllThreadPostsCollapsed();
+      showToast(collapsed ? 'Đã thu toàn bộ bài trong thread.' : 'Đã mở toàn bộ bài trong thread.');
       return;
     }
 
