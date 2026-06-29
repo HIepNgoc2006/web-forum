@@ -5465,6 +5465,8 @@ function meta(post, options = {}) {
         showPostActions
           ? `<button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
       <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
+      <button class="quote-button" data-filter-poster="${escapeHtml(posterId(post))}" data-filter-board="${escapeHtml(post.boardSlug || '')}" type="button">[Lọc ID]</button>
+      <button class="quote-button" data-note-poster="${escapeHtml(posterId(post))}" data-note-board="${escapeHtml(post.boardSlug || '')}" type="button">[Ghi chú ID]</button>
       <button class="quote-button" data-translate-post="${post.globalNumber}" type="button">[Dịch]</button>
       <button class="quote-button" data-tts-post="${post.globalNumber}" type="button">[Nghe]</button>`
           : ''
@@ -8955,6 +8957,45 @@ function bindEvents() {
         hidePostButton.closest('article.post')?.remove();
       }
       showToast('Đã ẩn bài trên trình duyệt này.');
+      return;
+    }
+
+    const filterPosterButton = event.target.closest('[data-filter-poster]');
+    if (filterPosterButton) {
+      const posterIdValue = filterPosterButton.dataset.filterPoster || '';
+      if (!posterIdValue || posterIdValue === 'ID:????') {
+        showToast('Không có Poster ID để lọc.');
+        return;
+      }
+      addContentFilter({
+        type: 'poster',
+        value: posterIdValue,
+        label: posterIdValue,
+        boardSlug: filterPosterButton.dataset.filterBoard || ''
+      });
+      showToast('Đã thêm bộ lọc Poster ID.');
+      return;
+    }
+
+    const notePosterButton = event.target.closest('[data-note-poster]');
+    if (notePosterButton) {
+      const posterIdValue = notePosterButton.dataset.notePoster || '';
+      if (!posterIdValue || posterIdValue === 'ID:????') {
+        showToast('Không có Poster ID để ghi chú.');
+        return;
+      }
+      const label = window.prompt('Nhãn cho ' + posterIdValue + ':', posterIdValue) || '';
+      if (!label.trim()) {
+        return;
+      }
+      const note = window.prompt('Ghi chú cho ' + posterIdValue + ':', '') || '';
+      addPosterNote({
+        posterId: posterIdValue,
+        label,
+        note,
+        boardSlug: notePosterButton.dataset.noteBoard || ''
+      });
+      showToast('Đã lưu ghi chú Poster ID.');
       return;
     }
 
