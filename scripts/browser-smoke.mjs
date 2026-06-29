@@ -831,6 +831,7 @@ async function main() {
             expression: `(async () => {
               const threadId = ${JSON.stringify(threadId)};
               const notifications = [];
+              const clipboardWrites = [];
               class FakeNotification {
                 static permission = 'granted';
                 constructor(title, options = {}) {
@@ -839,6 +840,14 @@ async function main() {
                 close() {}
               }
               Object.defineProperty(window, 'Notification', { configurable: true, value: FakeNotification });
+              Object.defineProperty(navigator, 'clipboard', {
+                configurable: true,
+                value: {
+                  writeText: async (text) => {
+                    clipboardWrites.push(String(text));
+                  }
+                }
+              });
               const threadNavLink = document.querySelector('[data-thread-nav]');
               const threadNavHref = threadNavLink?.getAttribute('href') || '';
               if (!threadNavLink || !threadNavHref.startsWith('#thread/')) {
@@ -1038,6 +1047,15 @@ async function main() {
               await new Promise((resolve) => setTimeout(resolve, 100));
               const selectedQuoteComposerValue = document.querySelector('#commentBody')?.value || '';
               const selectedQuoteNumber = selectedQuoteButton.dataset.quote || '';
+              const copyPostLinkButton = document.querySelector('#threadDetail [data-copy-post-link]');
+              if (!copyPostLinkButton) {
+                throw new Error('copy post link control missing');
+              }
+              copyPostLinkButton.click();
+              const copyPostLinkDeadline = Date.now() + 3000;
+              while (clipboardWrites.length === 0 && Date.now() < copyPostLinkDeadline) {
+                await new Promise((resolve) => setTimeout(resolve, 50));
+              }
               return {
                 count: notifications.length,
                 first: notifications[0] || null,
@@ -1048,6 +1066,7 @@ async function main() {
                 selfEditMarkerVisible,
                 selectedQuoteComposerValue,
                 selectedQuoteNumber,
+                copiedPostLink: clipboardWrites[0] || '',
                 mediaExpandedCount,
                 mediaButtonAfterExpand,
                 firstMediaLoaded,
@@ -1093,6 +1112,12 @@ async function main() {
             throw new Error(
               `thread desktop selected quote failed: quote=${payload.selectedQuoteNumber || 'missing'} composer=${payload.selectedQuoteComposerValue || 'missing'}`
             );
+          }
+          if (
+            !payload.copiedPostLink?.startsWith(baseUrl) ||
+            !payload.copiedPostLink.includes(`/#thread/${threadId}?p=`)
+          ) {
+            throw new Error(`thread desktop copy post link failed: ${payload.copiedPostLink || 'missing'}`);
           }
           if (
             payload.mediaExpandedCount < 2 ||
