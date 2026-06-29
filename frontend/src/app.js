@@ -5309,11 +5309,28 @@ function absolutePostPermalink(permalink) {
   return `${window.location.origin}${window.location.pathname}${permalink}`;
 }
 
+async function copyTextToClipboard(text) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(text);
+    return true;
+  }
+  const textarea = document.createElement('textarea');
+  textarea.value = text;
+  textarea.setAttribute('readonly', '');
+  textarea.style.position = 'fixed';
+  textarea.style.left = '-9999px';
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand('copy');
+  textarea.remove();
+  return copied;
+}
+
 async function copyPostPermalink(permalink) {
   const absolutePermalink = absolutePostPermalink(permalink);
   try {
-    await navigator.clipboard.writeText(absolutePermalink);
-    showToast('Đã sao chép link bài viết.');
+    const copied = await copyTextToClipboard(absolutePermalink);
+    showToast(copied ? 'Đã sao chép link bài viết.' : absolutePermalink);
   } catch {
     showToast(absolutePermalink);
   }
