@@ -1134,7 +1134,45 @@ async function main() {
         theme: 'burichan',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-admin-desktop.png'),
-        checks: ['AI chờ duyệt', 'Báo cáo', 'Đã duyệt', 'Nhật ký', 'Hàng đợi trống']
+        checks: ['AI chờ duyệt', 'Báo cáo', 'Đã duyệt', 'Nhật ký', 'Hàng đợi trống'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const waitFor = async (predicate, label) => {
+                const deadline = Date.now() + 5000;
+                while (Date.now() < deadline) {
+                  const value = predicate();
+                  if (value) return value;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                throw new Error('Timed out waiting for ' + label);
+              };
+              document.querySelector('[data-admin-tab="analytics"]')?.click();
+              await waitFor(() => document.querySelector('#pendingList .analytics-dashboard'), 'analytics dashboard');
+              const adminToken = localStorage.getItem('adminToken') || '';
+              const response = await fetch('/api/admin/analytics', {
+                headers: adminToken ? { authorization: 'Bearer ' + adminToken } : {}
+              });
+              const analytics = await response.json().catch(() => ({}));
+              const errorText = document.querySelector('#pendingList .form-error')?.innerText || '';
+              return {
+                ok: response.ok,
+                hasBoardActivity: analytics?.data?.boardActivity && typeof analytics.data.boardActivity === 'object',
+                hasMapError: errorText.includes('map is not a function'),
+                errorText
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          if (result.exceptionDetails) {
+            throw new Error(`admin analytics evaluation failed: ${result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)}`);
+          }
+          const payload = result.result?.value || {};
+          if (!payload.ok || !payload.hasBoardActivity || payload.hasMapError) {
+            throw new Error(`admin analytics tab failed to render: ${payload.errorText || 'missing analytics content'}`);
+          }
+        }
       },
       {
         label: 'admin moderation flow desktop',
