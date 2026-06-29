@@ -306,11 +306,11 @@
           [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
         </div>
 
-        <div class="board-sort-row" aria-label="Sắp xếp và lọc chủ đề">
-          <span>Sắp xếp:</span>
-          <button class="link-button" data-board-sort="bump" type="button">Đẩy lên</button>
-          <button class="link-button" data-board-sort="created" type="button">Mới tạo</button>
-          <button class="link-button" data-board-sort="replies" type="button">Nhiều trả lời</button>
+        <div class="board-sort-row" aria-label="Sắp xếp chủ đề">
+          <span>Sắp xếp theo:</span>
+          <button class="link-button" data-board-sort="bump" type="button">Thứ tự đẩy lên</button>
+          <button class="link-button" data-board-sort="created" type="button">Ngày tạo</button>
+          <button class="link-button" data-board-sort="replies" type="button">Số trả lời</button>
           <span>Lọc:</span>
           <button class="link-button" data-board-filter="all" type="button">Tất cả</button>
           <button class="link-button" data-board-filter="media" type="button">Có tệp</button>
@@ -353,7 +353,7 @@
               <span>Bình luận</span>
               <textarea id="threadBody" rows="4" maxlength="5000" placeholder="Nội dung bài viết..."></textarea>
             </label>
-            <div class="composer-picker" data-composer-picker="thread" aria-label="Emoji và sticker">
+            <div class="composer-picker" data-composer-picker="thread" aria-label="Emoji và sticker cho chủ đề">
               <span>Emoji</span>
               <button class="link-button" data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
               <button class="link-button" data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
@@ -573,7 +573,7 @@
               <span>Bình luận</span>
               <textarea id="commentBody" rows="4" maxlength="5000" placeholder="Viết bình luận..."></textarea>
             </label>
-            <div class="composer-picker" data-composer-picker="comment" aria-label="Emoji và sticker">
+            <div class="composer-picker" data-composer-picker="comment" aria-label="Emoji và sticker cho trả lời">
               <span>Emoji</span>
               <button class="link-button" data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
               <button class="link-button" data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
@@ -821,7 +821,7 @@
             <span>Hiển thị</span>
             <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
             <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn thumbnail</label>
-            <label><input id="accountWatchedUnreadOnly" type="checkbox" /> Watchlist: chỉ chưa đọc</label>
+            <label><input id="accountWatchedUnreadOnly" type="checkbox" /> Watchlist chỉ chưa đọc</label>
           </div>
           <label class="field-row">
             <span>Sắp xếp watchlist</span>
