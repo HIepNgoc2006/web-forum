@@ -1056,6 +1056,36 @@ async function main() {
               while (clipboardWrites.length === 0 && Date.now() < copyPostLinkDeadline) {
                 await new Promise((resolve) => setTimeout(resolve, 50));
               }
+              const collapseButton = document.querySelector('#threadDetail [data-collapse-post]');
+              if (!collapseButton) {
+                throw new Error('post collapse button missing');
+              }
+              collapseButton.click();
+              const collapsedPost = collapseButton.closest('.post');
+              const collapsedBodyHidden = collapsedPost
+                ? getComputedStyle(collapsedPost.querySelector('.post-body')).display === 'none'
+                : false;
+              const collapseLabel = collapseButton.textContent.trim();
+              collapseButton.click();
+              const expandedBodyVisible = collapsedPost
+                ? getComputedStyle(collapsedPost.querySelector('.post-body')).display !== 'none'
+                : false;
+              const expandLabel = collapseButton.textContent.trim();
+              const threadCollapseButton = document.querySelector('[data-thread-collapse-posts]');
+              if (!threadCollapseButton) {
+                throw new Error('thread post collapse toolbar missing');
+              }
+              threadCollapseButton.click();
+              const postsAfterThreadCollapse = [...document.querySelectorAll('#threadDetail article.post')];
+              const threadPostCount = postsAfterThreadCollapse.length;
+              const threadCollapsedPostCount = postsAfterThreadCollapse.filter((post) => post.classList.contains('post-collapsed')).length;
+              const threadCollapseLabel = threadCollapseButton.textContent.trim();
+              const threadCollapsePressed = threadCollapseButton.getAttribute('aria-pressed');
+              threadCollapseButton.click();
+              const postsAfterThreadExpand = [...document.querySelectorAll('#threadDetail article.post')];
+              const threadExpandedCollapsedCount = postsAfterThreadExpand.filter((post) => post.classList.contains('post-collapsed')).length;
+              const threadExpandLabel = threadCollapseButton.textContent.trim();
+              const threadExpandPressed = threadCollapseButton.getAttribute('aria-pressed');
               return {
                 count: notifications.length,
                 first: notifications[0] || null,
@@ -1067,6 +1097,17 @@ async function main() {
                 selectedQuoteComposerValue,
                 selectedQuoteNumber,
                 copiedPostLink: clipboardWrites[0] || '',
+                collapsedBodyHidden,
+                collapseLabel,
+                expandedBodyVisible,
+                expandLabel,
+                threadPostCount,
+                threadCollapsedPostCount,
+                threadCollapseLabel,
+                threadCollapsePressed,
+                threadExpandedCollapsedCount,
+                threadExpandLabel,
+                threadExpandPressed,
                 mediaExpandedCount,
                 mediaButtonAfterExpand,
                 firstMediaLoaded,
@@ -1118,6 +1159,29 @@ async function main() {
             !payload.copiedPostLink.includes(`/#thread/${threadId}?p=`)
           ) {
             throw new Error(`thread desktop copy post link failed: ${payload.copiedPostLink || 'missing'}`);
+          }
+          if (
+            !payload.collapsedBodyHidden ||
+            payload.collapseLabel !== '[Mở]' ||
+            !payload.expandedBodyVisible ||
+            payload.expandLabel !== '[Thu]'
+          ) {
+            throw new Error(
+              `thread desktop post collapse failed: hidden=${Boolean(payload.collapsedBodyHidden)} collapsedLabel=${payload.collapseLabel || 'missing'} visible=${Boolean(payload.expandedBodyVisible)} expandedLabel=${payload.expandLabel || 'missing'}`
+            );
+          }
+          if (
+            payload.threadPostCount < 1 ||
+            payload.threadCollapsedPostCount !== payload.threadPostCount ||
+            payload.threadCollapseLabel !== 'Mở bài' ||
+            payload.threadCollapsePressed !== 'true' ||
+            payload.threadExpandedCollapsedCount !== 0 ||
+            payload.threadExpandLabel !== 'Thu bài' ||
+            payload.threadExpandPressed !== 'false'
+          ) {
+            throw new Error(
+              `thread desktop post collapse toolbar failed: posts=${payload.threadPostCount || 0} collapsed=${payload.threadCollapsedPostCount || 0} collapseLabel=${payload.threadCollapseLabel || 'missing'} collapsePressed=${payload.threadCollapsePressed || 'missing'} remaining=${payload.threadExpandedCollapsedCount || 0} expandLabel=${payload.threadExpandLabel || 'missing'} expandPressed=${payload.threadExpandPressed || 'missing'}`
+            );
           }
           if (
             payload.mediaExpandedCount < 2 ||
