@@ -936,9 +936,57 @@ async function main() {
               if (!response.ok) {
                 throw new Error('notification smoke comment failed: ' + response.status);
               }
+              const notificationBody = await response.json();
+              const commentNumber = Number(notificationBody?.data?.comment?.globalNumber || notificationBody?.data?.globalNumber || 0);
+              if (!Number.isFinite(commentNumber) || commentNumber <= 0) {
+                throw new Error('notification smoke comment did not return a global number');
+              }
+              const watchedThreadLink = () =>
+                [...document.querySelectorAll('#watchedThreads .watch-thread-link')].find((link) =>
+                  (link.getAttribute('href') || '').includes('#thread/' + encodeURIComponent(threadId))
+                );
+              const watchedThreadMarkReadButton = () =>
+                watchedThreadLink()?.closest('.watch-item')?.querySelector('[data-mark-watch-read]');
               const notificationDeadline = Date.now() + 3000;
               while (notifications.length === 0 && Date.now() < notificationDeadline) {
                 await new Promise((resolve) => setTimeout(resolve, 50));
+              }
+              const watchedMap = JSON.parse(localStorage.getItem('watchedThreads') || '{}');
+              const currentWatched = watchedMap[threadId] || {};
+              watchedMap[threadId] = {
+                ...currentWatched,
+                maxNumber: Math.max(Number(currentWatched.maxNumber || 0), commentNumber),
+                lastSeen: Math.max(0, commentNumber - 1)
+              };
+              localStorage.setItem('watchedThreads', JSON.stringify(watchedMap));
+              window.location.hash = '#home';
+              const watchDeadline = Date.now() + 5000;
+              let watchHref = '';
+              while (Date.now() < watchDeadline) {
+                watchHref = watchedThreadLink()?.getAttribute('href') || '';
+                if (watchHref.includes('?p=' + encodeURIComponent(commentNumber))) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              watchedThreadMarkReadButton()?.click();
+              const readDeadline = Date.now() + 3000;
+              let readWatched = {};
+              let readHref = '';
+              let markReadButtonStillVisible = true;
+              while (Date.now() < readDeadline) {
+                readWatched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
+                readHref = watchedThreadLink()?.getAttribute('href') || '';
+                markReadButtonStillVisible = Boolean(watchedThreadMarkReadButton());
+                if (Number(readWatched.lastSeen || 0) >= commentNumber && !readHref.includes('?p=') && !markReadButtonStillVisible) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
+              window.location.hash = '#thread/' + encodeURIComponent(threadId);
+              const returnThreadDeadline = Date.now() + 5000;
+              while (!document.querySelector('#threadSearchInput') && Date.now() < returnThreadDeadline) {
+                await new Promise((resolve) => setTimeout(resolve, 100));
               }
               const threadSearchInput = document.querySelector('#threadSearchInput');
               if (!threadSearchInput) {
@@ -1146,6 +1194,11 @@ async function main() {
                 selfEditPromptDefault,
                 selfEditBodyUpdated,
                 selfEditMarkerVisible,
+                commentNumber,
+                watchHref,
+                readWatched,
+                readHref,
+                markReadButtonStillVisible,
                 selectedQuoteComposerValue,
                 selectedQuoteNumber,
                 copiedPostLink: clipboardWrites[0] || '',
@@ -1199,6 +1252,15 @@ async function main() {
           }
           if (!payload.sageMarkerVisible) {
             throw new Error('thread desktop did not render sage marker for sage reply.');
+          }
+          if (!payload.watchHref?.includes(`?p=${payload.commentNumber}`)) {
+            throw new Error(`thread desktop watchlist did not link to first unread post: ${payload.watchHref || 'missing href'}`);
+          }
+          if (Number(payload.readWatched?.lastSeen || 0) < Number(payload.commentNumber || 0)) {
+            throw new Error('thread desktop watchlist mark-read did not advance lastSeen.');
+          }
+          if (payload.readHref?.includes('?p=') || payload.markReadButtonStillVisible) {
+            throw new Error(`thread desktop watchlist mark-read did not clear unread UI: ${payload.readHref || 'missing href'}`);
           }
           if (!payload.selfEditPromptDefault || !payload.selfEditBodyUpdated || !payload.selfEditMarkerVisible) {
             throw new Error(

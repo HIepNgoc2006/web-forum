@@ -653,6 +653,12 @@ button {
   white-space: nowrap;
 }
 
+.watch-actions {
+  display: flex;
+  gap: 6px;
+  white-space: nowrap;
+}
+
 .watch-remove {
   white-space: nowrap;
 }

@@ -3677,6 +3677,7 @@ function renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
         ? 'Chủ đề không còn truy cập được hoặc đã bị xóa.'
         : item.preview || 'Không có nội dung';
       const href = watchedThreadHref(item);
+      const hasUnread = Number(item.unreadCount || 0) > 0;
       const unreadBadge = item.unreadCount
         ? `<span class="watch-unread">+${Number(item.unreadCount).toLocaleString()} mới</span>`
         : '<span class="watch-seen">đã đọc</span>';
@@ -3695,7 +3696,14 @@ function renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
             <span class="watch-preview">${escapeHtml(preview)}${preview.length >= 180 ? '...' : ''}</span>
             <span class="watch-stats">${stats}</span>
           </a>
-          <button class="link-button watch-remove" data-unwatch-thread="${escapeHtml(item.threadId)}" type="button">[Bỏ]</button>
+          <span class="watch-actions">
+            ${
+              hasUnread
+                ? `<button class="link-button watch-read" data-mark-watch-read="${escapeHtml(item.threadId)}" type="button">[Đã đọc]</button>`
+                : ''
+            }
+            <button class="link-button watch-remove" data-unwatch-thread="${escapeHtml(item.threadId)}" type="button">[Bỏ]</button>
+          </span>
         </div>
       `;
     })
@@ -8878,6 +8886,16 @@ function bindEvents() {
       if (count) {
         persistAccountSettings({ silent: true });
         showToast(`Đã đánh dấu ${count.toLocaleString()} chủ đề là đã đọc.`);
+      }
+      return;
+    }
+
+    const markWatchReadButton = event.target.closest('[data-mark-watch-read]');
+    if (markWatchReadButton) {
+      if (markWatchedThreadRead(markWatchReadButton.dataset.markWatchRead)) {
+        renderWatchedThreads();
+        persistAccountSettings({ silent: true });
+        showToast('Đã đánh dấu chủ đề là đã đọc.');
       }
       return;
     }
