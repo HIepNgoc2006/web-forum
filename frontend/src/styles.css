@@ -2155,6 +2155,34 @@ body.display-compact .post-body {
   font-size: 13px;
 }
 
+.admin-edit-history {
+  display: grid;
+  gap: 6px;
+}
+
+.admin-edit-history-entry {
+  border-top: 1px solid var(--reply-border);
+  padding-top: 5px;
+}
+
+.admin-edit-history-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.admin-edit-history-grid h4 {
+  margin: 0 0 3px;
+  color: #800;
+  font-size: 12px;
+}
+
+@media (max-width: 720px) {
+  .admin-edit-history-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
 .admin-log-section {
   max-width: 980px;
   margin: 14px auto 0;

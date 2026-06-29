@@ -101,6 +101,11 @@ const REASON_MACROS = {
     'Xem xét lại, không vi phạm',
     'Yêu cầu gỡ bỏ'
   ],
+  restore: [
+    'Khôi phục sau khi xem xét lại',
+    'Xóa nhầm',
+    'Kháng nghị hợp lệ'
+  ],
   'bulk-approve': [
     'Nội dung hợp lệ',
     'Đã xác minh an toàn',
@@ -3940,6 +3945,7 @@ function deletedPostsHtml(posts) {
           <div class="pending-actions">
             <button class="ghost-button" data-admin-detail="${post.globalNumber}" type="button">[Chi tiết]</button>
             <button class="ghost-button" data-admin-note="${post.globalNumber}" type="button">[Ghi chú]</button>
+            ${adminPostRestoreButtonHtml(post)}
           </div>
         </article>
       `
@@ -4022,12 +4028,57 @@ function pendingPostsHtml(posts) {
     .join('');
 }
 
+function editHistoryMediaHtml(images = []) {
+  const media = mediaList(images);
+  if (!media.length) {
+    return '<p class="muted">Không có tệp.</p>';
+  }
+  return `<div class="post-media-gallery">${media.map((image) => mediaToggleHtml(image, 'thumb')).join('')}</div>`;
+}
+
+function editHistoryHtml(history = []) {
+  if (!history.length) {
+    return '<p class="muted">Chưa có lịch sử chỉnh sửa.</p>';
+  }
+
+  return `
+    <div class="admin-edit-history">
+      ${history
+        .map(
+          (entry) => `
+            <section class="admin-edit-history-entry">
+              <div class="post-meta">
+                <span>${formatPostDate(entry.createdAt)}</span>
+                <span>${escapeHtml(entry.actor || 'admin')}</span>
+                <span>${escapeHtml(entry.reason || '-')}</span>
+              </div>
+              <div class="admin-edit-history-grid">
+                <div>
+                  <h4>Trước</h4>
+                  ${editHistoryMediaHtml(entry.previousImages || [])}
+                  <div class="post-body">${renderPostLines(entry.previousBodyLines || [])}</div>
+                </div>
+                <div>
+                  <h4>Sau</h4>
+                  ${editHistoryMediaHtml(entry.newImages || [])}
+                  <div class="post-body">${renderPostLines(entry.newBodyLines || [])}</div>
+                </div>
+              </div>
+            </section>
+          `
+        )
+        .join('')}
+    </div>
+  `;
+}
+
 function adminPostDetailHtml(detail) {
   const post = detail.post;
   const actions = detail.actions || [];
   const reports = detail.reports || [];
   const appeals = detail.appeals || [];
   const sanctions = detail.sanctions || [];
+  const editHistory = detail.editHistory || [];
   return `
     <div class="admin-detail">
       <div class="post-meta">
@@ -4038,15 +4089,23 @@ function adminPostDetailHtml(detail) {
         ${moderationConfidenceHtml(post.moderationConfidence)}
       </div>
       ${detail.thread ? `<p class="muted">Ngữ cảnh thread: No.${detail.thread.globalNumber} · ${escapeHtml(detail.thread.boardSlug)}</p>` : ''}
+      ${imageHtml(post)}
       <div class="post-body">${renderPostLines(post.bodyLines || [])}</div>
       <div class="pending-actions">
         <button class="ghost-button" data-admin-note="${post.globalNumber}" type="button">[Ghi chú]</button>
-        ${post.type === 'thread' ? adminStickyButtonHtml(post) : ''}
-        ${post.type === 'thread' ? adminLockButtonHtml(post) : ''}
-        <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
-        <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
-        ${postMediaCount(post) ? `<button class="ghost-button" data-admin-delete-post="${post.globalNumber}" data-file-only="true" type="button">[Xóa tệp]</button>` : ''}
-        <button class="danger-button" data-admin-delete-post="${post.globalNumber}" type="button">Xóa bài</button>
+        ${
+          post.isDeleted
+            ? adminPostRestoreButtonHtml(post)
+            : `
+              ${adminPostEditButtonHtml(post, { className: 'ghost-button' })}
+              ${post.type === 'thread' ? adminStickyButtonHtml(post) : ''}
+              ${post.type === 'thread' ? adminLockButtonHtml(post) : ''}
+              <button class="ghost-button" data-admin-sanction="cooldown" data-global-number="${post.globalNumber}" type="button">[Làm chậm]</button>
+              <button class="ghost-button" data-admin-sanction="ban" data-global-number="${post.globalNumber}" type="button">[Tạm khóa]</button>
+              ${postMediaCount(post) ? `<button class="ghost-button" data-admin-delete-post="${post.globalNumber}" data-file-only="true" type="button">[Xóa tệp]</button>` : ''}
+              <button class="danger-button" data-admin-delete-post="${post.globalNumber}" type="button">Xóa bài</button>
+            `
+        }
       </div>
       <h3>Báo cáo ${reports.length ? `<button class="ghost-button" data-admin-reports-summary="${post.globalNumber}" type="button">[Tóm tắt báo cáo AI]</button>` : ''}</h3>
       <div id="adminReportsSummaryBox-${post.globalNumber}" class="admin-reports-summary-box hidden"></div>
@@ -4055,6 +4114,8 @@ function adminPostDetailHtml(detail) {
       ${appeals.length ? appealsHtml(appeals) : '<p class="muted">Không có kháng nghị.</p>'}
       <h3>Làm chậm/Tạm khóa</h3>
       ${sanctions.length ? sanctionsHtml(sanctions) : '<p class="muted">Không có lệnh làm chậm/tạm khóa.</p>'}
+      <h3>Lịch sử chỉnh sửa</h3>
+      ${editHistoryHtml(editHistory)}
       <h3>Nhật ký</h3>
       ${actions.length ? moderationActionsHtml(actions) : '<p class="muted">Không có nhật ký.</p>'}
     </div>
@@ -5099,6 +5160,21 @@ function capcodeBadgeHtml(post) {
     return '';
   }
   return `<span class="capcode capcode-${post.capcode}" title="Chức danh đã xác minh">${label}</span>`;
+}
+
+function adminPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
+  if (!post?.globalNumber) {
+    return '';
+  }
+  const encodedBody = encodeURIComponent(post.body || '');
+  return `<button class="${className}" data-admin-edit-post="${post.globalNumber}" data-admin-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa]</button>`;
+}
+
+function adminPostRestoreButtonHtml(post, { className = 'ghost-button' } = {}) {
+  if (!post?.globalNumber) {
+    return '';
+  }
+  return `<button class="${className}" data-admin-restore-post="${post.globalNumber}" type="button">[Khôi phục]</button>`;
 }
 
 function accountPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
@@ -9022,6 +9098,61 @@ function bindEvents() {
         });
         showToast('Đã lưu ghi chú.');
         await loadAdmin();
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminEditPostButton = event.target.closest('[data-admin-edit-post]');
+    if (adminEditPostButton) {
+      const globalNumber = adminEditPostButton.dataset.adminEditPost;
+      const currentBody = decodeURIComponent(adminEditPostButton.dataset.adminEditBody || '');
+      const edit = await showPostEditModal(globalNumber, currentBody);
+      if (!edit) {
+        return;
+      }
+      try {
+        await api(`/api/admin/posts/${globalNumber}`, {
+          method: 'PUT',
+          body: JSON.stringify(edit)
+        });
+        showToast('Đã sửa bài.');
+        const hash = window.location.hash || '';
+        if (hash.startsWith('#thread/')) {
+          await loadThread();
+        } else if (hash.startsWith('#board/')) {
+          await loadBoard();
+        } else {
+          await loadAdmin();
+        }
+      } catch (error) {
+        showToast(error.message);
+      }
+      return;
+    }
+
+    const adminRestorePostButton = event.target.closest('[data-admin-restore-post]');
+    if (adminRestorePostButton) {
+      const globalNumber = adminRestorePostButton.dataset.adminRestorePost;
+      const reason = await showReasonModal(`Lý do khôi phục bài No.${globalNumber}:`, 'restore');
+      if (reason === null) {
+        return;
+      }
+      try {
+        await api(`/api/admin/posts/${globalNumber}/restore`, {
+          method: 'POST',
+          body: JSON.stringify({ reason })
+        });
+        showToast('Đã khôi phục bài.');
+        const hash = window.location.hash || '';
+        if (hash.startsWith('#thread/')) {
+          await loadThread();
+        } else if (hash.startsWith('#board/')) {
+          await loadBoard();
+        } else {
+          await loadAdmin();
+        }
       } catch (error) {
         showToast(error.message);
       }
