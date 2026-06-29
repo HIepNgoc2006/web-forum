@@ -4394,31 +4394,39 @@ body.theme-yotsuba.board-page .topbar {
   min-width: 150px;
 }
 
+.admin-board-events {
+  min-width: 150px;
+}
+
+.admin-board-presentation {
+  min-width: 190px;
+}
+
+.admin-board-presentation label,
+.admin-board-events label,
 .admin-board-retention label {
   display: grid;
   gap: 2px;
   margin-bottom: 4px;
 }
 
+.admin-board-presentation input,
+.admin-board-presentation textarea {
+  min-width: 0;
+}
+
+.admin-board-presentation textarea {
+  min-height: 52px;
+  resize: vertical;
+}
+
+.admin-board-events label:first-child {
+  display: block;
+}
+
 .admin-board-retention label:last-child {
   display: block;
   margin-bottom: 0;
-}
-
-.admin-board-metadata {
-  display: grid;
-  gap: 4px;
-  min-width: 220px;
-}
-
-.admin-board-metadata label {
-  display: grid;
-  gap: 2px;
-}
-
-.admin-board-metadata textarea {
-  min-height: 56px;
-  resize: vertical;
 }
 
 .admin-board-actions {

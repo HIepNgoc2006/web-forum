@@ -4734,12 +4734,18 @@ function adminBoardsHtml(boards) {
           <td data-label="Tên"><input data-admin-board-name aria-label="Tên board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.name)}" maxlength="80" /></td>
           <td data-label="Danh mục"><input data-admin-board-category aria-label="Danh mục board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.category)}" maxlength="80" /></td>
           <td data-label="Mô tả"><input data-admin-board-description aria-label="Mô tả board /${escapeHtml(board.slug)}/" value="${escapeHtml(board.description)}" maxlength="240" /></td>
-          <td data-label="Metadata">
-            <div class="admin-board-metadata">
+          <td data-label="Hiển thị">
+            <div class="admin-board-presentation">
               <label><span>Nội quy</span><textarea data-admin-board-rules aria-label="Nội quy board /${escapeHtml(board.slug)}/" rows="3" maxlength="2000">${escapeHtml(rulesText)}</textarea></label>
               <label><span>Banner</span><input data-admin-board-banner-text aria-label="Banner board /${escapeHtml(board.slug)}/" value="${escapeHtml(banner.text || '')}" maxlength="180" /></label>
               <label><span>Ảnh banner</span><input data-admin-board-banner-image-url aria-label="URL ảnh banner board /${escapeHtml(board.slug)}/" value="${escapeHtml(banner.imageUrl || '')}" maxlength="300" /></label>
               <label><span>Alt ảnh</span><input data-admin-board-banner-alt aria-label="Alt ảnh banner board /${escapeHtml(board.slug)}/" value="${escapeHtml(banner.altText || '')}" maxlength="140" /></label>
+            </div>
+          </td>
+          <td data-label="Sự kiện">
+            <div class="admin-board-events">
+              <label><input data-admin-board-temporary type="checkbox" ${board.temporary ? 'checked' : ''} /> Tạm thời</label>
+              <label><span>Kết thúc</span><input data-admin-board-event-ends-at aria-label="Thời điểm kết thúc board /${escapeHtml(board.slug)}/" type="datetime-local" value="${escapeHtml(eventEndsAt)}" /></label>
             </div>
           </td>
           <td data-label="Retention">
@@ -4801,13 +4807,14 @@ function adminBoardsHtml(boards) {
               <th>Tên</th>
               <th>Danh mục</th>
               <th>Mô tả</th>
-              <th>Metadata</th>
+              <th>Hiển thị</th>
+              <th>Sự kiện</th>
               <th>Retention</th>
               <th>Trạng thái</th>
               <th>Thao tác</th>
             </tr>
           </thead>
-          <tbody>${rows || '<tr><td colspan="8">Chưa có board.</td></tr>'}</tbody>
+          <tbody>${rows || '<tr><td colspan="9">Chưa có board.</td></tr>'}</tbody>
         </table>
       </div>
       <p class="muted">Xóa chỉ áp dụng cho board rỗng. Board đã có nội dung nên dùng Ẩn hoặc Lưu trữ.</p>
