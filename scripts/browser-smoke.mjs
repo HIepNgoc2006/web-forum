@@ -1011,6 +1011,33 @@ async function main() {
                 await new Promise((resolve) => setTimeout(resolve, 100));
               }
               window.prompt = originalPrompt;
+              const selectedQuoteButton = document.querySelector('#threadDetail article.post.op [data-quote]');
+              const selectedQuoteBody = document.querySelector('#threadDetail article.post.op .post-body');
+              if (!selectedQuoteButton || !selectedQuoteBody) {
+                throw new Error('selected quote controls missing');
+              }
+              const walker = document.createTreeWalker(selectedQuoteBody, NodeFilter.SHOW_TEXT);
+              let selectedQuoteNode = null;
+              while (walker.nextNode()) {
+                if (walker.currentNode.data.includes('browser smoke')) {
+                  selectedQuoteNode = walker.currentNode;
+                  break;
+                }
+              }
+              if (!selectedQuoteNode) {
+                throw new Error('selected quote source text missing');
+              }
+              const quoteStart = selectedQuoteNode.data.indexOf('browser smoke');
+              const range = document.createRange();
+              range.setStart(selectedQuoteNode, quoteStart);
+              range.setEnd(selectedQuoteNode, quoteStart + 'browser smoke'.length);
+              const selection = window.getSelection();
+              selection.removeAllRanges();
+              selection.addRange(range);
+              selectedQuoteButton.click();
+              await new Promise((resolve) => setTimeout(resolve, 100));
+              const selectedQuoteComposerValue = document.querySelector('#commentBody')?.value || '';
+              const selectedQuoteNumber = selectedQuoteButton.dataset.quote || '';
               return {
                 count: notifications.length,
                 first: notifications[0] || null,
@@ -1019,6 +1046,8 @@ async function main() {
                 selfEditPromptDefault,
                 selfEditBodyUpdated,
                 selfEditMarkerVisible,
+                selectedQuoteComposerValue,
+                selectedQuoteNumber,
                 mediaExpandedCount,
                 mediaButtonAfterExpand,
                 firstMediaLoaded,
@@ -1054,6 +1083,15 @@ async function main() {
           if (!payload.selfEditPromptDefault || !payload.selfEditBodyUpdated || !payload.selfEditMarkerVisible) {
             throw new Error(
               `thread desktop self edit failed: promptDefault=${payload.selfEditPromptDefault || 'missing'} updated=${Boolean(payload.selfEditBodyUpdated)} marker=${Boolean(payload.selfEditMarkerVisible)}`
+            );
+          }
+          if (
+            !payload.selectedQuoteNumber ||
+            !payload.selectedQuoteComposerValue?.includes(payload.selectedQuoteNumber) ||
+            !payload.selectedQuoteComposerValue?.includes('>browser smoke')
+          ) {
+            throw new Error(
+              `thread desktop selected quote failed: quote=${payload.selectedQuoteNumber || 'missing'} composer=${payload.selectedQuoteComposerValue || 'missing'}`
             );
           }
           if (
