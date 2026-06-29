@@ -1192,6 +1192,74 @@ test('tripcode is parsed from display name, name part is sanitized, and image sp
   );
 });
 
+test('image spoiler flags survive storage drivers that return fresh metadata', async () => {
+  const imageStorage = {
+    async save(image) {
+      return {
+        name: `stored-${image.name || 'upload.png'}`,
+        type: image.type,
+        sizeBytes: image.sizeBytes || 0,
+        url: `/uploads/stored-${image.name || 'upload.png'}`
+      };
+    }
+  };
+  const service = createForumService({
+    store: createMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    imageStorage,
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread co nhieu anh spoiler',
+    images: [
+      {
+        name: 'spoiler.png',
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        sizeBytes: 5,
+        spoiler: true
+      },
+      {
+        name: 'plain.png',
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        sizeBytes: 5,
+        spoiler: false
+      }
+    ],
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    posterToken: 'browser-a'
+  });
+  const reply = await service.createComment({
+    threadId: created.thread.id,
+    body: 'Reply co anh spoiler',
+    image: {
+      name: 'reply.png',
+      type: 'image/png',
+      dataUrl: 'data:image/png;base64,aGVsbG8=',
+      sizeBytes: 5,
+      spoiler: true
+    },
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.8',
+    posterToken: 'browser-b'
+  });
+  const detail = await service.getThread(created.thread.id);
+
+  assert.equal(created.thread.images[0].name, 'stored-spoiler.png');
+  assert.equal(created.thread.images[0].spoiler, true);
+  assert.equal(created.thread.images[1].spoiler, false);
+  assert.equal(created.thread.image.spoiler, true);
+  assert.deepEqual(detail.thread.images.map((image) => image.spoiler), [true, false]);
+  assert.equal(reply.comment.image.name, 'stored-reply.png');
+  assert.equal(reply.comment.image.spoiler, true);
+  assert.equal(detail.comments[0].image.spoiler, true);
+});
+
 test('capcode is stamped only for authorized roles and ignores forged values', async () => {
   const service = createForumService({
     store: createMemoryStore(),
