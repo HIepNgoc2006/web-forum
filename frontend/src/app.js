@@ -6046,7 +6046,7 @@ async function loadCatalog() {
 }
 
 function archiveThreadHtml(thread) {
-  const title = plainPreview(thread.bodyLines, 'Chưa có nội dung').slice(0, 180);
+  const title = threadTitle(thread, 'Chưa có nội dung').slice(0, 180);
   const archivedAt = thread.archivedAt ? new Date(thread.archivedAt).toLocaleString('vi-VN') : 'không rõ';
   return `
     <a class="archive-row" href="#thread/${thread.id}">
@@ -6058,11 +6058,12 @@ function archiveThreadHtml(thread) {
 }
 
 function renderArchiveThreads(threads) {
-  if (!threads.length) {
+  const visibleThreads = threads.filter((thread) => !isPostFiltered(thread));
+  if (!visibleThreads.length) {
     els.archiveList.innerHTML = '<p class="muted">Kho lưu trữ chưa có chủ đề.</p>';
     return;
   }
-  els.archiveList.innerHTML = threads.map(archiveThreadHtml).join('');
+  els.archiveList.innerHTML = visibleThreads.map(archiveThreadHtml).join('');
 }
 
 async function loadArchive() {
