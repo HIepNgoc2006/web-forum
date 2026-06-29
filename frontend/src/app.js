@@ -1131,19 +1131,19 @@ function composerTextarea(target) {
 
 function insertComposerBlock(target, text) {
   const textarea = composerTextarea(target);
-  const body = String(text || '').trim();
+  const body = safeReplyTemplateBody(text);
   if (!textarea || !body) {
     return;
   }
   const value = textarea.value;
   const start = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : value.length;
   const end = Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : start;
-  const prefix = start > 0 && value[start - 1] !== '\n' ? '\n' : '';
-  const suffix = value[end] && value[end] !== '\n' ? '\n' : '';
+  const prefix = start > 0 && !value.slice(0, start).endsWith('\n') ? '\n' : '';
+  const suffix = value[end] && !value.slice(end).startsWith('\n') ? '\n' : '';
   const insertText = `${prefix}${body}${suffix}`;
   const maxLength = Number(textarea.maxLength);
   if (Number.isFinite(maxLength) && maxLength > 0 && value.length - (end - start) + insertText.length > maxLength) {
-    showToast('Nội dung đã đạt giới hạn ký tự.');
+    showToast('Nháp đã đạt giới hạn ký tự.');
     textarea.focus();
     return;
   }
@@ -1162,12 +1162,13 @@ function insertReplyTemplate(target, id) {
 }
 
 function defaultReplyTemplateTitle(body = '') {
-  return safePrivateText(String(body).split(/\n/).find(Boolean) || 'Mẫu trả lời', 48);
+  const firstLine = safePrivateText(String(body).split('\n').find((line) => line.trim()) || '', 80);
+  return firstLine || 'Mẫu trả lời';
 }
 
 function saveComposerReplyTemplate(target) {
   const textarea = composerTextarea(target);
-  const body = textarea?.value.trim() || '';
+  const body = safeReplyTemplateBody(textarea?.value || '');
   if (!body) {
     showToast('Nhập nội dung trước khi lưu mẫu.');
     textarea?.focus();
@@ -1178,7 +1179,6 @@ function saveComposerReplyTemplate(target) {
     body,
     boardSlug: state.boardSlug || ''
   });
-  renderReplyTemplatePickers();
   showToast('Đã lưu mẫu trả lời.');
 }
 
