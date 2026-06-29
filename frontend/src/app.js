@@ -1523,6 +1523,7 @@ const els = {
   boardSummary: document.querySelector('#boardSummary'),
   backToBoard: document.querySelector('#backToBoard'),
   threadTitle: document.querySelector('#threadTitle'),
+  threadAdminActions: document.querySelector('#threadAdminActions'),
   threadBoardPath: document.querySelector('#threadBoardPath'),
   threadBoardDescription: document.querySelector('#threadBoardDescription'),
   threadToolbarTop: document.querySelector('#threadToolbarTop'),
@@ -5583,6 +5584,22 @@ function adminLockButtonHtml(thread) {
   return `<button class="ghost-button" data-admin-lock-thread="${escapeHtml(thread.id)}" data-lock-next="${nextLocked}" type="button">[${label}]</button>`;
 }
 
+function canModerateFromAdminToken() {
+  const payload = decodeJwtPayload(state.token);
+  return Boolean(payload && ['admin', 'owner', 'moderator'].includes(payload.role));
+}
+
+function threadHeaderActionsHtml(detail = {}) {
+  if (!canModerateFromAdminToken()) {
+    return '';
+  }
+  const actions = [adminStickyButtonHtml(detail.thread), adminLockButtonHtml(detail.thread)].filter(Boolean);
+  if (!actions.length) {
+    return '';
+  }
+  return `<div class="thread-admin-action-group">${actions.join(' ')}</div>`;
+}
+
 function focusPermalinkPost(globalNumber, { scroll = false } = {}) {
   const postNumber = String(globalNumber || '').trim();
   if (!postNumber) {
@@ -6061,6 +6078,7 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
   renderBoards();
   updateBoardPresentation(board);
   els.threadTitle.textContent = threadTitle(detail.thread, boardHeading(board) || detail.thread.boardSlug);
+  els.threadAdminActions.innerHTML = threadHeaderActionsHtml(detail);
   els.threadBoardPath.textContent = board?.path || `/${detail.thread.boardSlug}/`;
   els.threadBoardDescription.textContent = board?.description || 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt';
   els.threadToolbarTop.innerHTML = threadToolbarHtml(detail, 'top');

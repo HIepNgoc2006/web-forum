@@ -1129,6 +1129,35 @@ select {
   color: var(--header);
 }
 
+.thread-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+}
+
+.thread-admin-actions {
+  display: flex;
+  align-items: center;
+  min-height: 20px;
+}
+
+.thread-admin-action-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+}
+
+.thread-admin-action-group .ghost-button {
+  border: 1px solid var(--header);
+  background: var(--reply);
+  color: var(--header);
+  padding: 1px 8px;
+  font-weight: 700;
+}
+
 .primary-button:disabled,
 .ghost-button:disabled {
   cursor: wait;
