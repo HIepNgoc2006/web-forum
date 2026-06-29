@@ -1810,6 +1810,54 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
   });
 });
 
+test('http self delete can remove only post files with the delete password', async () => {
+  await withServer(async (baseUrl) => {
+    const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Thread co file de xoa rieng',
+        captchaToken: 'dev-pass',
+        deletePassword: 'file-pass',
+        image: {
+          name: 'self-delete-file.png',
+          type: 'image/png',
+          dataUrl: 'data:image/png;base64,AAAA',
+          sizeBytes: 3
+        }
+      })
+    });
+    const createdBody = await created.json();
+    assert.equal(created.status, 201);
+    assert.equal(createdBody.data.thread.image.name, 'self-delete-file.png');
+
+    const deletedFile = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'file-pass', fileOnly: true })
+    });
+    const deletedFileBody = await deletedFile.json();
+    assert.equal(deletedFile.status, 200);
+    assert.equal(deletedFileBody.data.fileOnly, true);
+
+    const detail = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
+    const detailBody = await detail.json();
+    assert.equal(detail.status, 200);
+    assert.equal(detailBody.data.thread.body, 'Thread co file de xoa rieng');
+    assert.equal(detailBody.data.thread.image, null);
+    assert.deepEqual(detailBody.data.thread.images, []);
+
+    const secondDelete = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}`, {
+      method: 'DELETE',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: 'file-pass', fileOnly: true })
+    });
+    const secondDeleteBody = await secondDelete.json();
+    assert.equal(secondDelete.status, 400);
+    assert.match(secondDeleteBody.error.message, /không có tệp/);
+  });
+});
+
 test('http posts support self edit and admin edit restore history', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
