@@ -3010,6 +3010,95 @@ test('account and board reads use targeted store hooks when available', async ()
   assert.equal(calls.some((call) => Array.isArray(call) && call[0] === 'upsertAdminAccount'), true);
 });
 
+test('2FA login uses targeted user read when available', async () => {
+  let readUserId = null;
+  const store = {
+    async readUser(userId) {
+      readUserId = userId;
+      return {
+        id: 'user-2fa',
+        username: 'adminfixture',
+        role: 'admin',
+        twoFactorEnabled: true,
+        twoFactorSecret: 'targeted-secret',
+        settings: {},
+        createdAt: '2026-05-22T07:00:00.000Z',
+        updatedAt: '2026-05-22T07:30:00.000Z'
+      };
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    totp: {
+      verifyTOTP(code, secret) {
+        return code === '123456' && secret === 'targeted-secret';
+      }
+    }
+  });
+
+  const result = await service.verify2FALogin('user-2fa', '123456');
+
+  assert.equal(readUserId, 'user-2fa');
+  assert.equal(result.ok, true);
+  assert.equal(result.account.username, 'adminfixture');
+  assert.equal(result.account.role, 'owner');
+  assert.equal(result.account.twoFactorEnabled, true);
+});
+
+test('admin login account bootstrap uses targeted store hook when available', async () => {
+  let hookArgs = null;
+  const store = {
+    async upsertAdminAccount(args) {
+      hookArgs = args;
+      return {
+        id: 'admin-1',
+        username: args.username,
+        passwordHash: args.passwordHash,
+        role: args.role,
+        settings: args.settings,
+        privateData: args.privateData,
+        disabled: args.disabled,
+        twoFactorEnabled: true,
+        twoFactorSecret: 'existing-secret',
+        createdAt: '2026-05-22T07:00:00.000Z',
+        updatedAt: args.updatedAt
+      };
+    },
+    async read() {
+      throw new Error('full read should not be used');
+    },
+    async write() {
+      throw new Error('write should not be used');
+    }
+  };
+  const service = createForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const account = await service.getOrCreateAdminAccount('AdminFixture', 'ExampleStrongPassword123');
+
+  assert.equal(hookArgs.username, 'adminfixture');
+  assert.equal(hookArgs.passwordHash.includes('ExampleStrongPassword123'), false);
+  assert.equal(hookArgs.role, 'owner');
+  assert.equal(hookArgs.disabled, false);
+  assert.equal(hookArgs.createdAt, '2026-05-22T08:00:00.000Z');
+  assert.equal(hookArgs.updatedAt, '2026-05-22T08:00:00.000Z');
+  assert.equal(account.username, 'adminfixture');
+  assert.equal(account.role, 'owner');
+  assert.equal(account.twoFactorEnabled, true);
+});
+
 test('admin moderation lists use targeted store hooks when available', async () => {
   const calls = [];
   const baseThread = {
