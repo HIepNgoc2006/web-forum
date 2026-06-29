@@ -5644,6 +5644,34 @@ function postHtml(post, type = 'post', options = {}) {
   `;
 }
 
+function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply } = {}) {
+  if (!comments.length) {
+    return state.threadSearchTerm
+      ? '<p class="muted">Không có bình luận khớp tìm kiếm trong thread.</p>'
+      : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>';
+  }
+
+  const lastSeen = Number(state.threadLastSeenBefore || 0);
+  let markerShown = false;
+  return comments
+    .map((comment) => {
+      const isUnread = lastSeen > 0 && Number(comment.globalNumber || 0) > lastSeen;
+      const marker =
+        isUnread && !markerShown
+          ? `<div class="new-posts-divider" role="separator">Bài mới từ lần đọc trước · sau No.${escapeHtml(lastSeen)}</div>`
+          : '';
+      if (isUnread) {
+        markerShown = true;
+      }
+      return `${marker}${postHtml(comment, 'post comment', {
+        opNumber,
+        opPosterHash,
+        canReply
+      })}`;
+    })
+    .join('');
+}
+
 function threadMediaGalleryItems(detail = {}) {
   return [detail.thread, ...(detail.comments || [])]
     .filter(Boolean)
@@ -6404,21 +6432,11 @@ async function loadThread({ resetReply = false, focusPost = '' } = {}) {
     ${threadSearchHtml(detail)}
     ${commentSortHtml(state.commentsSort)}
     <div class="comment-list">
-      ${
-        visibleComments.length
-          ? visibleComments
-              .map((comment) =>
-                postHtml(comment, 'post comment', {
-                  opNumber: detail.thread.globalNumber,
-                  opPosterHash: detail.thread.posterHash,
-                  canReply
-                })
-              )
-              .join('')
-          : state.threadSearchTerm
-            ? '<p class="muted">Không có bình luận khớp tìm kiếm trong thread.</p>'
-            : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>'
-      }
+      ${threadCommentsHtml(visibleComments, {
+        opNumber: detail.thread.globalNumber,
+        opPosterHash: detail.thread.posterHash,
+        canReply
+      })}
     </div>
   `;
   els.threadPagination.innerHTML = pageControlsHtml(state.threadCommentPageMeta, 'thread-comments');

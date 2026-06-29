@@ -1134,6 +1134,27 @@ async function main() {
               const watched = JSON.parse(localStorage.getItem('watchedThreads') || '{}')[threadId] || {};
               const diceRollText = document.querySelector('.dice-roll')?.textContent || '';
               const sageMarkerVisible = Boolean([...document.querySelectorAll('.sage-marker')].find((item) => item.textContent.trim() === 'sage'));
+              localStorage.setItem('threadLastSeen:' + threadId, String(Math.max(0, allReadNumber - 1)));
+              window.location.hash = '#thread/' + encodeURIComponent(threadId) + '?p=' + encodeURIComponent(allReadNumber);
+              const unreadMarkerDeadline = Date.now() + 5000;
+              let unreadMarkerText = '';
+              let unreadMarkerBeforePost = false;
+              while (Date.now() < unreadMarkerDeadline) {
+                const marker = document.querySelector('#threadDetail .new-posts-divider');
+                const targetPost = document.querySelector('#p' + CSS.escape(String(allReadNumber)));
+                unreadMarkerText = marker?.textContent || '';
+                unreadMarkerBeforePost = Boolean(
+                  marker && targetPost && (marker.compareDocumentPosition(targetPost) & Node.DOCUMENT_POSITION_FOLLOWING)
+                );
+                if (
+                  unreadMarkerText.includes('Bài mới từ lần đọc trước') &&
+                  unreadMarkerText.includes('No.' + String(allReadNumber - 1)) &&
+                  unreadMarkerBeforePost
+                ) {
+                  break;
+                }
+                await new Promise((resolve) => setTimeout(resolve, 100));
+              }
               const commentDeletePasswordInput = document.querySelector('#commentForm [name="deletePassword"]');
               if (!commentDeletePasswordInput) {
                 throw new Error('comment delete password field missing');
@@ -1319,6 +1340,8 @@ async function main() {
                 recentFirstBoard,
                 boardFirstBoard,
                 storedWatchedSort,
+                unreadMarkerText,
+                unreadMarkerBeforePost,
                 selectedQuoteComposerValue,
                 selectedQuoteNumber,
                 copiedPostLink: clipboardWrites[0] || '',
@@ -1394,6 +1417,15 @@ async function main() {
           if (payload.recentFirstBoard !== '/confession/' || payload.boardFirstBoard !== '/an-uong/' || payload.storedWatchedSort !== 'board') {
             throw new Error(
               `thread desktop watchlist sort controls failed: recent=${payload.recentFirstBoard || 'missing'} board=${payload.boardFirstBoard || 'missing'} stored=${payload.storedWatchedSort || 'missing'}`
+            );
+          }
+          if (
+            !payload.unreadMarkerText?.includes('Bài mới từ lần đọc trước') ||
+            !payload.unreadMarkerText?.includes(`No.${Number(payload.allReadNumber || 0) - 1}`) ||
+            !payload.unreadMarkerBeforePost
+          ) {
+            throw new Error(
+              `thread desktop unread marker failed: text=${payload.unreadMarkerText || 'missing'} beforePost=${Boolean(payload.unreadMarkerBeforePost)}`
             );
           }
           if (!payload.selfEditPromptDefault || !payload.selfEditBodyUpdated || !payload.selfEditMarkerVisible) {
