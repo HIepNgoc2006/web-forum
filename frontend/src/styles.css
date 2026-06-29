@@ -1249,28 +1249,35 @@ body.display-hide-thumbnails .thread-thumb-wrap {
 }
 
 .thread-media-index-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  max-width: 180px;
-  overflow: hidden;
+  display: grid;
+  grid-template-rows: 54px 14px;
+  place-items: center;
+  width: 62px;
+  min-width: 62px;
   color: var(--link);
+  line-height: 12px;
+  overflow: hidden;
+  text-align: center;
   text-decoration: none;
-  white-space: nowrap;
 }
 
 .thread-media-index-item img,
 .thread-media-index-item > span:first-child {
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(128, 0, 0, 0.28);
-  background: rgba(255, 255, 255, 0.65);
+  display: grid;
+  width: 54px;
+  height: 54px;
+  place-items: center;
+  border: 1px solid #b7c5d9;
+  background: #eef2ff;
   object-fit: cover;
+  overflow: hidden;
 }
 
-.thread-media-index-item > span:first-child {
-  display: grid;
-  place-items: center;
+.thread-media-index-item span:last-child {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-media-index-item:hover span:last-child,
@@ -4005,6 +4012,24 @@ body.theme-yotsuba.board-page .topbar {
 .board-page #threadScreen .post-image {
   max-width: 180px;
   max-height: 180px;
+}
+
+.board-page .thread-media-index {
+  margin: 2px 0 5px;
+  padding: 3px;
+  font-size: 10px;
+}
+
+.board-page .thread-media-index-item {
+  grid-template-rows: 44px 12px;
+  width: 52px;
+  min-width: 52px;
+}
+
+.board-page .thread-media-index-item img,
+.board-page .thread-media-index-item > span:first-child {
+  width: 44px;
+  height: 44px;
 }
 
 .board-page .image-toggle.expanded .thumb,
