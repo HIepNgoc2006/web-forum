@@ -218,6 +218,42 @@ async function createAdminToken() {
   return payload.data.token;
 }
 
+async function createDeletedAppealThread(adminToken) {
+  const threadResponse = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      subject: 'Appeal form smoke',
+      body: 'Bài kiểm thử form kháng nghị public',
+      captchaToken: 'dev-pass',
+      posterToken: 'ci-poster-appeal'
+    })
+  });
+  if (!threadResponse.ok) {
+    const body = await threadResponse.text().catch(() => '');
+    throw new Error(`Could not create appeal smoke thread: ${threadResponse.status} ${body}`);
+  }
+  const threadPayload = await threadResponse.json();
+  const thread = threadPayload.data.thread;
+  const appealToken = threadPayload.data.appealToken;
+  if (!thread?.globalNumber || !appealToken) {
+    throw new Error('Appeal smoke thread did not return a global number and appeal token.');
+  }
+  const deleteResponse = await fetch(`${baseUrl}/api/admin/posts/${thread.globalNumber}`, {
+    method: 'DELETE',
+    headers: {
+      authorization: `Bearer ${adminToken}`,
+      'content-type': 'application/json'
+    },
+    body: JSON.stringify({ reason: 'Browser smoke appeal setup' })
+  });
+  if (!deleteResponse.ok) {
+    const body = await deleteResponse.text().catch(() => '');
+    throw new Error(`Could not delete appeal smoke thread: ${deleteResponse.status} ${body}`);
+  }
+  return { appealToken, globalNumber: thread.globalNumber };
+}
+
 function connectWebSocket(url) {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
@@ -537,6 +573,7 @@ async function main() {
     const threadId = await createSeedThread();
     let approvePendingThread = null;
     let deletePendingThread = null;
+    let appealSmoke = null;
     const pages = [
       {
         label: 'home desktop',
@@ -932,6 +969,57 @@ async function main() {
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-admin-mobile.png'),
         checks: ['AI chờ duyệt', 'Báo cáo', 'Đã duyệt', 'Nhật ký', 'Hàng đợi trống']
+      },
+      {
+        label: 'policy appeal desktop',
+        url: `${baseUrl}/#policy/appeal`,
+        theme: 'burichan',
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-policy-appeal-desktop.png'),
+        checks: ['Nội quy, riêng tư và báo cáo', 'Kháng nghị bài bị xóa', 'Mã kháng nghị', 'Gửi kháng nghị'],
+        async before() {
+          appealSmoke = await createDeletedAppealThread(adminToken);
+        },
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const appealToken = ${JSON.stringify(appealSmoke?.appealToken || '')};
+              const globalNumber = ${JSON.stringify(appealSmoke?.globalNumber || '')};
+              const waitFor = async (predicate, label) => {
+                const deadline = Date.now() + 5000;
+                while (Date.now() < deadline) {
+                  const value = predicate();
+                  if (value) return value;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                throw new Error('Timed out waiting for ' + label);
+              };
+              const form = await waitFor(() => document.querySelector('#appealForm'), 'appeal form');
+              document.querySelector('#appealToken').value = appealToken;
+              document.querySelector('#appealReason').value = 'Xin admin xem lại bài kiểm thử kháng nghị';
+              form.requestSubmit();
+              const resultText = await waitFor(() => {
+                const text = document.querySelector('#appealResult')?.textContent || '';
+                return text.includes('No.' + globalNumber) ? text : '';
+              }, 'appeal result');
+              return {
+                resultText,
+                tokenCleared: document.querySelector('#appealToken')?.value === '',
+                reasonCleared: document.querySelector('#appealReason')?.value === '',
+                errorHidden: document.querySelector('#appealError')?.classList.contains('hidden') ?? false
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          if (result.exceptionDetails) {
+            throw new Error(`policy appeal evaluation failed: ${result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)}`);
+          }
+          const payload = result.result?.value || {};
+          if (!payload.resultText?.includes('Trạng thái: open') || !payload.tokenCleared || !payload.reasonCleared || !payload.errorHidden) {
+            throw new Error(`policy appeal form failed: ${JSON.stringify(payload)}`);
+          }
+        }
       }
     ];
 
