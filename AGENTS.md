@@ -31,7 +31,29 @@ Use Node.js 20 or newer.
 
 ## Coding Style & Naming Conventions
 
-Use modern ESM JavaScript. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.js`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and route/socket wiring in `backend/src/server/`. Frontend changes should preserve the current plain Vite structure unless a larger refactor is explicitly requested.
+Use modern ESM JavaScript and TypeScript during migration. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.js`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and route/socket wiring in `backend/src/server/`. Frontend changes should preserve the current plain Vite structure unless a larger refactor is explicitly requested.
+
+## TypeScript Migration Guidelines
+
+Port JavaScript to TypeScript incrementally. Do not do a repo-wide `.js` to `.ts` rename in a single PR unless explicitly requested. Use small, reviewable migration passes that keep runtime behavior unchanged.
+
+Recommended order:
+1. Add TypeScript infrastructure first: `typescript`, package-level `tsconfig.json` files, shared compiler settings if useful, and `typecheck` scripts that can be wired into `npm run check`.
+2. Enable mixed JS/TS with `allowJs` at the start so `.ts` files can coexist with existing `.js` files. Start with permissive settings, then tighten after the code compiles.
+3. Convert leaf modules before entry points: pure helpers, validators, formatters, security utilities, and service types before `backend/server.js` or frontend app bootstrap files.
+4. Define shared domain types for boards, threads, posts, users/accounts, moderation results, store state, realtime events, image metadata, and API payloads before typing large service functions.
+5. Convert tests alongside the code they cover. Keep existing `node:test` behavior unless the test runner is intentionally changed.
+6. Convert frontend files with Vite-compatible TypeScript. Keep the current vanilla DOM architecture; do not introduce React or JSX as part of the TypeScript migration.
+7. Convert backend entry points only after the build/dev/start story is decided. If backend emits compiled files, keep source in `src/` and run production from `dist/`; if using a TS runtime for development, keep production startup explicit and documented.
+8. Turn on stricter compiler options gradually: first `noEmit` typechecks, then `strict`/`noUncheckedIndexedAccess`/similar checks once the initial migration is stable.
+
+Migration PR rules:
+- Keep each PR focused on one layer or feature area.
+- Avoid behavior changes unless the migration exposes a confirmed bug; put bug fixes in their own commit or PR when practical.
+- Do not add new production dependencies just for typing.
+- Prefer `import type` / `export type` for type-only imports and exports.
+- Add explicit return types for public service, store, auth, moderation, and API boundary functions.
+- Validate each migration pass with `npm test`, `npm run check`, and `npm run build` when affected.
 
 ## Testing Guidelines
 
