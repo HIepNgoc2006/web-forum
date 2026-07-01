@@ -8,6 +8,7 @@
     "dev": "node --watch server.js",
     "start": "node server.js",
     "test": "node test/run-tests.js",
+    "build": "tsc -p tsconfig.build.json",
     "check": "node scripts/check-syntax.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate:images": "node scripts/migrate-inline-images.js",
