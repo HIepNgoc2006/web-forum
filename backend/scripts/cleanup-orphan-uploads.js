@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 import { createJsonStore } from '../src/core/forum-store.js';
 import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.js';
 import { createMongoStore } from '../src/core/mongo-store.js';
-import { cleanupOrphanUploads } from '../src/core/upload-cleanup.js';
+import { cleanupOrphanUploads } from '../src/core/upload-cleanup.ts';
 
 function readOption(argv, name, fallback) {
   const index = argv.indexOf(name);

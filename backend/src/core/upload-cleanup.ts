@@ -1,34 +1,97 @@
-function mediaItems(post) {
+type UploadStorageName = 'local' | 's3';
+
+type ForumPostLike = {
+  image?: unknown;
+  images?: unknown;
+};
+
+type ForumStateLike = {
+  threads?: unknown;
+  comments?: unknown;
+};
+
+type UploadMediaLike = {
+  storage?: unknown;
+  storageKey?: unknown;
+  thumbnail?: unknown;
+};
+
+type UploadCleanupStorage = {
+  type?: string;
+  listKeys: () => Promise<unknown[]>;
+  deleteKey: (storageKey: string) => Promise<unknown>;
+};
+
+type UploadCleanupCandidate = {
+  storageKey: string;
+};
+
+type UploadCleanupFailure = UploadCleanupCandidate & {
+  error: string;
+};
+
+type UploadCleanupResult = {
+  dryRun: boolean;
+  storageType: string;
+  startedAt: string;
+  finishedAt: string | null;
+  scanned: number;
+  referenced: number;
+  candidates: UploadCleanupCandidate[];
+  deleted: UploadCleanupCandidate[];
+  failures: UploadCleanupFailure[];
+};
+
+type UploadCleanupLogger = (entry: Record<string, unknown>) => unknown;
+
+type CollectReferencedOptions = {
+  storage?: UploadStorageName;
+};
+
+type CleanupOrphanUploadsOptions = {
+  state?: ForumStateLike;
+  imageStorage?: UploadCleanupStorage;
+  dryRun?: boolean;
+  logger?: UploadCleanupLogger;
+  now?: () => Date;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function mediaItems(post: ForumPostLike): unknown[] {
   if (Array.isArray(post?.images)) {
     return post.images.filter(Boolean);
   }
   return post?.image ? [post.image] : [];
 }
 
-function normalizeStorageKey(value) {
+function normalizeStorageKey(value: unknown): string {
   return String(value ?? '').replace(/\\/g, '/').replace(/^\/+/g, '');
 }
 
-function addReferencedKey(keys, media, storage) {
-  if (!media || typeof media !== 'object') {
+function addReferencedKey(keys: Set<string>, media: unknown, storage?: UploadStorageName): void {
+  if (!isRecord(media)) {
     return;
   }
-  if (storage && media.storage !== storage) {
+  const uploadMedia = media as UploadMediaLike;
+  if (storage && uploadMedia.storage !== storage) {
     return;
   }
 
-  const key = normalizeStorageKey(media.storageKey);
+  const key = normalizeStorageKey(uploadMedia.storageKey);
   if (key) {
     keys.add(key);
   }
 
-  if (media.thumbnail && typeof media.thumbnail === 'object') {
-    addReferencedKey(keys, media.thumbnail, storage);
+  if (isRecord(uploadMedia.thumbnail)) {
+    addReferencedKey(keys, uploadMedia.thumbnail, storage);
   }
 }
 
-export function collectReferencedUploadKeys(state = {}, { storage } = {}) {
-  const keys = new Set();
+export function collectReferencedUploadKeys(state: ForumStateLike = {}, { storage }: CollectReferencedOptions = {}): Set<string> {
+  const keys = new Set<string>();
   for (const collection of [state.threads, state.comments]) {
     if (!Array.isArray(collection)) {
       continue;
@@ -48,7 +111,7 @@ export async function cleanupOrphanUploads({
   dryRun = true,
   logger = () => undefined,
   now = () => new Date()
-} = {}) {
+}: CleanupOrphanUploadsOptions = {}): Promise<UploadCleanupResult> {
   if (!state || typeof state !== 'object') {
     throw new Error('Forum state is required');
   }
@@ -64,7 +127,7 @@ export async function cleanupOrphanUploads({
     .filter((key) => !referencedKeys.has(key))
     .sort()
     .map((storageKey) => ({ storageKey }));
-  const result = {
+  const result: UploadCleanupResult = {
     dryRun: Boolean(dryRun),
     storageType: imageStorage.type ?? 'unknown',
     startedAt,

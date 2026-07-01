@@ -6,7 +6,7 @@ import path from 'node:path';
 
 import { parseCleanupArgs, readForumStateForCleanup } from '../scripts/cleanup-orphan-uploads.js';
 import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.js';
-import { cleanupOrphanUploads, collectReferencedUploadKeys } from '../src/core/upload-cleanup.js';
+import { cleanupOrphanUploads, collectReferencedUploadKeys } from '../src/core/upload-cleanup.ts';
 
 const tempRoots = [];
 

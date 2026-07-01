@@ -1,6 +1,6 @@
 import path from 'node:path';
 
-import { migrateInlineImages } from '../src/core/image-migration.js';
+import { migrateInlineImages } from '../src/core/image-migration.ts';
 
 function readOption(name, fallback) {
   const index = process.argv.indexOf(name);

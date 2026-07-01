@@ -3,23 +3,46 @@ import path from 'node:path';
 
 import { createLocalImageStorage } from './image-storage.js';
 
-function isInlineImage(image) {
+type InlineImage = Record<string, unknown> & {
+  dataUrl: string;
+};
+
+type ImageMigrationOptions = {
+  forumPath?: string;
+  uploadRoot?: string;
+  publicPath?: string;
+  dryRun?: boolean;
+  now?: Date;
+};
+
+type ImageMigrationResult = {
+  scanned: number;
+  migrated: number;
+  skipped: number;
+  bytesWritten: number;
+  backupPath: string | null;
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object';
+}
+
+function isInlineImage(image: unknown): image is InlineImage {
   return Boolean(
-    image &&
-    typeof image === 'object' &&
+    isRecord(image) &&
     typeof image.dataUrl === 'string' &&
     image.dataUrl.startsWith('data:image/')
   );
 }
 
-function postImages(item) {
+function postImages(item: { image?: unknown; images?: unknown }): unknown[] {
   if (Array.isArray(item.images) && item.images.length) {
     return item.images;
   }
   return item.image ? [item.image] : [];
 }
 
-function backupPathFor(forumPath, now = new Date()) {
+function backupPathFor(forumPath: string, now = new Date()): string {
   const stamp = now.toISOString().replace(/[:.]/g, '-');
   return `${forumPath}.backup-${stamp}`;
 }
@@ -30,12 +53,12 @@ export async function migrateInlineImages({
   publicPath = '/uploads',
   dryRun = false,
   now = new Date()
-} = {}) {
+}: ImageMigrationOptions = {}): Promise<ImageMigrationResult> {
   const raw = await fs.readFile(forumPath, 'utf8');
   const state = JSON.parse(raw);
   const storage = createLocalImageStorage({ root: uploadRoot, publicPath });
   const collections = ['threads', 'comments'];
-  const result = {
+  const result: ImageMigrationResult = {
     scanned: 0,
     migrated: 0,
     skipped: 0,
@@ -55,7 +78,7 @@ export async function migrateInlineImages({
       }
 
       result.scanned += images.length;
-      const nextImages = [];
+      const nextImages: unknown[] = [];
       let itemMigrated = false;
 
       for (const image of images) {
