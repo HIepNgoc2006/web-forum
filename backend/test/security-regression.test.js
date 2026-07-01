@@ -5,7 +5,7 @@ import { test } from 'node:test';
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
 import { createHttpServer } from '../src/server/http-app.js';
-import { sanitizeText } from '../src/core/text-format.js';
+import { sanitizeText } from '../src/core/text-format.ts';
 import { redactSensitiveText } from '../src/core/ai.js';
 import { signJwt } from '../src/core/security.js';
 

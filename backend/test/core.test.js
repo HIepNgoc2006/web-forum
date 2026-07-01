@@ -28,7 +28,7 @@ import {
   verifyHcaptcha,
   verifyJwt
 } from '../src/core/security.js';
-import { parsePostText, sanitizeText } from '../src/core/text-format.js';
+import { parsePostText, sanitizeText } from '../src/core/text-format.ts';
 
 const safeAi = {
   async moderate() {

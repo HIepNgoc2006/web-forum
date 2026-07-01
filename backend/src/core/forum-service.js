@@ -14,7 +14,7 @@ import {
 import { redactSensitiveText } from './ai.js';
 import { createInlineImageStorage } from './image-storage.js';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.js';
-import { normalizeBody, parsePostText, sanitizeText } from './text-format.js';
+import { normalizeBody, parsePostText, sanitizeText } from './text-format.ts';
 import * as defaultTotp from './totp-service.js';
 import * as defaultWebAuthn from './webauthn-service.js';
 

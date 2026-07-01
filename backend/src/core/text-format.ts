@@ -1,4 +1,12 @@
-export function sanitizeText(value = '') {
+export type PostTextLineType = 'greentext' | 'text';
+
+export interface ParsedPostTextLine {
+  type: PostTextLineType;
+  text: string;
+  refs: number[];
+}
+
+export function sanitizeText(value: unknown = ''): string {
   return String(value)
     .replaceAll('&', '&amp;')
     .replaceAll('<', '&lt;')
@@ -7,11 +15,11 @@ export function sanitizeText(value = '') {
     .replaceAll("'", '&#39;');
 }
 
-export function normalizeBody(value = '') {
+export function normalizeBody(value: unknown = ''): string {
   return String(value).replace(/\r\n/g, '\n').trim().slice(0, 5000);
 }
 
-export function parsePostText(value = '') {
+export function parsePostText(value: unknown = ''): ParsedPostTextLine[] {
   return normalizeBody(value)
     .split('\n')
     .map((rawLine) => {
