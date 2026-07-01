@@ -15,7 +15,8 @@
     "test:e2e": "node scripts/browser-smoke.mjs",
     "loadtest:write": "node scripts/load-test-write-path.mjs",
     "build": "npm --prefix frontend run build",
-    "check": "npm --prefix backend run check && npm --prefix frontend run lint",
+    "check": "npm run typecheck && npm --prefix backend run check && npm --prefix frontend run lint",
+    "typecheck": "npm --prefix backend run typecheck && npm --prefix frontend run typecheck",
     "release:verify": "npm test && npm run check && npm run build && npm run test:e2e",
     "migrate:images": "npm --prefix backend run migrate:images --",
     "cleanup:uploads": "npm --prefix backend run cleanup:uploads --",
@@ -26,6 +27,9 @@
     "seed:restore": "npm --prefix backend run seed:restore --"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3"
   }
 }

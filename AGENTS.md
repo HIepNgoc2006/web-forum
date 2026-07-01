@@ -20,7 +20,7 @@ Gotchas:
 
 ## Build, Test, and Development Commands
 
-Use Node.js 20 or newer.
+Use Node.js 22 or newer.
 
 - `npm run dev`: start the backend in watch mode on port 3000.
 - `npm run dev:frontend`: start the Vite frontend; it proxies `/api` and `/events` to the backend.

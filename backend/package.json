@@ -9,6 +9,7 @@
     "start": "node server.js",
     "test": "node test/run-tests.js",
     "check": "node scripts/check-syntax.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate:images": "node scripts/migrate-inline-images.js",
     "cleanup:uploads": "node scripts/cleanup-orphan-uploads.js",
     "backup:run": "node scripts/backup-scheduler.js run",
@@ -34,5 +35,9 @@
     "qrcode": "^1.5.4",
     "redis": "^6.0.0",
     "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
   }
 }
