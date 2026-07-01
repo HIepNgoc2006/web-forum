@@ -20,12 +20,14 @@ Gotchas:
 
 ## Build, Test, and Development Commands
 
-Use Node.js 22 or newer.
+Use Node.js 22.18.0 or newer. Backend source-mode TypeScript relies on Node built-in type stripping.
 
 - `npm run dev`: start the backend in watch mode on port 3000.
 - `npm run dev:frontend`: start the Vite frontend; it proxies `/api` and `/events` to the backend.
 - `npm test`: run backend tests through `backend/test/run-tests.js`.
-- `npm run build`: build the frontend with Vite.
+- `npm run build`: build backend compiled output into `backend/dist`, then build the frontend with Vite.
+- `npm run build:backend`: compile backend JS/TS source to `backend/dist` with rewritten ESM import extensions.
+- `npm run build:frontend`: build the frontend with Vite.
 - `npm run check`: run backend syntax checks and frontend ESLint.
 - `npm --prefix backend install` and `npm --prefix frontend install`: install workspace dependencies when needed.
 

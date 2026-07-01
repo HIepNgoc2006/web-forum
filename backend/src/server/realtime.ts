@@ -4,18 +4,97 @@ const DEFAULT_WARN_PCT = 75;
 const DEFAULT_CRITICAL_PCT = 90;
 const DEFAULT_MAX_BACKPRESSURE_EVENTS = 3;
 
-function positiveIntEnv(name, fallback) {
+type RealtimeCapacityStatus = 'ok' | 'warning' | 'critical';
+type RealtimeInterval = ReturnType<typeof setInterval> | { unref?: () => void };
+
+interface RealtimeClient {
+  writeHead(code: number, headers: Record<string, string | number>): unknown;
+  write(line: string): boolean | void;
+  end(data?: string): unknown;
+}
+
+interface RealtimeRequest {
+  url: string;
+  on(event: 'close', handler: () => void): unknown;
+}
+
+interface ClientMeta {
+  boardSlug: string;
+  threadId: string;
+  backpressureEvents: number;
+}
+
+interface RealtimeMetricsState {
+  totalConnections: number;
+  rejected: number;
+  dropped: number;
+  heartbeats: number;
+  backpressureEvents: number;
+  backpressureDrops: number;
+}
+
+export interface RealtimeHubOptions {
+  maxClients?: number;
+  heartbeatMs?: number;
+  warnPct?: number;
+  criticalPct?: number;
+  maxBackpressureEvents?: number;
+  setIntervalFn?: (callback: () => void, ms: number) => RealtimeInterval;
+  clearIntervalFn?: (timer: RealtimeInterval) => void;
+}
+
+export interface RealtimeConnectionFilter {
+  boardSlug?: string;
+  threadId?: string;
+}
+
+export interface RealtimeSnapshot {
+  total: number;
+  boards: Record<string, number>;
+}
+
+export interface RealtimeMetrics {
+  clients: number;
+  boards: Record<string, number>;
+  maxClients: number;
+  capacityUsedPct: number;
+  capacityStatus: RealtimeCapacityStatus;
+  heartbeatMs: number;
+  maxBackpressureEvents: number;
+  totalConnections: number;
+  rejected: number;
+  dropped: number;
+  heartbeats: number;
+  backpressureEvents: number;
+  backpressureDrops: number;
+  thresholds: {
+    warnPct: number;
+    criticalPct: number;
+  };
+}
+
+export interface RealtimeHub {
+  handle(request: RealtimeRequest, response: RealtimeClient): void;
+  publish(event: string, payload: unknown): void;
+  count(filter?: RealtimeConnectionFilter): number;
+  boardCounts(): Record<string, number>;
+  snapshot(): RealtimeSnapshot;
+  metrics(): RealtimeMetrics;
+  close(): void;
+}
+
+function positiveIntEnv(name: string, fallback: number): number {
   const value = Number(process.env[name]);
   return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
 }
 
-function percentEnv(name, fallback) {
+function percentEnv(name: string, fallback: number): number {
   const value = positiveIntEnv(name, fallback);
   return Math.max(1, Math.min(value, 100));
 }
 
-export function createRealtimeHub(options = {}) {
-  const clients = new Map();
+export function createRealtimeHub(options: RealtimeHubOptions = {}): RealtimeHub {
+  const clients = new Map<RealtimeClient, ClientMeta>();
   const maxClients = options.maxClients ?? positiveIntEnv('SSE_MAX_CLIENTS', DEFAULT_MAX_CLIENTS);
   const heartbeatMs = options.heartbeatMs ?? positiveIntEnv('SSE_HEARTBEAT_MS', DEFAULT_HEARTBEAT_MS);
   const configuredWarnPct = options.warnPct ?? percentEnv('SSE_WARN_PCT', DEFAULT_WARN_PCT);
@@ -24,10 +103,12 @@ export function createRealtimeHub(options = {}) {
   const criticalPct = Math.max(configuredWarnPct, configuredCriticalPct);
   const maxBackpressureEvents = options.maxBackpressureEvents ??
     positiveIntEnv('SSE_MAX_BACKPRESSURE_EVENTS', DEFAULT_MAX_BACKPRESSURE_EVENTS);
-  const startInterval = options.setIntervalFn ?? setInterval;
-  const stopInterval = options.clearIntervalFn ?? clearInterval;
+  const startInterval: (callback: () => void, ms: number) => RealtimeInterval =
+    options.setIntervalFn ?? ((callback, ms) => setInterval(callback, ms));
+  const stopInterval: (timer: RealtimeInterval) => void =
+    options.clearIntervalFn ?? ((timer) => clearInterval(timer as ReturnType<typeof setInterval>));
 
-  const metricsState = {
+  const metricsState: RealtimeMetricsState = {
     totalConnections: 0,
     rejected: 0,
     dropped: 0,
@@ -36,9 +117,9 @@ export function createRealtimeHub(options = {}) {
     backpressureDrops: 0
   };
 
-  let heartbeatTimer = null;
+  let heartbeatTimer: RealtimeInterval | null = null;
 
-  function clientMeta(request) {
+  function clientMeta(request: RealtimeRequest): ClientMeta {
     const url = new URL(request.url, 'http://localhost');
     return {
       boardSlug: String(url.searchParams.get('boardSlug') || '').slice(0, 80),
@@ -47,7 +128,7 @@ export function createRealtimeHub(options = {}) {
     };
   }
 
-  function dropClient(client) {
+  function dropClient(client: RealtimeClient): void {
     if (!clients.has(client)) {
       return;
     }
@@ -61,7 +142,7 @@ export function createRealtimeHub(options = {}) {
   }
 
   // Returns true if the write succeeded, false if it failed (client dropped).
-  function safeWrite(client, line) {
+  function safeWrite(client: RealtimeClient, line: string): boolean {
     try {
       const flushed = client.write(line);
       const meta = clients.get(client);
@@ -85,7 +166,7 @@ export function createRealtimeHub(options = {}) {
     }
   }
 
-  function ensureHeartbeat() {
+  function ensureHeartbeat(): void {
     if (heartbeatTimer || heartbeatMs <= 0) {
       return;
     }
@@ -100,15 +181,15 @@ export function createRealtimeHub(options = {}) {
     }
   }
 
-  function maybeStopHeartbeat() {
+  function maybeStopHeartbeat(): void {
     if (heartbeatTimer && clients.size === 0) {
       stopInterval(heartbeatTimer);
       heartbeatTimer = null;
     }
   }
 
-  function boardCounts() {
-    const counts = {};
+  function boardCounts(): Record<string, number> {
+    const counts: Record<string, number> = {};
     for (const meta of clients.values()) {
       if (meta.boardSlug) {
         counts[meta.boardSlug] = (counts[meta.boardSlug] || 0) + 1;
@@ -118,7 +199,7 @@ export function createRealtimeHub(options = {}) {
   }
 
   return {
-    handle(request, response) {
+    handle(request: RealtimeRequest, response: RealtimeClient): void {
       if (clients.size >= maxClients) {
         metricsState.rejected += 1;
         response.writeHead(503, {
@@ -148,14 +229,14 @@ export function createRealtimeHub(options = {}) {
       });
     },
 
-    publish(event, payload) {
+    publish(event: string, payload: unknown): void {
       const line = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
       for (const client of [...clients.keys()]) {
         safeWrite(client, line);
       }
     },
 
-    count(filter = {}) {
+    count(filter: RealtimeConnectionFilter = {}): number {
       if (!filter.boardSlug && !filter.threadId) {
         return clients.size;
       }
@@ -172,7 +253,7 @@ export function createRealtimeHub(options = {}) {
 
     boardCounts,
 
-    snapshot() {
+    snapshot(): RealtimeSnapshot {
       return {
         total: clients.size,
         boards: boardCounts()
@@ -180,10 +261,10 @@ export function createRealtimeHub(options = {}) {
     },
 
     // Production metrics + alert thresholds for /api/health and dashboards.
-    metrics() {
+    metrics(): RealtimeMetrics {
       const clientsCount = clients.size;
       const capacityUsedPct = maxClients > 0 ? Math.round((clientsCount / maxClients) * 100) : 0;
-      let capacityStatus = 'ok';
+      let capacityStatus: RealtimeCapacityStatus = 'ok';
       if (capacityUsedPct >= criticalPct) {
         capacityStatus = 'critical';
       } else if (capacityUsedPct >= warnPct) {
@@ -208,7 +289,7 @@ export function createRealtimeHub(options = {}) {
     },
 
     // Stop the heartbeat timer (used on shutdown and in tests).
-    close() {
+    close(): void {
       if (heartbeatTimer) {
         stopInterval(heartbeatTimer);
         heartbeatTimer = null;

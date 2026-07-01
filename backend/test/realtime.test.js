@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 
-import { createRealtimeHub } from '../src/server/realtime.js';
+import { createRealtimeHub } from '../src/server/realtime.ts';
 
 function createResponse({ writeImpl } = {}) {
   return {

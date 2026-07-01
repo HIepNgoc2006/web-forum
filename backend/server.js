@@ -9,7 +9,7 @@ import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-
 import { createMongoStore } from './src/core/mongo-store.js';
 import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.js';
 import { createHttpServer } from './src/server/http-app.js';
-import { createRealtimeHub } from './src/server/realtime.js';
+import { createRealtimeHub } from './src/server/realtime.ts';
 import { assertProductionSecrets } from './src/core/security.js';
 
 // Environment variables are loaded synchronously in env-init.js (the first
