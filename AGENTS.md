@@ -55,6 +55,17 @@ Migration PR rules:
 - Add explicit return types for public service, store, auth, moderation, and API boundary functions.
 - Validate each migration pass with `npm test`, `npm run check`, and `npm run build` when affected.
 
+Backend TypeScript source-mode rules:
+
+- Backend dev/start/test currently execute source files directly with Node.
+- Node.js must be >=22.18.0 because source `.ts` execution relies on built-in type stripping.
+- Backend `.ts` files must use erasable TypeScript syntax only.
+- Do not use TypeScript enums, parameter properties, runtime namespaces, decorators, or `import =` aliases in backend source files.
+- Use `import type` for type-only imports.
+- When source files import converted TypeScript modules, use `.ts` extensions in source imports.
+- `backend/tsconfig.build.json` must keep `rewriteRelativeImportExtensions` so emitted `dist` JavaScript imports use `.js`.
+- Every backend conversion must pass `npm run typecheck`, `npm --prefix backend run build`, `npm test`, `npm run check`, and `npm run build`.
+
 ## Testing Guidelines
 
 Backend tests use Node's built-in `node:test` with `node:assert/strict`. Name files `*.test.js` under `backend/test/`; if you add a new test file, import it from `backend/test/run-tests.js`. Cover moderation, security, formatting, and HTTP behavior when those areas change. Run `npm test` for backend behavior and `npm run check` before submitting changes. Run a single suite directly with `node --test backend/test/http.test.js` (each `*.test.js` is self-contained and also imported by `run-tests.js`). `npm run release:verify` chains tests, checks, build, and the `scripts/browser-smoke.mjs` e2e smoke.
