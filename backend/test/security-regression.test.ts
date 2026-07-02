@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test } from 'node:test';
+import type { AddressInfo } from 'node:net';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
@@ -8,6 +9,25 @@ import { createHttpServer } from '../src/server/http-app.js';
 import { sanitizeText } from '../src/core/text-format.ts';
 import { redactSensitiveText } from '../src/core/ai.js';
 import { signJwt } from '../src/core/security.js';
+
+type TestAi = {
+  moderate: (...args: any[]) => Promise<{ status: string; labels: string[] }>;
+  summarize: (...args: any[]) => Promise<string[]>;
+  suggest: (...args: any[]) => Promise<string[]>;
+  rewrite: (...args: any[]) => Promise<string>;
+};
+
+type ServerCallback = (baseUrl: string, jwtSecret: string) => Promise<void>;
+
+type ApiBody = {
+  data?: any;
+};
+
+async function readApiBody(response: Response): Promise<ApiBody> {
+  const body = await response.json();
+  assert.ok(typeof body === 'object' && body !== null);
+  return body as ApiBody;
+}
 
 const safeAi = {
   async moderate() {
@@ -22,17 +42,17 @@ const safeAi = {
   async rewrite(text) {
     return `Da sua: ${text}`;
   }
-};
+} satisfies TestAi;
 
 async function withServer(
-  callback,
+  callback: ServerCallback,
   {
     ai = safeAi,
     now = () => new Date('2026-05-22T08:00:00.000Z'),
     jwtSecret = 'test-secret-long-enough-for-jwt'
-  } = {}
+  }: { ai?: TestAi; now?: () => Date; jwtSecret?: string } = {}
 ) {
-  const realtime = { publish() {} };
+  const realtime = { publish() {}, count: () => 0 };
   const service = createForumService({
     store: createMemoryStore(),
     ai,
@@ -45,10 +65,10 @@ async function withServer(
     jwtSecret,
     adminUsername: 'admin',
     adminPassword: 'secure-admin-password-12'
-  });
+  } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
-  const { port } = server.address();
+  const { port } = server.address() as AddressInfo;
   try {
     await callback(`http://127.0.0.1:${port}`, jwtSecret);
   } finally {
@@ -86,7 +106,7 @@ test('security: XSS payloads in thread body are escaped', async () => {
         })
       });
       ipCounter += 1;
-      const createdBody = await created.json();
+      const createdBody = await readApiBody(created);
       assert.equal(created.status, 201);
 
       const serialized = JSON.stringify(createdBody.data);
@@ -109,7 +129,7 @@ test('security: XSS payloads in display name are escaped', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readApiBody(created);
 
     // The sanitized display name should not contain raw script tags
     const serialized = JSON.stringify(createdBody.data);
@@ -275,7 +295,7 @@ test('security: account API rejects access after logout (session revocation)', a
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'revoke_test', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const registeredBody = await registered.json();
+    const registeredBody = await readApiBody(registered);
     const token = registeredBody.data.token;
 
     // Logout
@@ -304,7 +324,7 @@ test('security: admin moderation actions require valid admin JWT', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'secure-admin-password-12' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readApiBody(login);
     const adminToken = loginBody.data.token;
 
     // Create a thread to have something in pending
