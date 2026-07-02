@@ -4,7 +4,7 @@ import crypto from 'node:crypto';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.ts';
-import { signJwt, verifyJwt } from '../src/core/security.js';
+import { signJwt } from '../src/core/security.ts';
 
 type ServiceError = {
   message?: string;

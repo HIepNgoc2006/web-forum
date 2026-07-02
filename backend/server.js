@@ -10,7 +10,7 @@ import { createMongoStore } from './src/core/mongo-store.js';
 import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.ts';
 import { createHttpServer } from './src/server/http-app.js';
 import { createRealtimeHub } from './src/server/realtime.ts';
-import { assertProductionSecrets } from './src/core/security.js';
+import { assertProductionSecrets } from './src/core/security.ts';
 
 // Environment variables are loaded synchronously in env-init.ts (the first
 // import above) to ensure they are available to static imports at module load.

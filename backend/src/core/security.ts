@@ -1,11 +1,96 @@
 import crypto from 'node:crypto';
+import type { IncomingMessage } from 'node:http';
 import https from 'node:https';
 
-function base64url(input) {
+type PosterHashOptions = {
+  ip: string;
+  threadId: string;
+  salt: string;
+  posterToken?: unknown;
+};
+
+type PosterProofHashOptions = {
+  threadId: string;
+  posterToken?: unknown;
+};
+
+type ModerationFingerprintOptions = {
+  ip: string;
+  posterToken?: unknown;
+};
+
+export type JwtPayload = Record<string, any>;
+
+type JwtOptions = {
+  expiresInSeconds?: number;
+};
+
+export type SecurityConfigInput = {
+  jwtSecret?: string;
+  adminUsername?: string;
+  adminPassword?: string;
+  hcaptchaSecret?: string;
+  moderationFingerprintSecret?: string;
+  posterProofSecret?: string;
+};
+
+export type SecurityConfigStatus = {
+  adminConfigured: boolean;
+  hcaptchaConfigured: boolean;
+  warnings: string[];
+};
+
+type ProductionSecretConfig = SecurityConfigInput & {
+  nodeEnv?: string;
+};
+
+type RateLimitBucket = {
+  count: number;
+  resetAt: number;
+};
+
+type RateLimitIncrementOptions = {
+  windowMs: number;
+  now: number;
+};
+
+type RateLimitStore = {
+  increment?: (key: string, options: RateLimitIncrementOptions) => RateLimitBucket | Promise<RateLimitBucket>;
+  get?: (key: string) => RateLimitBucket | undefined;
+  set?: (key: string, bucket: RateLimitBucket) => unknown;
+  delete?: (key: string) => unknown;
+  size?: number;
+  [Symbol.iterator]?: () => IterableIterator<[string, RateLimitBucket]>;
+};
+
+export type RateLimitResult = {
+  ok: boolean;
+  remaining: number;
+  retryAfter?: number;
+  degraded?: boolean;
+};
+
+export type RateLimiter = {
+  check: (key: string) => RateLimitResult | Promise<RateLimitResult>;
+  sweep: (now?: number) => void;
+  size: () => number | undefined;
+  stop: () => void;
+};
+
+type RateLimiterOptions = {
+  limit?: number;
+  windowMs?: number;
+  store?: RateLimitStore;
+  failureMode?: 'closed' | 'open';
+  onStoreError?: (error: unknown) => void;
+  sweepIntervalMs?: number;
+};
+
+function base64url(input: string): string {
   return Buffer.from(input).toString('base64url');
 }
 
-function sign(input, secret) {
+function sign(input: string, secret: string): string {
   return crypto.createHmac('sha256', secret).update(input).digest('base64url');
 }
 
@@ -13,7 +98,7 @@ function sign(input, secret) {
 // production) to a clearly-labeled dev literal. In production a missing
 // dedicated secret with no JWT_SECRET is a hard error rather than a
 // predictable, source-visible default.
-function secretOrDevFallback(primary, devFallback, name) {
+function secretOrDevFallback(primary: string | undefined, devFallback: string, name: string): string {
   const secret = primary || process.env.JWT_SECRET;
   if (secret) {
     return secret;
@@ -24,7 +109,7 @@ function secretOrDevFallback(primary, devFallback, name) {
   return devFallback;
 }
 
-export function createPosterHash({ ip, threadId, salt, posterToken = '' }) {
+export function createPosterHash({ ip, threadId, salt, posterToken = '' }: PosterHashOptions): string {
   const token = String(posterToken).slice(0, 128);
   const digest = crypto
     .createHash('sha256')
@@ -35,7 +120,7 @@ export function createPosterHash({ ip, threadId, salt, posterToken = '' }) {
   return `ID:${digest}`;
 }
 
-export function createPosterProofHash({ threadId, posterToken = '' }) {
+export function createPosterProofHash({ threadId, posterToken = '' }: PosterProofHashOptions): string | null {
   const token = String(posterToken).slice(0, 128);
   if (!token) {
     return null;
@@ -54,7 +139,7 @@ export function createPosterProofHash({ threadId, posterToken = '' }) {
 // forged without the secret. Otherwise it is an *insecure* tripcode: a pure
 // function of the password (forgeable by design, matching 4chan semantics).
 // Returns null when there is no usable secret.
-export function createTripcode(secret = '') {
+export function createTripcode(secret: unknown = ''): string | null {
   const password = String(secret ?? '').slice(0, 256);
   if (!password) {
     return null;
@@ -86,7 +171,7 @@ export function createTripcode(secret = '') {
   return `!${digest}`;
 }
 
-export function createModerationFingerprint({ ip, posterToken = '' }) {
+export function createModerationFingerprint({ ip, posterToken = '' }: ModerationFingerprintOptions): string {
   const secret = secretOrDevFallback(
     process.env.MODERATION_FINGERPRINT_SECRET,
     '36chan-dev-fingerprint-secret',
@@ -96,7 +181,11 @@ export function createModerationFingerprint({ ip, posterToken = '' }) {
   return crypto.createHmac('sha256', secret).update(`${ip}:${token}`).digest('hex');
 }
 
-export function signJwt(payload, secret, { expiresInSeconds = 60 * 60 * 8 } = {}) {
+export function signJwt(
+  payload: JwtPayload,
+  secret: string | undefined,
+  { expiresInSeconds = 60 * 60 * 8 }: JwtOptions = {}
+): string {
   if (!secret) {
     throw new Error('JWT secret is required');
   }
@@ -108,7 +197,7 @@ export function signJwt(payload, secret, { expiresInSeconds = 60 * 60 * 8 } = {}
   return `${unsigned}.${sign(unsigned, secret)}`;
 }
 
-export function verifyJwt(token, secret) {
+export function verifyJwt(token: string | undefined, secret: string | undefined): JwtPayload {
   if (!token || !secret) {
     throw new Error('Invalid token');
   }
@@ -130,8 +219,8 @@ export function verifyJwt(token, secret) {
     throw new Error('Invalid token');
   }
 
-  let header;
-  let payload;
+  let header: JwtPayload;
+  let payload: JwtPayload;
   try {
     header = JSON.parse(Buffer.from(encodedHeader, 'base64url').toString('utf8'));
     payload = JSON.parse(Buffer.from(encodedPayload, 'base64url').toString('utf8'));
@@ -150,7 +239,7 @@ export function verifyJwt(token, secret) {
   return payload;
 }
 
-function isDefaultSecret(value) {
+function isDefaultSecret(value: string | undefined): boolean {
   return !value || /^change-me/i.test(String(value)) || /^secret$/i.test(String(value));
 }
 
@@ -161,8 +250,8 @@ export function securityConfigStatus({
   hcaptchaSecret = process.env.HCAPTCHA_SECRET,
   moderationFingerprintSecret = process.env.MODERATION_FINGERPRINT_SECRET,
   posterProofSecret = process.env.POSTER_PROOF_SECRET
-} = {}) {
-  const warnings = [];
+}: SecurityConfigInput = {}): SecurityConfigStatus {
+  const warnings: string[] = [];
   const adminConfigured = Boolean(jwtSecret && adminUsername && adminPassword);
   const hcaptchaConfigured = Boolean(hcaptchaSecret);
 
@@ -211,7 +300,7 @@ const PRODUCTION_FATAL_WARNINGS = new Set([
 // disqualifying secret is missing/default. Returns the status (with all
 // warnings) in non-production so callers can log them without failing.
 // Never includes secret values in its output or error message.
-export function assertProductionSecrets(config = {}) {
+export function assertProductionSecrets(config: ProductionSecretConfig = {}): SecurityConfigStatus {
   const { nodeEnv = process.env.NODE_ENV, ...statusConfig } = config;
   const status = securityConfigStatus(statusConfig);
   if (nodeEnv !== 'production') {
@@ -228,7 +317,7 @@ export function assertProductionSecrets(config = {}) {
   return status;
 }
 
-export function getClientIp(request) {
+export function getClientIp(request: IncomingMessage): string {
   const forwarded = request.headers['x-forwarded-for'];
   if (forwarded) {
     return String(forwarded).split(',')[0].trim();
@@ -267,23 +356,23 @@ export function createRateLimiter({
   failureMode = 'closed',
   onStoreError,
   sweepIntervalMs = windowMs
-} = {}) {
-  const buckets = store ?? new Map();
+}: RateLimiterOptions = {}): RateLimiter {
+  const buckets: RateLimitStore = store ?? new Map<string, RateLimitBucket>();
   const hasAtomicIncrement = typeof buckets.increment === 'function';
   const canSweep = !hasAtomicIncrement && typeof buckets[Symbol.iterator] === 'function' && typeof buckets.delete === 'function';
 
-  function sweep(now = Date.now()) {
+  function sweep(now = Date.now()): void {
     if (!canSweep) {
       return;
     }
-    for (const [key, bucket] of buckets) {
+    for (const [key, bucket] of buckets as Iterable<[string, RateLimitBucket]>) {
       if (bucket.resetAt <= now) {
-        buckets.delete(key);
+        buckets.delete!(key);
       }
     }
   }
 
-  let timer = null;
+  let timer: ReturnType<typeof setInterval> | null = null;
   if (canSweep && sweepIntervalMs > 0 && typeof setInterval === 'function') {
     timer = setInterval(() => sweep(), sweepIntervalMs);
     if (typeof timer.unref === 'function') {
@@ -291,7 +380,7 @@ export function createRateLimiter({
     }
   }
 
-  function resultFromBucket(bucket, now) {
+  function resultFromBucket(bucket: RateLimitBucket | undefined, now: number): RateLimitResult {
     const count = Number(bucket?.count) || 0;
     const resetAt = Number(bucket?.resetAt) || now + windowMs;
     const remaining = Math.max(0, limit - count);
@@ -302,7 +391,7 @@ export function createRateLimiter({
     };
   }
 
-  function resultFromStoreError(error) {
+  function resultFromStoreError(error: unknown): RateLimitResult {
     if (typeof onStoreError === 'function') {
       onStoreError(error);
     }
@@ -318,23 +407,24 @@ export function createRateLimiter({
   }
 
   return {
-    check(key) {
+    check(key: string) {
       const now = Date.now();
       if (hasAtomicIncrement) {
-        return Promise.resolve(buckets.increment(key, { windowMs, now }))
+        return Promise.resolve(buckets.increment!(key, { windowMs, now }))
           .then((bucket) => resultFromBucket(bucket, now))
           .catch((error) => resultFromStoreError(error));
       }
 
-      const current = buckets.get(key);
+      const mapBuckets = buckets as Required<Pick<RateLimitStore, 'get' | 'set'>>;
+      const current = mapBuckets.get(key);
       if (!current || current.resetAt <= now) {
-        buckets.set(key, { count: 1, resetAt: now + windowMs });
+        mapBuckets.set(key, { count: 1, resetAt: now + windowMs });
         return { ok: true, remaining: limit - 1 };
       }
       current.count += 1;
       // Re-set so non-by-reference backends (e.g. a Redis adapter) persist the
       // mutated bucket; harmless for the default Map.
-      buckets.set(key, current);
+      mapBuckets.set(key, current);
       const remaining = Math.max(0, limit - current.count);
       return {
         ok: current.count <= limit,
@@ -355,7 +445,7 @@ export function createRateLimiter({
   };
 }
 
-export async function verifyHcaptcha(token, remoteIp) {
+export async function verifyHcaptcha(token: string | undefined, remoteIp?: string): Promise<boolean> {
   if (!token) {
     return false;
   }

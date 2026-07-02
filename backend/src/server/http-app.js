@@ -8,7 +8,7 @@ import {
   publicConfig,
   readPositiveInteger
 } from '../core/config.ts';
-import { createRateLimiter, getClientIp, securityConfigStatus, signJwt, verifyJwt } from '../core/security.js';
+import { createRateLimiter, getClientIp, securityConfigStatus, signJwt, verifyJwt } from '../core/security.ts';
 
 const MIME_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],

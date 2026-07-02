@@ -8,7 +8,7 @@ import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createHttpServer } from '../src/server/http-app.js';
 import { sanitizeText } from '../src/core/text-format.ts';
 import { redactSensitiveText } from '../src/core/ai.ts';
-import { signJwt } from '../src/core/security.js';
+import { signJwt } from '../src/core/security.ts';
 
 type TestAi = {
   moderate: (...args: any[]) => Promise<{ status: string; labels: string[] }>;

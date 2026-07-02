@@ -27,7 +27,7 @@ import {
   signJwt,
   verifyHcaptcha,
   verifyJwt
-} from '../src/core/security.js';
+} from '../src/core/security.ts';
 import { parsePostText, sanitizeText } from '../src/core/text-format.ts';
 
 type ServiceError = {
