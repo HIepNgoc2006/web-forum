@@ -1,6 +1,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
@@ -12,6 +13,12 @@ async function withServer(callback) {
     ai: { moderate: async () => ({ status: 'Safe', labels: [] }) },
     now: () => new Date('2026-06-10T12:00:00Z'),
     webauthn: {
+      getWebAuthnRegisterOptions: async () => {
+        throw new Error('registration options should not run for invalid origins');
+      },
+      getWebAuthnLoginOptions: async () => {
+        throw new Error('login options should not run for invalid origins');
+      },
       verifyWebAuthnLoginResponse: async () => {
         throw new Error('verification should not run for invalid origins');
       },
@@ -26,10 +33,10 @@ async function withServer(callback) {
     jwtSecret: 'some-long-test-jwt-secret-value',
     adminUsername: 'admin',
     adminPassword: 'pass'
-  });
+  } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
-  const { port } = server.address();
+  const { port } = server.address() as AddressInfo;
   try {
     await callback(`http://127.0.0.1:${port}`);
   } finally {
@@ -49,7 +56,7 @@ describe('WebAuthn origin validation', () => {
         },
         body: JSON.stringify({ username: 'user', assertionResponse: {} })
       });
-      const body = await response.json();
+      const body = await response.json() as { error: { message: string } };
 
       assert.equal(response.status, 400);
       assert.match(body.error.message, /Origin đăng nhập không hợp lệ/);

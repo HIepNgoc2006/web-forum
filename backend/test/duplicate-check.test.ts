@@ -1,10 +1,18 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
 import { createHttpServer } from '../src/server/http-app.js';
+
+function createTestRealtime() {
+  return {
+    publish() {},
+    count: () => 0
+  };
+}
 
 function withGoogleKey(fn) {
   return async (...args) => {
@@ -52,7 +60,7 @@ function flaggedAi() {
 }
 
 async function withServer(callback, { ai = duplicateAi(), store = createMemoryStore() } = {}) {
-  const realtime = { publish() {} };
+  const realtime = createTestRealtime();
   const service = createForumService({
     store,
     ai,
@@ -65,10 +73,10 @@ async function withServer(callback, { ai = duplicateAi(), store = createMemorySt
     jwtSecret: 'secret',
     adminUsername: 'admin',
     adminPassword: 'pass'
-  });
+  } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
-  const { port } = server.address();
+  const { port } = server.address() as AddressInfo;
   try {
     await callback(`http://127.0.0.1:${port}`, { ai, service });
   } finally {
@@ -85,7 +93,7 @@ test(
     const service = createForumService({
       store,
       ai,
-      realtime: { publish() {} },
+      realtime: createTestRealtime(),
       now: () => new Date('2026-06-20T10:00:00.000Z')
     });
     const publicThread = await service.createThread({
@@ -94,19 +102,19 @@ test(
       captchaToken: 'dev-pass',
       ip: '203.0.113.1',
       posterToken: 'one'
-    });
+    } as Parameters<typeof service.createThread>[0]);
     const archivedThread = await service.createThread({
       boardSlug: 'hoc-tap',
       body: 'Thread da luu tru',
       captchaToken: 'dev-pass',
       ip: '203.0.113.2',
       posterToken: 'two'
-    });
-    await service.archiveThread(archivedThread.thread.id, { actor: 'admin' });
+    } as Parameters<typeof service.createThread>[0]);
+    await service.archiveThread(archivedThread.thread.id, { actor: 'admin' } as unknown as string);
     const pendingService = createForumService({
       store,
       ai: flaggedAi(),
-      realtime: { publish() {} },
+      realtime: createTestRealtime(),
       now: () => new Date('2026-06-20T10:00:00.000Z')
     });
     await pendingService.createThread({
@@ -115,14 +123,14 @@ test(
       captchaToken: 'dev-pass',
       ip: '203.0.113.3',
       posterToken: 'three'
-    });
+    } as Parameters<typeof pendingService.createThread>[0]);
 
     const result = await service.checkDuplicateThread({
       boardSlug: 'hoc-tap',
       body: 'duplicate-me noi dung moi',
       ip: '203.0.113.4',
       posterToken: 'four'
-    });
+    } as Parameters<typeof service.checkDuplicateThread>[0]);
 
     assert.equal(result.isDuplicate, true);
     assert.equal(result.matchedThreadId, publicThread.thread.id);
@@ -145,7 +153,7 @@ test('duplicate check is a no-op when AI is not configured', async () => {
     const service = createForumService({
       store: createMemoryStore(),
       ai,
-      realtime: { publish() {} },
+      realtime: createTestRealtime(),
       now: () => new Date('2026-06-20T10:00:00.000Z')
     });
     await service.createThread({
@@ -153,13 +161,13 @@ test('duplicate check is a no-op when AI is not configured', async () => {
       body: 'Thread cong khai',
       captchaToken: 'dev-pass',
       ip: '203.0.113.1'
-    });
+    } as Parameters<typeof service.createThread>[0]);
 
     const result = await service.checkDuplicateThread({
       boardSlug: 'hoc-tap',
       body: 'duplicate-me',
       ip: '203.0.113.2'
-    });
+    } as Parameters<typeof service.checkDuplicateThread>[0]);
 
     assert.deepEqual(result, { isDuplicate: false, matchedThreadId: null, reason: null });
     assert.equal(ai.checks.length, 0);
@@ -197,7 +205,12 @@ test(
             posterToken: 'two'
           })
         });
-        const payload = await checked.json();
+        const payload = await checked.json() as {
+          data: {
+            isDuplicate: boolean;
+            reason: string | null;
+          };
+        };
 
         assert.equal(checked.status, 200);
         assert.equal(payload.data.isDuplicate, true);

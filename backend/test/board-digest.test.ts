@@ -1,11 +1,26 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import type { AddressInfo } from 'node:net';
 import path from 'node:path';
 import { test } from 'node:test';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
 import { createHttpServer } from '../src/server/http-app.js';
+
+function createTestRealtime() {
+  return {
+    publish() {},
+    count: () => 0
+  };
+}
+
+function hasStatusCode(error: unknown, statusCode: number): boolean {
+  return typeof error === 'object' &&
+    error !== null &&
+    'statusCode' in error &&
+    (error as { statusCode?: number }).statusCode === statusCode;
+}
 
 function capturingAi() {
   const captured = [];
@@ -35,7 +50,7 @@ test('admin board digest only sends public, redacted content to AI', async () =>
   const service = createForumService({
     store: createMemoryStore(),
     ai,
-    realtime: { publish() {} },
+    realtime: createTestRealtime(),
     now: () => new Date('2026-06-17T08:00:00.000Z')
   });
 
@@ -47,7 +62,7 @@ test('admin board digest only sends public, redacted content to AI', async () =>
     ip: '203.0.113.99',
     posterToken: 'poster-secret-token',
     adminToken: 'admin-secret-token'
-  });
+  } as unknown as Parameters<typeof service.createThread>[0]);
 
   // Pending (flagged) thread must be excluded.
   await service.createThread({
@@ -55,7 +70,7 @@ test('admin board digest only sends public, redacted content to AI', async () =>
     body: 'flagme noi dung khong duoc tong hop',
     captchaToken: 'dev-pass',
     ip: '203.0.113.1'
-  });
+  } as Parameters<typeof service.createThread>[0]);
 
   // Content on a board that is later hidden must be excluded.
   await service.createThread({
@@ -63,10 +78,13 @@ test('admin board digest only sends public, redacted content to AI', async () =>
     body: 'NOIDUNGBIAN khong duoc gui cho AI',
     captchaToken: 'dev-pass',
     ip: '203.0.113.2'
-  });
+  } as Parameters<typeof service.createThread>[0]);
   await service.updateBoard('tam-su', { isHidden: true }, { actor: 'admin' });
 
-  const digest = await service.generateBoardDigest({ ip: '198.51.100.7', actor: 'admin' });
+  const digest = await service.generateBoardDigest({
+    ip: '198.51.100.7',
+    actor: 'admin'
+  } as Parameters<typeof service.generateBoardDigest>[0]);
 
   assert.equal(digest.label, 'Nội dung do AI tổng hợp');
   assert.equal(digest.threadCount, 1);
@@ -104,11 +122,14 @@ test('admin board digest returns a defer message and skips AI when no public con
   const service = createForumService({
     store: createMemoryStore(),
     ai,
-    realtime: { publish() {} },
+    realtime: createTestRealtime(),
     now: () => new Date('2026-06-17T08:00:00.000Z')
   });
 
-  const digest = await service.generateBoardDigest({ ip: '198.51.100.7', actor: 'admin' });
+  const digest = await service.generateBoardDigest({
+    ip: '198.51.100.7',
+    actor: 'admin'
+  } as Parameters<typeof service.generateBoardDigest>[0]);
   assert.equal(digest.threadCount, 0);
   assert.equal(ai.captured.length, 0);
   assert.equal(digest.label, 'Nội dung do AI tổng hợp');
@@ -122,18 +143,34 @@ test('admin board digest enforces a daily admin budget', async () => {
     const service = createForumService({
       store: createMemoryStore(),
       ai,
-      realtime: { publish() {} },
+      realtime: createTestRealtime(),
       now: () => new Date('2026-06-17T08:00:00.000Z')
     });
 
-    await service.createThread({ boardSlug: 'hoc-tap', body: 'noi dung mot', captchaToken: 'dev-pass', ip: '203.0.113.5' });
-    await service.generateBoardDigest({ ip: '198.51.100.7', actor: 'admin' });
+    await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'noi dung mot',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.5'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.generateBoardDigest({
+      ip: '198.51.100.7',
+      actor: 'admin'
+    } as Parameters<typeof service.generateBoardDigest>[0]);
 
     // New content changes the fingerprint, forcing a second budget consumption.
-    await service.createThread({ boardSlug: 'hoc-tap', body: 'noi dung hai', captchaToken: 'dev-pass', ip: '203.0.113.6' });
+    await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'noi dung hai',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.6'
+    } as Parameters<typeof service.createThread>[0]);
     await assert.rejects(
-      () => service.generateBoardDigest({ ip: '198.51.100.7', actor: 'admin' }),
-      (error) => error.statusCode === 429
+      () => service.generateBoardDigest({
+        ip: '198.51.100.7',
+        actor: 'admin'
+      } as Parameters<typeof service.generateBoardDigest>[0]),
+      (error) => hasStatusCode(error, 429)
     );
   } finally {
     if (previous === undefined) {
@@ -146,7 +183,7 @@ test('admin board digest enforces a daily admin budget', async () => {
 
 async function withDigestServer(callback) {
   const ai = capturingAi();
-  const realtime = { publish() {} };
+  const realtime = createTestRealtime();
   const service = createForumService({
     store: createMemoryStore(),
     ai,
@@ -160,10 +197,10 @@ async function withDigestServer(callback) {
     adminUsername: 'admin',
     adminPassword: 'pass',
     uploadRoot: path.resolve('data/uploads-test')
-  });
+  } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
-  const { port } = server.address();
+  const { port } = server.address() as AddressInfo;
   try {
     await callback(`http://127.0.0.1:${port}`);
   } finally {
@@ -188,13 +225,19 @@ test('http admin board digest is admin-only and labelled AI-generated', async ()
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await login.json() as { data: { token: string } };
 
     const response = await fetch(`${baseUrl}/api/admin/board-digest`, {
       method: 'POST',
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const body = await response.json();
+    const body = await response.json() as {
+      data: {
+        label: string;
+        bullets: unknown[];
+        threadCount: number;
+      };
+    };
     assert.equal(response.status, 200);
     assert.equal(body.data.label, 'Nội dung do AI tổng hợp');
     assert.ok(Array.isArray(body.data.bullets));
