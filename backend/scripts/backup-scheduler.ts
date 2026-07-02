@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createJsonStore } from '../src/core/forum-store.ts';
 import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.ts';
-import { createMongoStore } from '../src/core/mongo-store.js';
+import { createMongoStore } from '../src/core/mongo-store.ts';
 import { createBackupScheduler, runBackupJob } from '../src/core/backup-scheduler.ts';
 
 type MongoStoreOptions = {

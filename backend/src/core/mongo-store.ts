@@ -1,8 +1,60 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
+import type { Connection, Model, SchemaOptions } from 'mongoose';
 
 import { BOARDS } from './config.ts';
 import { EMPTY_STATE, normalizeState } from './forum-store.ts';
+import type { ForumRecord, ForumState } from './forum-store.ts';
+
+type AnyRecord = Record<string, any>;
+type MongoModel = Model<any>;
+type MongoModels = Record<
+  | 'Board'
+  | 'Thread'
+  | 'Comment'
+  | 'User'
+  | 'ModerationAction'
+  | 'Report'
+  | 'Appeal'
+  | 'Sanction'
+  | 'AiUsage'
+  | 'AiSummaryCache'
+  | 'StateMeta',
+  MongoModel
+>;
+
+type MongoStoreOptions = {
+  uri?: string;
+  dbName?: string;
+};
+
+type MongoForumStore = {
+  type: 'mongo';
+  read(): Promise<ForumState>;
+  write(nextState: unknown): Promise<ForumState>;
+  appendPostCreate(delta: AppendPostCreateDelta): Promise<ForumState>;
+  health(): Promise<AnyRecord>;
+  close(): Promise<void>;
+  [key: string]: any;
+};
+
+type FlexibleIndex = {
+  fields: AnyRecord;
+  options?: AnyRecord;
+};
+
+type AppendPostCreateDelta = {
+  state?: unknown;
+  thread?: ForumRecord | null;
+  comment?: ForumRecord | null;
+  updatedThreads?: ForumRecord[];
+  moderationActions?: ForumRecord[];
+  appeals?: ForumRecord[];
+};
+
+type StatusError = Error & {
+  statusCode?: number;
+};
 
 const MODEL_OPTIONS = {
   strict: false,
@@ -11,7 +63,7 @@ const MODEL_OPTIONS = {
   // Disable Mongoose's virtual `id` alias so a literal `id` field (UUID) is
   // persisted instead of being silently dropped in favour of the ObjectId _id.
   id: false
-};
+} as const satisfies SchemaOptions;
 
 const BOARD_SCHEMA = new mongoose.Schema(
   {
@@ -68,7 +120,7 @@ const PRODUCTION_MODEL_READINESS = {
   moderationLogs: true
 };
 
-function flexibleSchema(indexes = []) {
+function flexibleSchema(indexes: FlexibleIndex[] = []) {
   const schema = new mongoose.Schema({}, MODEL_OPTIONS);
   for (const index of indexes) {
     schema.index(index.fields, index.options);
@@ -76,7 +128,7 @@ function flexibleSchema(indexes = []) {
   return schema;
 }
 
-function plainDocument(document) {
+function plainDocument(document: any): ForumRecord {
   const { _id, ...plain } = document;
   if (!plain.id && _id) {
     plain.id = typeof _id === 'object' && _id.toString ? _id.toString() : String(_id);
@@ -84,19 +136,19 @@ function plainDocument(document) {
   return plain;
 }
 
-function objectToKeyValues(value = {}) {
+function objectToKeyValues(value: AnyRecord = {}) {
   return Object.entries(value).map(([key, entry]) => ({
     _id: key,
     value: entry
   }));
 }
 
-function keyValuesToObject(items = []) {
+function keyValuesToObject(items: AnyRecord[] = []) {
   return Object.fromEntries(items.map((item) => [item._id, item.value]));
 }
 
-function reportQueryForFilters(filters = {}) {
-  const query = {};
+function reportQueryForFilters(filters: AnyRecord = {}) {
+  const query: AnyRecord = {};
   if (filters.boardSlug) {
     query.boardSlug = filters.boardSlug;
   }
@@ -112,18 +164,18 @@ function reportQueryForFilters(filters = {}) {
   return query;
 }
 
-function reportCandidateLimit(limit = 50, filters = {}) {
+function reportCandidateLimit(limit = 50, filters: AnyRecord = {}) {
   const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
   const sort = String(filters.sort || '').toLowerCase();
   const needsPriorityPass = !sort || sort === 'priority' || filters.priority;
   return needsPriorityPass ? Math.min(Math.max(safeLimit * 10, 500), 2_000) : safeLimit;
 }
 
-function fingerprintPreview(fingerprint = '') {
+function fingerprintPreview(fingerprint: unknown = '') {
   return `${String(fingerprint).slice(0, 12)}...`;
 }
 
-function moderationActionForPost({ action, actor = 'system', postType, post, reason = '', createdAt }) {
+function moderationActionForPost({ action, actor = 'system', postType, post, reason = '', createdAt }: AnyRecord) {
   return {
     id: crypto.randomUUID(),
     action,
@@ -141,8 +193,8 @@ function moderationActionForPost({ action, actor = 'system', postType, post, rea
   };
 }
 
-export function createMongoModels(connection) {
-  const model = (name, schema, collection) =>
+export function createMongoModels(connection: Connection): MongoModels {
+  const model = (name: string, schema: mongoose.Schema, collection: string): MongoModel =>
     connection.models[name] ?? connection.model(name, schema, collection);
 
   return {
@@ -209,7 +261,7 @@ export function createMongoModels(connection) {
   };
 }
 
-async function replaceCollection(model, items) {
+async function replaceCollection(model: MongoModel, items: AnyRecord[]) {
   await model.deleteMany({});
   if (items.length > 0) {
     // `id: false` on the schema keeps the literal UUID `id` field, while Mongo
@@ -218,7 +270,7 @@ async function replaceCollection(model, items) {
   }
 }
 
-async function insertDocuments(model, items) {
+async function insertDocuments(model: MongoModel, items: AnyRecord[]) {
   if (items.length === 1) {
     await model.collection.insertOne(items[0]);
     return;
@@ -228,7 +280,7 @@ async function insertDocuments(model, items) {
   }
 }
 
-async function updateDocumentsById(model, items) {
+async function updateDocumentsById(model: MongoModel, items: AnyRecord[]) {
   if (items.length === 0) {
     return;
   }
@@ -250,7 +302,7 @@ export async function appendMongoPostCreate(models, {
   updatedThreads = [],
   moderationActions = [],
   appeals = []
-} = {}) {
+}: AppendPostCreateDelta = {}): Promise<ForumState> {
   const normalized = normalizeState(state);
   const threadsToInsert = thread ? [thread] : [];
   const commentsToInsert = comment ? [comment] : [];
@@ -276,13 +328,13 @@ export async function appendMongoPostCreate(models, {
   return normalizeState(normalized);
 }
 
-export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {}) {
+export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: MongoStoreOptions = {}): MongoForumStore {
   if (!uri) {
     throw new Error('MONGODB_URI is required when STORE_DRIVER=mongo');
   }
 
-  let connectionPromise;
-  let queue = Promise.resolve();
+  let connectionPromise: Promise<Connection> | undefined;
+  let queue: Promise<unknown> = Promise.resolve();
 
   async function getModels() {
     if (!connectionPromise) {
@@ -312,7 +364,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
   return {
     type: 'mongo',
 
-    async readUser(userId) {
+    async readUser(userId: string) {
       const models = await getModels();
       const user = await models.User.findOne({ id: userId }).lean();
       return user ? plainDocument(user) : null;
@@ -331,10 +383,10 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       return users.map(plainDocument);
     },
 
-    async readModerationActions({ limit = 50, filters = {} } = {}) {
+    async readModerationActions({ limit = 50, filters = {} }: AnyRecord = {}) {
       const models = await getModels();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
-      const query = {};
+      const query: AnyRecord = {};
       if (filters.action) {
         query.action = filters.action;
       }
@@ -357,7 +409,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       disabled = false,
       createdAt,
       updatedAt
-    } = {}) {
+    }: AnyRecord = {}) {
       const models = await getModels();
       queue = queue.then(async () => {
         const existing = await models.User.findOne({ username }).lean();
@@ -395,10 +447,10 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       return queue;
     },
 
-    async readDeletedModerationState({ limit = 50, filters = {} } = {}) {
+    async readDeletedModerationState({ limit = 50, filters = {} }: AnyRecord = {}) {
       const models = await getModels();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
-      const deletedQuery = { isDeleted: true };
+      const deletedQuery: AnyRecord = { isDeleted: true };
       if (filters.boardSlug) {
         deletedQuery.boardSlug = filters.boardSlug;
       }
@@ -436,10 +488,10 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       });
     },
 
-    async readAppealsModerationState({ limit = 50, filters = {} } = {}) {
+    async readAppealsModerationState({ limit = 50, filters = {} }: AnyRecord = {}) {
       const models = await getModels();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
-      const query = { status: { $ne: 'issued' } };
+      const query: AnyRecord = { status: { $ne: 'issued' } };
       if (filters.boardSlug) {
         query.boardSlug = filters.boardSlug;
       }
@@ -477,10 +529,10 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       });
     },
 
-    async readSanctions({ limit = 50, filters = {} } = {}) {
+    async readSanctions({ limit = 50, filters = {} }: AnyRecord = {}) {
       const models = await getModels();
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
-      const query = {};
+      const query: AnyRecord = {};
       if (filters.kind) {
         query.kind = filters.kind;
       }
@@ -538,7 +590,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       });
     },
 
-    async readReportsModerationState({ limit = 50, filters = {} } = {}) {
+    async readReportsModerationState({ limit = 50, filters = {} }: AnyRecord = {}) {
       const models = await getModels();
       const query = reportQueryForFilters(filters);
       const sortDirection = String(filters.sort || '').toLowerCase() === 'oldest' ? 1 : -1;
@@ -575,10 +627,10 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
         threads: threads.map(plainDocument),
         comments: comments.map(plainDocument),
         reports: plainReports
-      });
+      }) as ForumState & { reportCounts?: Map<number, number> };
       state.reportCounts = new Map(
         reportCountRows
-          .map((row) => [Number(row._id), Number(row.count) || 0])
+          .map((row): [number, number] => [Number(row._id), Number(row.count) || 0])
           .filter(([globalNumber]) => Number.isFinite(globalNumber))
       );
       return state;
@@ -592,7 +644,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       actor = 'admin',
       createdAt = new Date().toISOString(),
       expiresAt
-    } = {}) {
+    }: AnyRecord = {}) {
       queue = queue.then(async () => {
         const models = await getModels();
         const postNumber = Number(globalNumber);
@@ -603,12 +655,12 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
         const postType = thread ? 'thread' : comment ? 'comment' : '';
         const post = thread ? plainDocument(thread) : comment ? plainDocument(comment) : null;
         if (!post) {
-          const error = new Error('Không tìm thấy bài viết');
+          const error = new Error('Không tìm thấy bài viết') as StatusError;
           error.statusCode = 404;
           throw error;
         }
         if (!post.authorFingerprint) {
-          const error = new Error('Bài viết này chưa có fingerprint vận hành');
+          const error = new Error('Bài viết này chưa có fingerprint vận hành') as StatusError;
           error.statusCode = 409;
           throw error;
         }
@@ -647,7 +699,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       return queue;
     },
 
-    async revokeSanction({ id, reason = '', actor = 'admin', revokedAt = new Date().toISOString() } = {}) {
+    async revokeSanction({ id, reason = '', actor = 'admin', revokedAt = new Date().toISOString() }: AnyRecord = {}) {
       queue = queue.then(async () => {
         const models = await getModels();
         const revokeReason = String(reason || '').slice(0, 240);
@@ -670,7 +722,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           { new: true }
         ).lean();
         if (!sanction) {
-          const error = new Error('Không tìm thấy khóa tạm đang hoạt động');
+          const error = new Error('Không tìm thấy khóa tạm đang hoạt động') as StatusError;
           error.statusCode = 404;
           throw error;
         }
@@ -700,7 +752,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       return queue;
     },
 
-    async approvePending({ id, reason = '', actor = 'admin', createdAt = new Date().toISOString() } = {}) {
+    async approvePending({ id, reason = '', actor = 'admin', createdAt = new Date().toISOString() }: AnyRecord = {}) {
       queue = queue.then(async () => {
         const models = await getModels();
         const moderationReason = String(reason || '').slice(0, 240);
@@ -743,7 +795,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
 
         const pendingComment = await models.Comment.findOne({ id, isPending: true, isDeleted: { $ne: true } }).lean();
         if (!pendingComment) {
-          const error = new Error('Không tìm thấy bài đang chờ duyệt');
+          const error = new Error('Không tìm thấy bài đang chờ duyệt') as StatusError;
           error.statusCode = 404;
           throw error;
         }
@@ -755,7 +807,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           isArchived: { $ne: true }
         }).lean();
         if (!parentBeforeUpdate) {
-          const error = new Error('Không tìm thấy chủ đề cha');
+          const error = new Error('Không tìm thấy chủ đề cha') as StatusError;
           error.statusCode = 404;
           throw error;
         }
@@ -772,7 +824,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
           { new: true }
         ).lean();
         if (!comment) {
-          const error = new Error('Không tìm thấy bài đang chờ duyệt');
+          const error = new Error('Không tìm thấy bài đang chờ duyệt') as StatusError;
           error.statusCode = 404;
           throw error;
         }
@@ -841,8 +893,8 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
       });
     },
 
-    async write(nextState) {
-      queue = queue.then(async () => {
+    async write(nextState: unknown) {
+      const writeJob = queue.then<ForumState>(async () => {
         const models = await getModels();
         const normalized = normalizeState(nextState);
         await models.StateMeta.updateOne(
@@ -868,16 +920,18 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName } = {})
         await replaceCollection(models.AiSummaryCache, objectToKeyValues(normalized.aiSummaryCache));
         return normalizeState(normalized);
       });
-      return queue;
+      queue = writeJob;
+      return writeJob;
     },
 
-    async appendPostCreate(delta) {
-      queue = queue.then(async () => {
+    async appendPostCreate(delta: AppendPostCreateDelta) {
+      const appendJob = queue.then<ForumState>(async () => {
         const models = await getModels();
         await ensureBoards(models);
         return appendMongoPostCreate(models, delta);
       });
-      return queue;
+      queue = appendJob;
+      return appendJob;
     },
 
     async health() {

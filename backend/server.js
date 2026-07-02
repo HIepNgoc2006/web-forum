@@ -6,7 +6,7 @@ import { createAiClient } from './src/core/ai.ts';
 import { createForumService } from './src/core/forum-service.js';
 import { createJsonStore } from './src/core/forum-store.ts';
 import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-storage.ts';
-import { createMongoStore } from './src/core/mongo-store.js';
+import { createMongoStore } from './src/core/mongo-store.ts';
 import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.ts';
 import { createHttpServer } from './src/server/http-app.js';
 import { createRealtimeHub } from './src/server/realtime.ts';

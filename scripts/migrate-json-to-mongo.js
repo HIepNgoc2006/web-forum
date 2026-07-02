@@ -245,7 +245,7 @@ async function migrate(args) {
   // Connect to MongoDB
   console.log(`\n🔌 Connecting to MongoDB...`);
   const mongoose = (await import('mongoose')).default;
-  const { createMongoModels } = await import('../backend/src/core/mongo-store.js');
+  const { createMongoModels } = await import('../backend/src/core/mongo-store.ts');
   const { BOARDS } = await import('../backend/src/core/config.ts');
 
   const connectOptions = args.dbName ? { dbName: args.dbName } : undefined;
