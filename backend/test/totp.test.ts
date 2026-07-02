@@ -1,13 +1,43 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { test, describe, it } from 'node:test';
-import crypto from 'node:crypto';
+import type { AddressInfo } from 'node:net';
 
 import * as totpService from '../src/core/totp-service.js';
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
 import { createHttpServer } from '../src/server/http-app.js';
-import { signJwt } from '../src/core/security.js';
+
+type ServiceError = {
+  statusCode?: number;
+};
+
+type ApiBody = {
+  data?: {
+    account?: {
+      id?: string;
+    };
+    backupCodes?: string[];
+    requires2FA?: boolean;
+    secret?: string;
+    tempToken?: string;
+    token?: string;
+  };
+  error?: {
+    requires2FA?: boolean;
+    setupRequired?: boolean;
+  };
+};
+
+function isServiceError(error: unknown, statusCode: number) {
+  return typeof error === 'object' && error !== null && (error as ServiceError).statusCode === statusCode;
+}
+
+async function readApiBody(response: Response): Promise<ApiBody> {
+  const body = await response.json();
+  assert.ok(typeof body === 'object' && body !== null);
+  return body as ApiBody;
+}
 
 function createTestService(overrides = {}) {
   return createForumService({
@@ -25,7 +55,7 @@ async function withServer(
     jwtSecret = 'secret-long-enough-for-signing-jwt-properly-in-tests'
   } = {}
 ) {
-  const realtime = { publish() {} };
+  const realtime = { publish() {}, count: () => 0 };
   const service = createForumService({
     store: createMemoryStore(),
     ai: { moderate: async () => ({ status: 'Safe', labels: [] }) },
@@ -38,10 +68,10 @@ async function withServer(
     jwtSecret,
     adminUsername: 'admin',
     adminPassword: 'pass'
-  });
+  } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
-  const { port } = server.address();
+  const { port } = server.address() as AddressInfo;
   try {
     await callback(`http://127.0.0.1:${port}`, service, jwtSecret);
   } finally {
@@ -118,7 +148,7 @@ describe('Forum Service 2FA Functions', () => {
     // Verify setup failure with wrong code
     await assert.rejects(
       () => service.verify2FASetup(account.id, '000000'),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
 
     // Verify setup success
@@ -134,7 +164,7 @@ describe('Forum Service 2FA Functions', () => {
     // Verify login fails with invalid code
     await assert.rejects(
       () => service.verify2FALogin(account.id, '000000'),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
 
     // Verify backup code login
@@ -145,13 +175,13 @@ describe('Forum Service 2FA Functions', () => {
     // Second use of the same backup code fails
     await assert.rejects(
       () => service.verifyBackupCodeLogin(account.id, firstBackup),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
 
     // Disable 2FA requires correct password
     await assert.rejects(
       () => service.disable2FA(account.id, 'wrongpass'),
-      (error) => error.statusCode === 401
+      (error) => isServiceError(error, 401)
     );
 
     const disableResult = await service.disable2FA(account.id, 'securepass12');
@@ -183,7 +213,7 @@ describe('HTTP 2FA Integration API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'user2fa', password: 'strong-2fa-pass', captchaToken: 'dev-pass' })
       });
-      const registerBody = await registerRes.json();
+      const registerBody = await readApiBody(registerRes);
       assert.equal(registerRes.status, 201);
       const userToken = registerBody.data.token;
       const userId = registerBody.data.account.id;
@@ -193,7 +223,7 @@ describe('HTTP 2FA Integration API', () => {
         method: 'POST',
         headers: { authorization: `Bearer ${userToken}` }
       });
-      const setupBody = await setupRes.json();
+      const setupBody = await readApiBody(setupRes);
       assert.equal(setupRes.status, 200);
       const secret = setupBody.data.secret;
       const backupCodes = setupBody.data.backupCodes;
@@ -216,7 +246,7 @@ describe('HTTP 2FA Integration API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'user2fa', password: 'strong-2fa-pass', captchaToken: 'dev-pass' })
       });
-      const loginBody = await loginRes.json();
+      const loginBody = await readApiBody(loginRes);
       assert.equal(loginRes.status, 200);
       assert.equal(loginBody.data.requires2FA, true);
       assert.ok(loginBody.data.tempToken);
@@ -235,7 +265,7 @@ describe('HTTP 2FA Integration API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tempToken: loginBody.data.tempToken, code: validCode })
       });
-      const verifySuccessBody = await verifySuccessRes.json();
+      const verifySuccessBody = await readApiBody(verifySuccessRes);
       assert.equal(verifySuccessRes.status, 200);
       assert.ok(verifySuccessBody.data.token);
 
@@ -245,7 +275,7 @@ describe('HTTP 2FA Integration API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tempToken: loginBody.data.tempToken, code: backupCodes[0] })
       });
-      const backupLoginBody = await backupLoginRes.json();
+      const backupLoginBody = await readApiBody(backupLoginRes);
       assert.equal(backupLoginRes.status, 200);
       assert.ok(backupLoginBody.data.token);
 
@@ -267,7 +297,7 @@ describe('HTTP 2FA Integration API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const adminLoginBody = await adminLoginRes.json();
+      const adminLoginBody = await readApiBody(adminLoginRes);
       assert.equal(adminLoginRes.status, 200);
       const adminToken = adminLoginBody.data.token;
 
@@ -289,7 +319,7 @@ describe('HTTP 2FA Integration API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const adminLogin2FABody = await adminLogin2FARes.json();
+      const adminLogin2FABody = await readApiBody(adminLogin2FARes);
       assert.equal(adminLogin2FARes.status, 200);
       assert.equal(adminLogin2FABody.data.requires2FA, true);
       const tempToken = adminLogin2FABody.data.tempToken;
@@ -298,7 +328,7 @@ describe('HTTP 2FA Integration API', () => {
       const accessBlockedRes = await fetch(`${baseUrl}/api/admin/pending`, {
         headers: { authorization: `Bearer ${tempToken}` }
       });
-      const accessBlockedBody = await accessBlockedRes.json();
+      const accessBlockedBody = await readApiBody(accessBlockedRes);
       assert.equal(accessBlockedRes.status, 401);
       assert.equal(accessBlockedBody.error.requires2FA, true);
 
@@ -308,7 +338,7 @@ describe('HTTP 2FA Integration API', () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ tempToken, code: validCode })
       });
-      const verifyBody = await verifyRes.json();
+      const verifyBody = await readApiBody(verifyRes);
       assert.equal(verifyRes.status, 200);
       const verifiedAdminToken = verifyBody.data.token;
 
@@ -330,14 +360,14 @@ describe('HTTP 2FA Integration API', () => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ username: 'admin', password: 'pass' })
         });
-        const adminLoginBody = await adminLoginRes.json();
+        const adminLoginBody = await readApiBody(adminLoginRes);
         assert.equal(adminLoginRes.status, 200);
         const adminToken = adminLoginBody.data.token;
 
         const blockedAdminRes = await fetch(`${baseUrl}/api/admin/pending`, {
           headers: { authorization: `Bearer ${adminToken}` }
         });
-        const blockedAdminBody = await blockedAdminRes.json();
+        const blockedAdminBody = await readApiBody(blockedAdminRes);
         assert.equal(blockedAdminRes.status, 403);
         assert.equal(blockedAdminBody.error.setupRequired, true);
 
@@ -345,7 +375,7 @@ describe('HTTP 2FA Integration API', () => {
           method: 'POST',
           headers: { authorization: `Bearer ${adminToken}` }
         });
-        const setupBody = await setupRes.json();
+        const setupBody = await readApiBody(setupRes);
         assert.equal(setupRes.status, 200);
         assert.ok(setupBody.data.secret);
 
