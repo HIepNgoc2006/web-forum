@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "node --watch server.js",
     "start": "node server.js",
-    "test": "node test/run-tests.js",
+    "test": "node test/run-tests.ts",
     "build": "tsc -p tsconfig.build.json",
     "check": "node scripts/check-syntax.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
