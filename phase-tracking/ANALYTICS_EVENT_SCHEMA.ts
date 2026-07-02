@@ -6,6 +6,48 @@
 // ==========================================
 // 1. JSON Schema Definition
 // ==========================================
+type AnalyticsBoard = {
+  slug: string;
+};
+
+type AnalyticsThread = {
+  id: string;
+  boardSlug: string;
+  isPending?: boolean;
+  isDeleted?: boolean;
+  isArchived?: boolean;
+};
+
+type AnalyticsComment = {
+  threadId: string;
+  isPending?: boolean;
+  isDeleted?: boolean;
+};
+
+type AnalyticsReport = {
+  boardSlug: string;
+};
+
+type BoardActivityMetrics = {
+  activeThreads: number;
+  activeComments: number;
+  pendingThreads: number;
+  pendingComments: number;
+  deletedThreads: number;
+  deletedComments: number;
+  totalReports: number;
+};
+
+type BoardActivity = Record<string, BoardActivityMetrics>;
+
+type AiUsageKind = 'moderation' | 'summary' | 'suggestion' | 'rewrite';
+
+type AiUsageSummary = {
+  total: number;
+  byKind: Record<AiUsageKind, number>;
+  daily: Array<{ date: string; count: number }>;
+};
+
 export const AnalyticsEventSchema = {
   $schema: 'http://json-schema.org/draft-07/schema#',
   title: 'AnalyticsPayload',
@@ -87,7 +129,7 @@ export const AnalyticsEventSchema = {
       }
     }
   }
-};
+} as const satisfies Record<string, unknown>;
 
 // ==========================================
 // 2. Pure Aggregate calculation helpers
@@ -95,13 +137,14 @@ export const AnalyticsEventSchema = {
 
 /**
  * Builds the board-level activity metrics without pulling individual poster data.
- * @param {Array} threads 
- * @param {Array} comments 
- * @param {Array} reports 
- * @param {Array} boards 
  */
-export function aggregateBoardActivity(threads, comments, reports, boards) {
-  const activity = {};
+export function aggregateBoardActivity(
+  threads: readonly AnalyticsThread[],
+  comments: readonly AnalyticsComment[],
+  reports: readonly AnalyticsReport[],
+  boards: readonly AnalyticsBoard[]
+): BoardActivity {
+  const activity: BoardActivity = {};
 
   for (const board of boards) {
     const slug = board.slug;
@@ -144,10 +187,10 @@ export function aggregateBoardActivity(threads, comments, reports, boards) {
  * Parses in-memory usage keys while stripping all pseudonymous/identifiable key hashes
  * Key structure: YYYY-MM-DD:kind:hashedIdentity24
  */
-export function aggregateAiUsage(aiUsageKeys = []) {
+export function aggregateAiUsage(aiUsageKeys: readonly string[] = []): AiUsageSummary {
   let total = 0;
-  const byKind = { moderation: 0, summary: 0, suggestion: 0, rewrite: 0 };
-  const dailyMap = {};
+  const byKind: Record<AiUsageKind, number> = { moderation: 0, summary: 0, suggestion: 0, rewrite: 0 };
+  const dailyMap: Record<string, number> = {};
 
   for (const key of aiUsageKeys) {
     const parts = key.split(':');
@@ -155,7 +198,8 @@ export function aggregateAiUsage(aiUsageKeys = []) {
 
     const [date, kind] = parts;
     if (kind in byKind) {
-      byKind[kind] += 1;
+      const usageKind = kind as AiUsageKind;
+      byKind[usageKind] += 1;
       total += 1;
       dailyMap[date] = (dailyMap[date] || 0) + 1;
     }

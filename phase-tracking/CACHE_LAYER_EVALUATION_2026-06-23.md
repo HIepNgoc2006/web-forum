@@ -31,8 +31,8 @@ persisted in MongoDB in production.
 
 | Surface | Current implementation | Cache decision |
 | --- | --- | --- |
-| HTTP rate counters | `backend/src/core/security.js` exposes `createRateLimiter({ store })`; `backend/src/core/rate-limit-store.js` provides Redis-backed atomic counters; `backend/src/server/http-app.js` creates scoped limiters for thread, comment, AI, account, admin, search, and generic routes. | Use `RATE_LIMIT_STORE=redis` before broad multi-instance traffic. |
-| AI summaries | `cacheSummary(...)` in `backend/src/core/forum-service.js` stores summaries in `state.aiSummaryCache` by fingerprint. `mongo-store.js` persists this as the `aiSummaryCache` key-value collection. | Keep store-backed cache. Redis hot cache is optional only if metrics show repeated hot-read pressure. |
+| HTTP rate counters | `backend/src/core/security.ts` exposes `createRateLimiter({ store })`; `backend/src/core/rate-limit-store.ts` provides Redis-backed atomic counters; `backend/src/server/http-app.ts` creates scoped limiters for thread, comment, AI, account, admin, search, and generic routes. | Use `RATE_LIMIT_STORE=redis` before broad multi-instance traffic. |
+| AI summaries | `cacheSummary(...)` in `backend/src/core/forum-service.ts` stores summaries in `state.aiSummaryCache` by fingerprint. `mongo-store.ts` persists this as the `aiSummaryCache` key-value collection. | Keep store-backed cache. Redis hot cache is optional only if metrics show repeated hot-read pressure. |
 | AI daily budgets | `consumeAiBudget(...)` stores daily counters in `state.aiUsage`; Mongo persists them as the `aiUsage` key-value collection. | Keep store-backed counters for daily budgets; do not mix them with minute-scale HTTP limiter counters. |
 | Catalog/list reads | Frontend catalog rendering uses the normal board/thread data path. Backend list/archive responses are derived from store reads and service filtering/sorting. | Do not add Redis now. Prefer indexed/paginated Mongo reads and measured read latency first. |
 

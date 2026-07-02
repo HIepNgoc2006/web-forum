@@ -90,7 +90,7 @@ For production readiness and Docker/deployment health checks, `GET /api/health` 
 
 ### MongoDB Database Structure
 
-`backend/src/core/mongo-store.js` maps the normalized forum state into these production collections:
+`backend/src/core/mongo-store.ts` maps the normalized forum state into these production collections:
 
 | Collection | Purpose | Main keys and indexes |
 |---|---|---|
@@ -344,8 +344,8 @@ Public reading and anonymous posting do not require an account. Accounts only ad
 flowchart LR
   Browser["Browser SPA\nfrontend/src/app.ts"]
   Admin["Admin user\nJWT-protected UI"]
-  Http["Node HTTP API\nbackend/src/server/http-app.js"]
-  Service["Forum service\nbackend/src/core/forum-service.js"]
+  Http["Node HTTP API\nbackend/src/server/http-app.ts"]
+  Service["Forum service\nbackend/src/core/forum-service.ts"]
   Store["Forum store\nMongoDB production\nJSON dev/demo fallback"]
   Mongo[("MongoDB collections")]
   Json[("backend/data/forum.json")]

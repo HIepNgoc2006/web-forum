@@ -77,7 +77,7 @@ Runbook actions:
 
 In-code behavior: Vite emits content-hashed assets; uploaded files are served
 with `Cache-Control: public, max-age=31536000, immutable`. Static frontend files
-served by `backend/src/server/http-app.js` do **not** emit explicit cache
+served by `backend/src/server/http-app.ts` do **not** emit explicit cache
 headers, so CDN/platform cache rules must be set.
 
 Recommended cache rules:

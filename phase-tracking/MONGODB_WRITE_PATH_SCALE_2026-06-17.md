@@ -7,11 +7,11 @@ Follow-up from #63
 
 ## Problem
 
-`backend/src/core/mongo-store.js` follows the same whole-state model as the JSON
+`backend/src/core/mongo-store.ts` follows the same whole-state model as the JSON
 store: `read()` loads full collections and `write(normalizeState(...))`
 serializes the entire forum snapshot, replacing most collections with
 `deleteMany()` + `insertMany()` inside a single mutate queue in
-`forum-service.js`. Every thread or comment create therefore reads and rewrites
+`forum-service.ts`. Every thread or comment create therefore reads and rewrites
 the whole dataset.
 
 This is fine for beta data volume, but write latency and lock/queue contention

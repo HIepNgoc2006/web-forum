@@ -77,4 +77,4 @@ The analytics endpoint returns a JSON payload containing three primary metric ar
 ---
 
 ## 3. Verification & Compliance
-- **PII-free tests**: Both `core.test.js` and `http.test.js` contain assertions scanning serialized analytics payloads for patterns matching IP addresses (`192.168.x.x`, `127.0.0.1`), `posterToken`, `authorFingerprint`, or `posterHash` values, ensuring no data leaks exist.
+- **PII-free tests**: Both `core.test.ts` and `http.test.ts` contain assertions scanning serialized analytics payloads for patterns matching IP addresses (`192.168.x.x`, `127.0.0.1`), `posterToken`, `authorFingerprint`, or `posterHash` values, ensuring no data leaks exist.

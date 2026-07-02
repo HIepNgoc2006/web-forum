@@ -14,14 +14,14 @@ The fix keeps production admin 2FA enforcement covered by backend tests and make
 
 | Scope | Evidence | Result |
 | --- | --- | --- |
-| Homepage | `scripts/browser-smoke.mjs` home desktop/mobile checks; `backend/test/http.test.js` homepage stats/latest/hot boards/campus pulse tests | Pass |
-| Board/thread/catalog/archive | Browser smoke board/thread/catalog checks; `backend/test/http.test.js` archive/admin archive tests; `backend/test/core.test.js` archive lifecycle tests | Pass |
+| Homepage | `scripts/browser-smoke.mjs` home desktop/mobile checks; `backend/test/http.test.ts` homepage stats/latest/hot boards/campus pulse tests | Pass |
+| Board/thread/catalog/archive | Browser smoke board/thread/catalog checks; `backend/test/http.test.ts` archive/admin archive tests; `backend/test/core.test.ts` archive lifecycle tests | Pass |
 | Posting/commenting | Browser smoke seed thread/comment flow; backend HTTP thread/comment tests; rate-limit and moderation tests | Pass |
-| Uploads | `backend/test/http.test.js` local upload serving tests; `backend/test/security-regression.test.js` invalid MIME and oversize tests; `backend/test/image-storage.test.js` storage adapter tests | Pass |
-| Account login/settings | `backend/test/account.test.js`, `backend/test/http.test.js`, WebAuthn and 2FA tests | Pass |
-| Admin moderation | Browser smoke admin login/dashboard checks; `backend/test/http.test.js` admin queue/reports/sanctions/sticky/archive tests; security regression admin JWT tests | P1 smoke harness failure found and fixed |
-| AI moderation/summary/suggestion | `backend/test/core.test.js`, `backend/test/http.test.js`, and security regression AI redaction tests | Pass |
-| Search/watchlist/drafts | `backend/test/http.test.js` paged search test; `backend/test/account.test.js` and HTTP private-data sync/clear tests | Pass |
+| Uploads | `backend/test/http.test.ts` local upload serving tests; `backend/test/security-regression.test.ts` invalid MIME and oversize tests; `backend/test/image-storage.test.ts` storage adapter tests | Pass |
+| Account login/settings | `backend/test/account.test.ts`, `backend/test/http.test.ts`, WebAuthn and 2FA tests | Pass |
+| Admin moderation | Browser smoke admin login/dashboard checks; `backend/test/http.test.ts` admin queue/reports/sanctions/sticky/archive tests; security regression admin JWT tests | P1 smoke harness failure found and fixed |
+| AI moderation/summary/suggestion | `backend/test/core.test.ts`, `backend/test/http.test.ts`, and security regression AI redaction tests | Pass |
+| Search/watchlist/drafts | `backend/test/http.test.ts` paged search test; `backend/test/account.test.ts` and HTTP private-data sync/clear tests | Pass |
 | Responsive layout smoke | Browser smoke home/thread mobile checks | Pass |
 
 ## Release Blocker Triage
