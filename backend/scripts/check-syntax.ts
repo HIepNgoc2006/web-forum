@@ -7,13 +7,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const roots = ['server.js', 'scripts', 'src', 'test'];
 const ignoreDirs = new Set(['node_modules', 'data', 'coverage']);
 
-async function collectJsFiles(target) {
+async function collectJsFiles(target: string): Promise<string[]> {
   const absolute = path.resolve(root, target);
   if (target.endsWith('.js')) {
     return [absolute];
   }
 
-  const files = [];
+  const files: string[] = [];
   const entries = await readdir(absolute, { withFileTypes: true });
   for (const entry of entries) {
     if (entry.isDirectory()) {

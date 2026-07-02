@@ -9,7 +9,7 @@
     "start": "node server.js",
     "test": "node test/run-tests.js",
     "build": "tsc -p tsconfig.build.json",
-    "check": "node scripts/check-syntax.js",
+    "check": "node scripts/check-syntax.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate:images": "node scripts/migrate-inline-images.ts",
     "cleanup:uploads": "node scripts/cleanup-orphan-uploads.ts",
