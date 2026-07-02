@@ -2,6 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import crypto from 'node:crypto';
+import type { AddressInfo } from 'node:net';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
@@ -10,6 +11,19 @@ import {
   getWebAuthnLoginOptions,
   getWebAuthnRegisterOptions
 } from '../src/core/webauthn-service.js';
+
+type ApiBody = {
+  data?: any;
+  error?: {
+    message?: string;
+  };
+};
+
+async function readApiBody(response: Response): Promise<ApiBody> {
+  const body = await response.json();
+  assert.ok(typeof body === 'object' && body !== null);
+  return body as ApiBody;
+}
 
 describe('WebAuthn user verification policy', () => {
   it('requires user verification in registration and login options', async () => {
@@ -76,18 +90,18 @@ async function withServer(callback, jwtSecret = 'test-jwt-secret') {
     store,
     ai: { moderate: async () => ({ status: 'Safe', labels: [] }) },
     now: () => new Date('2026-06-10T12:00:00Z'),
-    webauthn: mockWebAuthn
+    webauthn: mockWebAuthn as unknown as Parameters<typeof createForumService>[0]['webauthn']
   });
   const server = createHttpServer({
     service,
-    realtime: { publish() {} },
+    realtime: { publish() {}, count: () => 0 },
     jwtSecret,
     adminUsername: 'admin',
     adminPassword: 'pass'
-  });
+  } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
-  const { port } = server.address();
+  const { port } = server.address() as AddressInfo;
   try {
     await callback(`http://127.0.0.1:${port}`, service);
   } finally {
@@ -108,7 +122,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         body: JSON.stringify({ username: 'webauthnuser', password: 'securepass123', captchaToken: 'dev-pass' })
       });
       assert.strictEqual(regRes.status, 201);
-      const regData = await regRes.json();
+      const regData = await readApiBody(regRes);
       const userToken = regData.data.token;
       assert.ok(userToken);
 
@@ -117,7 +131,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         headers: { Authorization: `Bearer ${userToken}` }
       });
       assert.strictEqual(listEmptyRes.status, 200);
-      const emptyPasskeys = (await listEmptyRes.json()).data;
+      const emptyPasskeys = (await readApiBody(listEmptyRes)).data;
       assert.deepStrictEqual(emptyPasskeys, []);
 
       // 2. Generate registration options
@@ -129,7 +143,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         }
       });
       assert.strictEqual(optRes.status, 200);
-      const optData = (await optRes.json()).data;
+      const optData = (await readApiBody(optRes)).data;
       assert.strictEqual(optData.challenge, 'registerChallengeValue');
 
       // 3. Verify/complete registration
@@ -151,7 +165,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         })
       });
       assert.strictEqual(verifyRes.status, 200);
-      const verifyData = (await verifyRes.json()).data;
+      const verifyData = (await readApiBody(verifyRes)).data;
       assert.deepStrictEqual(verifyData, { ok: true });
 
       // Verify listing passkeys now returns 1 registered passkey
@@ -159,7 +173,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         headers: { Authorization: `Bearer ${userToken}` }
       });
       assert.strictEqual(listRes.status, 200);
-      const passkeys = (await listRes.json()).data;
+      const passkeys = (await readApiBody(listRes)).data;
       assert.strictEqual(passkeys.length, 1);
       assert.strictEqual(passkeys[0].id, 'mockCredentialID_123');
       assert.strictEqual(passkeys[0].credentialDeviceType, 'singleDevice');
@@ -171,7 +185,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         body: JSON.stringify({ username: 'webauthnuser' })
       });
       assert.strictEqual(loginOptRes.status, 200);
-      const loginOptData = (await loginOptRes.json()).data;
+      const loginOptData = (await readApiBody(loginOptRes)).data;
       assert.strictEqual(loginOptData.challenge, 'loginChallengeValue');
 
       // 5. Verify login response
@@ -194,7 +208,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         })
       });
       assert.strictEqual(loginVerifyRes.status, 200);
-      const loginVerifyData = (await loginVerifyRes.json()).data;
+      const loginVerifyData = (await readApiBody(loginVerifyRes)).data;
       assert.ok(loginVerifyData.token);
       assert.strictEqual(loginVerifyData.account.username, 'webauthnuser');
 
@@ -204,7 +218,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         headers: { Authorization: `Bearer ${userToken}` }
       });
       assert.strictEqual(deleteRes.status, 200);
-      const deleteData = (await deleteRes.json()).data;
+      const deleteData = (await readApiBody(deleteRes)).data;
       assert.deepStrictEqual(deleteData, { ok: true });
 
       // Verify passkey is gone
@@ -212,7 +226,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         headers: { Authorization: `Bearer ${userToken}` }
       });
       assert.strictEqual(listAfterDeleteRes.status, 200);
-      const passkeysAfterDelete = (await listAfterDeleteRes.json()).data;
+      const passkeysAfterDelete = (await readApiBody(listAfterDeleteRes)).data;
       assert.deepStrictEqual(passkeysAfterDelete, []);
     }, jwtSecret);
   });
@@ -225,7 +239,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: 'anotheruser', password: 'securepass123', captchaToken: 'dev-pass' })
       });
-      const regData = await regRes.json();
+      const regData = await readApiBody(regRes);
       const userToken = regData.data.token;
 
       // Submit verification directly without request options
@@ -246,7 +260,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         })
       });
       assert.strictEqual(verifyRes.status, 400);
-      const errorData = await verifyRes.json();
+      const errorData = await readApiBody(verifyRes);
       assert.strictEqual(errorData.error.message, 'Không tìm thấy yêu cầu đăng ký tương ứng');
     }, jwtSecret);
   });
@@ -268,7 +282,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         })
       });
       assert.strictEqual(loginVerifyRes.status, 401);
-      const errorData = await loginVerifyRes.json();
+      const errorData = await readApiBody(loginVerifyRes);
       assert.strictEqual(errorData.error.message, 'Tên tài khoản hoặc mật khẩu không đúng');
     }, jwtSecret);
   });
@@ -285,7 +299,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
       assert.strictEqual(loginRes.status, 200);
-      const adminToken = (await loginRes.json()).data.token;
+      const adminToken = (await readApiBody(loginRes)).data.token;
       assert.ok(adminToken);
       assert.strictEqual(decodeJwt(adminToken).role, 'owner');
       assert.strictEqual(decodeJwt(adminToken).isTwoFactorVerified, false);
@@ -338,7 +352,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         })
       });
       assert.strictEqual(passkeyLoginRes.status, 200);
-      const passkeyToken = (await passkeyLoginRes.json()).data.token;
+      const passkeyToken = (await readApiBody(passkeyLoginRes)).data.token;
 
       // The passkey login token is owner-scoped AND counts as 2FA-verified.
       const payload = decodeJwt(passkeyToken);
@@ -361,7 +375,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
         body: JSON.stringify({ username: 'missinguser' })
       });
       assert.strictEqual(loginOptRes.status, 401);
-      const errorData = await loginOptRes.json();
+      const errorData = await readApiBody(loginOptRes);
       assert.strictEqual(errorData.error.message, 'Tên tài khoản hoặc thiết bị đăng nhập không đúng');
       assert.equal(errorData.error.message.includes('không tồn tại'), false);
     }, jwtSecret);
