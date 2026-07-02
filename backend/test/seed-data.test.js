@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { parseSeedArgs } from '../scripts/seed-data.js';
+import { parseSeedArgs } from '../scripts/seed-data.ts';
 import {
   importSeedData,
   planSeedImport,

@@ -7,6 +7,11 @@ import { createJsonStore } from '../src/core/forum-store.js';
 import { createMongoStore } from '../src/core/mongo-store.js';
 import { exportSeedData, importSeedData, readSeedFile, restoreSeedRollback } from '../src/core/seed-data.js';
 
+type MongoStoreOptions = {
+  uri?: string;
+  dbName?: string;
+};
+
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(scriptPath);
 const defaultForumPath = path.resolve(scriptDir, '..', 'data', 'forum.json');
@@ -21,9 +26,9 @@ function readOption(argv, name, fallback) {
 
 function usage() {
   return `Usage:
-  node backend/scripts/seed-data.js export --out <seed.json> [options]
-  node backend/scripts/seed-data.js import --in <seed.json> [--dry-run|--write] [options]
-  node backend/scripts/seed-data.js restore --in <rollback.json> [--dry-run|--write] [options]
+  node backend/scripts/seed-data.ts export --out <seed.json> [options]
+  node backend/scripts/seed-data.ts import --in <seed.json> [--dry-run|--write] [options]
+  node backend/scripts/seed-data.ts restore --in <rollback.json> [--dry-run|--write] [options]
 
 Options:
   --store-driver <json|mongo>  State source (default: STORE_DRIVER or json)
@@ -82,7 +87,7 @@ export function createSeedStore(args, {
   if (args.storeDriver === 'json') {
     return createJsonStoreImpl(args.forumPath);
   }
-  return createMongoStoreImpl({ dbName: args.mongoDbName });
+  return createMongoStoreImpl({ dbName: args.mongoDbName } as MongoStoreOptions);
 }
 
 function summarizeResult(result) {

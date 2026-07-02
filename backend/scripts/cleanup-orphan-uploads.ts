@@ -7,6 +7,11 @@ import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image
 import { createMongoStore } from '../src/core/mongo-store.js';
 import { cleanupOrphanUploads } from '../src/core/upload-cleanup.ts';
 
+type MongoStoreOptions = {
+  uri?: string;
+  dbName?: string;
+};
+
 function readOption(argv, name, fallback) {
   const index = argv.indexOf(name);
   if (index === -1 || index + 1 >= argv.length) {
@@ -81,7 +86,7 @@ export function createForumStateStore(args, {
     return createJsonStoreImpl(args.forumPath);
   }
   if (args.storeDriver === 'mongo') {
-    return createMongoStoreImpl({ dbName: args.mongoDbName });
+    return createMongoStoreImpl({ dbName: args.mongoDbName } as MongoStoreOptions);
   }
   throw new Error('STORE_DRIVER must be either json or mongo.');
 }

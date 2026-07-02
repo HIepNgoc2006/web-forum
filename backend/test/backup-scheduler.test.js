@@ -4,7 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { parseBackupArgs } from '../scripts/backup-scheduler.js';
+import { parseBackupArgs } from '../scripts/backup-scheduler.ts';
 import { createBackupScheduler, runBackupJob } from '../src/core/backup-scheduler.ts';
 
 const tempRoots = [];

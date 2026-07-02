@@ -8,6 +8,11 @@ import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image
 import { createMongoStore } from '../src/core/mongo-store.js';
 import { createBackupScheduler, runBackupJob } from '../src/core/backup-scheduler.ts';
 
+type MongoStoreOptions = {
+  uri?: string;
+  dbName?: string;
+};
+
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(scriptPath);
 const backendRoot = path.resolve(scriptDir, '..');
@@ -25,8 +30,8 @@ function readOption(argv, name, fallback) {
 
 function usage() {
   return `Usage:
-  node backend/scripts/backup-scheduler.js run [options]
-  node backend/scripts/backup-scheduler.js schedule --enable [options]
+  node backend/scripts/backup-scheduler.ts run [options]
+  node backend/scripts/backup-scheduler.ts schedule --enable [options]
 
 Options:
   --store-driver <json|mongo>  State source (default: STORE_DRIVER, or mongo in production)
@@ -103,7 +108,7 @@ export function createBackupStore(args, {
   if (args.storeDriver === 'json') {
     return createJsonStoreImpl(args.forumPath);
   }
-  return createMongoStoreImpl({ dbName: args.mongoDbName });
+  return createMongoStoreImpl({ dbName: args.mongoDbName } as MongoStoreOptions);
 }
 
 export function createBackupImageStorage(args) {
@@ -128,8 +133,14 @@ export async function runBackupCommand(args, {
     output(usage());
     return { help: true };
   }
-  const store = createBackupStore(args, dependencies);
-  const imageStorage = dependencies.createImageStorageImpl?.(args) ?? createBackupImageStorage(args);
+  const typedDependencies = dependencies as typeof dependencies & {
+    createJsonStoreImpl?: typeof createJsonStore;
+    createMongoStoreImpl?: typeof createMongoStore;
+    createImageStorageImpl?: (args: unknown) => ReturnType<typeof createBackupImageStorage>;
+    writeJsonImpl?: (filePath: string, value: unknown) => Promise<void>;
+  };
+  const store = createBackupStore(args, typedDependencies);
+  const imageStorage = typedDependencies.createImageStorageImpl?.(args) ?? createBackupImageStorage(args);
 
   async function runOnce() {
     return runBackupJob({
@@ -145,7 +156,7 @@ export async function runBackupCommand(args, {
       dryRun: args.dryRun,
       operator: args.operator,
       logger,
-      writeJsonImpl: dependencies.writeJsonImpl
+      writeJsonImpl: typedDependencies.writeJsonImpl
     });
   }
 
