@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { createAiClient } from './src/core/ai.ts';
-import { createForumService } from './src/core/forum-service.js';
+import { createForumService } from './src/core/forum-service.ts';
 import { createJsonStore } from './src/core/forum-store.ts';
 import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-storage.ts';
 import { createMongoStore } from './src/core/mongo-store.ts';

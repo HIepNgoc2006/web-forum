@@ -2,7 +2,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
-import { createForumService } from '../src/core/forum-service.js';
+import { createForumService } from '../src/core/forum-service.ts';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { signJwt } from '../src/core/security.ts';
 

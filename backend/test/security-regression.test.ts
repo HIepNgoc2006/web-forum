@@ -3,7 +3,7 @@ import { once } from 'node:events';
 import { test } from 'node:test';
 import type { AddressInfo } from 'node:net';
 
-import { createForumService } from '../src/core/forum-service.js';
+import { createForumService } from '../src/core/forum-service.ts';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createHttpServer } from '../src/server/http-app.ts';
 import { sanitizeText } from '../src/core/text-format.ts';

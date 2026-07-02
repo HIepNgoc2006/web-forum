@@ -17,8 +17,36 @@ import { createModerationFingerprint, createPosterHash, createPosterProofHash, c
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.ts';
 import * as defaultTotp from './totp-service.ts';
 import * as defaultWebAuthn from './webauthn-service.ts';
+import type { BoardConfig, ThreadLifecycle } from './config.ts';
 
-const noopLogger = () => {};
+type AnyRecord = Record<string, any>;
+
+type ForumServiceOptions = {
+  store: any;
+  ai: any;
+  realtime?: AnyRecord;
+  now?: () => Date;
+  lifecycle?: ThreadLifecycle;
+  logger?: (entry: AnyRecord) => void;
+  imageStorage?: any;
+  totp?: AnyRecord;
+  webauthn?: AnyRecord;
+  moderationConfidenceThreshold?: number;
+  randomInt?: typeof crypto.randomInt;
+};
+
+declare global {
+  interface Error {
+    statusCode?: number;
+    retryAfter?: number;
+  }
+}
+
+const noopLogger = (_entry?: AnyRecord) => {};
+const noopRealtime: AnyRecord = {
+  publish(_event?: string, _payload?: unknown) {},
+  count: () => 0
+};
 const PULSE_STOP_WORDS = new Set([
   'anh',
   'ban',
@@ -162,7 +190,7 @@ function archivedPublicThread(thread) {
   return publicPost(thread) && thread.isArchived;
 }
 
-function boardRetentionPolicy(board, defaults = THREAD_LIFECYCLE) {
+function boardRetentionPolicy(board: AnyRecord | null | undefined, defaults: ThreadLifecycle = THREAD_LIFECYCLE) {
   return normalizeRetentionPolicy(board?.retentionPolicy, defaults);
 }
 
@@ -187,13 +215,13 @@ function boardEventEnded(board, at) {
   return Boolean(board?.temporary && board.eventEndsAt && String(board.eventEndsAt).localeCompare(at) <= 0);
 }
 
-function publicBoard(board = {}) {
+function publicBoard(board: AnyRecord = {}) {
   return Boolean(board?.slug) && !board.isHidden && !board.isArchived;
 }
 
-function serializeBoard(board = {}, { admin = false, retentionDefaults = THREAD_LIFECYCLE } = {}) {
-  const presentation = publicBoardConfig(board);
-  const serialized = {
+function serializeBoard(board: AnyRecord = {}, { admin = false, retentionDefaults = THREAD_LIFECYCLE }: AnyRecord = {}) {
+  const presentation = publicBoardConfig(board as BoardConfig);
+  const serialized: AnyRecord = {
     slug: board.slug,
     path: board.path || '/' + board.slug + '/',
     name: presentation.name,
@@ -212,7 +240,7 @@ function serializeBoard(board = {}, { admin = false, retentionDefaults = THREAD_
   return serialized;
 }
 
-function findBoard(state, slug, { publicOnly = false } = {}) {
+function findBoard(state: AnyRecord, slug: string, { publicOnly = false }: AnyRecord = {}) {
   const board = state.boards.find((item) => item.slug === slug);
   if (!board || (publicOnly && !publicBoard(board))) {
     return null;
@@ -279,10 +307,10 @@ function normalizeBoardBannerInput(value) {
 }
 
 function normalizeBoardInput(
-  { slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt } = {},
-  { requireSlug = true } = {}
+  { slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt }: AnyRecord = {},
+  { requireSlug = true }: AnyRecord = {}
 ) {
-  const board = {};
+  const board: AnyRecord = {};
   if (requireSlug || slug !== undefined) {
     const safeSlug = String(slug ?? '').trim().toLowerCase();
     if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
@@ -339,7 +367,7 @@ function sanitizePositiveInteger(value, max) {
   return Math.min(Math.round(number), max);
 }
 
-function paginationOptions({ page, pageSize, maxPageSize = 50 } = {}) {
+function paginationOptions({ page, pageSize, maxPageSize = 50 }: AnyRecord = {}) {
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safePageSize = Math.max(1, Math.min(Math.floor(Number(pageSize) || maxPageSize), maxPageSize));
   return {
@@ -349,7 +377,7 @@ function paginationOptions({ page, pageSize, maxPageSize = 50 } = {}) {
   };
 }
 
-function pagedResult(items, options = {}) {
+function pagedResult(items: any[], options: AnyRecord = {}) {
   const { page, pageSize, offset } = paginationOptions(options);
   const total = items.length;
   return {
@@ -512,7 +540,7 @@ function isTrivialSequence(value = '') {
   return ascending || descending;
 }
 
-function assertAccountPassword(value = '', { username = '' } = {}) {
+function assertAccountPassword(value = '', { username = '' }: AnyRecord = {}) {
   const password = String(value ?? '');
   if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
     const error = new Error(`Mật khẩu cần từ ${MIN_PASSWORD_LENGTH} đến ${MAX_PASSWORD_LENGTH} ký tự`);
@@ -559,7 +587,7 @@ function normalizeManagedPrivilegedRole(value = '') {
   return role;
 }
 
-function isPrivilegedAccount(user = {}) {
+function isPrivilegedAccount(user: AnyRecord = {}) {
   return PRIVILEGED_ACCOUNT_ROLES.has(String(user.role || '').toLowerCase());
 }
 
@@ -627,7 +655,7 @@ function defaultAccountSettings() {
   };
 }
 
-function normalizeBoardSubscriptionSlugs(values = [], state = {}) {
+function normalizeBoardSubscriptionSlugs(values: any[] = [], state: AnyRecord = {}) {
   const boards = Array.isArray(state.boards) && state.boards.length > 0 ? state.boards : BOARDS;
   const slugs = new Set();
   for (const item of values) {
@@ -642,7 +670,7 @@ function normalizeBoardSubscriptionSlugs(values = [], state = {}) {
   return [...slugs];
 }
 
-function normalizeAccountSettings(state, settings = {}, current = defaultAccountSettings()) {
+function normalizeAccountSettings(state: AnyRecord, settings: AnyRecord = {}, current = defaultAccountSettings()) {
   const defaults = defaultAccountSettings();
   const safe = {
     ...defaults,
@@ -898,7 +926,7 @@ function defaultAccountPrivateData() {
   };
 }
 
-function normalizeAccountPrivateData(value = {}, current = defaultAccountPrivateData()) {
+function normalizeAccountPrivateData(value: AnyRecord = {}, current: AnyRecord = defaultAccountPrivateData()) {
   const input = value && typeof value === 'object' ? value : {};
   const previous = current && typeof current === 'object' ? current : defaultAccountPrivateData();
   const safe = {
@@ -930,11 +958,11 @@ function normalizeAccountPrivateData(value = {}, current = defaultAccountPrivate
   return safe;
 }
 
-function serializeAccountPrivateData(value = {}) {
+function serializeAccountPrivateData(value: AnyRecord = {}) {
   return normalizeAccountPrivateData(value, value);
 }
 
-function serializeAccount(state, user = {}) {
+function serializeAccount(state: AnyRecord, user: AnyRecord = {}) {
   return {
     id: user.id,
     username: user.username,
@@ -948,7 +976,7 @@ function serializeAccount(state, user = {}) {
   };
 }
 
-function serializePrivilegedAccount(state, user = {}) {
+function serializePrivilegedAccount(state: AnyRecord, user: AnyRecord = {}) {
   const account = serializeAccount(state, user);
   return {
     id: account.id,
@@ -985,9 +1013,9 @@ function referencedPostNumbers(body = '') {
   return [...String(body).matchAll(/(?:>>|&gt;&gt;)(\d+)/g)].map((match) => Number(match[1])).filter((number) => Number.isFinite(number));
 }
 
-function addBacklinks(posts) {
+function addBacklinks(posts: AnyRecord[]): AnyRecord[] {
   const postByNumber = new Map(posts.map((post) => [Number(post.globalNumber), post]));
-  const backlinks = new Map(posts.map((post) => [Number(post.globalNumber), []]));
+  const backlinks = new Map<number, number[]>(posts.map((post) => [Number(post.globalNumber), []]));
   for (const source of posts) {
     for (const targetNumber of referencedPostNumbers(source.body)) {
       if (targetNumber !== Number(source.globalNumber) && postByNumber.has(targetNumber)) {
@@ -1196,7 +1224,7 @@ function moderationPriorityDetails({ createdAt, labels = [], moderationStatus = 
   };
 }
 
-function normalizePriorityFilters(filters = {}) {
+function normalizePriorityFilters(filters: AnyRecord = {}) {
   const priority = String(filters.priority || '').toLowerCase();
   const sort = String(filters.sort || '').toLowerCase();
   return {
@@ -1205,12 +1233,12 @@ function normalizePriorityFilters(filters = {}) {
   };
 }
 
-function matchesPriorityFilter(item, filters = {}) {
+function matchesPriorityFilter(item: AnyRecord, filters: AnyRecord = {}) {
   const { priority } = normalizePriorityFilters(filters);
   return !priority || item.moderationPriority?.level === priority;
 }
 
-function compareAdminPriority(filters = {}) {
+function compareAdminPriority(filters: AnyRecord = {}) {
   const { sort } = normalizePriorityFilters(filters);
   return (left, right) => {
     if (sort === 'confidence-desc' || sort === 'confidence-asc') {
@@ -1353,7 +1381,7 @@ function validateMedia(media) {
     throw error;
   }
 
-  const safeMedia = {
+  const safeMedia: AnyRecord = {
     name: sanitizeFileName(media.name),
     type,
     dataUrl,
@@ -1378,7 +1406,7 @@ function validateMedia(media) {
   return safeMedia;
 }
 
-function validateMediaList({ image, images } = {}) {
+function validateMediaList({ image, images }: AnyRecord = {}) {
   const rawItems = Array.isArray(images) ? images : image ? [image] : [];
   if (rawItems.length > MAX_MEDIA_PER_POST) {
     const error = new Error(`Tối đa ${MAX_MEDIA_PER_POST} tệp mỗi bài viết`);
@@ -1411,11 +1439,11 @@ function uniqueModerationLabels(results) {
   return [...labels];
 }
 
-function mergeModerationResults(...results) {
+function mergeModerationResults(...results: any[]): AnyRecord {
   const confidences = results
     .map((result) => Number(result?.confidence))
     .filter((confidence) => Number.isFinite(confidence));
-  const merged = {
+  const merged: AnyRecord = {
     status: results.some((result) => result?.status === 'Flagged') ? 'Flagged' : 'Safe',
     labels: uniqueModerationLabels(results)
   };
@@ -1495,7 +1523,7 @@ function validateImageThumbnail(thumbnail) {
     throw error;
   }
 
-  const safeThumbnail = {
+  const safeThumbnail: AnyRecord = {
     name: sanitizeFileName(thumbnail.name || 'thumbnail.jpg'),
     type,
     dataUrl,
@@ -1651,7 +1679,7 @@ function normalizeBoardThreadFilter(value) {
   return ['media', 'video', 'poll', 'unanswered'].includes(filter) ? filter : 'all';
 }
 
-function postHasVideo(post = {}) {
+function postHasVideo(post: AnyRecord = {}) {
   return mediaItems(post).some((item) => String(item.type || '').startsWith('video/'));
 }
 
@@ -1745,7 +1773,7 @@ function recommendedModerationRisk(thread) {
   return Math.min(5, highRiskCount * 2 + mediumRiskCount + statusRisk + confidenceRisk);
 }
 
-function recommendedThreadFeatures(state, thread, referenceDate, context = {}) {
+function recommendedThreadFeatures(state: AnyRecord, thread: AnyRecord, referenceDate: Date, context: AnyRecord = {}) {
   const referenceMs = referenceDate.getTime();
   const createdMs = dateValue(thread.createdAt);
   const lastActivityAt = thread.bumpedAt || thread.createdAt;
@@ -1831,7 +1859,7 @@ function compareRecommendedThreads(left, right) {
   return Number(right.globalNumber) - Number(left.globalNumber);
 }
 
-function incrementHotBoardMetric(metrics, boardSlug, type, createdAt) {
+function incrementHotBoardMetric(metrics: Map<string, AnyRecord>, boardSlug: string, type: string, createdAt: string) {
   const metric = metrics.get(boardSlug);
   if (!metric) {
     return;
@@ -2048,7 +2076,7 @@ function findAnyPostByGlobalNumber(state, globalNumber) {
   return null;
 }
 
-function matchesAdminFilters(item, filters = {}, dateField = 'createdAt') {
+function matchesAdminFilters(item: AnyRecord, filters: AnyRecord = {}, dateField = 'createdAt') {
   if (filters.boardSlug && item.boardSlug !== filters.boardSlug) {
     return false;
   }
@@ -2077,7 +2105,7 @@ function matchesAdminFilters(item, filters = {}, dateField = 'createdAt') {
   return true;
 }
 
-function serializeAdminPost(postType, post, state, priorityContext = {}) {
+function serializeAdminPost(postType: string, post: AnyRecord, state: AnyRecord, priorityContext: AnyRecord = {}) {
   const parent = postType === 'comment' ? state.threads.find((thread) => thread.id === post.threadId) : null;
   return {
     type: postType,
@@ -2181,7 +2209,7 @@ function moderationSettingsForState(state, fallbackThreshold) {
   };
 }
 
-function serializeAdminReport(report, state, priorityContext = {}) {
+function serializeAdminReport(report: AnyRecord, state: AnyRecord, priorityContext: AnyRecord = {}) {
   const found = findAnyPostByGlobalNumber(state, report.globalNumber);
   const post = found?.post;
   return {
@@ -2209,7 +2237,7 @@ function aiBudgetKey({ kind, ip = '', posterToken = '', actor = 'public', create
   return `${day}:${kind}:${identity}`;
 }
 
-function consumeAiBudget(state, { kind, ip, posterToken, actor, createdAt }) {
+function consumeAiBudget(state: AnyRecord, { kind, ip, posterToken, actor, createdAt }: AnyRecord) {
   const limits = {
     summary: 20,
     suggestion: 30,
@@ -2364,7 +2392,7 @@ async function readImageStorageHealth(imageStorage) {
 export function createForumService({
   store,
   ai,
-  realtime = { publish() {}, count: () => 0 },
+  realtime = noopRealtime,
   now = () => new Date(),
   lifecycle = THREAD_LIFECYCLE,
   logger = noopLogger,
@@ -2373,7 +2401,7 @@ export function createForumService({
   webauthn = defaultWebAuthn,
   moderationConfidenceThreshold = readModerationConfidenceThreshold(),
   randomInt = crypto.randomInt
-}) {
+}: ForumServiceOptions) {
   // In-memory token blacklist for session revocation (logout).
   // Each entry maps jti/token → revokedAt timestamp string.
   // Tokens are cleaned up after 14 days (matching JWT maxAge).
@@ -2389,7 +2417,7 @@ export function createForumService({
     }
   }
 
-  function logEvent(event, payload = {}) {
+  function logEvent(event: string, payload: AnyRecord = {}) {
     if (logger === noopLogger) {
       return;
     }
@@ -2404,7 +2432,7 @@ export function createForumService({
   // collide). Queue is process-local; multi-instance deployments still need a
   // shared lock (see store notes).
   let mutateQueue = Promise.resolve();
-  function mutate(callback, { write = null } = {}) {
+  function mutate(callback: (state: AnyRecord) => any, { write = null }: AnyRecord = {}) {
     const run = mutateQueue.then(async () => {
       const state = await store.read();
       const result = await callback(state);
@@ -2481,7 +2509,11 @@ export function createForumService({
     return changed;
   }
 
-  function restoreDeletedPostRecord(state, found, { reason = '', actor = 'admin', restoredAt = now().toISOString(), action = 'admin:restore' } = {}) {
+  function restoreDeletedPostRecord(
+    state: AnyRecord,
+    found: AnyRecord,
+    { reason = '', actor = 'admin', restoredAt = now().toISOString(), action = 'admin:restore' }: AnyRecord = {}
+  ) {
     const safeReason = sanitizeReason(reason);
     found.post.isDeleted = false;
     found.post.restoredAt = restoredAt;
@@ -2577,7 +2609,7 @@ export function createForumService({
       return moderationSettingsForState(state, moderationConfidenceThreshold);
     },
 
-    async updateModerationSettings(settings = {}, { actor = 'admin' } = {}) {
+    async updateModerationSettings(settings: AnyRecord = {}, { actor = 'admin' }: AnyRecord = {}) {
       return mutate(async (state) => {
         const nextSettings = moderationSettingsForState(
           {
@@ -2648,7 +2680,7 @@ export function createForumService({
       };
     },
 
-    async registerAccount({ username, password, captchaToken, ip } = {}) {
+    async registerAccount({ username, password, captchaToken, ip }: AnyRecord = {}) {
       await requireCaptcha(captchaToken, ip);
       const safeUsername = assertAccountUsername(username);
       const safePassword = assertAccountPassword(password, { username: safeUsername });
@@ -2679,7 +2711,7 @@ export function createForumService({
       });
     },
 
-    async loginAccount({ username, password, captchaToken, ip } = {}) {
+    async loginAccount({ username, password, captchaToken, ip }: AnyRecord = {}) {
       await requireCaptcha(captchaToken, ip);
       const safeUsername = normalizeAccountUsername(username);
       const state = await store.read();
@@ -2731,7 +2763,7 @@ export function createForumService({
       return serializeAccount(state, user);
     },
 
-    async resetAccountPasswordWithRecoveryCode({ username, recoveryCode, newPassword, captchaToken, ip } = {}) {
+    async resetAccountPasswordWithRecoveryCode({ username, recoveryCode, newPassword, captchaToken, ip }: AnyRecord = {}) {
       await requireCaptcha(captchaToken, ip);
       const safeUsername = normalizeAccountUsername(username);
       const safePassword = assertAccountPassword(newPassword, { username: safeUsername });
@@ -2806,7 +2838,7 @@ export function createForumService({
       return serializeAccount(state, user);
     },
 
-    async updateAccountSettings(userId, settings = {}) {
+    async updateAccountSettings(userId: string, settings: AnyRecord = {}) {
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
@@ -2833,7 +2865,7 @@ export function createForumService({
       return serializeAccountPrivateData(user.privateData);
     },
 
-    async updateAccountPrivateData(userId, privateData = {}) {
+    async updateAccountPrivateData(userId: string, privateData: AnyRecord = {}) {
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
@@ -2948,7 +2980,10 @@ export function createForumService({
         .sort((left, right) => left.username.localeCompare(right.username));
     },
 
-    async createPrivilegedUser({ username, password, role = 'viewer', disabled = false } = {}, { actor = 'admin' } = {}) {
+    async createPrivilegedUser(
+      { username, password, role = 'viewer', disabled = false }: AnyRecord = {},
+      { actor = 'admin' }: AnyRecord = {}
+    ) {
       const safeUsername = assertAccountUsername(username);
       const safePassword = assertAccountPassword(password, { username: safeUsername });
       const safeRole = normalizeManagedPrivilegedRole(role);
@@ -2977,7 +3012,7 @@ export function createForumService({
       });
     },
 
-    async updatePrivilegedUser(userId, updates = {}, { actor = 'admin', actorId = '' } = {}) {
+    async updatePrivilegedUser(userId: string, updates: AnyRecord = {}, { actor = 'admin', actorId = '' }: AnyRecord = {}) {
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user || !isPrivilegedAccount(user)) {
@@ -3012,7 +3047,7 @@ export function createForumService({
       });
     },
 
-    async disablePrivilegedUser(userId, { actor = 'admin', actorId = '' } = {}) {
+    async disablePrivilegedUser(userId: string, { actor = 'admin', actorId = '' }: AnyRecord = {}) {
       return this.updatePrivilegedUser(userId, { disabled: true }, { actor, actorId });
     },
 
@@ -3336,7 +3371,7 @@ export function createForumService({
       return [...threads, ...comments].sort(compareNewestPosts).slice(0, safeLimit);
     },
 
-    async listRecommendedThreads(limit = 10, options = {}) {
+    async listRecommendedThreads(limit = 10, options: AnyRecord = {}) {
       const state = await store.read();
       const referenceDate = now();
       const referenceMs = referenceDate.getTime();
@@ -3389,7 +3424,7 @@ export function createForumService({
           .filter((thread) => publicThread(state, thread) && !thread.isArchived)
           .map((thread) => thread.id)
       );
-      const metrics = new Map(
+      const metrics = new Map<string, AnyRecord>(
         publicBoards.map((board) => [
           board.slug,
           {
@@ -3475,7 +3510,7 @@ export function createForumService({
         }));
     },
 
-    async listModerationActions(limit = 50, filters = {}) {
+    async listModerationActions(limit = 50, filters: AnyRecord = {}) {
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
       const actions = typeof store.readModerationActions === 'function'
         ? await store.readModerationActions({ limit: safeLimit, filters })
@@ -3487,7 +3522,7 @@ export function createForumService({
         .slice(0, safeLimit);
     },
 
-    async listReports(limit = 50, filters = {}) {
+    async listReports(limit = 50, filters: AnyRecord = {}) {
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
       const state = typeof store.readReportsModerationState === 'function'
         ? await store.readReportsModerationState({ limit: safeLimit, filters })
@@ -3506,7 +3541,7 @@ export function createForumService({
         .slice(0, safeLimit);
     },
 
-    async listThreads(boardSlug, options = {}) {
+    async listThreads(boardSlug: string, options: AnyRecord = {}) {
       const state = await store.read();
       if (!findBoard(state, boardSlug, { publicOnly: true })) {
         const error = new Error('Không tìm thấy bảng');
@@ -3568,7 +3603,7 @@ export function createForumService({
       });
     },
 
-    async setThreadSticky(threadId, sticky, { actor = 'admin' } = {}) {
+    async setThreadSticky(threadId: string, sticky: boolean, { actor = 'admin' }: AnyRecord = {}) {
       return mutate(async (state) => {
         const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
         if (!thread) {
@@ -3601,7 +3636,7 @@ export function createForumService({
       });
     },
 
-    async setThreadLocked(threadId, locked, { actor = 'admin' } = {}) {
+    async setThreadLocked(threadId: string, locked: boolean, { actor = 'admin' }: AnyRecord = {}) {
       return mutate(async (state) => {
         const thread = state.threads.find((item) => item.id === threadId && activePublicThread(item));
         if (!thread) {
@@ -3773,7 +3808,7 @@ export function createForumService({
       });
     },
 
-    async getThread(threadId, options = {}) {
+    async getThread(threadId: string, options: AnyRecord = {}) {
       const state = await store.read();
       const thread = state.threads.find((item) => item.id === threadId && publicThread(state, item));
       if (!thread) {
@@ -4009,7 +4044,7 @@ export function createForumService({
       });
     },
 
-    async votePoll(threadId, { optionId, ip, posterToken } = {}) {
+    async votePoll(threadId: string, { optionId, ip, posterToken }: AnyRecord = {}) {
       const selectedOptionId = String(optionId ?? '');
       return mutate(async (state) => {
         const thread = state.threads.find((item) => item.id === threadId && publicThread(state, item) && !item.isArchived);
@@ -4104,7 +4139,7 @@ export function createForumService({
       });
     },
 
-    async submitAppeal({ token, reason, ip, posterToken } = {}) {
+    async submitAppeal({ token, reason, ip, posterToken }: AnyRecord = {}) {
       const safeToken = normalizeAppealToken(token);
       const safeReason = sanitizeAppealReason(reason);
       if (!safeToken || !safeReason) {
@@ -4158,7 +4193,7 @@ export function createForumService({
       });
     },
 
-    async votePost({ globalNumber, direction, accountId } = {}) {
+    async votePost({ globalNumber, direction, accountId }: AnyRecord = {}) {
       const dir = direction === 'up' || direction === 'down' ? direction : null;
       if (!dir) {
         const error = new Error('Lựa chọn vote không hợp lệ');
@@ -4214,7 +4249,7 @@ export function createForumService({
       });
     },
 
-    async reactPost({ globalNumber, reaction, accountId, ip, posterToken } = {}) {
+    async reactPost({ globalNumber, reaction, accountId, ip, posterToken }: AnyRecord = {}) {
       const reactionType = normalizeReactionType(reaction);
 
       return mutate(async (state) => {
@@ -4237,7 +4272,7 @@ export function createForumService({
         }
 
         const reactions = Object.fromEntries([...POST_REACTION_TYPES].map((type) => [type, 0]));
-        for (const value of Object.values(post.reactionVoters)) {
+        for (const value of Object.values(post.reactionVoters) as string[]) {
           if (POST_REACTION_TYPES.has(value)) {
             reactions[value] += 1;
           }
@@ -4258,7 +4293,7 @@ export function createForumService({
       });
     },
 
-    async deletePost({ globalNumber, password, fileOnly = false } = {}) {
+    async deletePost({ globalNumber, password, fileOnly = false }: AnyRecord = {}) {
       return mutate(async (state) => {
         const found = findPublicPostByGlobalNumber(state, globalNumber);
         if (!found) {
@@ -4302,7 +4337,7 @@ export function createForumService({
       });
     },
 
-    async listPending(filters = {}, limit = 100) {
+    async listPending(filters: AnyRecord = {}, limit = 100) {
       const state = typeof store.readPendingModerationState === 'function'
         ? await store.readPendingModerationState()
         : await store.read();
@@ -4325,7 +4360,7 @@ export function createForumService({
         .slice(0, safeLimit);
     },
 
-    async listDeleted(limit = 50, filters = {}) {
+    async listDeleted(limit = 50, filters: AnyRecord = {}) {
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
       const state = typeof store.readDeletedModerationState === 'function'
         ? await store.readDeletedModerationState({ limit: safeLimit, filters })
@@ -4343,7 +4378,7 @@ export function createForumService({
         .slice(0, safeLimit);
     },
 
-    async listAppeals(limit = 50, filters = {}) {
+    async listAppeals(limit = 50, filters: AnyRecord = {}) {
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
       const state = typeof store.readAppealsModerationState === 'function'
         ? await store.readAppealsModerationState({ limit: safeLimit, filters })
@@ -4367,7 +4402,7 @@ export function createForumService({
         .map((appeal) => serializeAppeal(appeal, state));
     },
 
-    async listApprovedHistory(limit = 50, filters = {}) {
+    async listApprovedHistory(limit = 50, filters: AnyRecord = {}) {
       return this.listModerationActions(limit, { ...filters, action: 'admin:approve' });
     },
 
@@ -4411,7 +4446,7 @@ export function createForumService({
       };
     },
 
-    async resolveAppeal(id, { status = 'rejected', reason = '', actor = 'admin' } = {}) {
+    async resolveAppeal(id: string, { status = 'rejected', reason = '', actor = 'admin' }: AnyRecord = {}) {
       const safeStatus = APPEAL_RESOLUTION_STATUSES.has(String(status)) ? String(status) : '';
       if (!safeStatus) {
         const error = new Error('Trạng thái kháng nghị không hợp lệ');
@@ -4472,7 +4507,7 @@ export function createForumService({
       });
     },
 
-    async adminEditPost(globalNumber, { body = '', reason = '', actor = 'admin' } = {}) {
+    async adminEditPost(globalNumber: number, { body = '', reason = '', actor = 'admin' }: AnyRecord = {}) {
       assertPostBodySize(body);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
@@ -4539,7 +4574,7 @@ export function createForumService({
       });
     },
 
-    async adminDeletePost(globalNumber, { reason = '', actor = 'admin', fileOnly = false } = {}) {
+    async adminDeletePost(globalNumber: number, { reason = '', actor = 'admin', fileOnly = false }: AnyRecord = {}) {
       return mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
         if (!found || found.post.isDeleted) {
@@ -4590,7 +4625,7 @@ export function createForumService({
       });
     },
 
-    async editPostWithPassword(globalNumber, { password = '', body = '' } = {}) {
+    async editPostWithPassword(globalNumber: number, { password = '', body = '' }: AnyRecord = {}) {
       assertPostBodySize(body);
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
@@ -4678,7 +4713,7 @@ export function createForumService({
       });
     },
 
-    async adminRestorePost(globalNumber, { reason = '', actor = 'admin' } = {}) {
+    async adminRestorePost(globalNumber: number, { reason = '', actor = 'admin' }: AnyRecord = {}) {
       return mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
         if (!found || !found.post.isDeleted) {
@@ -4692,7 +4727,7 @@ export function createForumService({
       });
     },
 
-    async editAccountPost(globalNumber, { accountId, body = '', image, images, replaceImages = false } = {}) {
+    async editAccountPost(globalNumber: number, { accountId, body = '', image, images, replaceImages = false }: AnyRecord = {}) {
       if (!accountId) {
         const error = new Error('Vui lòng đăng nhập tài khoản để sửa bài');
         error.statusCode = 401;
@@ -4800,7 +4835,7 @@ export function createForumService({
       });
     },
 
-    async addModeratorNote(globalNumber, { note = '', actor = 'admin' } = {}) {
+    async addModeratorNote(globalNumber: number, { note = '', actor = 'admin' }: AnyRecord = {}) {
       const safeNote = sanitizeReason(note);
       if (!safeNote) {
         const error = new Error('Ghi chú là bắt buộc');
@@ -4835,7 +4870,7 @@ export function createForumService({
       });
     },
 
-    async listSanctions(limit = 50, filters = {}) {
+    async listSanctions(limit = 50, filters: AnyRecord = {}) {
       const safeLimit = Math.max(1, Math.min(Number(limit) || 50, 200));
       const sanctions = typeof store.readSanctions === 'function'
         ? await store.readSanctions({ limit: safeLimit, filters })
@@ -4861,7 +4896,7 @@ export function createForumService({
         .map(serializeSanction);
     },
 
-    async createSanctionForPost(globalNumber, { kind = 'cooldown', durationMinutes, reason = '', actor = 'admin' } = {}) {
+    async createSanctionForPost(globalNumber: number, { kind = 'cooldown', durationMinutes, reason = '', actor = 'admin' }: AnyRecord = {}) {
       const safeKind = kind === 'ban' ? 'ban' : 'cooldown';
       const safeDuration = sanitizeDurationMinutes(durationMinutes, safeKind === 'ban' ? 24 * 60 : 60);
       const safeReason = sanitizeReason(reason) || (safeKind === 'ban' ? 'Tạm khóa' : 'Cooldown');
@@ -4933,7 +4968,7 @@ export function createForumService({
       });
     },
 
-    async revokeSanction(id, { reason = '', actor = 'admin' } = {}) {
+    async revokeSanction(id: string, { reason = '', actor = 'admin' }: AnyRecord = {}) {
       if (typeof store.revokeSanction === 'function') {
         const revokedAt = now().toISOString();
         const revokeReason = sanitizeReason(reason);
@@ -4979,7 +5014,7 @@ export function createForumService({
       });
     },
 
-    async approvePending(id, { reason = '', actor = 'admin' } = {}) {
+    async approvePending(id: string, { reason = '', actor = 'admin' }: AnyRecord = {}) {
       if (typeof store.approvePending === 'function') {
         const actionAt = now().toISOString();
         const moderationReason = sanitizeReason(reason);
@@ -5071,7 +5106,7 @@ export function createForumService({
       });
     },
 
-    async deletePending(id, { reason = '', actor = 'admin' } = {}) {
+    async deletePending(id: string, { reason = '', actor = 'admin' }: AnyRecord = {}) {
       return mutate(async (state) => {
         const post =
           state.threads.find((item) => item.id === id && item.isPending && !item.isDeleted) ??
@@ -5102,7 +5137,7 @@ export function createForumService({
       });
     },
 
-    async checkDuplicateThread({ boardSlug, body, ip, posterToken, actor = 'public' } = {}) {
+    async checkDuplicateThread({ boardSlug, body, ip, posterToken, actor = 'public' }: AnyRecord = {}) {
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
         const error = new Error('Nội dung là bắt buộc');
@@ -5151,7 +5186,7 @@ export function createForumService({
       }
     },
 
-    async summarizeThread(threadId, { ip, posterToken, actor = 'public', sinceGlobalNumber = 0 } = {}) {
+    async summarizeThread(threadId: string, { ip, posterToken, actor = 'public', sinceGlobalNumber = 0 }: AnyRecord = {}) {
       const detail = await this.getThread(threadId);
       const sinceNumber = sanitizeSinceGlobalNumber(sinceGlobalNumber);
       const comments = sinceNumber
@@ -5175,7 +5210,7 @@ export function createForumService({
       });
     },
 
-    async summarizeBoard(boardSlug, { ip, posterToken, actor = 'public' } = {}) {
+    async summarizeBoard(boardSlug: string, { ip, posterToken, actor = 'public' }: AnyRecord = {}) {
       const threads = await this.listThreads(boardSlug);
       const items = threads.map((thread) => ({ body: redactSensitiveText(thread.body) }));
       return mutate(async (state) => {
@@ -5194,7 +5229,7 @@ export function createForumService({
     // account data, IPs, session/poster/admin tokens, or captcha tokens are
     // read or sent to AI. Result is explicitly labelled as AI-generated, cached
     // per day, and guarded by a stricter admin digest budget.
-    async generateBoardDigest({ ip, actor = 'admin', limit = 50 } = {}) {
+    async generateBoardDigest({ ip, actor = 'admin', limit = 50 }: AnyRecord = {}) {
       const label = 'Nội dung do AI tổng hợp';
       return mutate(async (state) => {
         const createdAt = now().toISOString();
@@ -5234,7 +5269,7 @@ export function createForumService({
       });
     },
 
-    async suggestComments(threadId, { ip, posterToken, actor = 'public' } = {}) {
+    async suggestComments(threadId: string, { ip, posterToken, actor = 'public' }: AnyRecord = {}) {
       const detail = await this.getThread(threadId);
       const items = [detail.thread, ...detail.comments.slice(-3)].map((item) => ({
         body: redactSensitiveText(item.body)
@@ -5252,7 +5287,7 @@ export function createForumService({
       });
     },
 
-    async rewriteDraft({ body, ip, posterToken, actor = 'public', tone = 'neutral' } = {}) {
+    async rewriteDraft({ body, ip, posterToken, actor = 'public', tone = 'neutral' }: AnyRecord = {}) {
       const normalizedBody = normalizeBody(body);
       if (!normalizedBody) {
         const error = new Error('Nội dung là bắt buộc');
@@ -5273,7 +5308,7 @@ export function createForumService({
       });
     },
 
-    async translateDraft({ text, targetLang = 'vi', ip, posterToken, actor = 'public' } = {}) {
+    async translateDraft({ text, targetLang = 'vi', ip, posterToken, actor = 'public' }: AnyRecord = {}) {
       const normalizedText = normalizeBody(text);
       if (!normalizedText) {
         const error = new Error('Nội dung là bắt buộc');
@@ -5289,7 +5324,7 @@ export function createForumService({
       });
     },
 
-    async transcribeAudio({ audio, ip, posterToken, actor = 'public' } = {}) {
+    async transcribeAudio({ audio, ip, posterToken, actor = 'public' }: AnyRecord = {}) {
       assertAiMedia(audio, 12 * 1024 * 1024, 'audio');
       return mutate(async (state) => {
         consumeAiBudget(state, { kind: 'transcribe', ip, posterToken, actor, createdAt: now().toISOString() });
@@ -5298,7 +5333,7 @@ export function createForumService({
       });
     },
 
-    async captionImage({ image, mode = 'describe', ip, posterToken, actor = 'public' } = {}) {
+    async captionImage({ image, mode = 'describe', ip, posterToken, actor = 'public' }: AnyRecord = {}) {
       assertAiMedia(image, 8 * 1024 * 1024, 'image');
       const safeMode = mode === 'ocr' ? 'ocr' : 'describe';
       return mutate(async (state) => {
@@ -5308,7 +5343,7 @@ export function createForumService({
       });
     },
 
-    async speakText({ text, voice, languageCode, ip, posterToken, actor = 'public' } = {}) {
+    async speakText({ text, voice, languageCode, ip, posterToken, actor = 'public' }: AnyRecord = {}) {
       const normalizedText = normalizeBody(text);
       if (!normalizedText) {
         const error = new Error('Nội dung là bắt buộc');
@@ -5328,7 +5363,7 @@ export function createForumService({
       });
     },
 
-    async summarizePostReports(globalNumber, { ip, actor = 'admin' } = {}) {
+    async summarizePostReports(globalNumber: number, { ip, actor = 'admin' }: AnyRecord = {}) {
       return mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
         if (!found) {
@@ -5377,7 +5412,7 @@ export function createForumService({
 
       let totalAiUsage = 0;
       const byKind = { moderation: 0, summary: 0, suggestion: 0, rewrite: 0 };
-      const dailyUsage = {};
+      const dailyUsage: AnyRecord = {};
 
       for (const key of Object.keys(state.aiUsage || {})) {
         const val = state.aiUsage[key];
@@ -5457,7 +5492,10 @@ export function createForumService({
       };
     },
 
-    async createBoard({ slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt, retentionPolicy } = {}, { actor } = {}) {
+    async createBoard(
+      { slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt, retentionPolicy }: AnyRecord = {},
+      { actor }: AnyRecord = {}
+    ) {
       const input = normalizeBoardInput({ slug, name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt });
       if (input.temporary && !input.eventEndsAt) {
         const error = new Error('Board sự kiện cần thời điểm kết thúc');
@@ -5470,7 +5508,7 @@ export function createForumService({
           error.statusCode = 409;
           throw error;
         }
-        const board = {
+        const board: AnyRecord = {
           ...input,
           isHidden: Boolean(input.isHidden),
           isArchived: Boolean(input.isArchived),
@@ -5482,7 +5520,11 @@ export function createForumService({
       });
     },
 
-    async updateBoard(slug, { name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt, retentionPolicy } = {}, { actor } = {}) {
+    async updateBoard(
+      slug: string,
+      { name, category, description, rules, banner, isHidden, isArchived, temporary, eventEndsAt, retentionPolicy }: AnyRecord = {},
+      { actor }: AnyRecord = {}
+    ) {
       const safeSlug = String(slug ?? '').trim().toLowerCase();
       if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
         const error = new Error('Slug board không hợp lệ');
@@ -5522,7 +5564,7 @@ export function createForumService({
       });
     },
 
-    async deleteBoard(slug, { actor } = {}) {
+    async deleteBoard(slug: string, { actor }: AnyRecord = {}) {
       const safeSlug = String(slug ?? '').trim().toLowerCase();
       if (!BOARD_SLUG_PATTERN.test(safeSlug)) {
         const error = new Error('Slug board không hợp lệ');

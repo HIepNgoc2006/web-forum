@@ -4,7 +4,7 @@ import path from 'node:path';
 import { test } from 'node:test';
 import mongoose from 'mongoose';
 
-import { createForumService } from '../src/core/forum-service.js';
+import { createForumService } from '../src/core/forum-service.ts';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createS3ImageStorage } from '../src/core/image-storage.ts';
 import { migrateInlineImages } from '../src/core/image-migration.ts';

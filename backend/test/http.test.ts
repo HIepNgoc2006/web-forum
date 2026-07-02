@@ -6,7 +6,7 @@ import path from 'node:path';
 import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 
-import { createForumService } from '../src/core/forum-service.js';
+import { createForumService } from '../src/core/forum-service.ts';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createLocalImageStorage } from '../src/core/image-storage.ts';
 import { BOARDS } from '../src/core/config.ts';
