@@ -125,8 +125,9 @@ describe('seed data export sanitization', () => {
     assert.equal(Object.hasOwn(seed.threads[0], 'authorFingerprint'), false);
     assert.equal(Object.hasOwn(seed.threads[0], 'posterToken'), false);
     assert.equal(Object.hasOwn(seed.threads[0], 'accountId'), false);
-    assert.equal(Object.hasOwn(seed.threads[0].image, 'dataUrl'), false);
-    assert.equal(Object.hasOwn(seed.threads[0].image.thumbnail, 'dataUrl'), false);
+    const image = seed.threads[0].image as Record<string, any>;
+    assert.equal(Object.hasOwn(image, 'dataUrl'), false);
+    assert.equal(Object.hasOwn(image.thumbnail, 'dataUrl'), false);
     assert.equal(Object.hasOwn(seed.comments[0], 'captchaToken'), false);
   });
 });

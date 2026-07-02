@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createJsonStore } from '../src/core/forum-store.js';
+import { createJsonStore } from '../src/core/forum-store.ts';
 import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.ts';
 import { createMongoStore } from '../src/core/mongo-store.js';
 import { createBackupScheduler, runBackupJob } from '../src/core/backup-scheduler.ts';

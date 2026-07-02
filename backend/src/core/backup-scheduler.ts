@@ -2,7 +2,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
-import { normalizeState } from './forum-store.js';
+import { normalizeState } from './forum-store.ts';
 
 type Logger = (entry: Record<string, unknown>) => void;
 type BackupStore = {

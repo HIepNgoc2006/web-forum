@@ -7,7 +7,7 @@ import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 
 import { createForumService } from '../src/core/forum-service.js';
-import { createMemoryStore } from '../src/core/forum-store.js';
+import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createLocalImageStorage } from '../src/core/image-storage.ts';
 import { BOARDS } from '../src/core/config.ts';
 import { createHttpServer } from '../src/server/http-app.js';

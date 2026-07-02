@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import mongoose from 'mongoose';
 
 import { BOARDS } from './config.ts';
-import { EMPTY_STATE, normalizeState } from './forum-store.js';
+import { EMPTY_STATE, normalizeState } from './forum-store.ts';
 
 const MODEL_OPTIONS = {
   strict: false,

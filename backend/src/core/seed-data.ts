@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { normalizeState } from './forum-store.js';
+import { normalizeState } from './forum-store.ts';
 
 type SeedRecord = Record<string, unknown>;
 type SeedValidationError = Error & {

@@ -4,7 +4,7 @@ import { test } from 'node:test';
 import type { AddressInfo } from 'node:net';
 
 import { createForumService } from '../src/core/forum-service.js';
-import { createMemoryStore } from '../src/core/forum-store.js';
+import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createHttpServer } from '../src/server/http-app.js';
 import { sanitizeText } from '../src/core/text-format.ts';
 import { redactSensitiveText } from '../src/core/ai.js';

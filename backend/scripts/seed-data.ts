@@ -3,7 +3,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { createJsonStore } from '../src/core/forum-store.js';
+import { createJsonStore } from '../src/core/forum-store.ts';
 import { createMongoStore } from '../src/core/mongo-store.js';
 import { exportSeedData, importSeedData, readSeedFile, restoreSeedRollback } from '../src/core/seed-data.ts';
 

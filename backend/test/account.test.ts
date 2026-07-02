@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
 
 import { createForumService } from '../src/core/forum-service.js';
-import { createMemoryStore } from '../src/core/forum-store.js';
+import { createMemoryStore } from '../src/core/forum-store.ts';
 import { signJwt, verifyJwt } from '../src/core/security.js';
 
 type ServiceError = {
