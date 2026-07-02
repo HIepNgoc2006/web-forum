@@ -3,6 +3,7 @@ import { EventEmitter, once } from 'node:events';
 import fs from 'node:fs/promises';
 import https from 'node:https';
 import path from 'node:path';
+import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 
 import { createForumService } from '../src/core/forum-service.js';
@@ -10,6 +11,35 @@ import { createMemoryStore } from '../src/core/forum-store.js';
 import { createLocalImageStorage } from '../src/core/image-storage.js';
 import { BOARDS } from '../src/core/config.js';
 import { createHttpServer } from '../src/server/http-app.js';
+
+type LooseJson = {
+  data?: any;
+  error?: any;
+  feed_url?: any;
+  items?: any;
+  title?: any;
+  version?: any;
+  [key: string]: any;
+};
+
+type WithServerOptions = {
+  ai?: unknown;
+  store?: unknown;
+  now?: () => Date;
+  imageStorage?: unknown;
+  uploadRoot?: string;
+  staticRoot?: string;
+  jwtSecret?: string;
+  realtime?: unknown;
+  rateLimitStore?: unknown;
+  rateLimitFailureMode?: unknown;
+  rateLimitLogger?: unknown;
+  forceConnectionClose?: boolean;
+};
+
+async function readJson(response: Response): Promise<LooseJson> {
+  return response.json() as Promise<LooseJson>;
+}
 
 const safeAi = {
   async moderate() {
@@ -57,7 +87,7 @@ const flaggedAi = {
 };
 
 async function withServer(
-  callback,
+  callback: (baseUrl: string) => Promise<void>,
   {
     ai = safeAi,
     store = createMemoryStore(),
@@ -71,7 +101,7 @@ async function withServer(
     rateLimitFailureMode,
     rateLimitLogger,
     forceConnectionClose
-  } = {}
+  }: WithServerOptions = {}
 ) {
   const service = createForumService({
     store,
@@ -79,7 +109,7 @@ async function withServer(
     realtime,
     now,
     imageStorage
-  });
+  } as Parameters<typeof createForumService>[0]);
   const server = createHttpServer({
     service,
     realtime,
@@ -92,10 +122,10 @@ async function withServer(
     rateLimitFailureMode,
     rateLimitLogger,
     forceConnectionClose
-  });
+  } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
-  const { port } = server.address();
+  const { port } = server.address() as AddressInfo;
   try {
     await callback(`http://127.0.0.1:${port}`);
   } finally {
@@ -104,12 +134,12 @@ async function withServer(
   }
 }
 
-function createCountingRateLimitStore({ fail = false } = {}) {
+function createCountingRateLimitStore({ fail = false }: { fail?: boolean } = {}) {
   const counts = new Map();
-  const calls = [];
+  const calls: string[] = [];
   return {
     calls,
-    async increment(key, { windowMs, now }) {
+    async increment(key: string, { windowMs, now }: { windowMs: number; now: number }) {
       calls.push(key);
       if (fail) {
         throw new Error('shared limiter unavailable');
@@ -121,7 +151,7 @@ function createCountingRateLimitStore({ fail = false } = {}) {
   };
 }
 
-async function withEnv(overrides, callback) {
+async function withEnv<T>(overrides: Record<string, string | undefined>, callback: () => Promise<T>) {
   const original = Object.fromEntries(Object.keys(overrides).map((key) => [key, process.env[key]]));
   for (const [key, value] of Object.entries(overrides)) {
     if (value === undefined) {
@@ -144,13 +174,21 @@ async function withEnv(overrides, callback) {
   }
 }
 
-async function withFakeHcaptcha(responses, callback) {
+async function withFakeHcaptcha<T>(
+  responses: Array<Record<string, unknown>>,
+  callback: (calls: Array<{ options: any; body: string }>) => Promise<T>
+) {
   const queue = [...responses];
-  const calls = [];
+  const calls: Array<{ options: any; body: string }> = [];
   const originalRequest = https.request;
 
-  https.request = (options, onResponse) => {
-    const request = new EventEmitter();
+  https.request = ((options, onResponse) => {
+    const request = new EventEmitter() as EventEmitter & {
+      write(chunk: unknown): void;
+      setTimeout(): typeof request;
+      destroy(): void;
+      end(): void;
+    };
     let body = '';
     request.write = (chunk) => {
       body += chunk;
@@ -162,13 +200,13 @@ async function withFakeHcaptcha(responses, callback) {
       const response = new EventEmitter();
       const payload = queue.length > 0 ? queue.shift() : { success: false };
       process.nextTick(() => {
-        onResponse(response);
+        onResponse?.(response as any);
         response.emit('data', JSON.stringify(payload));
         response.emit('end');
       });
     };
-    return request;
-  };
+    return request as any;
+  }) as typeof https.request;
 
   try {
     return await callback(calls);
@@ -181,7 +219,7 @@ test('http server can force non-SSE responses to close the connection', async ()
   await withServer(
     async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/config`);
-      const body = await response.json();
+      const body = await readJson(response);
 
       assert.equal(response.status, 200);
       assert.equal(response.headers.get('connection'), 'close');
@@ -201,7 +239,7 @@ test('http api creates public thread and protects admin pending queue', async ()
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     assert.equal(created.status, 201);
     assert.equal(createdBody.data.thread.diceRolls.length, 1);
     assert.equal(createdBody.data.thread.diceRolls[0].expression, '1d6');
@@ -210,7 +248,7 @@ test('http api creates public thread and protects admin pending queue', async ()
     assert.equal(createdBody.data.thread.diceRolls[0].rolls[0] <= 6, true);
 
     const listed = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
-    const listedBody = await listed.json();
+    const listedBody = await readJson(listed);
     assert.equal(listedBody.data.length, 1);
     assert.equal(listedBody.data[0].displayName, 'Anonymous');
     assert.deepEqual(listedBody.data[0].diceRolls, createdBody.data.thread.diceRolls);
@@ -223,7 +261,7 @@ test('http api creates public thread and protects admin pending queue', async ()
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     assert.equal(login.status, 200);
     assert.equal(typeof loginBody.data.token, 'string');
   });
@@ -241,7 +279,7 @@ test('http hCaptcha enabled rejects missing captcha token for thread and comment
             captchaToken: 'valid-hcaptcha-token'
           })
         });
-        const createdBody = await created.json();
+        const createdBody = await readJson(created);
         assert.equal(created.status, 201);
 
         const missingThreadCaptcha = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
@@ -249,14 +287,14 @@ test('http hCaptcha enabled rejects missing captcha token for thread and comment
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ body: 'Khong co captcha' })
         });
-        const missingThreadBody = await missingThreadCaptcha.json();
+        const missingThreadBody = await readJson(missingThreadCaptcha);
 
         const missingCommentCaptcha = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ body: 'Binh luan khong co captcha' })
         });
-        const missingCommentBody = await missingCommentCaptcha.json();
+        const missingCommentBody = await readJson(missingCommentCaptcha);
 
         assert.equal(missingThreadCaptcha.status, 403);
         assert.equal(missingThreadBody.error.message, 'Xác minh hCaptcha thất bại');
@@ -286,7 +324,7 @@ test('http hCaptcha enabled normalizes invalid captcha failures without real net
               captchaToken: 'invalid-thread-token'
             })
           });
-          const invalidThreadBody = await invalidThread.json();
+          const invalidThreadBody = await readJson(invalidThread);
 
           const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
             method: 'POST',
@@ -296,7 +334,7 @@ test('http hCaptcha enabled normalizes invalid captcha failures without real net
               captchaToken: 'valid-comment-setup-token'
             })
           });
-          const createdBody = await created.json();
+          const createdBody = await readJson(created);
 
           const invalidComment = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
             method: 'POST',
@@ -306,7 +344,7 @@ test('http hCaptcha enabled normalizes invalid captcha failures without real net
               captchaToken: 'invalid-comment-token'
             })
           });
-          const invalidCommentBody = await invalidComment.json();
+          const invalidCommentBody = await readJson(invalidComment);
 
           assert.equal(invalidThread.status, 403);
           assert.equal(invalidThreadBody.error.message, 'Xác minh hCaptcha thất bại');
@@ -334,7 +372,7 @@ test('http dev-pass captcha bypass works in test mode and is rejected in product
           captchaToken: 'dev-pass'
         })
       });
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
       assert.equal(created.status, 201);
 
       await withEnv({ HCAPTCHA_SECRET: undefined, NODE_ENV: 'production' }, async () => {
@@ -346,7 +384,7 @@ test('http dev-pass captcha bypass works in test mode and is rejected in product
             captchaToken: 'dev-pass'
           })
         });
-        const productionThreadBody = await productionThread.json();
+        const productionThreadBody = await readJson(productionThread);
 
         const productionComment = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
           method: 'POST',
@@ -356,7 +394,7 @@ test('http dev-pass captcha bypass works in test mode and is rejected in product
             captchaToken: 'dev-pass'
           })
         });
-        const productionCommentBody = await productionComment.json();
+        const productionCommentBody = await readJson(productionComment);
 
         assert.equal(productionThread.status, 403);
         assert.equal(productionThreadBody.error.message, 'Xác minh hCaptcha thất bại');
@@ -375,7 +413,7 @@ test('http admin roles gate privileged user and moderation permissions', async (
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const ownerLoginBody = await ownerLogin.json();
+      const ownerLoginBody = await readJson(ownerLogin);
       const ownerHeaders = {
         authorization: `Bearer ${ownerLoginBody.data.token}`,
         'content-type': 'application/json'
@@ -386,17 +424,17 @@ test('http admin roles gate privileged user and moderation permissions', async (
         headers: ownerHeaders,
         body: JSON.stringify({ username: 'queue_mod', password: 'moderator-pass', role: 'moderator' })
       });
-      const moderatorBody = await moderator.json();
+      const moderatorBody = await readJson(moderator);
       const viewer = await fetch(`${baseUrl}/api/admin/users`, {
         method: 'POST',
         headers: ownerHeaders,
         body: JSON.stringify({ username: 'queue_view', password: 'viewer-pass-1', role: 'viewer' })
       });
-      const viewerBody = await viewer.json();
+      const viewerBody = await readJson(viewer);
       const users = await fetch(`${baseUrl}/api/admin/users`, {
         headers: { authorization: ownerHeaders.authorization }
       });
-      const usersBody = await users.json();
+      const usersBody = await readJson(users);
       const serializedUsers = JSON.stringify(usersBody.data);
 
       assert.equal(moderator.status, 201);
@@ -414,14 +452,14 @@ test('http admin roles gate privileged user and moderation permissions', async (
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ body: 'Pending role test', captchaToken: 'dev-pass' })
       });
-      const pendingPostBody = await pendingPost.json();
+      const pendingPostBody = await readJson(pendingPost);
 
       const moderatorLogin = await fetch(`${baseUrl}/api/account/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'queue_mod', password: 'moderator-pass', captchaToken: 'dev-pass' })
       });
-      const moderatorLoginBody = await moderatorLogin.json();
+      const moderatorLoginBody = await readJson(moderatorLogin);
       const moderatorHeaders = {
         authorization: `Bearer ${moderatorLoginBody.data.token}`,
         'content-type': 'application/json'
@@ -431,7 +469,7 @@ test('http admin roles gate privileged user and moderation permissions', async (
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'queue_view', password: 'viewer-pass-1', captchaToken: 'dev-pass' })
       });
-      const viewerLoginBody = await viewerLogin.json();
+      const viewerLoginBody = await readJson(viewerLogin);
       const viewerHeaders = {
         authorization: `Bearer ${viewerLoginBody.data.token}`,
         'content-type': 'application/json'
@@ -480,7 +518,7 @@ test('http admin role demotion and disable affect existing tokens', async () => 
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const ownerLoginBody = await ownerLogin.json();
+      const ownerLoginBody = await readJson(ownerLogin);
       const ownerHeaders = {
         authorization: `Bearer ${ownerLoginBody.data.token}`,
         'content-type': 'application/json'
@@ -490,14 +528,14 @@ test('http admin role demotion and disable affect existing tokens', async () => 
         headers: ownerHeaders,
         body: JSON.stringify({ username: 'demote_mod', password: 'moderator-pass', role: 'moderator' })
       });
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
 
       const moderatorLogin = await fetch(`${baseUrl}/api/account/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'demote_mod', password: 'moderator-pass', captchaToken: 'dev-pass' })
       });
-      const moderatorLoginBody = await moderatorLogin.json();
+      const moderatorLoginBody = await readJson(moderatorLogin);
       const moderatorHeaders = {
         authorization: `Bearer ${moderatorLoginBody.data.token}`,
         'content-type': 'application/json'
@@ -603,7 +641,7 @@ test('http capcode is granted to admins but denied to regular and anonymous post
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ body: 'Anon doi capcode', captchaToken: 'dev-pass', capcode: true })
     });
-    const anonBody = await anon.json();
+    const anonBody = await readJson(anon);
     assert.equal(anon.status, 201);
     assert.equal(anonBody.data.thread.capcode, null);
 
@@ -613,7 +651,7 @@ test('http capcode is granted to admins but denied to regular and anonymous post
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'sinhvien_cap', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const registeredBody = await registered.json();
+    const registeredBody = await readJson(registered);
     const userThread = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
       method: 'POST',
       headers: {
@@ -622,7 +660,7 @@ test('http capcode is granted to admins but denied to regular and anonymous post
       },
       body: JSON.stringify({ body: 'User doi capcode', captchaToken: 'dev-pass', capcode: true })
     });
-    const userThreadBody = await userThread.json();
+    const userThreadBody = await readJson(userThread);
     assert.equal(userThread.status, 201);
     assert.equal(userThreadBody.data.thread.capcode, null);
 
@@ -632,7 +670,7 @@ test('http capcode is granted to admins but denied to regular and anonymous post
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     const adminThread = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
       method: 'POST',
       headers: {
@@ -641,7 +679,7 @@ test('http capcode is granted to admins but denied to regular and anonymous post
       },
       body: JSON.stringify({ body: 'Thong bao chinh thuc', captchaToken: 'dev-pass', capcode: true })
     });
-    const adminThreadBody = await adminThread.json();
+    const adminThreadBody = await readJson(adminThread);
     assert.equal(adminThread.status, 201);
     assert.equal(adminThreadBody.data.thread.capcode, 'admin');
   });
@@ -654,7 +692,7 @@ test('http admin boards support dynamic create update and public filtering', asy
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     const headers = {
       authorization: `Bearer ${loginBody.data.token}`,
       'content-type': 'application/json'
@@ -685,7 +723,7 @@ test('http admin boards support dynamic create update and public filtering', asy
         }
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     assert.equal(created.status, 201);
     assert.equal(createdBody.data.board.slug, 'lab-news');
     assert.equal(createdBody.data.board.isHidden, true);
@@ -701,13 +739,13 @@ test('http admin boards support dynamic create update and public filtering', asy
     assert.equal(createdBody.data.board.retentionPolicy.publicArchive, false);
 
     const publicBoardsBefore = await fetch(`${baseUrl}/api/boards`);
-    const publicBoardsBeforeBody = await publicBoardsBefore.json();
+    const publicBoardsBeforeBody = await readJson(publicBoardsBefore);
     assert.equal(publicBoardsBeforeBody.data.some((board) => board.slug === 'lab-news'), false);
 
     const adminBoards = await fetch(`${baseUrl}/api/admin/boards`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const adminBoardsBody = await adminBoards.json();
+    const adminBoardsBody = await readJson(adminBoards);
     assert.equal(adminBoards.status, 200);
     assert.equal(adminBoardsBody.data.some((board) => board.slug === 'lab-news' && board.isHidden && board.temporary), true);
     assert.equal(
@@ -737,7 +775,7 @@ test('http admin boards support dynamic create update and public filtering', asy
         }
       })
     });
-    const shownBody = await shown.json();
+    const shownBody = await readJson(shown);
     assert.equal(shown.status, 200);
     assert.equal(shownBody.data.board.temporary, false);
     assert.equal(shownBody.data.board.eventEndsAt, null);
@@ -748,7 +786,7 @@ test('http admin boards support dynamic create update and public filtering', asy
     assert.equal(shownBody.data.board.retentionPolicy.publicArchive, true);
 
     const publicBoardsAfter = await fetch(`${baseUrl}/api/boards`);
-    const publicBoardsAfterBody = await publicBoardsAfter.json();
+    const publicBoardsAfterBody = await readJson(publicBoardsAfter);
     assert.equal(publicBoardsAfterBody.data.some((board) => board.slug === 'lab-news'), true);
 
     const archived = await fetch(`${baseUrl}/api/admin/boards/lab-news`, {
@@ -759,7 +797,7 @@ test('http admin boards support dynamic create update and public filtering', asy
     assert.equal(archived.status, 200);
 
     const publicBoardsArchived = await fetch(`${baseUrl}/api/boards`);
-    const publicBoardsArchivedBody = await publicBoardsArchived.json();
+    const publicBoardsArchivedBody = await readJson(publicBoardsArchived);
     assert.equal(publicBoardsArchivedBody.data.some((board) => board.slug === 'lab-news'), false);
 
     const deletedEmpty = await fetch(`${baseUrl}/api/admin/boards/lab-news`, {
@@ -771,7 +809,7 @@ test('http admin boards support dynamic create update and public filtering', asy
     const adminBoardsAfterDelete = await fetch(`${baseUrl}/api/admin/boards`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const adminBoardsAfterDeleteBody = await adminBoardsAfterDelete.json();
+    const adminBoardsAfterDeleteBody = await readJson(adminBoardsAfterDelete);
     assert.equal(adminBoardsAfterDeleteBody.data.some((board) => board.slug === 'lab-news'), false);
 
     await fetch(`${baseUrl}/api/admin/boards`, {
@@ -863,7 +901,7 @@ test('http hidden boards hide existing threads from public APIs', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     const headers = {
       authorization: `Bearer ${loginBody.data.token}`,
       'content-type': 'application/json'
@@ -889,7 +927,7 @@ test('http hidden boards hide existing threads from public APIs', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdThreadBody = await createdThread.json();
+    const createdThreadBody = await readJson(createdThread);
     assert.equal(createdThread.status, 201);
 
     const visibleThread = await fetch(`${baseUrl}/api/threads/${createdThreadBody.data.thread.id}`);
@@ -903,11 +941,11 @@ test('http hidden boards hide existing threads from public APIs', async () => {
     assert.equal(hiddenBoard.status, 200);
 
     const publicBoards = await fetch(`${baseUrl}/api/boards`);
-    const publicBoardsBody = await publicBoards.json();
+    const publicBoardsBody = await readJson(publicBoards);
     const adminBoards = await fetch(`${baseUrl}/api/admin/boards`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const adminBoardsBody = await adminBoards.json();
+    const adminBoardsBody = await readJson(adminBoards);
     const hiddenBoardAdmin = adminBoardsBody.data.find((board) => board.slug === 'hidden-posts');
 
     const hiddenList = await fetch(`${baseUrl}/api/boards/hidden-posts/threads`);
@@ -935,11 +973,11 @@ test('http hidden boards hide existing threads from public APIs', async () => {
       body: JSON.stringify({ reason: 'Hidden board report should not attach publicly' })
     });
     const latest = await fetch(`${baseUrl}/api/posts/latest`);
-    const latestBody = await latest.json();
+    const latestBody = await readJson(latest);
     const stats = await fetch(`${baseUrl}/api/stats`);
-    const statsBody = await stats.json();
+    const statsBody = await readJson(stats);
     const hotBoards = await fetch(`${baseUrl}/api/boards/hot`);
-    const hotBoardsBody = await hotBoards.json();
+    const hotBoardsBody = await readJson(hotBoards);
 
     assert.equal(publicBoardsBody.data.some((board) => board.slug === 'hidden-posts'), false);
     assert.equal(adminBoards.status, 200);
@@ -977,7 +1015,7 @@ test('http board deletion refuses boards with comments or reports', async () => 
     ],
     comments: [{ id: 'comment-only-1', boardSlug: 'comment-only-board' }],
     reports: [{ id: 'report-only-1', boardSlug: 'report-only-board' }]
-  });
+  } as any);
 
   await withServer(
     async (baseUrl) => {
@@ -986,7 +1024,7 @@ test('http board deletion refuses boards with comments or reports', async () => 
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const headers = { authorization: `Bearer ${loginBody.data.token}` };
 
       const commentBoardDelete = await fetch(`${baseUrl}/api/admin/boards/comment-only-board`, {
@@ -1022,11 +1060,11 @@ test('http admin analytics returns aggregate metrics without poster identifiers'
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     const analytics = await fetch(`${baseUrl}/api/admin/analytics`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const analyticsBody = await analytics.json();
+    const analyticsBody = await readJson(analytics);
     const serialized = JSON.stringify(analyticsBody.data);
 
     assert.equal(analytics.status, 200);
@@ -1048,7 +1086,7 @@ test('http account api registers, logs in and saves private settings', async () 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'SinhVien_36', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const registeredBody = await registered.json();
+    const registeredBody = await readJson(registered);
     assert.equal(registered.status, 201);
     assert.equal(registeredBody.data.account.username, 'sinhvien_36');
     assert.equal(typeof registeredBody.data.token, 'string');
@@ -1066,7 +1104,7 @@ test('http account api registers, logs in and saves private settings', async () 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'sinhvien_36', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     assert.equal(login.status, 200);
     assert.equal(loginBody.data.account.username, 'sinhvien_36');
 
@@ -1098,7 +1136,7 @@ test('http account api registers, logs in and saves private settings', async () 
         }
       })
     });
-    const settingsBody = await settings.json();
+    const settingsBody = await readJson(settings);
     assert.equal(settings.status, 200);
     assert.equal(settingsBody.data.settings.theme, 'burichan');
     assert.equal(settingsBody.data.settings.homeBoard, 'hoc-tap');
@@ -1121,7 +1159,7 @@ test('http account api registers, logs in and saves private settings', async () 
     const me = await fetch(`${baseUrl}/api/account/me`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const meBody = await me.json();
+    const meBody = await readJson(me);
     assert.equal(me.status, 200);
     assert.equal(meBody.data.settings.theme, 'burichan');
     assert.deepEqual(meBody.data.settings.boardSubscriptions, ['confession', 'an-uong']);
@@ -1130,7 +1168,7 @@ test('http account api registers, logs in and saves private settings', async () 
       method: 'POST',
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const logoutBody = await logout.json();
+    const logoutBody = await readJson(logout);
     assert.equal(logout.status, 200);
     assert.equal(logoutBody.data.ok, true);
 
@@ -1148,7 +1186,7 @@ test('http account api syncs and clears private watchlist drafts saved searches 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'sync_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const registeredBody = await registered.json();
+    const registeredBody = await readJson(registered);
     const token = registeredBody.data.token;
 
     const saved = await fetch(`${baseUrl}/api/account/private-data`, {
@@ -1213,7 +1251,7 @@ test('http account api syncs and clears private watchlist drafts saved searches 
         ]
       })
     });
-    const savedBody = await saved.json();
+    const savedBody = await readJson(saved);
     assert.equal(saved.status, 200);
     assert.equal(savedBody.data.watchlist[0].threadId, 'thread-1');
     assert.equal(savedBody.data.drafts[0].body, 'Noi dung draft rieng tu');
@@ -1228,14 +1266,14 @@ test('http account api syncs and clears private watchlist drafts saved searches 
     const fetched = await fetch(`${baseUrl}/api/account/private-data`, {
       headers: { authorization: `Bearer ${token}` }
     });
-    const fetchedBody = await fetched.json();
+    const fetchedBody = await readJson(fetched);
     assert.deepEqual(fetchedBody.data, savedBody.data);
 
     const clearedDrafts = await fetch(`${baseUrl}/api/account/private-data?section=drafts`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${token}` }
     });
-    const clearedDraftsBody = await clearedDrafts.json();
+    const clearedDraftsBody = await readJson(clearedDrafts);
     assert.equal(clearedDrafts.status, 200);
     assert.equal(clearedDraftsBody.data.watchlist.length, 1);
     assert.equal(clearedDraftsBody.data.drafts.length, 0);
@@ -1248,7 +1286,7 @@ test('http account api syncs and clears private watchlist drafts saved searches 
       method: 'DELETE',
       headers: { authorization: `Bearer ${token}` }
     });
-    const clearedFiltersBody = await clearedFilters.json();
+    const clearedFiltersBody = await readJson(clearedFilters);
     assert.equal(clearedFilters.status, 200);
     assert.equal(clearedFiltersBody.data.watchlist.length, 1);
     assert.equal(clearedFiltersBody.data.contentFilters.length, 0);
@@ -1257,7 +1295,7 @@ test('http account api syncs and clears private watchlist drafts saved searches 
       method: 'DELETE',
       headers: { authorization: `Bearer ${token}` }
     });
-    const clearedTemplatesBody = await clearedTemplates.json();
+    const clearedTemplatesBody = await readJson(clearedTemplates);
     assert.equal(clearedTemplates.status, 200);
     assert.equal(clearedTemplatesBody.data.watchlist.length, 1);
     assert.equal(clearedTemplatesBody.data.replyTemplates.length, 0);
@@ -1266,7 +1304,7 @@ test('http account api syncs and clears private watchlist drafts saved searches 
       method: 'DELETE',
       headers: { authorization: `Bearer ${token}` }
     });
-    const clearedPosterNotesBody = await clearedPosterNotes.json();
+    const clearedPosterNotesBody = await readJson(clearedPosterNotes);
     assert.equal(clearedPosterNotes.status, 200);
     assert.equal(clearedPosterNotesBody.data.watchlist.length, 1);
     assert.equal(clearedPosterNotesBody.data.posterNotes.length, 0);
@@ -1275,7 +1313,7 @@ test('http account api syncs and clears private watchlist drafts saved searches 
       method: 'DELETE',
       headers: { authorization: `Bearer ${token}` }
     });
-    const clearedAllBody = await clearedAll.json();
+    const clearedAllBody = await readJson(clearedAll);
     assert.deepEqual(clearedAllBody.data, {
       watchlist: [],
       drafts: [],
@@ -1312,7 +1350,7 @@ test('http ai rewrite does not receive account private data', async () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'ai_private_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
       });
-      const registeredBody = await registered.json();
+      const registeredBody = await readJson(registered);
 
       await fetch(`${baseUrl}/api/account/private-data`, {
         method: 'PUT',
@@ -1341,7 +1379,7 @@ test('http ai rewrite does not receive account private data', async () => {
           posterToken: 'poster-token'
         })
       });
-      const rewrittenBody = await rewritten.json();
+      const rewrittenBody = await readJson(rewritten);
       assert.equal(rewritten.status, 200);
       assert.equal(rewrittenBody.data.text, 'Da sua: Chi rewrite noi dung nay');
       assert.deepEqual(rewriteInputs, ['Chi rewrite noi dung nay']);
@@ -1356,25 +1394,25 @@ test('http exposes translate, transcribe, caption and speak AI routes', async ()
 
     const translate = await fetch(`${baseUrl}/api/ai/translate`, json({ text: 'Xin chào', targetLang: 'en' }));
     assert.equal(translate.status, 200);
-    assert.deepEqual(await translate.json(), { data: { text: 'Da dich [en]: Xin chào', targetLang: 'en' } });
+    assert.deepEqual(await readJson(translate), { data: { text: 'Da dich [en]: Xin chào', targetLang: 'en' } });
 
     const transcribe = await fetch(
       `${baseUrl}/api/ai/transcribe`,
       json({ data: Buffer.from('a').toString('base64'), mimeType: 'audio/mpeg' })
     );
     assert.equal(transcribe.status, 200);
-    assert.equal((await transcribe.json()).data.text, 'Loi thoai da go bang');
+    assert.equal((await readJson(transcribe)).data.text, 'Loi thoai da go bang');
 
     const caption = await fetch(
       `${baseUrl}/api/ai/caption`,
       json({ data: Buffer.from('a').toString('base64'), mimeType: 'image/png', mode: 'ocr' })
     );
     assert.equal(caption.status, 200);
-    assert.deepEqual(await caption.json(), { data: { text: 'Mo ta [ocr]', mode: 'ocr' } });
+    assert.deepEqual(await readJson(caption), { data: { text: 'Mo ta [ocr]', mode: 'ocr' } });
 
     const speak = await fetch(`${baseUrl}/api/ai/speak`, json({ text: 'Xin chào' }));
     assert.equal(speak.status, 200);
-    const speakBody = await speak.json();
+    const speakBody = await readJson(speak);
     assert.equal(speakBody.data.mimeType, 'audio/mpeg');
     assert.equal(Buffer.from(speakBody.data.audio, 'base64').toString(), 'audio');
   });
@@ -1387,7 +1425,7 @@ test('http account identity is not exposed on public posts', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const registeredBody = await registered.json();
+    const registeredBody = await readJson(registered);
 
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
       method: 'POST',
@@ -1400,7 +1438,7 @@ test('http account identity is not exposed on public posts', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     assert.equal(created.status, 201);
     assert.equal(createdBody.data.thread.displayName, 'Anonymous');
     assert.equal(createdBody.data.thread.username, undefined);
@@ -1418,14 +1456,14 @@ test('http account identity is not exposed on public posts', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const commentBody = await comment.json();
+    const commentBody = await readJson(comment);
     assert.equal(comment.status, 201);
     assert.equal(commentBody.data.comment.accountId, undefined);
 
     const myPosts = await fetch(`${baseUrl}/api/account/posts`, {
       headers: { authorization: `Bearer ${registeredBody.data.token}` }
     });
-    const myPostsBody = await myPosts.json();
+    const myPostsBody = await readJson(myPosts);
     assert.equal(myPosts.status, 200);
     assert.equal(myPostsBody.data.length, 2);
     assert.equal(myPostsBody.data[0].type, 'comment'); // Newest first
@@ -1434,7 +1472,7 @@ test('http account identity is not exposed on public posts', async () => {
     assert.equal(myPostsBody.data[1].post.bodyLines[0].text, 'Dang bai khi da dang nhap account');
 
     const publicPosts = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
-    const publicBody = await publicPosts.json();
+    const publicBody = await readJson(publicPosts);
     assert.equal(publicBody.data.thread.accountId, undefined);
     assert.equal(publicBody.data.comments[0].accountId, undefined);
 
@@ -1464,12 +1502,12 @@ test('http account identity is not exposed on public posts', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'private_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const loggedInAgainBody = await loggedInAgain.json();
+    const loggedInAgainBody = await readJson(loggedInAgain);
     assert.equal(loggedInAgain.status, 200);
     const myPostsAfterLogout = await fetch(`${baseUrl}/api/account/posts`, {
       headers: { authorization: `Bearer ${loggedInAgainBody.data.token}` }
     });
-    const myPostsAfterLogoutBody = await myPostsAfterLogout.json();
+    const myPostsAfterLogoutBody = await readJson(myPostsAfterLogout);
     assert.equal(myPostsAfterLogout.status, 200);
     assert.equal(myPostsAfterLogoutBody.data.length, 2);
     assert.equal(
@@ -1486,7 +1524,7 @@ test('http account owners can edit their own post body and media with private hi
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'edit_owner', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const registeredBody = await registered.json();
+    const registeredBody = await readJson(registered);
     const ownerHeaders = {
       authorization: `Bearer ${registeredBody.data.token}`,
       'content-type': 'application/json'
@@ -1496,7 +1534,7 @@ test('http account owners can edit their own post body and media with private hi
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'edit_other', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const otherBody = await other.json();
+    const otherBody = await readJson(other);
 
     const created = await fetch(`${baseUrl}/api/boards/tam-su/threads`, {
       method: 'POST',
@@ -1514,7 +1552,7 @@ test('http account owners can edit their own post body and media with private hi
         ]
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     const globalNumber = createdBody.data.thread.globalNumber;
 
     const anonymousEdit = await fetch(`${baseUrl}/api/posts/${globalNumber}`, {
@@ -1545,20 +1583,20 @@ test('http account owners can edit their own post body and media with private hi
         ]
       })
     });
-    const ownerEditBody = await ownerEdit.json();
+    const ownerEditBody = await readJson(ownerEdit);
     const publicPost = await fetch(`${baseUrl}/api/posts/${globalNumber}`);
-    const publicPostBody = await publicPost.json();
+    const publicPostBody = await readJson(publicPost);
 
     const adminLogin = await fetch(`${baseUrl}/api/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const adminLoginBody = await adminLogin.json();
+    const adminLoginBody = await readJson(adminLogin);
     const adminDetail = await fetch(`${baseUrl}/api/admin/posts/${globalNumber}`, {
       headers: { authorization: `Bearer ${adminLoginBody.data.token}` }
     });
-    const adminDetailBody = await adminDetail.json();
+    const adminDetailBody = await readJson(adminDetail);
 
     assert.equal(created.status, 201);
     assert.equal(anonymousEdit.status, 403);
@@ -1593,7 +1631,7 @@ test('http posting rejects reserved display names', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
 
     assert.equal(created.status, 400);
     assert.match(createdBody.error.message, /Tên hiển thị này không dùng được/);
@@ -1608,12 +1646,12 @@ test('http account registration requires JWT configuration before mutating users
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'no_jwt_user', password: 'long-enough-pass' })
       });
-      const registeredBody = await registered.json();
+      const registeredBody = await readJson(registered);
       assert.equal(registered.status, 503);
       assert.match(registeredBody.error.message, /JWT_SECRET/);
 
       const health = await fetch(`${baseUrl}/api/health`);
-      const healthBody = await health.json();
+      const healthBody = await readJson(health);
       assert.equal(healthBody.data.store.users, 0);
     },
     { jwtSecret: '' }
@@ -1641,7 +1679,7 @@ test('http health exposes deployment readiness without secrets', async () => {
   try {
     await withServer(async (baseUrl) => {
       const health = await fetch(`${baseUrl}/api/health`);
-      const body = await health.json();
+      const body = await readJson(health);
       const payload = body.data;
       const serialized = JSON.stringify(payload);
 
@@ -1746,7 +1784,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
         options: 'noko'
       })
     });
-    const firstBody = await first.json();
+    const firstBody = await readJson(first);
     assert.equal(first.status, 201);
     assert.equal(firstBody.data.thread.displayName, 'OP Hai');
 
@@ -1761,7 +1799,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
     });
 
     const searched = await fetch(`${baseUrl}/api/v1/boards/hoc-tap/threads?page=1&pageSize=1&q=alpha`);
-    const searchedBody = await searched.json();
+    const searchedBody = await readJson(searched);
     assert.equal(searched.status, 200);
     assert.equal(searchedBody.data.items.length, 1);
     assert.equal(searchedBody.data.total, 1);
@@ -1780,12 +1818,12 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
         options: 'sage'
       })
     });
-    const commentBody = await comment.json();
+    const commentBody = await readJson(comment);
     assert.equal(comment.status, 201);
     assert.equal(commentBody.data.comment.displayName, 'Ban reply');
 
     const detail = await fetch(`${baseUrl}/api/threads/${firstBody.data.thread.id}?commentsPage=1&commentsPageSize=1`);
-    const detailBody = await detail.json();
+    const detailBody = await readJson(detail);
     assert.equal(detail.status, 200);
     assert.equal(detailBody.data.commentPage.total, 1);
     assert.deepEqual(detailBody.data.thread.backlinks, [commentBody.data.comment.globalNumber]);
@@ -1805,7 +1843,7 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
     assert.equal(deleted.status, 200);
 
     const afterDelete = await fetch(`${baseUrl}/api/threads/${firstBody.data.thread.id}?commentsPage=1&commentsPageSize=1`);
-    const afterDeleteBody = await afterDelete.json();
+    const afterDeleteBody = await readJson(afterDelete);
     assert.equal(afterDeleteBody.data.commentPage.total, 0);
   });
 });
@@ -1827,7 +1865,7 @@ test('http self delete can remove only post files with the delete password', asy
         }
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     assert.equal(created.status, 201);
     assert.equal(createdBody.data.thread.image.name, 'self-delete-file.png');
 
@@ -1836,12 +1874,12 @@ test('http self delete can remove only post files with the delete password', asy
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ password: 'file-pass', fileOnly: true })
     });
-    const deletedFileBody = await deletedFile.json();
+    const deletedFileBody = await readJson(deletedFile);
     assert.equal(deletedFile.status, 200);
     assert.equal(deletedFileBody.data.fileOnly, true);
 
     const detail = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
-    const detailBody = await detail.json();
+    const detailBody = await readJson(detail);
     assert.equal(detail.status, 200);
     assert.equal(detailBody.data.thread.body, 'Thread co file de xoa rieng');
     assert.equal(detailBody.data.thread.image, null);
@@ -1852,7 +1890,7 @@ test('http self delete can remove only post files with the delete password', asy
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ password: 'file-pass', fileOnly: true })
     });
-    const secondDeleteBody = await secondDelete.json();
+    const secondDeleteBody = await readJson(secondDelete);
     assert.equal(secondDelete.status, 400);
     assert.match(secondDeleteBody.error.message, /không có tệp/);
   });
@@ -1869,7 +1907,7 @@ test('http posts support self edit and admin edit restore history', async () => 
         deletePassword: 'owner-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     const globalNumber = createdBody.data.thread.globalNumber;
     assert.equal(created.status, 201);
 
@@ -1885,7 +1923,7 @@ test('http posts support self edit and admin edit restore history', async () => 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ password: 'owner-pass', body: 'Nguoi dang da sua' })
     });
-    const selfEditBody = await selfEdit.json();
+    const selfEditBody = await readJson(selfEdit);
     assert.equal(selfEdit.status, 200);
     assert.equal(selfEditBody.data.status, 'published');
     assert.equal(selfEditBody.data.post.body, 'Nguoi dang da sua');
@@ -1895,7 +1933,7 @@ test('http posts support self edit and admin edit restore history', async () => 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     const adminHeaders = {
       authorization: `Bearer ${loginBody.data.token}`,
       'content-type': 'application/json'
@@ -1906,12 +1944,12 @@ test('http posts support self edit and admin edit restore history', async () => 
       headers: adminHeaders,
       body: JSON.stringify({ body: 'Mod da sua bai', reason: 'sua theo noi quy' })
     });
-    const adminEditBody = await adminEdit.json();
+    const adminEditBody = await readJson(adminEdit);
     assert.equal(adminEdit.status, 200);
     assert.equal(adminEditBody.data.post.body, 'Mod da sua bai');
 
     const publicLookup = await fetch(`${baseUrl}/api/posts/${globalNumber}`);
-    const publicLookupBody = await publicLookup.json();
+    const publicLookupBody = await readJson(publicLookup);
     const publicSerialized = JSON.stringify(publicLookupBody.data);
     assert.equal(publicLookup.status, 200);
     assert.equal(publicSerialized.includes('Mod da sua bai'), true);
@@ -1922,7 +1960,7 @@ test('http posts support self edit and admin edit restore history', async () => 
     const detail = await fetch(`${baseUrl}/api/admin/posts/${globalNumber}`, {
       headers: { authorization: adminHeaders.authorization }
     });
-    const detailBody = await detail.json();
+    const detailBody = await readJson(detail);
     assert.equal(detail.status, 200);
     assert.equal(detailBody.data.editHistory.length, 2);
     assert.equal(
@@ -1953,7 +1991,7 @@ test('http posts support self edit and admin edit restore history', async () => 
     assert.equal(restore.status, 200);
 
     const restored = await fetch(`${baseUrl}/api/posts/${globalNumber}`);
-    const restoredBody = await restored.json();
+    const restoredBody = await readJson(restored);
     const restoredSerialized = JSON.stringify(restoredBody.data);
     assert.equal(restored.status, 200);
     assert.equal(restoredSerialized.includes('Mod da sua bai'), true);
@@ -1964,7 +2002,7 @@ test('http posts support self edit and admin edit restore history', async () => 
     const actions = await fetch(`${baseUrl}/api/admin/moderation-actions`, {
       headers: { authorization: adminHeaders.authorization }
     });
-    const actionsBody = await actions.json();
+    const actionsBody = await readJson(actions);
     assert.equal(actions.status, 200);
     assert.equal(actionsBody.data.some((action) => action.action === 'user:edit'), true);
     assert.equal(actionsBody.data.some((action) => action.action === 'admin:edit'), true);
@@ -1982,7 +2020,7 @@ test('http thread detail filters paged comments by search query', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     assert.equal(created.status, 201);
 
     const first = await fetch(baseUrl + '/api/threads/' + createdBody.data.thread.id + '/comments', {
@@ -1993,7 +2031,7 @@ test('http thread detail filters paged comments by search query', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const firstBody = await first.json();
+    const firstBody = await readJson(first);
     assert.equal(first.status, 201);
 
     const second = await fetch(baseUrl + '/api/threads/' + createdBody.data.thread.id + '/comments', {
@@ -2004,13 +2042,13 @@ test('http thread detail filters paged comments by search query', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const secondBody = await second.json();
+    const secondBody = await readJson(second);
     assert.equal(second.status, 201);
 
     const searched = await fetch(
       baseUrl + '/api/threads/' + createdBody.data.thread.id + '?commentsPage=1&commentsPageSize=1&commentsSearch=kim'
     );
-    const searchedBody = await searched.json();
+    const searchedBody = await readJson(searched);
 
     assert.equal(searched.status, 200);
     assert.equal(searchedBody.data.commentPage.total, 1);
@@ -2032,14 +2070,14 @@ test('http api supports anonymous thread poll voting once per fingerprint', asyn
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
 
     const vote = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/poll`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ optionId: '1', posterToken: 'reader-a' })
     });
-    const voteBody = await vote.json();
+    const voteBody = await readJson(vote);
     const duplicate = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/poll`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2064,20 +2102,20 @@ test('http api toggles post reactions by poster fingerprint', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
 
     const reacted = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ reaction: 'laugh', posterToken: 'reader-a' })
     });
-    const reactedBody = await reacted.json();
+    const reactedBody = await readJson(reacted);
     assert.equal(reacted.status, 200);
     assert.equal(reactedBody.data.reactions.laugh, 1);
     assert.equal(reactedBody.data.myReaction, 'laugh');
 
     const detail = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
-    const detailBody = await detail.json();
+    const detailBody = await readJson(detail);
     assert.equal(detailBody.data.thread.reactions.laugh, 1);
     assert.equal(JSON.stringify(detailBody.data.thread).includes('reactionVoters'), false);
 
@@ -2086,7 +2124,7 @@ test('http api toggles post reactions by poster fingerprint', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ reaction: 'laugh', posterToken: 'reader-a' })
     });
-    const removedBody = await removed.json();
+    const removedBody = await readJson(removed);
     assert.equal(removed.status, 200);
     assert.equal(removedBody.data.reactions.laugh, 0);
     assert.equal(removedBody.data.myReaction, null);
@@ -2096,7 +2134,7 @@ test('http api toggles post reactions by poster fingerprint', async () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'reaction_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
     });
-    const registeredBody = await registered.json();
+    const registeredBody = await readJson(registered);
     const accountHeaders = {
       authorization: `Bearer ${registeredBody.data.token}`,
       'content-type': 'application/json'
@@ -2106,13 +2144,13 @@ test('http api toggles post reactions by poster fingerprint', async () => {
       headers: accountHeaders,
       body: JSON.stringify({ reaction: 'like', posterToken: 'account-token-a' })
     });
-    const accountReactedBody = await accountReacted.json();
+    const accountReactedBody = await readJson(accountReacted);
     const accountRemoved = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
       method: 'POST',
       headers: accountHeaders,
       body: JSON.stringify({ reaction: 'like', posterToken: 'account-token-b' })
     });
-    const accountRemovedBody = await accountRemoved.json();
+    const accountRemovedBody = await readJson(accountRemoved);
     assert.equal(accountReacted.status, 200);
     assert.equal(accountReactedBody.data.reactions.like, 1);
     assert.equal(accountReactedBody.data.myReaction, 'like');
@@ -2139,7 +2177,7 @@ test('http board thread list supports sort query with pagination', async () => {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ body, captchaToken: 'dev-pass' })
         });
-        const payload = await response.json();
+        const payload = await readJson(response);
         assert.equal(response.status, 201);
         return payload.data.thread;
       };
@@ -2158,11 +2196,11 @@ test('http board thread list supports sort query with pagination', async () => {
       });
 
       const created = await fetch(baseUrl + '/api/boards/hoc-tap/threads?sort=created&page=1&pageSize=2');
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
       const replies = await fetch(baseUrl + '/api/boards/hoc-tap/threads?sort=replies&page=1&pageSize=1');
-      const repliesBody = await replies.json();
+      const repliesBody = await readJson(replies);
       const fallback = await fetch(baseUrl + '/api/boards/hoc-tap/threads?sort=unknown&page=1&pageSize=3');
-      const fallbackBody = await fallback.json();
+      const fallbackBody = await readJson(fallback);
 
       assert.equal(created.status, 200);
       assert.deepEqual(createdBody.data.items.map((thread) => thread.id), [third.id, second.id]);
@@ -2185,7 +2223,7 @@ test('http board thread list supports filter query with pagination', async () =>
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ captchaToken: 'dev-pass', ...body })
       });
-      const payload = await response.json();
+      const payload = await readJson(response);
       assert.equal(response.status, 201);
       return payload.data.thread;
     };
@@ -2207,13 +2245,13 @@ test('http board thread list supports filter query with pagination', async () =>
     const poll = await createThread({ body: 'Thread co tham do', pollOptions: ['Co', 'Khong'] });
 
     const media = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=media&page=1&pageSize=1');
-    const mediaBody = await media.json();
+    const mediaBody = await readJson(media);
     const videos = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=video&page=1&pageSize=10');
-    const videosBody = await videos.json();
+    const videosBody = await readJson(videos);
     const polls = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=poll&page=1&pageSize=10');
-    const pollsBody = await polls.json();
+    const pollsBody = await readJson(polls);
     const unanswered = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=unanswered&page=1&pageSize=10');
-    const unansweredBody = await unanswered.json();
+    const unansweredBody = await readJson(unanswered);
 
     assert.equal(media.status, 200);
     assert.equal(mediaBody.data.total, 2);
@@ -2240,7 +2278,7 @@ test('http rate limits thread creation separately from comments', async () => {
           captchaToken: 'dev-pass'
         })
       });
-      const body = await response.json();
+      const body = await readJson(response);
       assert.equal(response.status, 201);
       firstThreadId ||= body.data.thread.id;
     }
@@ -2397,7 +2435,7 @@ test('http api exposes homepage stats aggregated from public content', async () 
     });
 
     const stats = await fetch(`${baseUrl}/api/stats`);
-    const statsBody = await stats.json();
+    const statsBody = await readJson(stats);
 
     assert.equal(stats.status, 200);
     assert.equal(statsBody.data.totalThreads, 1);
@@ -2415,7 +2453,7 @@ test('http api exposes homepage stats aggregated from public content', async () 
 test('http api exposes health without leaking secrets', async () => {
   await withServer(async (baseUrl) => {
     const health = await fetch(`${baseUrl}/api/health`);
-    const healthBody = await health.json();
+    const healthBody = await readJson(health);
     const serialized = JSON.stringify(healthBody.data);
 
     assert.equal(health.status, 200);
@@ -2455,7 +2493,7 @@ test('http api returns 503 when health is degraded', async () => {
   await withServer(
     async (baseUrl) => {
       const health = await fetch(`${baseUrl}/api/health`);
-      const healthBody = await health.json();
+      const healthBody = await readJson(health);
       const serialized = JSON.stringify(healthBody.data);
 
       assert.equal(health.status, 503);
@@ -2488,10 +2526,10 @@ test('http api stores image metadata from thread creation payloads', async () =>
         }
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     assert.equal(JSON.stringify(createdBody.data).includes('authorFingerprint'), false);
     const listed = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
-    const listedBody = await listed.json();
+    const listedBody = await readJson(listed);
 
     assert.equal(created.status, 201);
     assert.equal(createdBody.data.thread.image.sizeBytes, 4096);
@@ -2517,7 +2555,7 @@ test('http api thread upload limit uses defaults when env values are invalid', a
           captchaToken: 'dev-pass'
         })
       });
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
 
       assert.equal(created.status, 413);
       assert.equal(createdBody.error.message, 'Dữ liệu gửi lên quá lớn');
@@ -2567,7 +2605,7 @@ test('http api stores uploaded images on local disk and serves them from /upload
             }
           })
         });
-        const createdBody = await created.json();
+        const createdBody = await readJson(created);
         const image = createdBody.data.thread.image;
 
         assert.equal(created.status, 201);
@@ -2592,7 +2630,7 @@ test('http api stores uploaded images on local disk and serves them from /upload
         assert.equal((await thumbnailResponse.arrayBuffer()).byteLength, 2);
 
         const health = await fetch(`${baseUrl}/api/health`);
-        const healthBody = await health.json();
+        const healthBody = await readJson(health);
         const serializedHealth = JSON.stringify(healthBody.data);
         assert.equal(health.status, 200);
         assert.equal(healthBody.data.imageStorage.type, 'local-disk');
@@ -2640,7 +2678,7 @@ test('http api stores uploaded video media on local disk and serves it from /upl
             ]
           })
         });
-        const createdBody = await created.json();
+        const createdBody = await readJson(created);
         const video = createdBody.data.thread.images[0];
 
         assert.equal(created.status, 201);
@@ -2676,7 +2714,7 @@ test('http api exposes latest public posts for homepage', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2687,7 +2725,7 @@ test('http api exposes latest public posts for homepage', async () => {
     });
 
     const latest = await fetch(`${baseUrl}/api/posts/latest?limit=2`);
-    const latestBody = await latest.json();
+    const latestBody = await readJson(latest);
 
     assert.equal(latest.status, 200);
     assert.equal(latestBody.data.length, 2);
@@ -2711,13 +2749,13 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
       })
     });
     assert.equal(created.status, 201);
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     const json = await fetch(`${baseUrl}/feeds/latest.json?limit=1`);
-    const jsonBody = await json.json();
+    const jsonBody = await readJson(json);
     const forwardedJson = await fetch(`${baseUrl}/feeds/latest.json?limit=1`, {
       headers: { 'x-forwarded-proto': 'https, http' }
     });
-    const forwardedJsonBody = await forwardedJson.json();
+    const forwardedJsonBody = await readJson(forwardedJson);
     assert.equal(json.status, 200);
     assert.equal(json.headers.get('content-type')?.includes('application/json'), true);
     assert.equal(jsonBody.version, 'https://jsonfeed.org/version/1.1');
@@ -2746,7 +2784,7 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
     assert.equal(comment.status, 201);
 
     const boardJson = await fetch(`${baseUrl}/feeds/boards/an-uong/threads.json?limit=1`);
-    const boardJsonBody = await boardJson.json();
+    const boardJsonBody = await readJson(boardJson);
     assert.equal(boardJson.status, 200);
     assert.equal(boardJsonBody.title, '36chan - /an-uong/');
     assert.equal(boardJsonBody.items.length, 1);
@@ -2759,7 +2797,7 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
     assert.equal(boardRssBody.includes('36chan - /an-uong/'), true);
 
     const threadJson = await fetch(`${baseUrl}/feeds/threads/${createdBody.data.thread.id}/posts.json?limit=2`);
-    const threadJsonBody = await threadJson.json();
+    const threadJsonBody = await readJson(threadJson);
     assert.equal(threadJson.status, 200);
     assert.equal(threadJsonBody.items.length, 2);
     assert.equal(threadJsonBody.items[0].content_text, 'Reply feed item');
@@ -2783,7 +2821,7 @@ test('http api and feeds expose recommended threads', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const firstBody = await first.json();
+    const firstBody = await readJson(first);
     await fetch(`${baseUrl}/api/threads/${firstBody.data.thread.id}/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2802,7 +2840,7 @@ test('http api and feeds expose recommended threads', async () => {
     });
 
     const api = await fetch(`${baseUrl}/api/threads/recommended?limit=1`);
-    const apiBody = await api.json();
+    const apiBody = await readJson(api);
     assert.equal(api.status, 200);
     assert.equal(apiBody.data.length, 1);
     assert.equal(typeof apiBody.data[0].recommendation.score, 'number');
@@ -2811,7 +2849,7 @@ test('http api and feeds expose recommended threads', async () => {
     assert.equal(typeof apiBody.data[0].recommendation.features.openReportCount, 'number');
 
     const json = await fetch(`${baseUrl}/feeds/recommended.json?limit=1`);
-    const jsonBody = await json.json();
+    const jsonBody = await readJson(json);
     assert.equal(json.status, 200);
     assert.equal(jsonBody.title, '36chan - Chủ đề đề xuất');
     assert.equal(jsonBody.items.length, 1);
@@ -2834,7 +2872,7 @@ test('http api exposes hot boards for homepage discovery', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}/comments`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2845,7 +2883,7 @@ test('http api exposes hot boards for homepage discovery', async () => {
     });
 
     const hot = await fetch(`${baseUrl}/api/boards/hot?limit=3`);
-    const hotBody = await hot.json();
+    const hotBody = await readJson(hot);
 
     assert.equal(hot.status, 200);
     assert.equal(hotBody.data[0].boardSlug, 'hoc-tap');
@@ -2854,7 +2892,7 @@ test('http api exposes hot boards for homepage discovery', async () => {
     assert.equal(hotBody.data[0].replyCountLast24h, 1);
 
     const jsonFeed = await fetch(`${baseUrl}/feeds/hot-boards.json?limit=3`);
-    const jsonFeedBody = await jsonFeed.json();
+    const jsonFeedBody = await readJson(jsonFeed);
     assert.equal(jsonFeed.status, 200);
     assert.equal(jsonFeedBody.title, '36chan - Bảng đang nóng');
     assert.equal(jsonFeedBody.items[0].id, 'hoc-tap');
@@ -2881,7 +2919,7 @@ test('http api exposes campus pulse keywords for homepage discovery', async () =
     });
 
     const pulse = await fetch(`${baseUrl}/api/pulse?limit=3`);
-    const pulseBody = await pulse.json();
+    const pulseBody = await readJson(pulse);
 
     assert.equal(pulse.status, 200);
     assert.equal(pulseBody.data[0].keyword, 'deadline');
@@ -2900,9 +2938,9 @@ test('http api rewrites a draft without creating a public post', async () => {
         posterToken: 'reader'
       })
     });
-    const rewriteBody = await rewrite.json();
+    const rewriteBody = await readJson(rewrite);
     const stats = await fetch(`${baseUrl}/api/stats`);
-    const statsBody = await stats.json();
+    const statsBody = await readJson(stats);
 
     assert.equal(rewrite.status, 200);
     assert.equal(rewriteBody.data.text, 'Da sua: Ban A lua dao, sdt 0901234567');
@@ -2923,7 +2961,7 @@ test('http admin moderation actions include approve reasons and require JWT', as
           posterToken: 'browser-secret'
         })
       });
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
 
       const unauthorized = await fetch(`${baseUrl}/api/admin/moderation-actions`);
       assert.equal(unauthorized.status, 401);
@@ -2933,7 +2971,7 @@ test('http admin moderation actions include approve reasons and require JWT', as
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       await fetch(`${baseUrl}/api/admin/pending/${createdBody.data.thread.id}/approve`, {
         method: 'POST',
         headers: {
@@ -2946,7 +2984,7 @@ test('http admin moderation actions include approve reasons and require JWT', as
       const actions = await fetch(`${baseUrl}/api/admin/moderation-actions`, {
         headers: { authorization: `Bearer ${loginBody.data.token}` }
       });
-      const actionsBody = await actions.json();
+      const actionsBody = await readJson(actions);
       const serialized = JSON.stringify(actionsBody.data);
 
       assert.equal(actions.status, 200);
@@ -2974,7 +3012,7 @@ test('http api stores user reports and exposes them to admin only', async () => 
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     const report = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -2985,7 +3023,7 @@ test('http api stores user reports and exposes them to admin only', async () => 
       })
     });
     assert.equal(report.status, 201);
-    const reportBody = await report.json();
+    const reportBody = await readJson(report);
     assert.equal(reportBody.data.category, 'PII');
 
     const second = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
@@ -2996,7 +3034,7 @@ test('http api stores user reports and exposes them to admin only', async () => 
         captchaToken: 'dev-pass'
       })
     });
-    const secondBody = await second.json();
+    const secondBody = await readJson(second);
     const fallbackReport = await fetch(`${baseUrl}/api/posts/${secondBody.data.thread.globalNumber}`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -3007,7 +3045,7 @@ test('http api stores user reports and exposes them to admin only', async () => 
       })
     });
     assert.equal(fallbackReport.status, 201);
-    const fallbackReportBody = await fallbackReport.json();
+    const fallbackReportBody = await readJson(fallbackReport);
     assert.equal(fallbackReportBody.data.category, 'Other');
 
     const unauthorized = await fetch(`${baseUrl}/api/admin/reports`);
@@ -3018,11 +3056,11 @@ test('http api stores user reports and exposes them to admin only', async () => 
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     const reports = await fetch(`${baseUrl}/api/admin/reports?category=PII`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const reportsBody = await reports.json();
+    const reportsBody = await readJson(reports);
     const serialized = JSON.stringify(reportsBody.data);
 
     assert.equal(reports.status, 200);
@@ -3036,7 +3074,7 @@ test('http api stores user reports and exposes them to admin only', async () => 
       method: 'POST',
       headers: { authorization: `Bearer ${loginBody.data.token}` }
     });
-    const summaryBody = await summary.json();
+    const summaryBody = await readJson(summary);
 
     assert.equal(summary.status, 200);
     assert.equal(summaryBody.data.label, 'Nội dung do AI tổng hợp');
@@ -3061,7 +3099,7 @@ test('http api supports anonymous appeal submission and admin resolution', async
           posterToken: 'poster-secret'
         })
       });
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
 
       assert.equal(created.status, 201);
       assert.equal(createdBody.data.status, 'pending');
@@ -3076,7 +3114,7 @@ test('http api supports anonymous appeal submission and admin resolution', async
           posterToken: 'appeal-poster-secret'
         })
       });
-      const appealBody = await appeal.json();
+      const appealBody = await readJson(appeal);
       const serializedAppeal = JSON.stringify(appealBody.data);
 
       assert.equal(appeal.status, 201);
@@ -3104,7 +3142,7 @@ test('http api supports anonymous appeal submission and admin resolution', async
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const adminHeaders = {
         authorization: `Bearer ${loginBody.data.token}`,
         'content-type': 'application/json'
@@ -3113,7 +3151,7 @@ test('http api supports anonymous appeal submission and admin resolution', async
       const appeals = await fetch(`${baseUrl}/api/admin/appeals`, {
         headers: { authorization: adminHeaders.authorization }
       });
-      const appealsBody = await appeals.json();
+      const appealsBody = await readJson(appeals);
       assert.equal(appeals.status, 200);
       assert.equal(appealsBody.data.length, 1);
       assert.equal(appealsBody.data[0].reason, 'Xin xem lai vi khong phai spam');
@@ -3123,7 +3161,7 @@ test('http api supports anonymous appeal submission and admin resolution', async
         headers: adminHeaders,
         body: JSON.stringify({ status: 'rejected', reason: 'Quyet dinh giu nguyen' })
       });
-      const resolvedBody = await resolved.json();
+      const resolvedBody = await readJson(resolved);
       assert.equal(resolved.status, 200);
       assert.equal(resolvedBody.data.status, 'rejected');
       assert.equal(resolvedBody.data.history.at(-1).action, 'rejected');
@@ -3131,7 +3169,7 @@ test('http api supports anonymous appeal submission and admin resolution', async
       const actions = await fetch(`${baseUrl}/api/admin/moderation-actions`, {
         headers: { authorization: adminHeaders.authorization }
       });
-      const actionsBody = await actions.json();
+      const actionsBody = await readJson(actions);
       assert.equal(actions.status, 200);
       assert.equal(actionsBody.data[0].action, 'admin:appeal-reject');
       assert.equal(actionsBody.data[0].reason, 'Quyet dinh giu nguyen');
@@ -3161,7 +3199,7 @@ test('http api restores deleted public post when anonymous appeal is accepted', 
           posterToken: 'poster-restore-secret'
         })
       });
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
       assert.equal(created.status, 201);
       assert.equal(createdBody.data.status, 'published');
       assert.equal(typeof createdBody.data.appealToken, 'string');
@@ -3171,7 +3209,7 @@ test('http api restores deleted public post when anonymous appeal is accepted', 
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const adminHeaders = {
         authorization: `Bearer ${loginBody.data.token}`,
         'content-type': 'application/json'
@@ -3185,7 +3223,7 @@ test('http api restores deleted public post when anonymous appeal is accepted', 
       assert.equal(deleted.status, 200);
 
       const hiddenThreads = await fetch(`${baseUrl}/api/boards/tam-su/threads`);
-      const hiddenThreadsBody = await hiddenThreads.json();
+      const hiddenThreadsBody = await readJson(hiddenThreads);
       assert.equal(hiddenThreads.status, 200);
       assert.equal(
         hiddenThreadsBody.data.some((thread) => thread.globalNumber === createdBody.data.thread.globalNumber),
@@ -3200,7 +3238,7 @@ test('http api restores deleted public post when anonymous appeal is accepted', 
           reason: 'Xin khoi phuc bai da xoa'
         })
       });
-      const appealBody = await appeal.json();
+      const appealBody = await readJson(appeal);
       assert.equal(appeal.status, 201);
       assert.equal(appealBody.data.status, 'open');
 
@@ -3209,12 +3247,12 @@ test('http api restores deleted public post when anonymous appeal is accepted', 
         headers: adminHeaders,
         body: JSON.stringify({ status: 'accepted', reason: 'Dong y khoi phuc' })
       });
-      const resolvedBody = await resolved.json();
+      const resolvedBody = await readJson(resolved);
       assert.equal(resolved.status, 200);
       assert.equal(resolvedBody.data.status, 'accepted');
 
       const restoredThreads = await fetch(`${baseUrl}/api/boards/tam-su/threads`);
-      const restoredThreadsBody = await restoredThreads.json();
+      const restoredThreadsBody = await readJson(restoredThreads);
       assert.equal(restoredThreads.status, 200);
       assert.equal(
         restoredThreadsBody.data.some((thread) => thread.globalNumber === createdBody.data.thread.globalNumber),
@@ -3224,7 +3262,7 @@ test('http api restores deleted public post when anonymous appeal is accepted', 
       const actions = await fetch(`${baseUrl}/api/admin/moderation-actions`, {
         headers: { authorization: adminHeaders.authorization }
       });
-      const actionsBody = await actions.json();
+      const actionsBody = await readJson(actions);
       const restoreAction = actionsBody.data.find((action) => action.action === 'admin:appeal-restore');
       const acceptAction = actionsBody.data.find((action) => action.action === 'admin:appeal-accept');
       assert.equal(actions.status, 200);
@@ -3251,7 +3289,7 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
           captchaToken: 'dev-pass'
         })
       });
-      const firstBody = await first.json();
+      const firstBody = await readJson(first);
       const second = await fetch(`${baseUrl}/api/boards/tam-su/threads`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -3260,13 +3298,13 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
           captchaToken: 'dev-pass'
         })
       });
-      const secondBody = await second.json();
+      const secondBody = await readJson(second);
       const login = await fetch(`${baseUrl}/api/admin/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const adminHeaders = {
         authorization: `Bearer ${loginBody.data.token}`,
         'content-type': 'application/json'
@@ -3275,7 +3313,7 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
       const filtered = await fetch(`${baseUrl}/api/admin/pending?boardSlug=hoc-tap&label=Spam`, {
         headers: { authorization: adminHeaders.authorization }
       });
-      const filteredBody = await filtered.json();
+      const filteredBody = await readJson(filtered);
       assert.equal(filtered.status, 200);
       assert.equal(filteredBody.data.length, 1);
       assert.equal(filteredBody.data[0].id, firstBody.data.thread.id);
@@ -3283,7 +3321,7 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
       const detail = await fetch(`${baseUrl}/api/admin/posts/${firstBody.data.thread.globalNumber}`, {
         headers: { authorization: adminHeaders.authorization }
       });
-      const detailBody = await detail.json();
+      const detailBody = await readJson(detail);
       assert.equal(detail.status, 200);
       assert.equal(detailBody.data.post.body, 'Pending hoc tap');
       assert.equal(detailBody.data.actions[0].action, 'ai:moderate');
@@ -3293,7 +3331,7 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
         headers: adminHeaders,
         body: JSON.stringify({ note: 'Can xem nguon bao cao' })
       });
-      const noteBody = await note.json();
+      const noteBody = await readJson(note);
       assert.equal(note.status, 201);
       assert.equal(noteBody.data.action, 'admin:note');
       assert.equal(noteBody.data.reason, 'Can xem nguon bao cao');
@@ -3314,7 +3352,7 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
       const deleted = await fetch(`${baseUrl}/api/admin/deleted?boardSlug=hoc-tap`, {
         headers: { authorization: adminHeaders.authorization }
       });
-      const deletedBody = await deleted.json();
+      const deletedBody = await readJson(deleted);
       assert.equal(deleted.status, 200);
       assert.equal(deletedBody.data.length, 1);
       assert.equal(deletedBody.data[0].deleteReason, 'Spam ro rang');
@@ -3322,7 +3360,7 @@ test('http admin queue supports filters, detail, notes, bulk actions, and histor
       const approved = await fetch(`${baseUrl}/api/admin/approved?boardSlug=tam-su`, {
         headers: { authorization: adminHeaders.authorization }
       });
-      const approvedBody = await approved.json();
+      const approvedBody = await readJson(approved);
       assert.equal(approved.status, 200);
       assert.equal(approvedBody.data.length, 1);
       assert.equal(approvedBody.data[0].action, 'admin:approve');
@@ -3350,7 +3388,7 @@ test('http admin queue exposes and filters AI moderation confidence', async () =
           captchaToken: 'dev-pass'
         })
       });
-      const lowBody = await low.json();
+      const lowBody = await readJson(low);
       const high = await fetch(`${baseUrl}/api/boards/tam-su/threads`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -3359,19 +3397,19 @@ test('http admin queue exposes and filters AI moderation confidence', async () =
           captchaToken: 'dev-pass'
         })
       });
-      const highBody = await high.json();
+      const highBody = await readJson(high);
       const login = await fetch(`${baseUrl}/api/admin/login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const headers = { authorization: `Bearer ${loginBody.data.token}` };
 
       const pending = await fetch(`${baseUrl}/api/admin/pending?confidence=80&sort=confidence-desc`, { headers });
-      const pendingBody = await pending.json();
+      const pendingBody = await readJson(pending);
       const actions = await fetch(`${baseUrl}/api/admin/moderation-actions?confidence=80`, { headers });
-      const actionsBody = await actions.json();
+      const actionsBody = await readJson(actions);
 
       assert.equal(lowBody.data.thread.moderationConfidence, 0.42);
       assert.equal(highBody.data.thread.moderationConfidence, 0.91);
@@ -3412,11 +3450,11 @@ test('http admin pending queue honors limit query', async () => {
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const limited = await fetch(`${baseUrl}/api/admin/pending?limit=2`, {
         headers: { authorization: `Bearer ${loginBody.data.token}` }
       });
-      const limitedBody = await limited.json();
+      const limitedBody = await readJson(limited);
 
       assert.equal(limited.status, 200);
       assert.equal(limitedBody.data.length, 2);
@@ -3433,7 +3471,7 @@ test('http admin moderation settings update confidence queue threshold', async (
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const headers = {
         authorization: `Bearer ${loginBody.data.token}`,
         'content-type': 'application/json'
@@ -3444,11 +3482,11 @@ test('http admin moderation settings update confidence queue threshold', async (
         headers,
         body: JSON.stringify({ moderationConfidenceThreshold: 80 })
       });
-      const updateBody = await update.json();
+      const updateBody = await readJson(update);
       const settings = await fetch(`${baseUrl}/api/admin/moderation-settings`, {
         headers: { authorization: headers.authorization }
       });
-      const settingsBody = await settings.json();
+      const settingsBody = await readJson(settings);
       const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -3457,7 +3495,7 @@ test('http admin moderation settings update confidence queue threshold', async (
           captchaToken: 'dev-pass'
         })
       });
-      const createdBody = await created.json();
+      const createdBody = await readJson(created);
 
       assert.equal(update.status, 200);
       assert.equal(updateBody.data.moderationConfidenceThreshold, 0.8);
@@ -3492,13 +3530,13 @@ test('http admin sanctions temporarily block matching hashed posting fingerprint
         posterToken
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
     const login = await fetch(`${baseUrl}/api/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
     const adminHeaders = {
       authorization: `Bearer ${loginBody.data.token}`,
       'content-type': 'application/json'
@@ -3513,7 +3551,7 @@ test('http admin sanctions temporarily block matching hashed posting fingerprint
         reason: 'Spam lien tuc'
       })
     });
-    const sanctionBody = await sanction.json();
+    const sanctionBody = await readJson(sanction);
     assert.equal(sanction.status, 201);
     assert.equal(sanctionBody.data.kind, 'cooldown');
     assert.equal(typeof sanctionBody.data.fingerprintPreview, 'string');
@@ -3537,7 +3575,7 @@ test('http admin sanctions temporarily block matching hashed posting fingerprint
     const sanctions = await fetch(`${baseUrl}/api/admin/sanctions?status=active`, {
       headers: { authorization: adminHeaders.authorization }
     });
-    const sanctionsBody = await sanctions.json();
+    const sanctionsBody = await readJson(sanctions);
     assert.equal(sanctions.status, 200);
     assert.equal(sanctionsBody.data.length, 1);
     assert.equal(JSON.stringify(sanctionsBody.data).includes(clientIp), false);
@@ -3582,7 +3620,7 @@ test('http admin can sticky and unsticky active public threads only', async () =
           captchaToken: 'dev-pass'
         })
       });
-      const firstBody = await first.json();
+      const firstBody = await readJson(first);
       await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -3602,20 +3640,20 @@ test('http admin can sticky and unsticky active public threads only', async () =
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ username: 'admin', password: 'pass' })
       });
-      const loginBody = await login.json();
+      const loginBody = await readJson(login);
       const adminHeaders = { authorization: `Bearer ${loginBody.data.token}` };
       const stickied = await fetch(`${baseUrl}/api/admin/threads/${firstBody.data.thread.id}/sticky`, {
         method: 'POST',
         headers: adminHeaders
       });
-      const stickiedBody = await stickied.json();
+      const stickiedBody = await readJson(stickied);
       const listed = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
-      const listedBody = await listed.json();
+      const listedBody = await readJson(listed);
       const unstuck = await fetch(`${baseUrl}/api/admin/threads/${firstBody.data.thread.id}/sticky`, {
         method: 'DELETE',
         headers: adminHeaders
       });
-      const unstuckBody = await unstuck.json();
+      const unstuckBody = await readJson(unstuck);
       const missing = await fetch(`${baseUrl}/api/admin/threads/missing-thread/sticky`, {
         method: 'POST',
         headers: adminHeaders
@@ -3646,14 +3684,14 @@ test('http api exposes board archive and admin manual archive', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const createdBody = await created.json();
+    const createdBody = await readJson(created);
 
     const login = await fetch(`${baseUrl}/api/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
-    const loginBody = await login.json();
+    const loginBody = await readJson(login);
 
     const unauthorizedArchive = await fetch(`${baseUrl}/api/admin/threads/${createdBody.data.thread.id}/archive`, {
       method: 'POST'
@@ -3667,9 +3705,9 @@ test('http api exposes board archive and admin manual archive', async () => {
     assert.equal(archivePost.status, 200);
 
     const active = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`);
-    const activeBody = await active.json();
+    const activeBody = await readJson(active);
     const archive = await fetch(`${baseUrl}/api/boards/hoc-tap/archive`);
-    const archiveBody = await archive.json();
+    const archiveBody = await readJson(archive);
 
     assert.equal(active.status, 200);
     assert.equal(archive.status, 200);
@@ -3679,7 +3717,7 @@ test('http api exposes board archive and admin manual archive', async () => {
     assert.equal(archiveBody.data[0].archivedReason, 'manual');
 
     const archiveJsonFeed = await fetch(`${baseUrl}/feeds/boards/hoc-tap/archive.json?limit=3`);
-    const archiveJsonFeedBody = await archiveJsonFeed.json();
+    const archiveJsonFeedBody = await readJson(archiveJsonFeed);
     assert.equal(archiveJsonFeed.status, 200);
     assert.equal(archiveJsonFeedBody.title, '36chan - Lưu trữ /hoc-tap/');
     assert.equal(archiveJsonFeedBody.items.length, 1);
@@ -3721,7 +3759,7 @@ test('http api exposes board archive and admin manual archive', async () => {
         captchaToken: 'dev-pass'
       })
     });
-    const privateThreadBody = await privateThread.json();
+    const privateThreadBody = await readJson(privateThread);
     assert.equal(privateThread.status, 201);
 
     const archivePrivateThread = await fetch(`${baseUrl}/api/admin/threads/${privateThreadBody.data.thread.id}/archive`, {
