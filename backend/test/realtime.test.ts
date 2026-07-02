@@ -3,7 +3,27 @@ import { test } from 'node:test';
 
 import { createRealtimeHub } from '../src/server/realtime.ts';
 
-function createResponse({ writeImpl } = {}) {
+type TestResponse = {
+  statusCode: number;
+  headers: Record<string, string | number>;
+  chunks: string[];
+  ended: boolean;
+  writeHead(code: number, headers?: Record<string, string | number>): void;
+  write(line: string): boolean | void;
+  end(data?: string): void;
+};
+
+type TestRequest = {
+  url: string;
+  on(event: 'close', handler: () => void): void;
+  fireClose(): void;
+};
+
+type CreateResponseOptions = {
+  writeImpl?: (line: string) => boolean | void;
+};
+
+function createResponse({ writeImpl }: CreateResponseOptions = {}): TestResponse {
   return {
     statusCode: 0,
     headers: {},
@@ -29,8 +49,8 @@ function createResponse({ writeImpl } = {}) {
   };
 }
 
-function createRequest(query = '') {
-  const closeHandlers = [];
+function createRequest(query = ''): TestRequest {
+  const closeHandlers: Array<() => void> = [];
   return {
     url: `/events${query}`,
     on(event, handler) {
@@ -160,7 +180,7 @@ test('SSE hub drops clients after repeated backpressure', () => {
 });
 
 test('SSE heartbeat pings connected clients and is controllable', () => {
-  let captured = null;
+  let captured: (() => void) | null = null;
   const hub = createRealtimeHub({
     maxClients: 10,
     heartbeatMs: 1000,
@@ -173,6 +193,7 @@ test('SSE heartbeat pings connected clients and is controllable', () => {
   const client = createResponse();
   hub.handle(createRequest(), client);
   assert.equal(typeof captured, 'function');
+  assert.ok(captured);
 
   captured();
   assert.equal(hub.metrics().heartbeats, 1);

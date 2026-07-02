@@ -7,9 +7,9 @@ import path from 'node:path';
 import { parseBackupArgs } from '../scripts/backup-scheduler.ts';
 import { createBackupScheduler, runBackupJob } from '../src/core/backup-scheduler.ts';
 
-const tempRoots = [];
+const tempRoots: string[] = [];
 
-async function tempDir() {
+async function tempDir(): Promise<string> {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), '36chan-backup-'));
   tempRoots.push(root);
   return root;
@@ -21,7 +21,7 @@ afterEach(async () => {
   }
 });
 
-function memoryStore(state = {}) {
+function memoryStore(state: Record<string, unknown> = {}) {
   return {
     async read() {
       return {
@@ -43,7 +43,7 @@ function memoryStore(state = {}) {
 describe('backup job', () => {
   it('dry-runs without writing backup files and records metadata', async () => {
     const root = await tempDir();
-    const writes = [];
+    const writes: Array<{ filePath: string; value: unknown }> = [];
     const result = await runBackupJob({
       store: memoryStore(),
       imageStorage: {
@@ -51,7 +51,7 @@ describe('backup job', () => {
         async listKeys() {
           return ['uploads/a.png', 'uploads/b.png'];
         }
-      },
+      } as { type: string; listKeys(): Promise<string[]> },
       destination: root,
       storeDriver: 'mongo',
       imageStorageDriver: 's3',
@@ -60,7 +60,7 @@ describe('backup job', () => {
       dryRun: true,
       operator: 'ci',
       now: () => new Date('2026-06-22T10:00:00.000Z'),
-      writeJsonImpl(filePath, value) {
+      async writeJsonImpl(filePath, value) {
         writes.push({ filePath, value });
       }
     });
@@ -89,7 +89,7 @@ describe('backup job', () => {
         async listKeys() {
           return ['keep.png'];
         }
-      },
+      } as { type: string; listKeys(): Promise<string[]> },
       destination,
       storeDriver: 'json',
       imageStorageDriver: 'local',
@@ -119,7 +119,7 @@ describe('backup job', () => {
         async listKeys() {
           return [];
         }
-      },
+      } as { type: string; listKeys(): Promise<string[]> },
       destination: 'backups',
       storeDriver: 'mongo',
       imageStorageDriver: 's3',
@@ -136,7 +136,7 @@ describe('backup job', () => {
 
 describe('backup scheduler', () => {
   it('is disabled unless explicitly enabled', () => {
-    const events = [];
+    const events: Array<Record<string, unknown>> = [];
     const scheduler = createBackupScheduler({
       enabled: false,
       runJob: async () => ({ ok: true }),
@@ -144,17 +144,17 @@ describe('backup scheduler', () => {
     });
 
     assert.equal(scheduler.start(), false);
-    assert.equal(events[0].event, 'backup_scheduler_disabled');
+    assert.equal(events[0]?.event, 'backup_scheduler_disabled');
   });
 
   it('prevents overlapping backup jobs', async () => {
-    let release;
+    let release: (() => void) | undefined;
     let calls = 0;
     const scheduler = createBackupScheduler({
       enabled: true,
       runJob: async () => {
         calls += 1;
-        await new Promise((resolve) => {
+        await new Promise<void>((resolve) => {
           release = resolve;
         });
         return { ok: true };
@@ -163,6 +163,7 @@ describe('backup scheduler', () => {
 
     const first = scheduler.tick();
     const second = await scheduler.tick();
+    assert.ok(release);
     release();
     await first;
 
