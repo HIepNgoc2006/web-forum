@@ -8,6 +8,21 @@ import { parseCleanupArgs, readForumStateForCleanup } from '../scripts/cleanup-o
 import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.js';
 import { cleanupOrphanUploads, collectReferencedUploadKeys } from '../src/core/upload-cleanup.ts';
 
+type MockResponse = {
+  ok: boolean;
+  status: number;
+  text?: () => Promise<string>;
+};
+
+type FetchCall = {
+  url: string;
+  method?: string;
+};
+
+function mockResponse(response: MockResponse): Response {
+  return response as Response;
+}
+
 const tempRoots = [];
 
 async function tempDir() {
@@ -204,11 +219,11 @@ describe('cleanupOrphanUploads S3 storage', () => {
   };
 
   it('deletes only orphan keys listed within the configured bucket prefix', async () => {
-    const calls = [];
-    const fetchImpl = async (url, options) => {
+    const calls: FetchCall[] = [];
+    const fetchImpl = async (url: string | URL | Request, options: RequestInit = {}) => {
       calls.push({ url: url.toString(), method: options.method });
       if (options.method === 'GET') {
-        return {
+        return mockResponse({
           ok: true,
           status: 200,
           text: async () => [
@@ -218,9 +233,9 @@ describe('cleanupOrphanUploads S3 storage', () => {
             '<Contents><Key>uploads/orphan.png</Key></Contents>',
             '</ListBucketResult>'
           ].join('')
-        };
+        });
       }
-      return { ok: true, status: 204 };
+      return mockResponse({ ok: true, status: 204 });
     };
     const storage = createS3ImageStorage({ ...s3Config, fetchImpl });
     const state = {
@@ -233,19 +248,19 @@ describe('cleanupOrphanUploads S3 storage', () => {
     assert.deepStrictEqual(result.candidates, [{ storageKey: 'uploads/orphan.png' }]);
     assert.deepStrictEqual(result.deleted, [{ storageKey: 'uploads/orphan.png' }]);
     assert.strictEqual(calls.filter((call) => call.method === 'DELETE').length, 1);
-    assert.ok(calls.find((call) => call.method === 'DELETE').url.includes('/uploads/orphan.png'));
+    assert.ok(calls.find((call) => call.method === 'DELETE')?.url.includes('/uploads/orphan.png'));
   });
 
   it('records failure details when deletion fails', async () => {
-    const fetchImpl = async (_url, options) => {
+    const fetchImpl = async (_url: string | URL | Request, options: RequestInit = {}) => {
       if (options.method === 'GET') {
-        return {
+        return mockResponse({
           ok: true,
           status: 200,
           text: async () => '<ListBucketResult><Contents><Key>uploads/orphan.png</Key></Contents></ListBucketResult>'
-        };
+        });
       }
-      return { ok: false, status: 503 };
+      return mockResponse({ ok: false, status: 503 });
     };
     const storage = createS3ImageStorage({ ...s3Config, fetchImpl });
 
