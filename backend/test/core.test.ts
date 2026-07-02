@@ -30,6 +30,23 @@ import {
 } from '../src/core/security.js';
 import { parsePostText, sanitizeText } from '../src/core/text-format.ts';
 
+type ServiceError = {
+  message?: string;
+  statusCode?: number;
+};
+
+function asServiceError(error: unknown): ServiceError {
+  return error as ServiceError;
+}
+
+function createTestForumService(options: any) {
+  return createForumService(options as Parameters<typeof createForumService>[0]) as any;
+}
+
+function createTestMemoryStore(state?: any) {
+  return createMemoryStore(state as Parameters<typeof createMemoryStore>[0]) as any;
+}
+
 const safeAi = {
   async moderate() {
     return { status: 'Safe', labels: [] };
@@ -73,11 +90,14 @@ const flaggedAi = {
 };
 
 function createEvents() {
-  const events = [];
+  const events: Array<{ event: any; payload: any }> = [];
   return {
     events,
-    publish(event, payload) {
+    publish(event: any, payload: any) {
       events.push({ event, payload });
+    },
+    count() {
+      return events.length;
     }
   };
 }
@@ -257,7 +277,7 @@ test('mongo append post create uses targeted inserts and updates', async () => {
     thread: createdThread,
     updatedThreads: [createdThread, archivedThread],
     moderationActions: [moderationAction]
-  });
+  } as any);
 
   assert.deepEqual(calls[0], { model: 'Thread', method: 'insertOne', id: 'thread-new' });
   assert.deepEqual(calls[1], { model: 'ModerationAction', method: 'insertOne', id: 'mod-1' });
@@ -288,7 +308,7 @@ test('mongo append post create uses targeted inserts and updates', async () => {
 });
 
 test('forum service uses targeted post create store hook when available', async () => {
-  const memory = createMemoryStore();
+  const memory = createTestMemoryStore();
   const appendCalls = [];
   const store = {
     async read() {
@@ -302,7 +322,7 @@ test('forum service uses targeted post create store hook when available', async 
       await memory.write(delta.state);
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -341,7 +361,7 @@ test('forum service health reports unavailable store without leaking connection 
       throw new Error('MONGODB_URI=mongodb://user:secret@example.test/36chan');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     now: () => new Date('2026-06-04T00:00:00.000Z')
@@ -427,7 +447,7 @@ test('AI summary sends a system prompt to Google AI Studio', async () => {
   const originalFetch = global.fetch;
   let capturedBody;
   process.env.GOOGLE_AI_API_KEY = 'test-key';
-  global.fetch = async (_url, options) => {
+  (globalThis as any).fetch = async (_url, options) => {
     capturedBody = JSON.parse(options.body);
     return {
       ok: true,
@@ -454,7 +474,7 @@ test('AI summary sends a system prompt to Google AI Studio', async () => {
     assert.equal(capturedBody.systemInstruction.parts[0].text.includes('3-5 gạch đầu dòng'), true);
     assert.equal(capturedBody.contents[0].parts[0].text.includes('Bài viết công khai'), true);
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     if (originalKey === undefined) {
       delete process.env.GOOGLE_AI_API_KEY;
     } else {
@@ -486,7 +506,7 @@ test('AI moderation prompt supports PII Risk and redacts private data before Goo
   const originalFetch = global.fetch;
   let capturedBody;
   process.env.GOOGLE_AI_API_KEY = 'test-key';
-  global.fetch = async (_url, options) => {
+  (globalThis as any).fetch = async (_url, options) => {
     capturedBody = JSON.parse(options.body);
     return {
       ok: true,
@@ -518,7 +538,7 @@ test('AI moderation prompt supports PII Risk and redacts private data before Goo
     assert.equal(prompt.includes('[so dien thoai da an]'), true);
     assert.equal(prompt.includes('[ma sinh vien da an]'), true);
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     if (originalKey === undefined) {
       delete process.env.GOOGLE_AI_API_KEY;
     } else {
@@ -532,7 +552,7 @@ test('AI suggestions use draft-only prompt and redact private data', async () =>
   const originalFetch = global.fetch;
   let capturedBody;
   process.env.GOOGLE_AI_API_KEY = 'test-key';
-  global.fetch = async (_url, options) => {
+  (globalThis as any).fetch = async (_url, options) => {
     capturedBody = JSON.parse(options.body);
     return {
       ok: true,
@@ -561,7 +581,7 @@ test('AI suggestions use draft-only prompt and redact private data', async () =>
     assert.equal(prompt.includes('0987654321'), false);
     assert.equal(prompt.includes('[so dien thoai da an]'), true);
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     if (originalKey === undefined) {
       delete process.env.GOOGLE_AI_API_KEY;
     } else {
@@ -575,7 +595,7 @@ test('AI safe rewrite returns a draft and redacts private data in the prompt', a
   const originalFetch = global.fetch;
   let capturedBody;
   process.env.GOOGLE_AI_API_KEY = 'test-key';
-  global.fetch = async (_url, options) => {
+  (globalThis as any).fetch = async (_url, options) => {
     capturedBody = JSON.parse(options.body);
     return {
       ok: true,
@@ -603,7 +623,7 @@ test('AI safe rewrite returns a draft and redacts private data in the prompt', a
     assert.equal(prompt.includes('0901234567'), false);
     assert.equal(prompt.includes('[so dien thoai da an]'), true);
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     if (originalKey === undefined) {
       delete process.env.GOOGLE_AI_API_KEY;
     } else {
@@ -637,8 +657,8 @@ test('forum service does not send IP, captcha, poster token, or admin token to A
       return [];
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -673,8 +693,8 @@ test('uploaded image OCR moderation flags PII without sending raw OCR secrets', 
       return 'Email me@example.com, sdt 0901234567';
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => new Date('2026-06-10T08:00:00.000Z')
@@ -722,8 +742,8 @@ test('uploaded image safety labels can hold comments for moderation', async () =
       return '';
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => new Date('2026-06-10T08:00:00.000Z')
@@ -767,8 +787,8 @@ test('upload moderation attempts any image MIME type accepted by uploads', async
       return '';
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => new Date('2026-06-10T08:00:00.000Z')
@@ -839,8 +859,8 @@ test('upload moderation degrades safely when image AI is not configured', async 
   }
 
   try {
-    const service = createForumService({
-      store: createMemoryStore(),
+    const service = createTestForumService({
+      store: createTestMemoryStore(),
       ai: createAiClient(),
       realtime: createEvents(),
       now: () => new Date('2026-06-10T08:00:00.000Z')
@@ -872,8 +892,8 @@ test('upload moderation degrades safely when image AI is not configured', async 
 });
 
 test('forum service translateDraft returns translation and enforces target language allowlist', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     now: () => new Date('2026-06-04T00:00:00.000Z')
   });
@@ -887,8 +907,8 @@ test('forum service translateDraft returns translation and enforces target langu
 });
 
 test('forum service transcribeAudio and captionImage return AI text', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     now: () => new Date('2026-06-04T00:00:00.000Z')
   });
@@ -909,8 +929,8 @@ test('forum service transcribeAudio and captionImage return AI text', async () =
 });
 
 test('forum service speakText returns base64 audio and rejects empty or oversized text', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     now: () => new Date('2026-06-04T00:00:00.000Z')
   });
@@ -922,13 +942,13 @@ test('forum service speakText returns base64 audio and rejects empty or oversize
   await assert.rejects(() => service.speakText({ text: '   ', ip: '203.0.113.5' }), /bắt buộc/);
   await assert.rejects(
     () => service.speakText({ text: 'a'.repeat(2001), ip: '203.0.113.5' }),
-    (error) => error.statusCode === 413
+    (error) => asServiceError(error).statusCode === 413
   );
 });
 
 test('forum service rejects oversized AI media payloads', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     now: () => new Date('2026-06-04T00:00:00.000Z')
   });
@@ -936,17 +956,17 @@ test('forum service rejects oversized AI media payloads', async () => {
   const huge = 'A'.repeat(20 * 1024 * 1024);
   await assert.rejects(
     () => service.transcribeAudio({ audio: { data: huge, mimeType: 'audio/mpeg' }, ip: '203.0.113.5' }),
-    (error) => error.statusCode === 413
+    (error) => asServiceError(error).statusCode === 413
   );
   await assert.rejects(
     () => service.captionImage({ image: { data: '', mimeType: 'image/png' }, ip: '203.0.113.5' }),
-    (error) => error.statusCode === 400
+    (error) => asServiceError(error).statusCode === 400
   );
 });
 
 test('forum service enforces a daily budget on AI translate requests', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     now: () => new Date('2026-06-04T00:00:00.000Z')
   });
@@ -956,7 +976,7 @@ test('forum service enforces a daily budget on AI translate requests', async () 
   }
   await assert.rejects(
     () => service.translateDraft({ text: 'Xin chào', targetLang: 'en', ip: '203.0.113.9', posterToken: 'p' }),
-    (error) => error.statusCode === 429
+    (error) => asServiceError(error).statusCode === 429
   );
 });
 
@@ -1001,8 +1021,8 @@ test('createTripcode: insecure trips are deterministic, secure trips differ and 
 test('safe thread is public, gets global number, and emits realtime event', async () => {
   const realtime = createEvents();
   const logs = [];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => new Date('2026-05-22T08:00:00.000Z'),
@@ -1034,8 +1054,8 @@ test('safe thread is public, gets global number, and emits realtime event', asyn
 
 test('posts store immutable dice rolls from imageboard roll commands', async () => {
   const randomValues = [3, 4, 2, 12];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z'),
@@ -1086,8 +1106,8 @@ test('posts store immutable dice rolls from imageboard roll commands', async () 
 });
 
 test('display name is optional per post and separated from anonymous identity', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1143,8 +1163,8 @@ test('display name is optional per post and separated from anonymous identity', 
 });
 
 test('tripcode is parsed from display name, name part is sanitized, and image spoiler is preserved', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1203,8 +1223,8 @@ test('image spoiler flags survive storage drivers that return fresh metadata', a
       };
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     imageStorage,
@@ -1261,8 +1281,8 @@ test('image spoiler flags survive storage drivers that return fresh metadata', a
 });
 
 test('capcode is stamped only for authorized roles and ignores forged values', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1312,8 +1332,8 @@ test('capcode is stamped only for authorized roles and ignores forged values', a
 
 test('anonymous poll allows one vote per hashed fingerprint without exposing voters', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1350,8 +1370,8 @@ test('anonymous poll allows one vote per hashed fingerprint without exposing vot
 
 test('votePost toggles upvote/downvote on a comment without leaking voters', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1417,8 +1437,8 @@ test('votePost toggles upvote/downvote on a comment without leaking voters', asy
 
 test('reactPost toggles anonymous and account reactions without leaking voters', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1461,8 +1481,8 @@ test('reactPost toggles anonymous and account reactions without leaking voters',
 
 
 test('board thread list includes latest reply previews and omitted media counts', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1510,8 +1530,8 @@ test('board thread list supports server-side sort and filter modes before pagina
     new Date('2026-05-22T08:06:00.000Z'),
     new Date('2026-05-22T08:07:00.000Z')
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => dates.shift() ?? new Date('2026-05-22T08:07:00.000Z')
@@ -1558,8 +1578,8 @@ test('board thread list supports server-side sort and filter modes before pagina
 });
 
 test('getThread sorts comments by best/top/new/controversial/old', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1622,8 +1642,8 @@ test('getThread sorts comments by best/top/new/controversial/old', async () => {
 });
 
 test('getThread filters comments by search term before pagination', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1663,8 +1683,8 @@ test('getThread filters comments by search term before pagination', async () => 
 });
 
 test('getThread returns previous and next active board threads', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1707,8 +1727,8 @@ test('getThread returns previous and next active board threads', async () => {
 
 
 test('thread image metadata is sanitized and returned with public thread data', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1762,8 +1782,8 @@ test('thread image metadata is sanitized and returned with public thread data', 
 
 test('comment image metadata is sanitized and returned with public comment data', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1824,8 +1844,8 @@ test('comment image metadata is sanitized and returned with public comment data'
 });
 
 test('thread supports multiple media attachments while keeping image compatibility alias', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1867,8 +1887,8 @@ test('thread supports multiple media attachments while keeping image compatibili
 });
 
 test('invalid image metadata falls back to safe values', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1901,8 +1921,8 @@ test('image size limits use defaults when env values are invalid', async () => {
   process.env.MAX_THUMBNAIL_BYTES = 'not-a-number';
 
   try {
-    const service = createForumService({
-      store: createMemoryStore(),
+    const service = createTestForumService({
+      store: createTestMemoryStore(),
       ai: safeAi,
       realtime: createEvents(),
       now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -1922,8 +1942,8 @@ test('image size limits use defaults when env values are invalid', async () => {
           }
         }),
       (error) => {
-        assert.equal(error.statusCode, 413);
-        assert.equal(error.message, 'Ảnh quá lớn');
+        assert.equal(asServiceError(error).statusCode, 413);
+        assert.equal(asServiceError(error).message, 'Ảnh quá lớn');
         return true;
       }
     );
@@ -1947,8 +1967,8 @@ test('image size limits use defaults when env values are invalid', async () => {
           }
         }),
       (error) => {
-        assert.equal(error.statusCode, 413);
-        assert.equal(error.message, 'Thumbnail ảnh quá lớn');
+        assert.equal(asServiceError(error).statusCode, 413);
+        assert.equal(asServiceError(error).message, 'Thumbnail ảnh quá lớn');
         return true;
       }
     );
@@ -1967,8 +1987,8 @@ test('image size limits use defaults when env values are invalid', async () => {
 });
 
 test('image filenames strip HTML-sensitive characters before storage', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -2001,7 +2021,7 @@ test('s3 image storage uploads image bytes with signed S3-compatible PUT request
     keyPrefix: 'posts',
     fetchImpl: async (url, options) => {
       requests.push({ url, options });
-      return { ok: true, status: 200 };
+      return { ok: true, status: 200 } as Response;
     },
     now: () => new Date('2026-05-31T00:00:00.000Z'),
     randomUUID: () => '00000000-0000-4000-8000-000000000000'
@@ -2132,8 +2152,8 @@ test('migrateInlineImages moves inline image data to local upload files', async 
 
 test('flagged thread is quarantined until admin approval', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: flaggedAi,
     realtime,
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -2162,8 +2182,8 @@ test('flagged thread is quarantined until admin approval', async () => {
 
 test('moderation actions log AI decisions and admin reasons without private request data', async () => {
   const dates = [new Date('2026-05-22T08:00:00.000Z'), new Date('2026-05-22T08:01:00.000Z')];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: flaggedAi,
     realtime: createEvents(),
     now: () => dates.shift() ?? new Date('2026-05-22T08:01:00.000Z')
@@ -2197,8 +2217,8 @@ test('moderation actions log AI decisions and admin reasons without private requ
 
 test('deleting pending content stores admin reason in moderation log', async () => {
   const dates = [new Date('2026-05-22T08:00:00.000Z'), new Date('2026-05-22T08:01:00.000Z')];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: flaggedAi,
     realtime: createEvents(),
     now: () => dates.shift() ?? new Date('2026-05-22T08:01:00.000Z')
@@ -2223,8 +2243,8 @@ test('deleting pending content stores admin reason in moderation log', async () 
 });
 
 test('admin can delete a live post without the delete password', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -2256,8 +2276,8 @@ test('admin can delete a live post without the delete password', async () => {
 });
 
 test('admin delete rejects an unknown post number', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -2265,13 +2285,13 @@ test('admin delete rejects an unknown post number', async () => {
 
   await assert.rejects(
     () => service.adminDeletePost(999999, { actor: 'pengu1' }),
-    (error) => error.statusCode === 404
+    (error) => asServiceError(error).statusCode === 404
   );
 });
 
 test('admin can restore a deleted live post', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: (() => {
@@ -2313,8 +2333,8 @@ test('admin can restore a deleted live post', async () => {
 });
 
 test('admin can edit a live post without the delete password', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -2355,8 +2375,8 @@ test('admin can edit a live post without the delete password', async () => {
 
 test('anonymous poster can edit a live post with the delete password', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: (() => {
@@ -2407,8 +2427,8 @@ test('anonymous poster can edit a live post with the delete password', async () 
 });
 
 test('published posts can use creation-time appeal token after admin deletion', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: (() => {
@@ -2432,7 +2452,7 @@ test('published posts can use creation-time appeal token after admin deletion', 
 
   await assert.rejects(
     () => service.submitAppeal({ token: created.appealToken, reason: 'Chua bi xoa' }),
-    (error) => error.statusCode === 409
+    (error) => asServiceError(error).statusCode === 409
   );
 
   await service.adminDeletePost(created.thread.globalNumber, {
@@ -2451,8 +2471,8 @@ test('published posts can use creation-time appeal token after admin deletion', 
 });
 
 test('user reports store a reporter hash without raw IP or poster token', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -2483,8 +2503,8 @@ test('user reports store a reporter hash without raw IP or poster token', async 
 });
 
 test('pending moderation issues anonymous appeal tokens without storing raw token or identity', async () => {
-  const store = createMemoryStore();
-  const service = createForumService({
+  const store = createTestMemoryStore();
+  const service = createTestForumService({
     store,
     ai: flaggedAi,
     realtime: createEvents(),
@@ -2528,8 +2548,8 @@ test('pending moderation issues anonymous appeal tokens without storing raw toke
 
 test('admin resolves anonymous appeals with audit history', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: (() => {
@@ -2584,7 +2604,7 @@ test('admin resolves anonymous appeals with audit history', async () => {
 });
 
 test('admin pending queue prioritizes report count PII risk and recency without private data', async () => {
-  const store = createMemoryStore({
+  const store = createTestMemoryStore({
     version: 1,
     nextGlobalNumber: 4,
     threads: [
@@ -2666,7 +2686,7 @@ test('admin pending queue prioritizes report count PII risk and recency without 
       }
     ]
   });
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -2693,8 +2713,8 @@ test('admin pending queue prioritizes report count PII risk and recency without 
 });
 
 test('AI moderation confidence persists to posts and moderation actions', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: {
       async moderate() {
         return { status: 'Flagged', labels: ['Spam'], confidence: 0.84 };
@@ -2722,8 +2742,8 @@ test('AI moderation confidence persists to posts and moderation actions', async 
 });
 
 test('AI moderation confidence threshold only bypasses low-confidence flagged results', async () => {
-  const lowConfidenceService = createForumService({
-    store: createMemoryStore(),
+  const lowConfidenceService = createTestForumService({
+    store: createTestMemoryStore(),
     ai: {
       async moderate() {
         return { status: 'Flagged', labels: ['Spam'], confidence: 0.4 };
@@ -2741,8 +2761,8 @@ test('AI moderation confidence threshold only bypasses low-confidence flagged re
     ip: '203.0.113.9'
   });
 
-  const fallbackService = createForumService({
-    store: createMemoryStore(),
+  const fallbackService = createTestForumService({
+    store: createTestMemoryStore(),
     ai: flaggedAi,
     realtime: createEvents(),
     moderationConfidenceThreshold: 0.8,
@@ -2764,8 +2784,8 @@ test('AI moderation confidence threshold only bypasses low-confidence flagged re
 });
 
 test('admin moderation settings update the queue confidence threshold', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: {
       async moderate() {
         return { status: 'Flagged', labels: ['Spam'], confidence: 0.4 };
@@ -2790,7 +2810,7 @@ test('admin moderation settings update the queue confidence threshold', async ()
 });
 
 test('admin reports include priority metadata and support priority filtering', async () => {
-  const store = createMemoryStore({
+  const store = createTestMemoryStore({
     version: 1,
     nextGlobalNumber: 3,
     threads: [
@@ -2854,7 +2874,7 @@ test('admin reports include priority metadata and support priority filtering', a
       }
     ]
   });
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -2931,7 +2951,7 @@ test('admin reports use targeted moderation report reads when available', async 
       throw new Error('write should not be used');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -2986,7 +3006,7 @@ test('account and board reads use targeted store hooks when available', async ()
       throw new Error('write should not be used');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -3033,7 +3053,7 @@ test('2FA login uses targeted user read when available', async () => {
       throw new Error('write should not be used');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -3079,7 +3099,7 @@ test('admin login account bootstrap uses targeted store hook when available', as
       throw new Error('write should not be used');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -3144,7 +3164,7 @@ test('admin moderation lists use targeted store hooks when available', async () 
       throw new Error('write should not be used');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -3192,7 +3212,7 @@ test('admin sanctions use targeted store hook when available', async () => {
       throw new Error('write should not be used');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -3252,7 +3272,7 @@ test('admin revoke sanction uses targeted store hook when available', async () =
       throw new Error('write should not be used');
     }
   };
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -3332,7 +3352,7 @@ test('admin approval uses targeted store hook when available', async () => {
     }
   };
   const realtime = createEvents();
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime,
@@ -3353,8 +3373,8 @@ test('admin approval uses targeted store hook when available', async () => {
 
 test('archived threads are hidden from board list and visible in archive list', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore({
+  const service = createTestForumService({
+    store: createTestMemoryStore({
       version: 1,
       nextGlobalNumber: 2,
       threads: [
@@ -3396,8 +3416,8 @@ test('archived threads are hidden from board list and visible in archive list', 
 
 test('manual archive hides a thread from active board list', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -3430,8 +3450,8 @@ test('expired event boards auto archive active threads and reject new posts', as
     new Date('2026-08-01T08:01:00.000Z'),
     new Date('2026-08-01T08:02:00.000Z')
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => dates.shift() ?? new Date('2026-08-01T08:02:00.000Z')
@@ -3464,8 +3484,8 @@ test('expired event boards auto archive active threads and reject new posts', as
 });
 
 test('archived threads reject new comments', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -3493,8 +3513,8 @@ test('archived threads reject new comments', async () => {
 
 test('board active thread cap archives oldest bumped thread', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: (() => {
@@ -3531,8 +3551,8 @@ test('board active thread cap archives oldest bumped thread', async () => {
 
 test('board retention policy overrides active thread cap', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: (() => {
@@ -3581,8 +3601,8 @@ test('bump limit allows replies but stops bumping after threshold', async () => 
     new Date('2026-05-22T08:01:00.000Z'),
     new Date('2026-05-22T08:02:00.000Z')
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => dates.shift() ?? new Date('2026-05-22T08:03:00.000Z'),
@@ -3620,8 +3640,8 @@ test('sage comments publish without bumping the thread', async () => {
     new Date('2026-05-22T08:01:00.000Z'),
     new Date('2026-05-22T08:02:00.000Z')
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: () => dates.shift() ?? new Date('2026-05-22T08:02:00.000Z')
@@ -3660,8 +3680,8 @@ test('sage comments publish without bumping the thread', async () => {
 });
 
 test('reply limit rejects extra comments', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z'),
@@ -3695,8 +3715,8 @@ test('reply limit rejects extra comments', async () => {
 
 test('safe comments bump thread and remain hidden when flagged', async () => {
   const realtime = createEvents();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime,
     now: (() => {
@@ -3736,8 +3756,8 @@ test('flagged spam or toxic comments raise thread slow mode for repeat posters',
     { status: 'Flagged', labels: ['Spam'] },
     { status: 'Safe', labels: [] }
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: {
       async moderate() {
         return moderationResults.shift() ?? { status: 'Safe', labels: [] };
@@ -3798,8 +3818,8 @@ test('sticky threads sort above normal threads and only active public threads ca
     new Date('2026-05-22T08:03:00.000Z'),
     new Date('2026-05-22T08:04:00.000Z')
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => dates.shift() ?? new Date('2026-05-22T08:04:00.000Z')
@@ -3842,8 +3862,8 @@ test('sticky threads sort above normal threads and only active public threads ca
 });
 
 test('pending threads cannot be stickied onto the public board list', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: flaggedAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -3863,8 +3883,8 @@ test('pending threads cannot be stickied onto the public board list', async () =
 });
 
 test('OP proof follows local poster token without exposing the proof hash', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: (() => {
@@ -3909,20 +3929,20 @@ test('OP proof follows local poster token without exposing the proof hash', asyn
 });
 
 test('latest posts returns public threads and comments newest first', async () => {
-  const store = createMemoryStore();
+  const store = createTestMemoryStore();
   const realtime = createEvents();
   const dates = [
     new Date('2026-05-22T08:00:00.000Z'),
     new Date('2026-05-22T08:03:00.000Z'),
     new Date('2026-05-22T08:05:00.000Z')
   ];
-  const service = createForumService({
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime,
     now: () => dates.shift() ?? new Date('2026-05-22T08:05:00.000Z')
   });
-  const flaggedService = createForumService({
+  const flaggedService = createTestForumService({
     store,
     ai: flaggedAi,
     realtime,
@@ -3963,8 +3983,8 @@ test('latest posts returns public threads and comments newest first', async () =
 });
 
 test('recommended threads rank active public candidates with transparent scoring', async () => {
-  const service = createForumService({
-    store: createMemoryStore({
+  const service = createTestForumService({
+    store: createTestMemoryStore({
       version: 1,
       nextGlobalNumber: 10,
       threads: [
@@ -4171,8 +4191,8 @@ test('recommended threads rank active public candidates with transparent scoring
 });
 
 test('hot boards count active public posts from the last 24 hours', async () => {
-  const service = createForumService({
-    store: createMemoryStore({
+  const service = createTestForumService({
+    store: createTestMemoryStore({
       version: 1,
       nextGlobalNumber: 8,
       threads: [
@@ -4302,8 +4322,8 @@ test('hot boards count active public posts from the last 24 hours', async () => 
 });
 
 test('campus pulse counts public keywords from the last 24 hours without user data', async () => {
-  const service = createForumService({
-    store: createMemoryStore({
+  const service = createTestForumService({
+    store: createTestMemoryStore({
       threads: [
         {
           id: 'thread-deadline',
@@ -4410,8 +4430,8 @@ test('thread summaries are cached until public thread content changes', async ()
     new Date('2026-05-22T08:02:00.000Z'),
     new Date('2026-05-22T08:03:00.000Z')
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => dates.shift() ?? new Date('2026-05-22T08:03:00.000Z')
@@ -4459,8 +4479,8 @@ test('thread summary can target only comments newer than last seen post number',
     new Date('2026-05-22T08:02:00.000Z'),
     new Date('2026-05-22T08:03:00.000Z')
   ];
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => dates.shift() ?? new Date('2026-05-22T08:03:00.000Z')
@@ -4512,8 +4532,8 @@ test('AI suggestion budget is limited per reader identity per day', async () => 
       return ['Goi y'];
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -4553,8 +4573,8 @@ test('safe rewrite draft uses AI budget and does not store the rewritten draft a
       return `An toan: ${text}`;
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -4591,7 +4611,7 @@ test('security config status reports readiness without exposing values', () => {
     hcaptchaSecret: '',
     moderationFingerprintSecret: '',
     posterProofSecret: ''
-  });
+  } as any);
 
   assert.equal(status.adminConfigured, true);
   assert.equal(status.hcaptchaConfigured, false);
@@ -4624,8 +4644,8 @@ test('assertProductionSecrets throws in production with insecure config and neve
           adminPassword: 'a-strong-admin-password'
         }),
       (error) => {
-        assert.ok(/insecure secret configuration/.test(error.message));
-        assert.ok(!error.message.includes('change-me-please'));
+        assert.ok(/insecure secret configuration/.test(asServiceError(error).message));
+        assert.ok(!asServiceError(error).message.includes('change-me-please'));
         return true;
       }
     );
@@ -4722,8 +4742,8 @@ test('hCaptcha dev fallback is disabled in production without a secret', async (
 });
 
 test('AI safe rewrite draft supports different tones', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -4739,8 +4759,8 @@ test('AI safe rewrite draft supports different tones', async () => {
 });
 
 test('AI report assistant summarizes post reports', async () => {
-  const store = createMemoryStore();
-  const service = createForumService({
+  const store = createTestMemoryStore();
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -4774,8 +4794,8 @@ test('AI report assistant summarizes post reports', async () => {
 });
 
 test('getAnalytics calculates board-level counts, AI usage, and moderation health correctly', async () => {
-  const store = createMemoryStore();
-  const service = createForumService({
+  const store = createTestMemoryStore();
+  const service = createTestForumService({
     store,
     ai: safeAi,
     realtime: createEvents(),
@@ -4799,7 +4819,7 @@ test('getAnalytics calculates board-level counts, AI usage, and moderation healt
   assert.equal(analytics.moderationQueue.oldestPendingAgeMinutes, 0);
   assert.equal(analytics.moderationQueue.averageResolutionTimeMinutes, 0);
 
-  const flaggedService = createForumService({
+  const flaggedService = createTestForumService({
     store,
     ai: flaggedAi,
     realtime: createEvents(),
@@ -4848,7 +4868,7 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
 
   const capturedRequests = [];
 
-  global.fetch = async (url, options) => {
+  (globalThis as any).fetch = async (url, options) => {
     capturedRequests.push({ url, options });
     return {
       ok: true,
@@ -4897,7 +4917,7 @@ test('AI OpenAI-compatible client uses correct configuration and request format'
     assert.equal(imageModerationBody.messages[0].content.includes('kiểm duyệt ảnh'), true);
     assert.equal(imageModerationBody.messages[1].content[1].image_url.url, 'data:image/avif;base64,AAAA');
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -4920,7 +4940,7 @@ test('AI Google TTS uses interactions audio response and returns WAV audio', asy
   const capturedRequests = [];
   const rawPcm = Buffer.from([0, 1, 2, 3]).toString('base64');
 
-  global.fetch = async (url, options) => {
+  (globalThis as any).fetch = async (url, options) => {
     capturedRequests.push({ url, options });
     return {
       ok: true,
@@ -4961,7 +4981,7 @@ test('AI Google TTS uses interactions audio response and returns WAV audio', asy
     assert.equal(wav.subarray(0, 4).toString('ascii'), 'RIFF');
     assert.equal(wav.subarray(8, 12).toString('ascii'), 'WAVE');
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -4982,7 +5002,7 @@ test('AI Google TTS honors explicit language hints for post audio', async () => 
   process.env.GOOGLE_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
 
   let capturedBody;
-  global.fetch = async (_url, options) => {
+  (globalThis as any).fetch = async (_url, options) => {
     capturedBody = JSON.parse(options.body);
     return {
       ok: true,
@@ -5005,7 +5025,7 @@ test('AI Google TTS honors explicit language hints for post audio', async () => 
     assert.equal(capturedBody.input.includes('exactly as written in English.'), true);
     assert.equal(capturedBody.input.includes('This comment should be read as English.'), true);
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -5027,7 +5047,7 @@ test('AI Google TTS retries when response has no audio block', async () => {
 
   let attempts = 0;
   const rawPcm = Buffer.from([4, 5, 6, 7]).toString('base64');
-  global.fetch = async () => {
+  (globalThis as any).fetch = async () => {
     attempts += 1;
     return {
       ok: true,
@@ -5051,7 +5071,7 @@ test('AI Google TTS retries when response has no audio block', async () => {
     assert.equal(result.mimeType, 'audio/wav');
     assert.equal(Buffer.from(result.data, 'base64').subarray(0, 4).toString('ascii'), 'RIFF');
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -5071,7 +5091,7 @@ test('AI Google TTS exposes provider rate limit as 429', async () => {
   process.env.GOOGLE_AI_API_KEY = 'google-test-key';
   process.env.GOOGLE_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
 
-  global.fetch = async () => ({
+  (globalThis as any).fetch = async () => ({
     ok: false,
     status: 429
   });
@@ -5080,10 +5100,10 @@ test('AI Google TTS exposes provider rate limit as 429', async () => {
     const ai = createAiClient();
     await assert.rejects(
       () => ai.speak('Xin chào'),
-      (error) => error.statusCode === 429 && /giới hạn/.test(error.message)
+      (error) => asServiceError(error).statusCode === 429 && /giới hạn/.test(asServiceError(error).message)
     );
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -5104,7 +5124,7 @@ test('AI Google TTS exposes missing audio as bad gateway', async () => {
   process.env.GOOGLE_TTS_MODEL = 'gemini-3.1-flash-tts-preview';
 
   let attempts = 0;
-  global.fetch = async () => {
+  (globalThis as any).fetch = async () => {
     attempts += 1;
     return {
       ok: true,
@@ -5118,11 +5138,11 @@ test('AI Google TTS exposes missing audio as bad gateway', async () => {
     const ai = createAiClient();
     await assert.rejects(
       () => ai.speak('Xin chào'),
-      (error) => error.statusCode === 502 && /chưa trả về audio/.test(error.message)
+      (error) => asServiceError(error).statusCode === 502 && /chưa trả về audio/.test(asServiceError(error).message)
     );
     assert.equal(attempts, 2);
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -5142,7 +5162,7 @@ test('AI TTS times out when provider does not respond', async () => {
   process.env.GOOGLE_AI_API_KEY = 'google-test-key';
   process.env.AI_FETCH_TIMEOUT_MS = '5';
 
-  global.fetch = async (_url, options) => {
+  (globalThis as any).fetch = async (_url, options) => {
     await new Promise((resolve, reject) => {
       options.signal.addEventListener('abort', () => reject(new Error('aborted')));
     });
@@ -5152,7 +5172,7 @@ test('AI TTS times out when provider does not respond', async () => {
     const ai = createAiClient();
     await assert.rejects(() => ai.speak('Xin chào'), /quá thời gian chờ/);
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -5172,7 +5192,7 @@ test('AI transcription times out when provider does not respond', async () => {
   process.env.GOOGLE_AI_API_KEY = 'google-test-key';
   process.env.AI_FETCH_TIMEOUT_MS = '5';
 
-  global.fetch = async (_url, options) => {
+  (globalThis as any).fetch = async (_url, options) => {
     await new Promise((resolve, reject) => {
       options.signal.addEventListener('abort', () => reject(new Error('aborted')));
     });
@@ -5185,7 +5205,7 @@ test('AI transcription times out when provider does not respond', async () => {
       /quá thời gian chờ/
     );
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -5217,7 +5237,7 @@ test('AI Google client can route only speech-to-text through Groq Whisper', asyn
 
   const capturedRequests = [];
 
-  global.fetch = async (url, options) => {
+  (globalThis as any).fetch = async (url, options) => {
     capturedRequests.push({ url, options });
     return {
       ok: true,
@@ -5241,7 +5261,7 @@ test('AI Google client can route only speech-to-text through Groq Whisper', asyn
     assert.equal(capturedRequests[0].options.body.get('model'), 'whisper-large-v3');
     assert.equal(capturedRequests[0].options.body.get('file').type, 'audio/webm');
   } finally {
-    global.fetch = originalFetch;
+    (globalThis as any).fetch = originalFetch;
     for (const key of envKeys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -5303,7 +5323,7 @@ test('rate limiter evicts expired buckets so the map stays bounded', () => {
 
 test('rate limiter enforces the limit and accepts a shared Map-like backend', () => {
   const shared = new Map();
-  const limiter = createRateLimiter({ limit: 2, windowMs: 60_000, store: shared, sweepIntervalMs: 0 });
+  const limiter = createRateLimiter({ limit: 2, windowMs: 60_000, store: shared, sweepIntervalMs: 0 }) as any;
   try {
     assert.equal(limiter.check('k').ok, true); // 1
     assert.equal(limiter.check('k').ok, true); // 2
@@ -5350,7 +5370,7 @@ test('rate limiter fail-open and fail-closed modes handle shared store errors', 
     store,
     failureMode: 'open',
     onStoreError(error) {
-      errors.push(error.message);
+      errors.push(asServiceError(error).message);
     }
   });
   const closedLimiter = createRateLimiter({ limit: 2, windowMs: 60_000, store, failureMode: 'closed' });
@@ -5414,8 +5434,8 @@ test('rate limit store env factory keeps memory default and validates redis url'
 });
 
 test('login runs password verification even for unknown usernames (timing equalization)', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -5452,8 +5472,8 @@ test('login runs password verification even for unknown usernames (timing equali
 });
 
 test('login requires a valid captcha token', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -5469,7 +5489,7 @@ test('login requires a valid captcha token', async () => {
   // Correct credentials but no captcha token are rejected before auth runs.
   await assert.rejects(
     () => service.loginAccount({ username: 'login_captcha_user', password: 'correct-horse-battery' }),
-    (error) => error.statusCode === 403
+    (error) => asServiceError(error).statusCode === 403
   );
 
   const account = await service.loginAccount({
@@ -5482,8 +5502,8 @@ test('login requires a valid captcha token', async () => {
 });
 
 test('register requires a valid captcha token', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -5491,7 +5511,7 @@ test('register requires a valid captcha token', async () => {
 
   await assert.rejects(
     () => service.registerAccount({ username: 'no_captcha', password: 'long-enough-pass' }),
-    (error) => error.statusCode === 403
+    (error) => asServiceError(error).statusCode === 403
   );
 
   const { account } = await service.registerAccount({
@@ -5504,8 +5524,8 @@ test('register requires a valid captcha token', async () => {
 });
 
 test('register enforces the password policy', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -5515,14 +5535,14 @@ test('register enforces the password policy', async () => {
     service.registerAccount({ username, password, captchaToken: 'dev-pass', ip: '203.0.113.7' });
 
   // Too short (below the 10-character minimum).
-  await assert.rejects(() => register('shortpw', 'abc12'), (error) => error.statusCode === 400);
+  await assert.rejects(() => register('shortpw', 'abc12'), (error) => asServiceError(error).statusCode === 400);
   // Common/blocklisted password.
-  await assert.rejects(() => register('commonpw', 'password123'), (error) => error.statusCode === 400);
+  await assert.rejects(() => register('commonpw', 'password123'), (error) => asServiceError(error).statusCode === 400);
   // Password equal to the username.
-  await assert.rejects(() => register('sameaspw12', 'sameaspw12'), (error) => error.statusCode === 400);
+  await assert.rejects(() => register('sameaspw12', 'sameaspw12'), (error) => asServiceError(error).statusCode === 400);
   // Trivial sequence and single-character repeat.
-  await assert.rejects(() => register('seqpw', '0123456789'), (error) => error.statusCode === 400);
-  await assert.rejects(() => register('reppw', 'aaaaaaaaaa'), (error) => error.statusCode === 400);
+  await assert.rejects(() => register('seqpw', '0123456789'), (error) => asServiceError(error).statusCode === 400);
+  await assert.rejects(() => register('reppw', 'aaaaaaaaaa'), (error) => asServiceError(error).statusCode === 400);
 
   // A reasonable strong password is accepted.
   const { account } = await register('strong_user', 'a-strong-passphrase-2026');
@@ -5531,8 +5551,8 @@ test('register enforces the password policy', async () => {
 
 test('account locks after repeated failed logins and unlocks after the window', async () => {
   let clock = new Date('2026-05-22T08:00:00.000Z').getTime();
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date(clock)
@@ -5549,14 +5569,14 @@ test('account locks after repeated failed logins and unlocks after the window', 
   for (let i = 0; i < 5; i += 1) {
     await assert.rejects(
       () => service.loginAccount({ username: 'lock_target', password: 'wrong', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 401
+      (error) => asServiceError(error).statusCode === 401
     );
   }
 
   // Locked: even the correct password is rejected with 429.
   await assert.rejects(
     () => service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' }),
-    (error) => error.statusCode === 429
+    (error) => asServiceError(error).statusCode === 429
   );
 
   // After the lockout window passes, the correct password works again.
@@ -5566,8 +5586,8 @@ test('account locks after repeated failed logins and unlocks after the window', 
 });
 
 test('a successful login resets the failed-attempt counter', async () => {
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: safeAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
@@ -5584,7 +5604,7 @@ test('a successful login resets the failed-attempt counter', async () => {
   for (let i = 0; i < 4; i += 1) {
     await assert.rejects(
       () => service.loginAccount({ username: 'reset_target', password: 'wrong', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 401
+      (error) => asServiceError(error).statusCode === 401
     );
   }
   await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' });
@@ -5593,7 +5613,7 @@ test('a successful login resets the failed-attempt counter', async () => {
   for (let i = 0; i < 4; i += 1) {
     await assert.rejects(
       () => service.loginAccount({ username: 'reset_target', password: 'wrong', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 401
+      (error) => asServiceError(error).statusCode === 401
     );
   }
   const account = await service.loginAccount({ username: 'reset_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' });
@@ -5609,8 +5629,8 @@ test('concurrent thread creation never loses a post to interleaved writes', asyn
       return { status: 'Safe', labels: [] };
     }
   };
-  const service = createForumService({
-    store: createMemoryStore(),
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
     ai: slowAi,
     realtime: createEvents(),
     now: () => new Date('2026-05-22T08:00:00.000Z')
