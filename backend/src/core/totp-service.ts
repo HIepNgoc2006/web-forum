@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import QRCode from 'qrcode';
 
 // Base32 decoder
-function base32Decode(str) {
+function base32Decode(str: string): Buffer {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   const cleaned = str.toUpperCase().replace(/=+$/, '');
   let val = 0;
@@ -25,7 +25,7 @@ function base32Decode(str) {
 }
 
 // Generate base32 secret
-export function generateSecret(length = 16) {
+export function generateSecret(length = 16): string {
   const alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567';
   const randomBytes = crypto.randomBytes(length);
   let secret = '';
@@ -36,7 +36,7 @@ export function generateSecret(length = 16) {
 }
 
 // Generate TOTP code
-export function generateTOTP(secret, time = Date.now(), step = 30) {
+export function generateTOTP(secret: string, time = Date.now(), step = 30): string {
   const key = base32Decode(secret);
   const epoch = Math.floor(time / 1000);
   const counter = Math.floor(epoch / step);
@@ -63,7 +63,7 @@ export function generateTOTP(secret, time = Date.now(), step = 30) {
 }
 
 // Verify TOTP code
-export function verifyTOTP(token, secret, window = 1, step = 30) {
+export function verifyTOTP(token: unknown, secret: string, window = 1, step = 30): boolean {
   const cleanedToken = String(token).trim();
   if (!/^\d{6}$/.test(cleanedToken)) {
     return false;
@@ -79,7 +79,7 @@ export function verifyTOTP(token, secret, window = 1, step = 30) {
 }
 
 // Generate 10 random alphanumeric backup codes
-export function generateBackupCodes(count = 10) {
+export function generateBackupCodes(count = 10): string[] {
   const codes = [];
   for (let i = 0; i < count; i++) {
     const code = crypto.randomBytes(4).toString('hex').toUpperCase();
@@ -89,7 +89,7 @@ export function generateBackupCodes(count = 10) {
 }
 
 // Generate QR Code URL
-export async function generateQrCodeDataUrl(username, secret) {
+export async function generateQrCodeDataUrl(username: string, secret: string): Promise<string> {
   const otpauthUrl = `otpauth://totp/36chan:${encodeURIComponent(username)}?secret=${secret}&issuer=36chan`;
   return QRCode.toDataURL(otpauthUrl);
 }

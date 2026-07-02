@@ -15,7 +15,7 @@ import { redactSensitiveText } from './ai.ts';
 import { createInlineImageStorage } from './image-storage.ts';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.js';
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.ts';
-import * as defaultTotp from './totp-service.js';
+import * as defaultTotp from './totp-service.ts';
 import * as defaultWebAuthn from './webauthn-service.js';
 
 const noopLogger = () => {};
