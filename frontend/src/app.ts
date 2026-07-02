@@ -1,6 +1,60 @@
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
 
-const state = {
+type AnyRecord = Record<string, any>;
+
+type HCaptchaApi = {
+  render: (...args: any[]) => any;
+  reset: (...args: any[]) => void;
+};
+
+declare global {
+  interface Window {
+    hcaptcha?: HCaptchaApi;
+  }
+
+  interface Element {
+    alt: string;
+    checked: boolean;
+    dataset: DOMStringMap;
+    disabled: boolean;
+    files: FileList | null;
+    focus: () => void;
+    href: string;
+    maxLength: number;
+    reset: () => void;
+    searchTimer: number;
+    selectionEnd: number | null;
+    selectionStart: number | null;
+    setRangeText: (...args: any[]) => void;
+    setSelectionRange: (...args: any[]) => void;
+    src: string;
+    title: string;
+    value: string;
+  }
+
+  interface Event {
+    clientX: number;
+    clientY: number;
+  }
+
+  interface EventTarget {
+    closest: (selectors: string) => any;
+  }
+
+  interface ParentNode {
+    querySelector(selectors: string): any;
+    querySelectorAll(selectors: string): NodeListOf<any>;
+  }
+
+  interface Error {
+    requires2FA?: boolean;
+    setupRequired?: boolean;
+    statusCode?: number;
+    timedOut?: boolean;
+  }
+}
+
+const state: AnyRecord = {
   boards: [],
   boardGroups: [],
   aiConfigured: false,
@@ -178,7 +232,7 @@ function reportCategoryLabel(value) {
   return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
 }
 
-function moderationPriorityLabel(priority = {}) {
+function moderationPriorityLabel(priority: AnyRecord = {}) {
   if (priority.level === 'high') {
     return 'Cao';
   }
@@ -188,7 +242,7 @@ function moderationPriorityLabel(priority = {}) {
   return 'Thấp';
 }
 
-function moderationPriorityHtml(priority = {}) {
+function moderationPriorityHtml(priority: AnyRecord = {}) {
   const level = ['high', 'medium', 'low'].includes(priority.level) ? priority.level : 'low';
   const score = Number(priority.score || 0);
   const reportCount = Number(priority.reportCount || 0);
@@ -217,7 +271,7 @@ function moderationConfidenceHtml(value) {
 }
 
 function showReportModal(globalNumber) {
-  return new Promise((resolve) => {
+  return new Promise<any>((resolve) => {
     const overlay = document.createElement('div');
     overlay.className = 'reason-modal-overlay';
     overlay.innerHTML = `
@@ -280,7 +334,7 @@ function showReportModal(globalNumber) {
 }
 
 function showReasonModal(title, context) {
-  return new Promise((resolve) => {
+  return new Promise<any>((resolve) => {
     const macros = REASON_MACROS[context] || REASON_MACROS.approve;
     const overlay = document.createElement('div');
     overlay.className = 'reason-modal-overlay';
@@ -355,8 +409,8 @@ function showReasonModal(title, context) {
   });
 }
 
-function showPostEditModal(globalNumber, initialBody = '', options = {}) {
-  return new Promise((resolve) => {
+function showPostEditModal(globalNumber, initialBody = '', options: AnyRecord = {}) {
+  return new Promise<any>((resolve) => {
     const allowMedia = Boolean(options.allowMedia);
     const showReason = !allowMedia && options.showReason !== false;
     const currentMediaHtml = allowMedia && options.currentMediaHtml ? options.currentMediaHtml : '';
@@ -567,7 +621,7 @@ function readWatchedThreads() {
     return Object.fromEntries((state.accountPrivateData.watchlist || []).map((item) => [item.threadId, item]));
   }
   try {
-    const parsed = JSON.parse(localStorage.getItem(watchedThreadsKey) || '{}');
+    const parsed: AnyRecord = JSON.parse(localStorage.getItem(watchedThreadsKey) || '{}');
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return {};
     }
@@ -582,7 +636,7 @@ function readWatchedThreads() {
 function writeWatchedThreads(watchedThreads) {
   localStorage.setItem(watchedThreadsKey, JSON.stringify(watchedThreads));
   if (state.accountToken && state.accountPrivateData) {
-    state.accountPrivateData.watchlist = Object.values(watchedThreads).filter((item) => item?.threadId);
+    state.accountPrivateData.watchlist = Object.values(watchedThreads as AnyRecord).filter((item) => item?.threadId);
     scheduleAccountPrivateDataSave();
   }
 }
@@ -616,7 +670,7 @@ function normalizeWatchedSort(value) {
 function syncWatchedControls({
   unreadOnly = localDisplayPreferences().watchedUnreadOnly,
   unreadCount = state.watchedThreadSummaries.filter((item) => Number(item.unreadCount || 0) > 0).length
-} = {}) {
+}: AnyRecord = {}) {
   if (!els?.watchedUnreadToggle && !els?.watchedMarkAllRead && !els?.watchedSortSelect) {
     return;
   }
@@ -646,7 +700,7 @@ function localDisplayPreferences() {
   };
 }
 
-function writeLocalDisplayPreferences(preferences = {}) {
+function writeLocalDisplayPreferences(preferences: AnyRecord = {}) {
   const safe = {
     compactThreads: Boolean(preferences.compactThreads),
     hideThumbnails: Boolean(preferences.hideThumbnails),
@@ -667,7 +721,7 @@ function localNotificationPreferences() {
   };
 }
 
-function writeLocalNotificationPreferences(preferences = {}) {
+function writeLocalNotificationPreferences(preferences: AnyRecord = {}) {
   const safe = {
     email: Boolean(preferences.email),
     watchedThreads: preferences.watchedThreads !== false,
@@ -975,7 +1029,7 @@ function removePosterNote(id) {
   return next;
 }
 
-function posterNoteForPost(post = {}) {
+function posterNoteForPost(post: AnyRecord = {}) {
   const poster = normalizeSearchValue(posterId(post));
   const posterHash = normalizeSearchValue(post.posterHash || '');
   if (!poster || poster === 'id:????') {
@@ -994,7 +1048,7 @@ function posterNoteForPost(post = {}) {
   );
 }
 
-function postPlainText(post = {}) {
+function postPlainText(post: AnyRecord = {}) {
   return [
     post.subject,
     post.body,
@@ -1010,7 +1064,7 @@ function postPlainText(post = {}) {
     .join(' ');
 }
 
-function contentFilterMatch(post = {}) {
+function contentFilterMatch(post: AnyRecord = {}) {
   const filters = readContentFilters();
   if (!filters.length || !post) {
     return null;
@@ -1488,7 +1542,7 @@ async function resolveBrowserWatchedThreadPreference(requested) {
   }
 }
 
-const els = {
+const els: AnyRecord = {
   homeScreen: document.querySelector('#homeScreen'),
   policyScreen: document.querySelector('#policyScreen'),
   appealForm: document.querySelector('#appealForm'),
@@ -1742,8 +1796,8 @@ const els = {
 function showToast(message) {
   els.toast.textContent = message;
   els.toast.classList.remove('hidden');
-  window.clearTimeout(showToast.timer);
-  showToast.timer = window.setTimeout(() => els.toast.classList.add('hidden'), 3400);
+  window.clearTimeout((showToast as AnyRecord).timer);
+  (showToast as AnyRecord).timer = window.setTimeout(() => els.toast.classList.add('hidden'), 3400);
 }
 
 function loadHcaptchaScript() {
@@ -1756,7 +1810,7 @@ function loadHcaptchaScript() {
   if (state.hcaptchaReady) {
     return state.hcaptchaReady;
   }
-  state.hcaptchaReady = new Promise((resolve, reject) => {
+  state.hcaptchaReady = new Promise<void>((resolve, reject) => {
     const onloadName = '__chan36HcaptchaOnLoad';
     let settled = false;
     const cleanup = (callback) => {
@@ -1939,7 +1993,7 @@ function applyAccountSyncedSettings(account = state.account) {
   }
 }
 
-async function persistAccountSettings({ silent = false } = {}) {
+async function persistAccountSettings({ silent = false }: AnyRecord = {}) {
   if (!state.accountToken || !state.account) {
     return null;
   }
@@ -1963,7 +2017,7 @@ async function persistAccountSettings({ silent = false } = {}) {
   }
 }
 
-function setAccountSession({ token = '', account = null } = {}) {
+function setAccountSession({ token = '', account = null }: AnyRecord = {}) {
   state.accountToken = token;
   state.account = account;
   state.accountPostNumbers = new Set();
@@ -1981,7 +2035,7 @@ function setAccountSession({ token = '', account = null } = {}) {
   renderAccountPrivateData();
 }
 
-function normalizeAccountPrivateData(value = {}) {
+function normalizeAccountPrivateData(value: AnyRecord = {}) {
   return {
     watchlist: Array.isArray(value.watchlist) ? value.watchlist.filter((item) => item?.threadId).slice(0, 100) : [],
     drafts: Array.isArray(value.drafts) ? value.drafts.filter((item) => item?.key && item?.body).slice(0, 40) : [],
@@ -2006,7 +2060,7 @@ function mergeByKey(items, keyFn) {
 }
 
 function mergeAccountPrivateData(serverData = defaultAccountPrivateData()) {
-  const localWatchlist = Object.values(readJsonLocal(watchedThreadsKey, {})).filter((item) => item?.threadId);
+  const localWatchlist = Object.values(readJsonLocal(watchedThreadsKey, {}) as AnyRecord).filter((item) => item?.threadId);
   const localSearches = readLocalList(savedSearchesKey).filter((item) => item?.boardSlug && item?.query);
   const localFilters = normalizeContentFilters(readLocalList(contentFiltersKey));
   const localTemplates = normalizeReplyTemplates(readLocalList(replyTemplatesKey));
@@ -2063,7 +2117,7 @@ function scheduleAccountPrivateDataSave() {
   }, 600);
 }
 
-async function loadAccountPrivateData({ mergeLocal = false } = {}) {
+async function loadAccountPrivateData({ mergeLocal = false }: AnyRecord = {}) {
   if (!state.accountToken) {
     state.accountPrivateData = null;
     return null;
@@ -2077,7 +2131,7 @@ async function loadAccountPrivateData({ mergeLocal = false } = {}) {
   return state.accountPrivateData;
 }
 
-async function finishAccountLogin(result, { mergeLocal = true } = {}) {
+async function finishAccountLogin(result, { mergeLocal = true }: AnyRecord = {}) {
   setAccountSession({ token: result.token, account: result.account });
   state.accountPrivateData = mergeLocal ? mergeAccountPrivateData() : normalizeAccountPrivateData();
   renderAccountPrivateData();
@@ -2186,7 +2240,7 @@ function updateAccountNav() {
   updateCapcodeOptions();
 }
 
-function logoutAccount({ message = 'Đã đăng xuất tài khoản.' } = {}) {
+function logoutAccount({ message = 'Đã đăng xuất tài khoản.' }: AnyRecord = {}) {
   setAccountSession();
   if (message) {
     showToast(message);
@@ -2766,7 +2820,7 @@ async function loadAccountSettings() {
   window.scrollTo({ top: 0 });
 }
 
-async function api(path, options = {}) {
+async function api(path, options: AnyRecord = {}) {
   const {
     auth = 'admin',
     timeoutMs,
@@ -2946,13 +3000,13 @@ function boardThreadsCacheKey({
   q = state.boardSearchTerm,
   sort = state.boardSort,
   filter = state.boardFilter
-} = {}) {
+}: AnyRecord = {}) {
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safePageSize = Math.max(1, Math.floor(Number(pageSize) || state.boardPageSize));
   return [boardSlug, safePage, safePageSize, normalizeSearchValue(q), normalizeBoardSort(sort), normalizeBoardFilter(filter)].join('|');
 }
 
-function firstBoardPageFromThreads(threads = [], { page = 1, pageSize = state.boardPageSize } = {}) {
+function firstBoardPageFromThreads(threads = [], { page = 1, pageSize = state.boardPageSize }: AnyRecord = {}) {
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safePageSize = Math.max(1, Math.floor(Number(pageSize) || state.boardPageSize));
   const offset = (safePage - 1) * safePageSize;
@@ -2975,7 +3029,7 @@ function normalizeBoardThreadsPayload(payload) {
   return { threads, meta: payload && typeof payload === 'object' ? payload : null };
 }
 
-function writeBoardThreadsCache(boardSlug, payload, options = {}) {
+function writeBoardThreadsCache(boardSlug, payload, options: AnyRecord = {}) {
   const { threads, meta } = normalizeBoardThreadsPayload(payload);
   const pagePayload = meta || firstBoardPageFromThreads(threads, options);
   const entry = {
@@ -3000,7 +3054,7 @@ function writeBoardThreadsCache(boardSlug, payload, options = {}) {
   return entry;
 }
 
-function readBoardThreadsCache(options = {}) {
+function readBoardThreadsCache(options: AnyRecord = {}) {
   const key = boardThreadsCacheKey(options);
   const memoryEntry = state.boardThreadsCache.get(key);
   if (memoryEntry) {
@@ -3079,7 +3133,7 @@ function updateBoardPresentation(board) {
   });
 }
 
-function escapeHtml(value = '') {
+function escapeHtml(value: any = '') {
   return String(value).replace(/[&<>"']/g, (character) => {
     const entities = {
       '&': '&amp;',
@@ -3174,7 +3228,7 @@ function renderBoards() {
     .join('');
 }
 
-async function refreshPublicBoards({ fallbackBoards = state.boards } = {}) {
+async function refreshPublicBoards({ fallbackBoards = state.boards }: AnyRecord = {}) {
   try {
     state.boards = await api('/api/boards');
   } catch {
@@ -3192,7 +3246,7 @@ function syncBoardSubscriptionButtons() {
   });
 }
 
-function openThreadComposer({ focus = true } = {}) {
+function openThreadComposer({ focus = true }: AnyRecord = {}) {
   els.threadComposer.classList.remove('hidden');
   els.startThreadButton.classList.add('hidden');
   const savedDraft = readDraft(draftKey('thread', state.boardSlug));
@@ -3219,7 +3273,7 @@ function syncReplyComposer() {
   }
 }
 
-function openReplyComposer({ focus = true } = {}) {
+function openReplyComposer({ focus = true }: AnyRecord = {}) {
   if (state.threadIsArchived || state.threadIsLocked) {
     showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
     return;
@@ -3236,7 +3290,7 @@ function openReplyComposer({ focus = true } = {}) {
   }
 }
 
-function closeReplyComposer({ clear = false } = {}) {
+function closeReplyComposer({ clear = false }: AnyRecord = {}) {
   state.replyComposerOpen = false;
   if (clear) {
     els.commentBody.value = '';
@@ -3291,7 +3345,7 @@ function boardPostCount(threads = []) {
   return threads.reduce((total, thread) => total + 1 + Number(thread.replyCount || 0), 0);
 }
 
-function watchedThreadEntryFromDetail(detail, existing = {}, { markSeen = false } = {}) {
+function watchedThreadEntryFromDetail(detail, existing: AnyRecord = {}, { markSeen = false }: AnyRecord = {}) {
   const board = state.boards.find((item) => item.slug === detail.thread.boardSlug);
   const posts = [detail.thread, ...(detail.comments || [])];
   const currentMaxNumber = detail.commentPage?.currentMaxGlobalNumber || maxThreadPostNumber(detail);
@@ -3496,7 +3550,7 @@ function markAllWatchedThreadsRead() {
   return unreadThreadIds.length;
 }
 
-function watchedThreadHref(item = {}) {
+function watchedThreadHref(item: AnyRecord = {}) {
   if (item.unavailable || !item.threadId) {
     return '#home';
   }
@@ -3523,7 +3577,7 @@ async function loadHomeThreadsByBoard() {
   return Object.fromEntries(entries);
 }
 
-function renderHomeBoards(threadsByBoard = {}, stats = {}) {
+function renderHomeBoards(threadsByBoard: AnyRecord = {}, stats: AnyRecord = {}) {
   const rows = homeBoardList()
     .map((board) => {
       const postCount = boardPostCount(threadsByBoard[board.slug]);
@@ -3567,7 +3621,7 @@ function renderHomeBoards(threadsByBoard = {}, stats = {}) {
   `;
 }
 
-function popularThreadsFrom(threadsByBoard) {
+function popularThreadsFrom(threadsByBoard: AnyRecord) {
   return Object.values(threadsByBoard)
     .flat()
     .sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt))
@@ -4201,7 +4255,7 @@ function editHistoryHtml(history = []) {
   `;
 }
 
-function adminPostDetailHtml(detail, options = {}) {
+function adminPostDetailHtml(detail, options: AnyRecord = {}) {
   const post = detail.post;
   const actions = detail.actions || [];
   const reports = detail.reports || [];
@@ -4261,7 +4315,7 @@ function analyticsCount(value) {
   return Number.isFinite(count) && count >= 0 ? Math.round(count) : 0;
 }
 
-function normalizeAnalyticsBoard(slug, board = {}) {
+function normalizeAnalyticsBoard(slug, board: AnyRecord = {}) {
   const boardMeta = state.boards.find((item) => item.slug === (board.slug || slug));
   const threads = board.threads || {};
   const comments = board.comments || {};
@@ -4292,7 +4346,7 @@ function analyticsBoardActivityRows(boardActivity) {
   return [];
 }
 
-function adminAnalyticsHtml(analytics = {}) {
+function adminAnalyticsHtml(analytics: AnyRecord = {}) {
   const boardRows = analyticsBoardActivityRows(analytics.boardActivity)
     .map((board) => {
       return `
@@ -4522,7 +4576,7 @@ function renderAdminHealth(data) {
   }
 }
 
-function syncAdminModerationSettings(settings = {}) {
+function syncAdminModerationSettings(settings: AnyRecord = {}) {
   const threshold = Number(settings.moderationConfidenceThreshold ?? state.moderationConfidenceThreshold ?? 0);
   state.moderationConfidenceThreshold = Number.isFinite(threshold) ? Math.min(1, Math.max(0, threshold)) : 0;
   if (els.adminQueueThresholdInput) {
@@ -4533,7 +4587,7 @@ function syncAdminModerationSettings(settings = {}) {
 let adminModerationSettingsLoadedAt = 0;
 let adminModerationSettingsRequest = null;
 
-async function loadAdminModerationSettings({ force = false, signal } = {}) {
+async function loadAdminModerationSettings({ force = false, signal }: AnyRecord = {}) {
   if (!force && Date.now() - adminModerationSettingsLoadedAt < ADMIN_SETTINGS_REFRESH_MS) {
     return null;
   }
@@ -4697,14 +4751,14 @@ function renderAdminTabs() {
   els.moderationSection.classList.toggle('hidden', true);
 }
 
-function adminBoardPayload(root, { includeSlug = false } = {}) {
+function adminBoardPayload(root, { includeSlug = false }: AnyRecord = {}) {
   const retentionPolicy = {
     maxActiveThreadsPerBoard: root.querySelector('[data-admin-board-retention-max]')?.value || '',
     bumpLimit: root.querySelector('[data-admin-board-retention-bump]')?.value || '',
     replyLimit: root.querySelector('[data-admin-board-retention-reply]')?.value || '',
     publicArchive: Boolean(root.querySelector('[data-admin-board-retention-public-archive]')?.checked)
   };
-  const payload = {
+  const payload: AnyRecord = {
     name: root.querySelector('[data-admin-board-name]')?.value || '',
     category: root.querySelector('[data-admin-board-category]')?.value || '',
     description: root.querySelector('[data-admin-board-description]')?.value || '',
@@ -4742,8 +4796,8 @@ function formatDateTimeLocal(value) {
   ].join('-') + 'T' + [pad(date.getHours()), pad(date.getMinutes())].join(':');
 }
 
-function adminUserPayload(root, { includeUsername = false } = {}) {
-  const payload = {
+function adminUserPayload(root, { includeUsername = false }: AnyRecord = {}) {
+  const payload: AnyRecord = {
     role: root.querySelector('[data-admin-user-role]')?.value || 'viewer',
     disabled: Boolean(root.querySelector('[data-admin-user-disabled]')?.checked)
   };
@@ -5005,7 +5059,7 @@ function syncAdminBoardFilter() {
   }
 }
 
-async function loadAdminDetail(globalNumber, host, options = {}) {
+async function loadAdminDetail(globalNumber, host, options: AnyRecord = {}) {
   const detail = await api(`/api/admin/posts/${globalNumber}`, {
     timeoutMs: ADMIN_LOAD_TIMEOUT_MS,
     timeoutMessage: 'Chi tiết bài viết phản hồi quá lâu, vui lòng thử lại.'
@@ -5097,7 +5151,7 @@ async function loadHome() {
   renderStats(stats);
 }
 
-function renderPostLines(lines, options = {}) {
+function renderPostLines(lines, options: AnyRecord = {}) {
   const opNumber = Number(options.opNumber || 0);
   const knownBoards = new Set((state.boards || []).map((board) => board.slug));
   return lines
@@ -5207,7 +5261,7 @@ function dataUrlBytes(dataUrl = '') {
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
-function imageSizeBytes(image = {}) {
+function imageSizeBytes(image: AnyRecord = {}) {
   const sizeBytes = Number(image.sizeBytes);
   if (Number.isFinite(sizeBytes) && sizeBytes > 0) {
     return Math.round(sizeBytes);
@@ -5225,7 +5279,7 @@ function formatBytes(bytes) {
   return `${bytes} B`;
 }
 
-function imageInfoText(image = {}) {
+function imageInfoText(image: AnyRecord = {}) {
   const size = formatBytes(imageSizeBytes(image));
   const width = Number(image.width);
   const height = Number(image.height);
@@ -5235,20 +5289,20 @@ function imageInfoText(image = {}) {
   return size;
 }
 
-function mediaItemsFromPost(post = {}) {
+function mediaItemsFromPost(post: AnyRecord = {}) {
   return mediaList(post.images?.length ? post.images : post.image);
 }
 
-function postMediaCount(post = {}) {
+function postMediaCount(post: AnyRecord = {}) {
   return mediaItemsFromPost(post).length;
 }
 
-function mediaOriginalSrc(image = {}) {
+function mediaOriginalSrc(image: AnyRecord = {}) {
   const value = image || {};
   return value.url || value.dataUrl || '';
 }
 
-function mediaThumbnailSrc(image = {}, options = {}) {
+function mediaThumbnailSrc(image: AnyRecord = {}, options: AnyRecord = {}) {
   const value = image || {};
   const src = value.thumbnail?.url || value.thumbnail?.dataUrl || '';
   return src || (options.fallbackOriginal ? mediaOriginalSrc(value) : '');
@@ -5305,7 +5359,7 @@ function postDisplayName(post) {
   return String(post.displayName || 'Anonymous').trim() || 'Anonymous';
 }
 
-function postPermalink(post, options = {}) {
+function postPermalink(post, options: AnyRecord = {}) {
   const threadId = options.threadId || post.threadId || post.id || state.threadId;
   if (!threadId || !post.globalNumber) {
     return '#';
@@ -5436,11 +5490,11 @@ function commentSortHtml(current = 'old') {
   `;
 }
 
-function normalizeThreadSearchTerm(value = '') {
+function normalizeThreadSearchTerm(value: any = '') {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
-function threadSearchHtml(detail = {}) {
+function threadSearchHtml(detail: AnyRecord = {}) {
   const term = state.threadSearchTerm;
   const total = Number(detail.commentPage?.total ?? 0);
   const status = term
@@ -5476,7 +5530,7 @@ function capcodeBadgeHtml(post) {
   return `<span class="capcode capcode-${post.capcode}" title="Chức danh đã xác minh">${label}</span>`;
 }
 
-function adminPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
+function adminPostEditButtonHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
   if (!post?.globalNumber) {
     return '';
   }
@@ -5484,14 +5538,14 @@ function adminPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
   return `<button class="${className}" data-admin-edit-post="${post.globalNumber}" data-admin-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa]</button>`;
 }
 
-function adminPostRestoreButtonHtml(post, { className = 'ghost-button' } = {}) {
+function adminPostRestoreButtonHtml(post, { className = 'ghost-button' }: AnyRecord = {}) {
   if (!post?.globalNumber) {
     return '';
   }
   return `<button class="${className}" data-admin-restore-post="${post.globalNumber}" type="button">[Khôi phục]</button>`;
 }
 
-function accountPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
+function accountPostEditButtonHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
   if (!isAccountPost(post) || !post?.globalNumber) {
     return '';
   }
@@ -5499,7 +5553,7 @@ function accountPostEditButtonHtml(post, { className = 'quote-button' } = {}) {
   return `<button class="${className}" data-account-edit-post="${post.globalNumber}" data-account-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
 }
 
-function selfDeletePostActionsHtml(post, { className = 'quote-button' } = {}) {
+function selfDeletePostActionsHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
   if (!post?.globalNumber || post.isDeleted) {
     return '';
   }
@@ -5509,7 +5563,7 @@ function selfDeletePostActionsHtml(post, { className = 'quote-button' } = {}) {
   return `${deleteFileButton}<button class="${className}" data-self-delete-post="${post.globalNumber}" type="button">[Xóa bài]</button>`;
 }
 
-function selfEditPostButtonHtml(post, { className = 'quote-button' } = {}) {
+function selfEditPostButtonHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
   if (!post?.globalNumber || post.isDeleted) {
     return '';
   }
@@ -5517,7 +5571,7 @@ function selfEditPostButtonHtml(post, { className = 'quote-button' } = {}) {
   return `<button class="${className}" data-self-edit-post="${post.globalNumber}" data-self-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
 }
 
-function meta(post, options = {}) {
+function meta(post, options: AnyRecord = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
     : moderationStatusText(post.moderationStatus);
@@ -5626,7 +5680,7 @@ function diceRollsHtml(diceRolls = []) {
   `;
 }
 
-function postHtml(post, type = 'post', options = {}) {
+function postHtml(post, type = 'post', options: AnyRecord = {}) {
   const classes = String(type)
     .split(/\s+/)
     .filter(Boolean);
@@ -5647,7 +5701,7 @@ function postHtml(post, type = 'post', options = {}) {
   `;
 }
 
-function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply } = {}) {
+function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply }: AnyRecord = {}) {
   if (!comments.length) {
     return state.threadSearchTerm
       ? '<p class="muted">Không có bình luận khớp tìm kiếm trong thread.</p>'
@@ -5661,7 +5715,7 @@ function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply } = {})
       const isUnread = lastSeen > 0 && Number(comment.globalNumber || 0) > lastSeen;
       const marker =
         isUnread && !markerShown
-          ? `<div class="new-posts-divider" role="separator">Bài mới từ lần đọc trước · sau No.${escapeHtml(lastSeen)}</div>`
+          ? `<div class="new-posts-divider" role="separator">Bài mới từ lần đọc trước · sau No.${escapeHtml(String(lastSeen))}</div>`
           : '';
       if (isUnread) {
         markerShown = true;
@@ -5675,7 +5729,7 @@ function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply } = {})
     .join('');
 }
 
-function threadMediaGalleryItems(detail = {}) {
+function threadMediaGalleryItems(detail: AnyRecord = {}) {
   return [detail.thread, ...(detail.comments || [])]
     .filter(Boolean)
     .flatMap((post) =>
@@ -5830,7 +5884,7 @@ function stopAutoUpdateTimer() {
 function audioWorkInProgress() {
   return (
     state.audioTranscribing.size > 0 ||
-    Object.values(state.audioRecorders).some((item) => item?.recorder?.state === 'recording')
+    Object.values(state.audioRecorders as AnyRecord).some((item) => item?.recorder?.state === 'recording')
   );
 }
 
@@ -5909,7 +5963,7 @@ function canModerateFromAdminToken() {
   return Boolean(payload && ['admin', 'owner', 'moderator'].includes(payload.role));
 }
 
-function threadHeaderActionsHtml(detail = {}) {
+function threadHeaderActionsHtml(detail: AnyRecord = {}) {
   if (!canModerateFromAdminToken()) {
     return '';
   }
@@ -5920,7 +5974,7 @@ function threadHeaderActionsHtml(detail = {}) {
   return `<div class="thread-admin-action-group">${actions.join(' ')}</div>`;
 }
 
-function focusPermalinkPost(globalNumber, { scroll = false } = {}) {
+function focusPermalinkPost(globalNumber, { scroll = false }: AnyRecord = {}) {
   const postNumber = String(globalNumber || '').trim();
   if (!postNumber) {
     return;
@@ -5956,7 +6010,7 @@ function threadMatchesSearch(thread, term) {
   return haystack.includes(normalizedTerm);
 }
 
-function catalogThreadFileCount(thread = {}) {
+function catalogThreadFileCount(thread: AnyRecord = {}) {
   const previewFileCount = (Array.isArray(thread.previewComments) ? thread.previewComments : []).reduce(
     (total, comment) => total + postMediaCount(comment),
     0
@@ -5964,14 +6018,14 @@ function catalogThreadFileCount(thread = {}) {
   return postMediaCount(thread) + previewFileCount + Number(thread.omittedImageCount || 0);
 }
 
-function catalogThreadMediaItems(thread = {}) {
+function catalogThreadMediaItems(thread: AnyRecord = {}) {
   const previewMedia = (Array.isArray(thread.previewComments) ? thread.previewComments : []).flatMap((comment) =>
     mediaItemsFromPost(comment)
   );
   return [...mediaItemsFromPost(thread), ...previewMedia];
 }
 
-function catalogThreadHasVideo(thread = {}) {
+function catalogThreadHasVideo(thread: AnyRecord = {}) {
   return catalogThreadMediaItems(thread).some((media) => mediaKind(media) === 'video');
 }
 
@@ -6352,7 +6406,7 @@ async function loadBoard() {
   renderBoardThreads(entry.threads);
 }
 
-async function loadThread({ resetReply = false, focusPost = '' } = {}) {
+async function loadThread({ resetReply = false, focusPost = '' }: AnyRecord = {}) {
   setScreen('thread');
   els.threadSummary.classList.add('hidden');
   const query = new URLSearchParams({
@@ -6616,7 +6670,7 @@ function isSupportedMediaFile(file) {
   return Boolean(file?.type?.startsWith('image/') || SUPPORTED_VIDEO_TYPES.has(file?.type));
 }
 
-function mediaKind(media = {}) {
+function mediaKind(media: AnyRecord = {}) {
   return String(media.type || '').startsWith('video/') ? 'video' : 'image';
 }
 
@@ -6628,7 +6682,7 @@ function mediaList(value) {
 }
 
 function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
+  return new Promise<any>((resolve, reject) => {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error('Không thể đọc tệp'));
     reader.onload = () => {
@@ -6639,7 +6693,7 @@ function fileToDataUrl(file) {
       }
       const image = new Image();
       image.onload = () => {
-        const selectedImage = {
+        const selectedImage: AnyRecord = {
           name: file.name,
           type: file.type,
           sizeBytes: file.size,
@@ -6667,7 +6721,7 @@ function fileToDataUrl(file) {
 }
 
 function videoFileMetadata(file, dataUrl) {
-  return new Promise((resolve) => {
+  return new Promise<any>((resolve) => {
     const video = document.createElement('video');
     let settled = false;
     const timeout = window.setTimeout(() => finish(), 2500);
@@ -6678,7 +6732,7 @@ function videoFileMetadata(file, dataUrl) {
       }
       settled = true;
       window.clearTimeout(timeout);
-      const selectedVideo = {
+      const selectedVideo: AnyRecord = {
         name: file.name,
         type: file.type,
         mediaType: 'video',
@@ -6855,7 +6909,7 @@ function handleImageInputChange(input, { stateKey, preview = null, fileNameEl = 
         fileNameEl.textContent = 'Chưa chọn tệp';
       }
     };
-    const files = Array.from(input.files || []);
+    const files = Array.from(input.files || []) as File[];
     if (!files.length) {
       reset();
       return;
@@ -7153,7 +7207,7 @@ async function selfEditPost(globalNumber, currentBody = '') {
   await refreshCurrentScreen();
 }
 
-async function selfDeletePost(globalNumber, { fileOnly = false, sourceElement = null } = {}) {
+async function selfDeletePost(globalNumber, { fileOnly = false, sourceElement = null }: AnyRecord = {}) {
   const label = fileOnly ? 'xóa tệp khỏi bài' : 'xóa bài';
   const password = window.prompt(`Mật khẩu để ${label} No.${globalNumber}:`, myPostDeletePassword(globalNumber));
   if (password === null) {
@@ -7291,7 +7345,7 @@ async function showSummary(target) {
     box.innerHTML = `<strong>${defaultHeading}</strong><p>${aiNotConfiguredMessage}</p>`;
     return;
   }
-  const requestBody = { posterToken: state.posterToken };
+  const requestBody: AnyRecord = { posterToken: state.posterToken };
   const summarizeSinceLastRead =
     target === 'thread' &&
     state.threadLastSeenBefore > 0 &&
@@ -7552,7 +7606,7 @@ async function speakPost(button) {
 }
 
 // Caption (describe/OCR) the image already attached to a composer, inserting the result into the draft.
-async function captionAttachedImage({ stateKey, textarea, mode = 'describe' } = {}) {
+async function captionAttachedImage({ stateKey, textarea, mode = 'describe' }: AnyRecord = {}) {
   if (!state.aiConfigured) {
     showToast(aiNotConfiguredMessage);
     return;
@@ -7640,7 +7694,7 @@ function cancelAudioTranscription(key) {
 }
 
 // Reads an audio File as base64 and transcribes it into the given draft textarea.
-async function transcribeAudioFile(file, textarea, { activityKey = '' } = {}) {
+async function transcribeAudioFile(file, textarea, { activityKey = '' }: AnyRecord = {}) {
   if (!state.aiConfigured) {
     showToast(aiNotConfiguredMessage);
     return;
@@ -8211,7 +8265,7 @@ function rememberBrowserNotificationId(id) {
   }
 }
 
-function notifyWatchedThreadPost(payload = {}) {
+function notifyWatchedThreadPost(payload: AnyRecord = {}) {
   const preferences = localNotificationPreferences();
   if (!preferences.browserWatchedThreads || !browserNotificationsSupported() || browserNotificationPermission() !== 'granted') {
     return;
@@ -8462,7 +8516,7 @@ function threadMediaToggles() {
   return els.threadDetail ? [...els.threadDetail.querySelectorAll('[data-image-toggle]')] : [];
 }
 
-function setMediaToggleExpanded(imageToggle, expanded, { revealSpoiler = false } = {}) {
+function setMediaToggleExpanded(imageToggle, expanded, { revealSpoiler = false }: AnyRecord = {}) {
   if (!imageToggle) {
     return;
   }
@@ -8730,7 +8784,7 @@ function bindEvents() {
       return;
     }
     event.preventDefault();
-    state.threadSearchTerm = normalizeThreadSearchTerm(new FormData(threadSearchForm).get('q'));
+    state.threadSearchTerm = normalizeThreadSearchTerm(String(new FormData(threadSearchForm).get('q') || ''));
     state.threadCommentPage = 1;
     loadThread().catch((error) => showToast(error.message));
   });
@@ -8841,7 +8895,7 @@ function bindEvents() {
       if (!edit) {
         return;
       }
-      const payload = { body: edit.body };
+      const payload: AnyRecord = { body: edit.body };
       if (edit.replaceImages) {
         payload.images = edit.images || [];
       }

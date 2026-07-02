@@ -342,7 +342,7 @@ Public reading and anonymous posting do not require an account. Accounts only ad
 
 ```mermaid
 flowchart LR
-  Browser["Browser SPA\nfrontend/src/app.js"]
+  Browser["Browser SPA\nfrontend/src/app.ts"]
   Admin["Admin user\nJWT-protected UI"]
   Http["Node HTTP API\nbackend/src/server/http-app.js"]
   Service["Forum service\nbackend/src/core/forum-service.js"]
