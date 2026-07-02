@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 /**
- * migrate-json-to-mongo.js
+ * migrate-json-to-mongo.ts
  *
  * Migrate forum data from JSON file store to MongoDB.
  *
  * Usage:
- *   MONGODB_URI=mongodb://... node scripts/migrate-json-to-mongo.js [options]
+ *   MONGODB_URI=mongodb://... node scripts/migrate-json-to-mongo.ts [options]
  *
  * Options:
  *   --data <path>     Path to forum.json (default: data/forum.json)
@@ -30,8 +30,31 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-function parseArgs(argv) {
-  const args = {
+type AnyRecord = Record<string, any>;
+
+type MigrationArgs = {
+  dataPath: string;
+  dbName?: string;
+  dryRun: boolean;
+  drop: boolean;
+  quiet: boolean;
+};
+
+type MigrationCounts = {
+  threads: number;
+  comments: number;
+  users: number;
+  reports: number;
+  appeals: number;
+  sanctions: number;
+  moderationActions: number;
+  aiUsageKeys: number;
+  aiSummaryCacheKeys: number;
+  nextGlobalNumber: unknown;
+};
+
+function parseArgs(argv: string[]): MigrationArgs {
+  const args: MigrationArgs = {
     dataPath: path.resolve(__dirname, '..', 'data', 'forum.json'),
     dbName: undefined,
     dryRun: false,
@@ -52,7 +75,7 @@ function parseArgs(argv) {
     } else if (arg === '--quiet') {
       args.quiet = true;
     } else if (arg === '--help' || arg === '-h') {
-      console.log(`Usage: MONGODB_URI=mongodb://... node scripts/migrate-json-to-mongo.js [options]
+      console.log(`Usage: MONGODB_URI=mongodb://... node scripts/migrate-json-to-mongo.ts [options]
 
 Options:
   --data <path>   Path to forum.json (default: data/forum.json)
@@ -68,7 +91,7 @@ Options:
   return args;
 }
 
-function validateRecord(record, requiredFields, label) {
+function validateRecord(record: AnyRecord, requiredFields: string[], label: string): string[] {
   const errors = [];
   for (const field of requiredFields) {
     if (record[field] === undefined || record[field] === null || record[field] === '') {
@@ -78,10 +101,21 @@ function validateRecord(record, requiredFields, label) {
   return errors;
 }
 
-function validateState(state) {
-  const errors = [];
-  const warnings = [];
-  const counts = {};
+function validateState(state: AnyRecord): { errors: string[]; warnings: string[]; counts: MigrationCounts } {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const counts: MigrationCounts = {
+    threads: 0,
+    comments: 0,
+    users: 0,
+    reports: 0,
+    appeals: 0,
+    sanctions: 0,
+    moderationActions: 0,
+    aiUsageKeys: 0,
+    aiSummaryCacheKeys: 0,
+    nextGlobalNumber: undefined
+  };
 
   // Validate threads
   const threads = Array.isArray(state.threads) ? state.threads : [];
@@ -175,7 +209,7 @@ function validateState(state) {
   return { errors, warnings, counts };
 }
 
-async function migrate(args) {
+async function migrate(args: MigrationArgs): Promise<void> {
   const uri = process.env.MONGODB_URI;
   if (!uri && !args.dryRun) {
     console.error('❌ MONGODB_URI environment variable is required');
@@ -184,18 +218,18 @@ async function migrate(args) {
 
   // Read JSON data
   console.log(`📂 Reading data from: ${args.dataPath}`);
-  let raw;
+  let raw: string;
   try {
     raw = await fs.readFile(args.dataPath, 'utf8');
-  } catch (error) {
+  } catch (error: any) {
     console.error(`❌ Cannot read data file: ${error.message}`);
     process.exit(1);
   }
 
-  let state;
+  let state: AnyRecord;
   try {
     state = JSON.parse(raw);
-  } catch (error) {
+  } catch (error: any) {
     console.error(`❌ Invalid JSON: ${error.message}`);
     process.exit(1);
   }
@@ -242,6 +276,12 @@ async function migrate(args) {
     return;
   }
 
+  const mongoUri = uri;
+  if (!mongoUri) {
+    console.error('❌ MONGODB_URI environment variable is required');
+    process.exit(1);
+  }
+
   // Connect to MongoDB
   console.log(`\n🔌 Connecting to MongoDB...`);
   const mongoose = (await import('mongoose')).default;
@@ -249,7 +289,7 @@ async function migrate(args) {
   const { BOARDS } = await import('../backend/src/core/config.ts');
 
   const connectOptions = args.dbName ? { dbName: args.dbName } : undefined;
-  const connection = await mongoose.createConnection(uri, connectOptions).asPromise();
+  const connection = await mongoose.createConnection(mongoUri, connectOptions).asPromise();
   console.log('✅ Connected');
 
   try {
@@ -264,7 +304,7 @@ async function migrate(args) {
       ];
       for (const name of collectionNames) {
         try {
-          await connection.db.collection(name).drop();
+          await connection.db!.collection(name).drop();
           if (!args.quiet) console.log(`   Dropped: ${name}`);
         } catch {
           if (!args.quiet) console.log(`   Skip (not found): ${name}`);
@@ -301,7 +341,7 @@ async function migrate(args) {
     if (!args.quiet) console.log(`   ✅ nextGlobalNumber = ${state.nextGlobalNumber}`);
 
     // Helper for bulk insert
-    async function migrateCollection(label, model, items) {
+    async function migrateCollection(label: string, model: any, items: any[]): Promise<void> {
       if (!args.quiet) process.stdout.write(`\n📦 Migrating ${label}... `);
       if (items.length === 0) {
         if (!args.quiet) console.log('(empty)');
@@ -347,7 +387,7 @@ async function migrate(args) {
         models.ModerationAction.countDocuments()
       ]);
 
-    const expected = {
+    const expected: Record<string, number> = {
       threads: (state.threads ?? []).length,
       comments: (state.comments ?? []).length,
       users: (state.users ?? []).length,
@@ -356,7 +396,7 @@ async function migrate(args) {
       sanctions: (state.sanctions ?? []).length,
       moderationActions: (state.moderationActions ?? []).length
     };
-    const actual = {
+    const actual: Record<string, number> = {
       threads: threadCount,
       comments: commentCount,
       users: userCount,
@@ -387,7 +427,7 @@ async function migrate(args) {
   }
 }
 
-migrate(parseArgs(process.argv)).catch((error) => {
+migrate(parseArgs(process.argv)).catch((error: any) => {
   console.error(`\n❌ Migration failed: ${error.message}`);
   process.exit(1);
 });
