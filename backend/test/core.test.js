@@ -15,7 +15,7 @@ import {
   createRateLimitStoreFromEnv,
   createRedisRateLimitStore,
   normalizeRateLimitFailureMode
-} from '../src/core/rate-limit-store.js';
+} from '../src/core/rate-limit-store.ts';
 import {
   assertProductionSecrets,
   createModerationFingerprint,

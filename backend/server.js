@@ -7,7 +7,7 @@ import { createForumService } from './src/core/forum-service.js';
 import { createJsonStore } from './src/core/forum-store.js';
 import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-storage.js';
 import { createMongoStore } from './src/core/mongo-store.js';
-import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.js';
+import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.ts';
 import { createHttpServer } from './src/server/http-app.js';
 import { createRealtimeHub } from './src/server/realtime.ts';
 import { assertProductionSecrets } from './src/core/security.js';

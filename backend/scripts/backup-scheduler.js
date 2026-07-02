@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { createJsonStore } from '../src/core/forum-store.js';
 import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.js';
 import { createMongoStore } from '../src/core/mongo-store.js';
-import { createBackupScheduler, runBackupJob } from '../src/core/backup-scheduler.js';
+import { createBackupScheduler, runBackupJob } from '../src/core/backup-scheduler.ts';
 
 const scriptPath = fileURLToPath(import.meta.url);
 const scriptDir = path.dirname(scriptPath);

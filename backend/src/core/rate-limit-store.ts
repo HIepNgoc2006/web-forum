@@ -1,5 +1,24 @@
 import { createClient } from 'redis';
 
+type RateLimitDriver = 'memory' | 'redis';
+type RateLimitFailureMode = 'open' | 'closed';
+type RateLimitLogger = (entry: Record<string, unknown>) => void;
+type RedisRateLimitClient = {
+  eval: (script: string, options: { keys: string[]; arguments: string[] }) => Promise<unknown> | unknown;
+};
+type RedisRateLimitStoreOptions = {
+  client?: RedisRateLimitClient;
+  prefix?: string;
+};
+type RateLimitIncrementOptions = {
+  windowMs?: number;
+  now?: number;
+};
+type RateLimitStoreEnvOptions = {
+  env?: NodeJS.ProcessEnv;
+  logger?: RateLimitLogger;
+};
+
 const REDIS_INCREMENT_SCRIPT = `
 local count = redis.call("INCR", KEYS[1])
 if count == 1 then
@@ -9,7 +28,7 @@ local ttl = redis.call("PTTL", KEYS[1])
 return { count, ttl }
 `;
 
-function normalizeDriver(value = 'memory') {
+function normalizeDriver(value: unknown = 'memory'): RateLimitDriver {
   const driver = String(value || 'memory').trim().toLowerCase();
   if (['memory', 'map', 'local', 'none'].includes(driver)) {
     return 'memory';
@@ -20,7 +39,7 @@ function normalizeDriver(value = 'memory') {
   throw new Error('RATE_LIMIT_STORE must be either memory or redis.');
 }
 
-export function normalizeRateLimitFailureMode(value = 'closed') {
+export function normalizeRateLimitFailureMode(value: unknown = 'closed'): RateLimitFailureMode {
   const mode = String(value || 'closed').trim().toLowerCase();
   if (mode === 'open') {
     return 'open';
@@ -31,7 +50,7 @@ export function normalizeRateLimitFailureMode(value = 'closed') {
 export function createRedisRateLimitStore({
   client,
   prefix = '36chan:rate-limit:'
-} = {}) {
+}: RedisRateLimitStoreOptions = {}) {
   if (!client || typeof client.eval !== 'function') {
     throw new Error('Redis rate limit store requires a connected Redis client.');
   }
@@ -39,7 +58,7 @@ export function createRedisRateLimitStore({
   const keyPrefix = String(prefix || '36chan:rate-limit:');
 
   return {
-    async increment(key, { windowMs, now = Date.now() } = {}) {
+    async increment(key: unknown, { windowMs, now = Date.now() }: RateLimitIncrementOptions = {}) {
       const safeWindowMs = Math.max(1, Math.trunc(Number(windowMs) || 0));
       const result = await client.eval(REDIS_INCREMENT_SCRIPT, {
         keys: [`${keyPrefix}${String(key)}`],
@@ -57,7 +76,7 @@ export function createRedisRateLimitStore({
 export async function createRateLimitStoreFromEnv({
   env = process.env,
   logger = () => {}
-} = {}) {
+}: RateLimitStoreEnvOptions = {}) {
   const driver = normalizeDriver(env.RATE_LIMIT_STORE ?? env.RATE_LIMIT_DRIVER ?? 'memory');
   const failureMode = normalizeRateLimitFailureMode(env.RATE_LIMIT_FAILURE_MODE ?? env.RATE_LIMIT_REDIS_FAILURE_MODE);
 
@@ -84,7 +103,7 @@ export async function createRateLimitStoreFromEnv({
     driver,
     failureMode,
     store: createRedisRateLimitStore({
-      client,
+      client: client as RedisRateLimitClient,
       prefix: env.RATE_LIMIT_REDIS_PREFIX ?? '36chan:rate-limit:'
     }),
     async close() {

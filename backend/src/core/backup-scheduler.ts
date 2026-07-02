@@ -4,28 +4,92 @@ import path from 'node:path';
 
 import { normalizeState } from './forum-store.js';
 
-function safeTimestamp(date) {
+type Logger = (entry: Record<string, unknown>) => void;
+type BackupStore = {
+  read: () => Promise<unknown> | unknown;
+};
+type ImageStorage = {
+  listKeys: () => Promise<unknown[]> | unknown[];
+};
+type S3Metadata = {
+  bucket?: unknown;
+  endpoint?: unknown;
+  keyPrefix?: unknown;
+};
+type SourceMetadataOptions = {
+  storeDriver?: string;
+  imageStorageDriver?: string;
+  forumPath?: string;
+  mongoDbName?: string | null;
+  uploadRoot?: string;
+  s3?: S3Metadata;
+};
+type SystemMetadataOptions = {
+  operator?: string;
+  hostname?: string;
+  pid?: number;
+};
+type ForumStateLike = {
+  boards?: unknown[];
+  users?: unknown[];
+  threads?: unknown[];
+  comments?: unknown[];
+  reports?: unknown[];
+  sanctions?: unknown[];
+  moderationActions?: unknown[];
+};
+type UploadManifestOptions = {
+  imageStorage?: ImageStorage;
+  imageStorageDriver?: string;
+  uploadRoot?: string;
+};
+type BackupJobOptions = {
+  store?: BackupStore;
+  imageStorage?: ImageStorage;
+  destination?: string;
+  storeDriver?: string;
+  imageStorageDriver?: string;
+  forumPath?: string;
+  mongoDbName?: string | null;
+  uploadRoot?: string;
+  s3?: S3Metadata;
+  dryRun?: boolean;
+  operator?: string;
+  now?: () => Date;
+  logger?: Logger;
+  writeJsonImpl?: (filePath: string, value: unknown) => Promise<void>;
+};
+type BackupSchedulerOptions = {
+  enabled?: boolean;
+  intervalMs?: number;
+  runJob?: () => Promise<unknown> | unknown;
+  logger?: Logger;
+  setIntervalImpl?: (callback: () => void, ms: number) => unknown;
+  clearIntervalImpl?: (timer: unknown) => void;
+};
+
+function safeTimestamp(date: Date): string {
   return date.toISOString().replace(/[:.]/g, '-');
 }
 
-function jsonClone(value) {
+function jsonClone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-async function ensureDirectory(dirPath) {
+async function ensureDirectory(dirPath: string): Promise<void> {
   await fs.mkdir(dirPath, { recursive: true });
 }
 
-async function writeJson(filePath, value) {
+async function writeJson(filePath: string, value: unknown): Promise<void> {
   await ensureDirectory(path.dirname(filePath));
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
-function backupId(now) {
+function backupId(now: Date): string {
   return safeTimestamp(now);
 }
 
-function sourceMetadata({ storeDriver, imageStorageDriver, forumPath, mongoDbName, uploadRoot, s3 = {} }) {
+function sourceMetadata({ storeDriver, imageStorageDriver, forumPath, mongoDbName, uploadRoot, s3 = {} }: SourceMetadataOptions) {
   return {
     store: {
       driver: storeDriver,
@@ -42,7 +106,7 @@ function sourceMetadata({ storeDriver, imageStorageDriver, forumPath, mongoDbNam
   };
 }
 
-function systemMetadata({ operator, hostname = os.hostname(), pid = process.pid } = {}) {
+function systemMetadata({ operator, hostname = os.hostname(), pid = process.pid }: SystemMetadataOptions = {}) {
   return {
     operator: operator || process.env.USER || process.env.USERNAME || 'system',
     hostname,
@@ -50,7 +114,7 @@ function systemMetadata({ operator, hostname = os.hostname(), pid = process.pid 
   };
 }
 
-async function localUploadMetadata(uploadRoot, key) {
+async function localUploadMetadata(uploadRoot: string, key: string) {
   const resolvedRoot = path.resolve(uploadRoot);
   const resolvedPath = path.resolve(resolvedRoot, key);
   if (!resolvedPath.startsWith(`${resolvedRoot}${path.sep}`) && resolvedPath !== resolvedRoot) {
@@ -64,7 +128,7 @@ async function localUploadMetadata(uploadRoot, key) {
   };
 }
 
-async function uploadManifest({ imageStorage, imageStorageDriver, uploadRoot }) {
+async function uploadManifest({ imageStorage, imageStorageDriver, uploadRoot }: UploadManifestOptions) {
   if (!imageStorage || typeof imageStorage.listKeys !== 'function') {
     throw new Error('Image storage must provide listKeys');
   }
@@ -79,7 +143,7 @@ async function uploadManifest({ imageStorage, imageStorageDriver, uploadRoot }) 
   return entries;
 }
 
-export function backupSummary({ state, uploads }) {
+export function backupSummary({ state, uploads }: { state: ForumStateLike; uploads: unknown[] }) {
   return {
     boards: Array.isArray(state.boards) ? state.boards.length : 0,
     users: Array.isArray(state.users) ? state.users.length : 0,
@@ -107,7 +171,7 @@ export async function runBackupJob({
   now = () => new Date(),
   logger = () => undefined,
   writeJsonImpl = writeJson
-} = {}) {
+}: BackupJobOptions = {}) {
   if (!store || typeof store.read !== 'function') {
     throw new Error('Backup store must provide read()');
   }
@@ -174,12 +238,12 @@ export function createBackupScheduler({
   logger = () => undefined,
   setIntervalImpl = setInterval,
   clearIntervalImpl = clearInterval
-} = {}) {
+}: BackupSchedulerOptions = {}) {
   if (typeof runJob !== 'function') {
     throw new Error('Backup scheduler requires runJob');
   }
   const safeIntervalMs = Math.max(60_000, Number(intervalMs) || 0);
-  let timer = null;
+  let timer: unknown = null;
   let running = false;
 
   async function tick() {
