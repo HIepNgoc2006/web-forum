@@ -5,7 +5,7 @@ import {
   createInlineImageStorage,
   createLocalImageStorage,
   createS3ImageStorage
-} from '../src/core/image-storage.js';
+} from '../src/core/image-storage.ts';
 
 type MockResponse = {
   ok: boolean;

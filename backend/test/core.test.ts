@@ -6,7 +6,7 @@ import mongoose from 'mongoose';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
-import { createS3ImageStorage } from '../src/core/image-storage.js';
+import { createS3ImageStorage } from '../src/core/image-storage.ts';
 import { migrateInlineImages } from '../src/core/image-migration.ts';
 import { appendMongoPostCreate, createMongoModels } from '../src/core/mongo-store.js';
 import { publicBoardConfig, publicConfig } from '../src/core/config.ts';

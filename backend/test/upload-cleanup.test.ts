@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { parseCleanupArgs, readForumStateForCleanup } from '../scripts/cleanup-orphan-uploads.ts';
-import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.js';
+import { createLocalImageStorage, createS3ImageStorage } from '../src/core/image-storage.ts';
 import { cleanupOrphanUploads, collectReferencedUploadKeys } from '../src/core/upload-cleanup.ts';
 
 type MockResponse = {

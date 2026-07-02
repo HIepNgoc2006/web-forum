@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { createLocalImageStorage } from './image-storage.js';
+import { createLocalImageStorage } from './image-storage.ts';
 
 type InlineImage = Record<string, unknown> & {
   dataUrl: string;

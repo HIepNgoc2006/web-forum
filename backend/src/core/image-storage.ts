@@ -2,6 +2,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
+type BinaryDigestEncoding = crypto.BinaryToTextEncoding;
+type HmacUpdateValue = string | NodeJS.ArrayBufferView;
+type UploadError = Error & {
+  statusCode?: number;
+};
+
 const IMAGE_EXTENSIONS = new Map([
   ['image/apng', 'apng'],
   ['image/avif', 'avif'],
@@ -134,8 +140,11 @@ function stripThumbnailData(thumbnail) {
   return metadata;
 }
 
-function hmac(key, value, encoding) {
-  return crypto.createHmac('sha256', key).update(value).digest(encoding);
+function hmac(key: crypto.BinaryLike | crypto.KeyObject, value: HmacUpdateValue, encoding: BinaryDigestEncoding): string;
+function hmac(key: crypto.BinaryLike | crypto.KeyObject, value: HmacUpdateValue): Buffer;
+function hmac(key: crypto.BinaryLike | crypto.KeyObject, value: HmacUpdateValue, encoding?: BinaryDigestEncoding): Buffer | string {
+  const hash = crypto.createHmac('sha256', key).update(value);
+  return encoding ? hash.digest(encoding) : hash.digest();
 }
 
 function amzTimestamp(date) {
@@ -339,7 +348,7 @@ export function createS3ImageStorage({
       body: bytes
     });
     if (!response.ok) {
-      const error = new Error(`Không thể lưu ảnh lên S3-compatible storage (${response.status})`);
+      const error: UploadError = new Error(`Không thể lưu ảnh lên S3-compatible storage (${response.status})`);
       error.statusCode = 502;
       throw error;
     }
@@ -398,7 +407,7 @@ export function createS3ImageStorage({
 
       const response = await signedRequest('GET', url);
       if (!response.ok) {
-        const error = new Error(`Không thể liệt kê upload S3 (${response.status})`);
+        const error: UploadError = new Error(`Không thể liệt kê upload S3 (${response.status})`);
         error.statusCode = 502;
         throw error;
       }
@@ -426,7 +435,7 @@ export function createS3ImageStorage({
 
     const response = await signedRequest('DELETE', requestUrlFor(normalizedKey));
     if (!response.ok && response.status !== 404) {
-      const error = new Error(`Không thể xóa upload S3 (${response.status})`);
+      const error: UploadError = new Error(`Không thể xóa upload S3 (${response.status})`);
       error.statusCode = 502;
       throw error;
     }
