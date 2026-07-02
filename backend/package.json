@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "description": "Backend API for 36chan.",
   "type": "module",
-  "main": "server.js",
+  "main": "server.ts",
   "scripts": {
-    "dev": "node --watch server.js",
-    "start": "node server.js",
+    "dev": "node --watch server.ts",
+    "start": "node server.ts",
     "test": "node test/run-tests.ts",
     "build": "tsc -p tsconfig.build.json",
     "check": "node scripts/check-syntax.ts",

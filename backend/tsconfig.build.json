@@ -8,7 +8,7 @@
     "rewriteRelativeImportExtensions": true
   },
   "include": [
-    "server.js",
+    "server.ts",
     "src/**/*.js",
     "src/**/*.ts",
     "scripts/**/*.js",

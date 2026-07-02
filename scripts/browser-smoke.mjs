@@ -629,7 +629,7 @@ async function main() {
     : path.join(tempRoot, 'screenshots');
   await mkdir(screenshotRoot, { recursive: true });
   const userDataDir = path.join(tempRoot, 'chrome-profile');
-  const server = spawnProcess(process.execPath, [path.join(repoRoot, 'backend/server.js')], {
+  const server = spawnProcess(process.execPath, [path.join(repoRoot, 'backend/server.ts')], {
     cwd: tempRoot,
     env: {
       ...process.env,

@@ -9,7 +9,7 @@
     "rewriteRelativeImportExtensions": true
   },
   "include": [
-    "server.js",
+    "server.ts",
     "src/**/*.js",
     "src/**/*.ts",
     "test/**/*.js",

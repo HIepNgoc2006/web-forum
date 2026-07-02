@@ -10,7 +10,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const backend = path.resolve(here, '..');
 
-// Minimal .env loader (mirrors server.js hand-parsing) for AI keys only.
+// Minimal .env loader (mirrors server.ts hand-parsing) for AI keys only.
 for (const line of fs.readFileSync(path.join(backend, '.env'), 'utf8').split(/\r?\n/)) {
   const m = line.match(/^([A-Z0-9_]+)=(.*)$/);
   if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
