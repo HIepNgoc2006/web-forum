@@ -10,7 +10,7 @@ import { createHttpServer } from '../src/server/http-app.js';
 import {
   getWebAuthnLoginOptions,
   getWebAuthnRegisterOptions
-} from '../src/core/webauthn-service.js';
+} from '../src/core/webauthn-service.ts';
 
 type ApiBody = {
   data?: any;

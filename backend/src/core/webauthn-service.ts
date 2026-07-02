@@ -4,11 +4,54 @@ import {
   generateAuthenticationOptions,
   verifyAuthenticationResponse
 } from '@simplewebauthn/server';
+import type {
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+  AuthenticationResponseJSON,
+  AuthenticatorTransportFuture,
+  VerifiedAuthenticationResponse,
+  VerifiedRegistrationResponse
+} from '@simplewebauthn/server';
+
+type StoredPasskey = {
+  credentialID: string;
+  publicKey: string;
+  counter: number;
+  transports?: AuthenticatorTransportFuture[];
+};
+
+type WebAuthnUser = {
+  id: string;
+  username: string;
+  passkeys?: StoredPasskey[];
+};
+
+type WebAuthnRegisterOptionsArgs = {
+  user: WebAuthnUser;
+  rpID: string;
+};
+
+type WebAuthnVerifyRegisterArgs = {
+  body: unknown;
+  expectedChallenge: string;
+  origin: string;
+  rpID: string;
+};
+
+type WebAuthnLoginOptionsArgs = WebAuthnRegisterOptionsArgs;
+
+type WebAuthnVerifyLoginArgs = WebAuthnVerifyRegisterArgs & {
+  passkey: StoredPasskey;
+};
 
 /**
  * Generate registration options for WebAuthn.
  */
-export async function getWebAuthnRegisterOptions({ user, rpID }) {
+export async function getWebAuthnRegisterOptions({
+  user,
+  rpID
+}: WebAuthnRegisterOptionsArgs): Promise<PublicKeyCredentialCreationOptionsJSON> {
   const userPasskeys = user.passkeys || [];
 
   return generateRegistrationOptions({
@@ -38,9 +81,9 @@ export async function verifyWebAuthnRegisterResponse({
   expectedChallenge,
   origin,
   rpID
-}) {
+}: WebAuthnVerifyRegisterArgs): Promise<VerifiedRegistrationResponse> {
   return verifyRegistrationResponse({
-    response: body,
+    response: body as RegistrationResponseJSON,
     expectedChallenge,
     expectedOrigin: origin,
     expectedRPID: rpID,
@@ -51,7 +94,10 @@ export async function verifyWebAuthnRegisterResponse({
 /**
  * Generate authentication options for WebAuthn login.
  */
-export async function getWebAuthnLoginOptions({ user, rpID }) {
+export async function getWebAuthnLoginOptions({
+  user,
+  rpID
+}: WebAuthnLoginOptionsArgs): Promise<PublicKeyCredentialRequestOptionsJSON> {
   const userPasskeys = user.passkeys || [];
 
   return generateAuthenticationOptions({
@@ -74,9 +120,9 @@ export async function verifyWebAuthnLoginResponse({
   origin,
   rpID,
   passkey
-}) {
+}: WebAuthnVerifyLoginArgs): Promise<VerifiedAuthenticationResponse> {
   return verifyAuthenticationResponse({
-    response: body,
+    response: body as AuthenticationResponseJSON,
     expectedChallenge,
     expectedOrigin: origin,
     expectedRPID: rpID,
