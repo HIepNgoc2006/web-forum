@@ -6,6 +6,20 @@ import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.js';
 import { signJwt, verifyJwt } from '../src/core/security.js';
 
+type ServiceError = {
+  message?: string;
+  statusCode?: number;
+};
+
+function isServiceError(error: unknown, statusCode: number) {
+  return typeof error === 'object' && error !== null && (error as ServiceError).statusCode === statusCode;
+}
+
+function toServiceError(error: unknown): ServiceError {
+  assert.ok(typeof error === 'object' && error !== null);
+  return error as ServiceError;
+}
+
 function createTestService(overrides = {}) {
   return createForumService({
     store: createMemoryStore(),
@@ -31,7 +45,7 @@ describe('Account registration and login', () => {
     await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await assert.rejects(
       () => service.registerAccount({ username: 'testuser', password: 'anotherpass1', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 409
+      (error) => isServiceError(error, 409)
     );
   });
 
@@ -39,7 +53,7 @@ describe('Account registration and login', () => {
     const service = createTestService();
     await assert.rejects(
       () => service.registerAccount({ username: 'AB', password: 'securepass12', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
   });
 
@@ -47,7 +61,7 @@ describe('Account registration and login', () => {
     const service = createTestService();
     await assert.rejects(
       () => service.registerAccount({ username: 'testuser', password: 'short', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
   });
 
@@ -63,7 +77,7 @@ describe('Account registration and login', () => {
     await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await assert.rejects(
       () => service.loginAccount({ username: 'testuser', password: 'wrongpass12', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 401
+      (error) => isServiceError(error, 401)
     );
   });
 
@@ -71,7 +85,7 @@ describe('Account registration and login', () => {
     const service = createTestService();
     await assert.rejects(
       () => service.loginAccount({ username: 'ghost', password: 'securepass12', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 401
+      (error) => isServiceError(error, 401)
     );
   });
 });
@@ -92,7 +106,7 @@ describe('Forgot password (recovery code)', () => {
     // Old password no longer works; new one does.
     await assert.rejects(
       () => service.loginAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' }),
-      (error) => error.statusCode === 401
+      (error) => isServiceError(error, 401)
     );
     const account = await service.loginAccount({ username: 'testuser', password: 'brandnewpass34', captchaToken: 'dev-pass' });
     assert.strictEqual(account.username, 'testuser');
@@ -122,7 +136,7 @@ describe('Forgot password (recovery code)', () => {
         newPassword: 'brandnewpass34',
         captchaToken: 'dev-pass'
       }),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
     const account = await service.loginAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     assert.strictEqual(account.username, 'testuser');
@@ -133,10 +147,10 @@ describe('Forgot password (recovery code)', () => {
     await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const ghostError = await service.resetAccountPasswordWithRecoveryCode({
       username: 'ghost', recoveryCode: 'WRONG-CODE0-00000', newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
-    }).catch((error) => error);
+    }).catch((error) => toServiceError(error));
     const wrongCodeError = await service.resetAccountPasswordWithRecoveryCode({
       username: 'testuser', recoveryCode: 'WRONG-CODE0-00000', newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
-    }).catch((error) => error);
+    }).catch((error) => toServiceError(error));
     assert.strictEqual(ghostError.message, wrongCodeError.message);
     assert.strictEqual(ghostError.statusCode, wrongCodeError.statusCode);
   });
@@ -151,7 +165,7 @@ describe('Forgot password (recovery code)', () => {
       () => service.resetAccountPasswordWithRecoveryCode({
         username: 'testuser', recoveryCode, newPassword: 'thirdpassword5', captchaToken: 'dev-pass'
       }),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
   });
 
@@ -166,7 +180,7 @@ describe('Forgot password (recovery code)', () => {
       () => service.resetAccountPasswordWithRecoveryCode({
         username: 'testuser', recoveryCode, newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
       }),
-      (error) => error.statusCode === 400
+      (error) => isServiceError(error, 400)
     );
     await service.resetAccountPasswordWithRecoveryCode({
       username: 'testuser', recoveryCode: result.recoveryCode, newPassword: 'brandnewpass34', captchaToken: 'dev-pass'
@@ -180,7 +194,7 @@ describe('Forgot password (recovery code)', () => {
     const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     await assert.rejects(
       () => service.regenerateRecoveryCode(account.id, 'wrongpass99'),
-      (error) => error.statusCode === 401
+      (error) => isServiceError(error, 401)
     );
   });
 });
@@ -238,7 +252,7 @@ describe('GET /api/account/me after logout', () => {
     const service = createTestService();
     await assert.rejects(
       () => service.getAccount('non-existent-id'),
-      (error) => error.statusCode === 401
+      (error) => isServiceError(error, 401)
     );
   });
 });
@@ -434,7 +448,7 @@ describe('Anonymous posting works without login', () => {
       captchaToken: 'dev-pass',
       ip: '127.0.0.1',
       posterToken: crypto.randomUUID()
-    });
+    } as Parameters<typeof service.createThread>[0]);
     assert.ok(result.thread);
     assert.strictEqual(result.thread.displayName, 'Anonymous');
   });
