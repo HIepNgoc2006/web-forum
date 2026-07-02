@@ -5,7 +5,7 @@ import type { AddressInfo } from 'node:net';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.ts';
-import { createHttpServer } from '../src/server/http-app.js';
+import { createHttpServer } from '../src/server/http-app.ts';
 
 async function withServer(callback) {
   const service = createForumService({

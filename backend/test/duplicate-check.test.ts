@@ -5,7 +5,7 @@ import { test } from 'node:test';
 
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.ts';
-import { createHttpServer } from '../src/server/http-app.js';
+import { createHttpServer } from '../src/server/http-app.ts';
 
 function createTestRealtime() {
   return {

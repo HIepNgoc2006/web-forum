@@ -10,6 +10,34 @@ import {
 } from '../core/config.ts';
 import { createRateLimiter, getClientIp, securityConfigStatus, signJwt, verifyJwt } from '../core/security.ts';
 
+type AnyRecord = Record<string, any>;
+type RouteParams = Record<string, string>;
+type HttpRequest = http.IncomingMessage;
+type HttpResponse = http.ServerResponse;
+type RateLimitFailureMode = 'closed' | 'open';
+
+type CreateHttpServerOptions = {
+  service: any;
+  realtime: any;
+  jwtSecret?: string;
+  adminUsername?: string;
+  adminPassword?: string;
+  staticRoot?: string;
+  uploadRoot?: string;
+  rateLimitStore?: any;
+  rateLimitFailureMode?: RateLimitFailureMode;
+  rateLimitLogger?: (error: any) => void;
+  forceConnectionClose?: boolean;
+};
+
+declare global {
+  interface Error {
+    statusCode?: number;
+    setupRequired?: boolean;
+    requires2FA?: boolean;
+  }
+}
+
 const MIME_TYPES = new Map([
   ['.html', 'text/html; charset=utf-8'],
   ['.css', 'text/css; charset=utf-8'],
@@ -87,21 +115,21 @@ function hasAdminPermission(role, permission) {
   return adminPermissionsForRole(role).has(permission);
 }
 
-function sendJson(response, statusCode, payload) {
+function sendJson(response: HttpResponse, statusCode: number, payload: unknown) {
   response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
   response.end(JSON.stringify(payload));
 }
 
-function sendText(response, statusCode, text, contentType) {
+function sendText(response: HttpResponse, statusCode: number, text: string, contentType: string) {
   response.writeHead(statusCode, { 'content-type': contentType });
   response.end(text);
 }
 
-function ok(response, data, statusCode = 200) {
+function ok(response: HttpResponse, data: unknown, statusCode = 200) {
   sendJson(response, statusCode, { data });
 }
 
-function fail(response, error) {
+function fail(response: HttpResponse, error: Error) {
   const statusCode = error.statusCode ?? 500;
   sendJson(response, statusCode, {
     error: {
@@ -145,7 +173,7 @@ function appendCounter(lines, name, help, value) {
   lines.push(`${name} ${metricNumber(value)}`);
 }
 
-function healthMetricsText(health = {}) {
+function healthMetricsText(health: AnyRecord = {}) {
   const lines = [];
   const realtime = health.realtime ?? {};
   const thresholds = realtime.thresholds ?? {};
@@ -180,7 +208,7 @@ function healthMetricsText(health = {}) {
   return `${lines.join('\n')}\n`;
 }
 
-async function readJson(request, maxBytes = 1_600_000) {
+async function readJson(request: HttpRequest, maxBytes = 1_600_000): Promise<AnyRecord> {
   let body = '';
   for await (const chunk of request) {
     body += chunk;
@@ -213,12 +241,12 @@ function imageUploadJsonLimit() {
   );
 }
 
-function match(parts, pattern) {
+function match(parts: string[], pattern: string[]): RouteParams | null {
   if (parts.length !== pattern.length) {
     return null;
   }
 
-  const params = {};
+  const params: RouteParams = {};
   for (let index = 0; index < pattern.length; index += 1) {
     const expected = pattern[index];
     const actual = parts[index];
@@ -231,7 +259,12 @@ function match(parts, pattern) {
   return params;
 }
 
-async function requireAdmin(request, jwtSecret, service, { permission = 'admin:view' } = {}) {
+async function requireAdmin(
+  request: HttpRequest,
+  jwtSecret: string,
+  service: any,
+  { permission = 'admin:view' }: { permission?: string } = {}
+) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   let payload;
@@ -280,7 +313,12 @@ async function requireAdmin(request, jwtSecret, service, { permission = 'admin:v
   };
 }
 
-function requireAccount(request, jwtSecret, service, { allowAdmin2FASetup = false } = {}) {
+function requireAccount(
+  request: HttpRequest,
+  jwtSecret: string,
+  service: any,
+  { allowAdmin2FASetup = false }: { allowAdmin2FASetup?: boolean } = {}
+) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   try {
@@ -306,7 +344,7 @@ function requireAccount(request, jwtSecret, service, { allowAdmin2FASetup = fals
   }
 }
 
-function getOptionalAccount(request, jwtSecret, service) {
+function getOptionalAccount(request: HttpRequest, jwtSecret: string, service: any) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return undefined;
@@ -323,7 +361,7 @@ function getOptionalAccount(request, jwtSecret, service) {
 // account state (not the token claim) so a revoked/demoted account cannot keep
 // stamping posts, and only the privileged roles are ever returned. Returns null
 // unless the poster explicitly requested a capcode AND is authorized.
-async function getOptionalCapcode(request, jwtSecret, service, requested) {
+async function getOptionalCapcode(request: HttpRequest, jwtSecret: string, service: any, requested: unknown) {
   if (!requested) return null;
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
@@ -459,7 +497,7 @@ function escapeXml(value = '') {
   });
 }
 
-function postPreview(post = {}) {
+function postPreview(post: AnyRecord = {}) {
   return (post.bodyLines || [])
     .map((line) => line.text)
     .join(' ')
@@ -470,7 +508,7 @@ function postPreview(post = {}) {
     .slice(0, 300);
 }
 
-function requestOrigin(request) {
+function requestOrigin(request: HttpRequest) {
   const origin = request.headers.origin || request.headers.referer || 'http://localhost:3000';
   try {
     return new URL(origin).origin;
@@ -481,7 +519,7 @@ function requestOrigin(request) {
   }
 }
 
-function requestProtocol(request) {
+function requestProtocol(request: HttpRequest) {
   const forwardedProto = String(request.headers['x-forwarded-proto'] || '')
     .split(',')[0]
     .trim()
@@ -492,7 +530,7 @@ function requestProtocol(request) {
   return 'http';
 }
 
-function absoluteUrl(request, pathName) {
+function absoluteUrl(request: HttpRequest, pathName: string) {
   const host = request.headers.host || 'localhost';
   return `${requestProtocol(request)}://${host}${pathName}`;
 }
@@ -501,12 +539,12 @@ function feedLimit(value, fallback = 20, max = 50) {
   return Math.max(1, Math.min(Number(value) || fallback, max));
 }
 
-function postFeedTitle(post = {}, prefix = '') {
+function postFeedTitle(post: AnyRecord = {}, prefix = '') {
   const subject = String(post.subject || '').trim();
   return `${prefix}${subject || `No.${post.globalNumber}`} /${post.boardSlug}/`;
 }
 
-function postFeedItem(request, post) {
+function postFeedItem(request: HttpRequest, post: AnyRecord) {
   const threadId = post.threadId || post.id;
   const url = absoluteUrl(request, `/#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`);
   return {
@@ -518,7 +556,7 @@ function postFeedItem(request, post) {
   };
 }
 
-function jsonFeed({ request, title, feedPath, items }) {
+function jsonFeed({ request, title, feedPath, items }: AnyRecord) {
   return {
     version: 'https://jsonfeed.org/version/1.1',
     title,
@@ -553,7 +591,7 @@ function rssFeed({ request, title, description, items }) {
 </rss>`;
 }
 
-function latestPostJsonFeed(request, posts = []) {
+function latestPostJsonFeed(request: HttpRequest, posts: AnyRecord[] = []) {
   return jsonFeed({
     request,
     title: '36chan - Bài mới nhất',
@@ -562,7 +600,7 @@ function latestPostJsonFeed(request, posts = []) {
   });
 }
 
-function latestPostRssFeed(request, posts = []) {
+function latestPostRssFeed(request: HttpRequest, posts: AnyRecord[] = []) {
   return rssFeed({
     request,
     title: '36chan - Bài mới nhất',
@@ -571,7 +609,7 @@ function latestPostRssFeed(request, posts = []) {
   });
 }
 
-function recommendedThreadJsonFeed(request, threads = []) {
+function recommendedThreadJsonFeed(request: HttpRequest, threads: AnyRecord[] = []) {
   return jsonFeed({
     request,
     title: '36chan - Chủ đề đề xuất',
@@ -580,7 +618,7 @@ function recommendedThreadJsonFeed(request, threads = []) {
   });
 }
 
-function recommendedThreadRssFeed(request, threads = []) {
+function recommendedThreadRssFeed(request: HttpRequest, threads: AnyRecord[] = []) {
   return rssFeed({
     request,
     title: '36chan - Chủ đề đề xuất',
@@ -589,7 +627,7 @@ function recommendedThreadRssFeed(request, threads = []) {
   });
 }
 
-function hotBoardFeedItem(request, board = {}) {
+function hotBoardFeedItem(request: HttpRequest, board: AnyRecord = {}) {
   const url = absoluteUrl(request, `/#board/${encodeURIComponent(board.boardSlug)}`);
   const postCount = Number(board.postCountLast24h || 0);
   const threadCount = Number(board.threadCountLast24h || 0);
@@ -603,7 +641,7 @@ function hotBoardFeedItem(request, board = {}) {
   };
 }
 
-function withHotBoardDetails(hotBoards = [], boards = []) {
+function withHotBoardDetails(hotBoards: AnyRecord[] = [], boards: AnyRecord[] = []) {
   const boardBySlug = new Map(boards.map((board) => [board.slug, board]));
   return hotBoards.map((hotBoard) => {
     const board = boardBySlug.get(hotBoard.boardSlug) ?? {};
@@ -616,7 +654,7 @@ function withHotBoardDetails(hotBoards = [], boards = []) {
   });
 }
 
-function hotBoardsJsonFeed(request, boards = []) {
+function hotBoardsJsonFeed(request: HttpRequest, boards: AnyRecord[] = []) {
   return jsonFeed({
     request,
     title: '36chan - Bảng đang nóng',
@@ -625,7 +663,7 @@ function hotBoardsJsonFeed(request, boards = []) {
   });
 }
 
-function hotBoardsRssFeed(request, boards = []) {
+function hotBoardsRssFeed(request: HttpRequest, boards: AnyRecord[] = []) {
   return rssFeed({
     request,
     title: '36chan - Bảng đang nóng',
@@ -634,7 +672,7 @@ function hotBoardsRssFeed(request, boards = []) {
   });
 }
 
-function boardThreadJsonFeed(request, boardSlug, threads = []) {
+function boardThreadJsonFeed(request: HttpRequest, boardSlug: string, threads: AnyRecord[] = []) {
   return jsonFeed({
     request,
     title: `36chan - /${boardSlug}/`,
@@ -643,7 +681,7 @@ function boardThreadJsonFeed(request, boardSlug, threads = []) {
   });
 }
 
-function boardThreadRssFeed(request, boardSlug, threads = []) {
+function boardThreadRssFeed(request: HttpRequest, boardSlug: string, threads: AnyRecord[] = []) {
   return rssFeed({
     request,
     title: `36chan - /${boardSlug}/`,
@@ -652,7 +690,7 @@ function boardThreadRssFeed(request, boardSlug, threads = []) {
   });
 }
 
-function threadFeedPosts(detail = {}) {
+function threadFeedPosts(detail: AnyRecord = {}) {
   return [detail.thread, ...(detail.comments || [])]
     .filter(Boolean)
     .sort((left, right) => {
@@ -664,12 +702,12 @@ function threadFeedPosts(detail = {}) {
     });
 }
 
-function threadFeedTitle(detail = {}) {
+function threadFeedTitle(detail: AnyRecord = {}) {
   const thread = detail.thread || {};
   return `36chan - ${postFeedTitle(thread, 'Thread ')}`;
 }
 
-function threadPostJsonFeed(request, detail = {}, limit = 20) {
+function threadPostJsonFeed(request: HttpRequest, detail: AnyRecord = {}, limit = 20) {
   const threadId = detail.thread?.id || '';
   return jsonFeed({
     request,
@@ -679,7 +717,7 @@ function threadPostJsonFeed(request, detail = {}, limit = 20) {
   });
 }
 
-function threadPostRssFeed(request, detail = {}, limit = 20) {
+function threadPostRssFeed(request: HttpRequest, detail: AnyRecord = {}, limit = 20) {
   return rssFeed({
     request,
     title: threadFeedTitle(detail),
@@ -688,7 +726,7 @@ function threadPostRssFeed(request, detail = {}, limit = 20) {
   });
 }
 
-function archivedThreadFeedItem(request, thread = {}) {
+function archivedThreadFeedItem(request: HttpRequest, thread: AnyRecord = {}) {
   const url = absoluteUrl(request, `/#thread/${encodeURIComponent(thread.id)}?p=${encodeURIComponent(thread.globalNumber)}`);
   return {
     id: String(thread.globalNumber),
@@ -844,7 +882,7 @@ export function createHttpServer({
   rateLimitFailureMode = 'closed',
   rateLimitLogger = (error) => console.error('RATE LIMIT STORE ERROR:', error),
   forceConnectionClose = false
-}) {
+}: CreateHttpServerOptions) {
   const sharedLimiterOptions = {
     store: rateLimitStore,
     failureMode: rateLimitFailureMode,

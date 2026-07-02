@@ -6,7 +6,7 @@ import type { AddressInfo } from 'node:net';
 import * as totpService from '../src/core/totp-service.ts';
 import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.ts';
-import { createHttpServer } from '../src/server/http-app.js';
+import { createHttpServer } from '../src/server/http-app.ts';
 
 type ServiceError = {
   statusCode?: number;

@@ -8,7 +8,7 @@ import { createJsonStore } from './src/core/forum-store.ts';
 import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-storage.ts';
 import { createMongoStore } from './src/core/mongo-store.ts';
 import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.ts';
-import { createHttpServer } from './src/server/http-app.js';
+import { createHttpServer } from './src/server/http-app.ts';
 import { createRealtimeHub } from './src/server/realtime.ts';
 import { assertProductionSecrets } from './src/core/security.ts';
 

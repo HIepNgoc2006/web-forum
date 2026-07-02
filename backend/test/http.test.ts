@@ -10,7 +10,7 @@ import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createLocalImageStorage } from '../src/core/image-storage.ts';
 import { BOARDS } from '../src/core/config.ts';
-import { createHttpServer } from '../src/server/http-app.js';
+import { createHttpServer } from '../src/server/http-app.ts';
 
 type LooseJson = {
   data?: any;
