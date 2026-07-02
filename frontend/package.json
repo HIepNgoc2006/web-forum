@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "lint": "eslint .",
+    "lint": "eslint --flag unstable_native_nodejs_ts_config .",
     "preview": "vite preview",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

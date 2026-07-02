@@ -12,6 +12,7 @@
     "src/**/*.js",
     "src/**/*.ts",
     "src/**/*.d.ts",
+    "eslint.config.*",
     "vite.config.*"
   ],
   "exclude": [
