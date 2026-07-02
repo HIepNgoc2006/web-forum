@@ -1,6 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
-import { BOARDS, normalizeRetentionPolicy } from './config.js';
+import { BOARDS, normalizeRetentionPolicy } from './config.ts';
 
 export const EMPTY_STATE = {
   version: 1,

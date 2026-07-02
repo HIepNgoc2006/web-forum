@@ -10,7 +10,7 @@ import {
   publicBoardConfig,
   readModerationConfidenceThreshold,
   readPositiveInteger
-} from './config.js';
+} from './config.ts';
 import { redactSensitiveText } from './ai.js';
 import { createInlineImageStorage } from './image-storage.js';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.js';

@@ -9,7 +9,7 @@ import { createMemoryStore } from '../src/core/forum-store.js';
 import { createS3ImageStorage } from '../src/core/image-storage.js';
 import { migrateInlineImages } from '../src/core/image-migration.ts';
 import { appendMongoPostCreate, createMongoModels } from '../src/core/mongo-store.js';
-import { publicBoardConfig, publicConfig } from '../src/core/config.js';
+import { publicBoardConfig, publicConfig } from '../src/core/config.ts';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
 import {
   createRateLimitStoreFromEnv,
@@ -115,7 +115,7 @@ async function loadConfigWithEnv(env) {
   }
 
   try {
-    return await import(`../src/core/config.js?test=${Date.now()}-${Math.random()}`);
+    return await import(`../src/core/config.ts?test=${Date.now()}-${Math.random()}`);
   } finally {
     for (const key of keys) {
       if (original[key] === undefined) {

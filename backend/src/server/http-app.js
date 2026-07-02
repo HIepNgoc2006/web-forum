@@ -7,7 +7,7 @@ import {
   DEFAULT_MAX_THUMBNAIL_BYTES,
   publicConfig,
   readPositiveInteger
-} from '../core/config.js';
+} from '../core/config.ts';
 import { createRateLimiter, getClientIp, securityConfigStatus, signJwt, verifyJwt } from '../core/security.js';
 
 const MIME_TYPES = new Map([

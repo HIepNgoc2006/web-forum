@@ -1,4 +1,69 @@
-export const BOARDS = [
+export type ThreadLifecycle = {
+  maxActiveThreadsPerBoard: number;
+  bumpLimit: number;
+  replyLimit: number;
+};
+
+export type RetentionPolicy = ThreadLifecycle & {
+  publicArchive: boolean;
+};
+
+export type BoardBanner = {
+  text?: string;
+  imageUrl?: string;
+  altText?: string;
+};
+
+export type BoardConfig = {
+  slug: string;
+  path: string;
+  name: string;
+  category: string;
+  description: string;
+  temporary?: boolean;
+  eventEndsAt?: string;
+  rules?: string[];
+  retentionPolicy?: Partial<RetentionPolicy>;
+  banner?: BoardBanner;
+};
+
+export type BoardGroup = {
+  name: string;
+  slugs: string[];
+};
+
+export type AiProvider = 'google-ai-studio' | 'openai-compatible';
+
+export type AiConfigStatus = {
+  provider: AiProvider;
+  configured: boolean;
+  model: string;
+  moderationConfidenceThreshold: number;
+};
+
+export type PublicBoardConfig = Omit<BoardConfig, 'rules' | 'retentionPolicy' | 'banner'> & {
+  rules: string[];
+  retentionPolicy: RetentionPolicy;
+  banner: {
+    text: string;
+    imageUrl?: string;
+    altText?: string;
+  };
+};
+
+export type PublicConfig = {
+  boards: PublicBoardConfig[];
+  boardGroups: Array<{
+    name: string;
+    boards: PublicBoardConfig[];
+  }>;
+  lifecycle: ThreadLifecycle;
+  hcaptchaSiteKey: string;
+  maxImageBytes: number;
+  ai: AiConfigStatus;
+};
+
+export const BOARDS: BoardConfig[] = [
   {
     slug: 'confession',
     path: '/confession/',
@@ -112,7 +177,7 @@ export const BOARDS = [
   }
 ];
 
-export const BOARD_GROUPS = [
+export const BOARD_GROUPS: BoardGroup[] = [
   { name: 'Trường học', slugs: ['confession', 'hoc-tap', 'tam-su', 'hoi-dap'] },
   { name: 'Đời sống', slugs: ['su-kien', 'clb', 'an-uong', 'ktx'] },
   { name: 'Sự kiện tạm thời', slugs: ['deadline-week', 'thi-cuoi-ky', 'tuyen-clb'] },
@@ -121,7 +186,7 @@ export const BOARD_GROUPS = [
   { name: 'Khác', slugs: ['random'] }
 ];
 
-export const MODERATION_LABELS = ['Toxic', 'Spam', 'Hate Speech', 'Fake News', 'PII Risk'];
+export const MODERATION_LABELS: string[] = ['Toxic', 'Spam', 'Hate Speech', 'Fake News', 'PII Risk'];
 export const DEFAULT_MAX_IMAGE_BYTES = 1_500_000;
 export const DEFAULT_MAX_THUMBNAIL_BYTES = 120_000;
 const DEFAULT_BOARD_DESCRIPTION = 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt.';
@@ -132,12 +197,14 @@ const DEFAULT_BOARD_RULES = [
 ];
 const SAFE_BANNER_URL_PATTERN = /^(?:\/(?!\/)|https:\/\/)/i;
 
-export function readPositiveInteger(value, fallback) {
+export function readPositiveInteger(value: unknown, fallback: number): number {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed >= 1 ? parsed : fallback;
 }
 
-export function readModerationConfidenceThreshold(value = process.env.AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD) {
+export function readModerationConfidenceThreshold(
+  value: unknown = process.env.AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD
+): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) {
     return 0;
@@ -151,10 +218,13 @@ export const THREAD_LIFECYCLE = {
   maxActiveThreadsPerBoard: readPositiveInteger(process.env.MAX_ACTIVE_THREADS_PER_BOARD, 150),
   bumpLimit,
   replyLimit: Math.max(readPositiveInteger(process.env.THREAD_REPLY_LIMIT, 500), bumpLimit)
-};
+} satisfies ThreadLifecycle;
 
-export function normalizeRetentionPolicy(value = {}, defaults = THREAD_LIFECYCLE) {
-  const policy = value && typeof value === 'object' ? value : {};
+export function normalizeRetentionPolicy(
+  value: unknown = {},
+  defaults: ThreadLifecycle = THREAD_LIFECYCLE
+): RetentionPolicy {
+  const policy = value && typeof value === 'object' ? (value as Partial<RetentionPolicy>) : {};
   const normalized = {
     maxActiveThreadsPerBoard: readPositiveInteger(policy.maxActiveThreadsPerBoard, defaults.maxActiveThreadsPerBoard),
     bumpLimit: readPositiveInteger(policy.bumpLimit, defaults.bumpLimit),
@@ -164,11 +234,11 @@ export function normalizeRetentionPolicy(value = {}, defaults = THREAD_LIFECYCLE
   return normalized;
 }
 
-export function getBoard(slug) {
+export function getBoard(slug: string): BoardConfig | undefined {
   return BOARDS.find((board) => board.slug === slug);
 }
 
-function sanitizePlainText(value = '', fallback = '', maxLength = 400) {
+function sanitizePlainText(value: unknown = '', fallback: unknown = '', maxLength = 400): string {
   const text = String(value || fallback)
     .replace(/<[^>]*>/g, '')
     .replace(/[<>]/g, '')
@@ -178,7 +248,7 @@ function sanitizePlainText(value = '', fallback = '', maxLength = 400) {
   return text.slice(0, maxLength);
 }
 
-function sanitizeBoardRules(board, description) {
+function sanitizeBoardRules(board: BoardConfig, description: string): string[] {
   const configuredRules = Array.isArray(board.rules) ? board.rules : [];
   const fallbackRules = [description, ...DEFAULT_BOARD_RULES];
   const rules = configuredRules.length ? configuredRules : fallbackRules;
@@ -188,12 +258,12 @@ function sanitizeBoardRules(board, description) {
     .slice(0, 8);
 }
 
-function sanitizeBannerUrl(value = '') {
+function sanitizeBannerUrl(value: unknown = ''): string {
   const url = String(value || '').trim();
   return SAFE_BANNER_URL_PATTERN.test(url) ? url : '';
 }
 
-export function publicBoardConfig(board) {
+export function publicBoardConfig(board: BoardConfig): PublicBoardConfig {
   const name = sanitizePlainText(board.name, board.slug || '36chan', 80);
   const description = sanitizePlainText(board.description, DEFAULT_BOARD_DESCRIPTION, 500);
   const bannerText = sanitizePlainText(
@@ -218,14 +288,14 @@ export function publicBoardConfig(board) {
   };
 }
 
-export function aiConfigStatus() {
+export function aiConfigStatus(): AiConfigStatus {
   const explicitAiProvider = process.env.AI_PROVIDER;
   const hasGoogleAi = Boolean(process.env.GOOGLE_AI_API_KEY);
   const hasOpenAiCompatible = Boolean(
     (process.env.OPENAI_COMPATIBLE_API_KEY && process.env.OPENAI_COMPATIBLE_BASE_URL) ||
       (process.env.OPENAI_API_KEY && process.env.OPENAI_BASE_URL)
   );
-  const aiProvider =
+  const aiProvider: AiProvider =
     explicitAiProvider === 'openai-compatible'
       ? 'openai-compatible'
       : explicitAiProvider === 'google' || explicitAiProvider === 'google-ai-studio' || hasGoogleAi || !hasOpenAiCompatible
@@ -243,7 +313,7 @@ export function aiConfigStatus() {
   };
 }
 
-export function publicConfig() {
+export function publicConfig(): PublicConfig {
   const boards = BOARDS.map((board) => publicBoardConfig(board));
   const boardBySlug = new Map(boards.map((board) => [board.slug, board]));
 
