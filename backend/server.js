@@ -1,4 +1,4 @@
-import './src/core/env-init.js';
+import './src/core/env-init.ts';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
@@ -12,7 +12,7 @@ import { createHttpServer } from './src/server/http-app.js';
 import { createRealtimeHub } from './src/server/realtime.ts';
 import { assertProductionSecrets } from './src/core/security.js';
 
-// Environment variables are loaded synchronously in env-init.js (the first
+// Environment variables are loaded synchronously in env-init.ts (the first
 // import above) to ensure they are available to static imports at module load.
 
 // Fail fast in production rather than silently running with predictable

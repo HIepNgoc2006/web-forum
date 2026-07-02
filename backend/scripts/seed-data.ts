@@ -5,7 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { createJsonStore } from '../src/core/forum-store.js';
 import { createMongoStore } from '../src/core/mongo-store.js';
-import { exportSeedData, importSeedData, readSeedFile, restoreSeedRollback } from '../src/core/seed-data.js';
+import { exportSeedData, importSeedData, readSeedFile, restoreSeedRollback } from '../src/core/seed-data.ts';
 
 type MongoStoreOptions = {
   uri?: string;

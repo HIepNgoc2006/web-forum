@@ -3,6 +3,12 @@ import path from 'node:path';
 
 import { normalizeState } from './forum-store.js';
 
+type SeedRecord = Record<string, unknown>;
+type SeedValidationError = Error & {
+  validationErrors?: string[];
+  rollbackPath?: string;
+};
+
 const SEED_VERSION = 1;
 const PRIVATE_POST_FIELDS = new Set([
   'authorFingerprint',
@@ -88,16 +94,16 @@ const COMMENT_FIELDS = [
   'createdAt'
 ];
 
-function clone(value) {
+function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
 }
 
-function compactObject(value) {
+function compactObject(value: SeedRecord): SeedRecord {
   return Object.fromEntries(Object.entries(value).filter(([, item]) => item !== undefined));
 }
 
-function pickFields(source, fields) {
-  const result = {};
+function pickFields(source: SeedRecord, fields: string[]): SeedRecord {
+  const result: SeedRecord = {};
   for (const field of fields) {
     if (Object.hasOwn(source, field)) {
       result[field] = source[field];
@@ -106,28 +112,33 @@ function pickFields(source, fields) {
   return result;
 }
 
-function sanitizeMedia(media) {
+function sanitizeMedia(media: unknown): SeedRecord | null {
   if (!media || typeof media !== 'object') {
     return null;
   }
-  const sanitized = pickFields(media, MEDIA_FIELDS);
-  if (media.thumbnail && typeof media.thumbnail === 'object') {
-    sanitized.thumbnail = sanitizeMedia(media.thumbnail);
+  const source = media as SeedRecord;
+  const sanitized = pickFields(source, MEDIA_FIELDS);
+  if (source.thumbnail && typeof source.thumbnail === 'object') {
+    sanitized.thumbnail = sanitizeMedia(source.thumbnail);
   }
   return compactObject(sanitized);
 }
 
-function sanitizePoll(poll) {
-  if (!poll || typeof poll !== 'object' || !Array.isArray(poll.options)) {
+function sanitizePoll(poll: unknown): SeedRecord | null {
+  const source = poll && typeof poll === 'object' ? (poll as SeedRecord) : null;
+  if (!source || !Array.isArray(source.options)) {
     return null;
   }
-  const options = poll.options
+  const options = source.options
     .filter((option) => option && typeof option === 'object')
-    .map((option) => compactObject({
-      id: option.id,
-      text: option.text,
-      votes: Number(option.votes || 0)
-    }))
+    .map((option) => {
+      const record = option as SeedRecord;
+      return compactObject({
+        id: record.id,
+        text: record.text,
+        votes: Number(record.votes || 0)
+      });
+    })
     .filter((option) => option.id && option.text);
   if (options.length < 2) {
     return null;
@@ -135,11 +146,11 @@ function sanitizePoll(poll) {
   return compactObject({
     options,
     totalVotes: options.reduce((total, option) => total + Number(option.votes || 0), 0),
-    updatedAt: poll.updatedAt
+    updatedAt: source.updatedAt
   });
 }
 
-function sanitizePost(post, fields) {
+function sanitizePost(post: SeedRecord, fields: string[]): SeedRecord {
   const source = { ...post };
   for (const field of PRIVATE_POST_FIELDS) {
     delete source[field];
@@ -160,11 +171,11 @@ function sanitizePost(post, fields) {
   return compactObject(sanitized);
 }
 
-function sanitizeBoard(board) {
+function sanitizeBoard<T>(board: T): T {
   return clone(board);
 }
 
-function publicSeedPost(post) {
+function publicSeedPost(post: SeedRecord): boolean {
   return !post.isDeleted && !post.isPending;
 }
 
@@ -333,7 +344,7 @@ export function planSeedImport(currentState, seed, { mode = 'skip' } = {}) {
   }
   const validation = validateSeed(seed);
   if (!validation.valid) {
-    const error = new Error(`Seed validation failed: ${validation.errors.join('; ')}`);
+    const error: SeedValidationError = new Error(`Seed validation failed: ${validation.errors.join('; ')}`);
     error.validationErrors = validation.errors;
     throw error;
   }
@@ -456,8 +467,9 @@ export async function importSeedData({
     await store.write(nextState);
   } catch (error) {
     await store.write(currentState);
-    error.rollbackPath = resolvedRollbackPath;
-    throw error;
+    const rollbackError = error as SeedValidationError;
+    rollbackError.rollbackPath = resolvedRollbackPath;
+    throw rollbackError;
   }
   return { dryRun: false, summary, rollbackPath: resolvedRollbackPath };
 }

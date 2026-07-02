@@ -11,7 +11,7 @@ import {
   restoreSeedRollback,
   sanitizeSeedState,
   validateSeed
-} from '../src/core/seed-data.js';
+} from '../src/core/seed-data.ts';
 
 const tempRoots = [];
 
