@@ -1,5 +1,60 @@
 // GOOGLE_AI_MODEL is read dynamically from process.env to avoid module initialization ordering issues.
 
+type AiError = Error & {
+  statusCode?: number;
+  providerStatusCode?: number;
+};
+
+type JsonRecord = Record<string, any>;
+
+export type AiModerationResult = {
+  status: 'Safe' | 'Flagged';
+  labels: string[];
+  confidence?: number;
+};
+
+export type AiMedia = {
+  data?: string;
+  mimeType?: string;
+  filename?: string;
+  [key: string]: any;
+};
+
+export type AiTextItem = {
+  body: string;
+  [key: string]: any;
+};
+
+export type AiDuplicateResult = {
+  isDuplicate: boolean;
+  matchedThreadId: string | null;
+  reason: string | null;
+};
+
+export type AiSpeakOptions = {
+  voice?: string;
+  languageCode?: string;
+};
+
+export type AiSpeechResult = {
+  data: string;
+  mimeType: string;
+};
+
+export type AiClient = {
+  moderate(text: string): Promise<AiModerationResult>;
+  moderateImage(media: AiMedia): Promise<AiModerationResult>;
+  summarize(items: AiTextItem[]): Promise<string[]>;
+  suggest(contextItems: AiTextItem[]): Promise<string[]>;
+  rewrite(text: string, tone?: string): Promise<string>;
+  summarizeReports(reasons: string[]): Promise<string>;
+  checkDuplicateThread(newBody: string, existingThreads?: AiTextItem[]): Promise<AiDuplicateResult>;
+  translate(text: string, targetLang?: string): Promise<string>;
+  transcribe(media: AiMedia): Promise<string>;
+  caption(media: AiMedia, mode?: string): Promise<string>;
+  speak(text: string, options?: AiSpeakOptions): Promise<AiSpeechResult>;
+};
+
 const MODERATION_SYSTEM_PROMPT = `
 Bạn là bộ lọc kiểm duyệt trước khi đăng của 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.
 Nhiệm vụ: phân loại nội dung công khai theo mức an toàn, không đoán danh tính người viết, không yêu cầu IP, không dùng dữ liệu ngoài phần nội dung.
@@ -143,14 +198,18 @@ function aiFetchTimeoutMs() {
   return Number.isFinite(value) && value > 0 ? value : 45_000;
 }
 
-async function fetchWithTimeout(url, options = {}, { operation = 'AI', timeoutMs = aiFetchTimeoutMs() } = {}) {
+async function fetchWithTimeout(
+  url: string | URL,
+  options: RequestInit = {},
+  { operation = 'AI', timeoutMs = aiFetchTimeoutMs() }: { operation?: string; timeoutMs?: number } = {}
+) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
     return await fetch(url, { ...options, signal: controller.signal });
   } catch (error) {
     if (controller.signal.aborted) {
-      const timeoutError = new Error(`${operation} quá thời gian chờ. Vui lòng thử lại.`);
+      const timeoutError = new Error(`${operation} quá thời gian chờ. Vui lòng thử lại.`) as AiError;
       timeoutError.statusCode = 504;
       throw timeoutError;
     }
@@ -208,39 +267,39 @@ function rawBase64(data = '') {
   return value.startsWith('data:') && comma !== -1 ? value.slice(comma + 1) : value;
 }
 
-function assertAudioMedia(media) {
+function assertAudioMedia(media: AiMedia | null | undefined): asserts media is AiMedia & { data: string } {
   if (!media || typeof media.data !== 'string' || !media.data) {
-    const error = new Error('Thiếu dữ liệu audio để xử lý.');
+    const error = new Error('Thiếu dữ liệu audio để xử lý.') as AiError;
     error.statusCode = 400;
     throw error;
   }
   if (!AUDIO_MIME_TYPES.has(audioMimeType(media))) {
-    const error = new Error('Định dạng audio không được hỗ trợ.');
+    const error = new Error('Định dạng audio không được hỗ trợ.') as AiError;
     error.statusCode = 415;
     throw error;
   }
 }
 
-function assertImageMedia(media) {
+function assertImageMedia(media: AiMedia | null | undefined): asserts media is AiMedia & { data: string } {
   if (!media || typeof media.data !== 'string' || !media.data) {
-    const error = new Error('Thiếu dữ liệu ảnh để xử lý.');
+    const error = new Error('Thiếu dữ liệu ảnh để xử lý.') as AiError;
     error.statusCode = 400;
     throw error;
   }
   if (media.mimeType && !String(media.mimeType).toLowerCase().startsWith('image/')) {
-    const error = new Error('Định dạng ảnh không được hỗ trợ.');
+    const error = new Error('Định dạng ảnh không được hỗ trợ.') as AiError;
     error.statusCode = 415;
     throw error;
   }
 }
 
 function notConfiguredError(message = 'Chưa cấu hình nhà cung cấp AI. Thêm khóa API vào backend/.env để dùng tính năng AI này.') {
-  const error = new Error(message);
+  const error = new Error(message) as AiError;
   error.statusCode = 503;
   return error;
 }
 
-function heuristicModeration(text) {
+function heuristicModeration(text: string): AiModerationResult {
   const normalized = text.toLowerCase();
   const rules = [
     { label: 'Spam', terms: ['http://', 'https://', 'telegram', 'free money', 'kiem tien'] },
@@ -305,12 +364,12 @@ function normalizeConfidence(value) {
   return Math.min(1, Math.max(0, normalized));
 }
 
-function normalizeModerationResult(parsed = {}) {
+function normalizeModerationResult(parsed: JsonRecord = {}): AiModerationResult {
   const labels = Array.isArray(parsed.labels)
     ? parsed.labels.map((label) => String(label ?? '').trim()).filter(Boolean)
     : [];
   const confidence = normalizeConfidence(parsed.confidence ?? parsed.confidenceScore ?? parsed.score);
-  const result =
+  const result: AiModerationResult =
     parsed.status === 'Flagged'
       ? { status: 'Flagged', labels }
       : { status: 'Safe', labels: [] };
@@ -325,7 +384,7 @@ function bulletize(text, limit = 5) {
     .slice(0, limit);
 }
 
-function duplicatePrompt(newBody, existingThreads = []) {
+function duplicatePrompt(newBody: string, existingThreads: AiTextItem[] = []) {
   const threadsText = existingThreads
     .map((thread, index) => {
       return [
@@ -344,7 +403,7 @@ ${threadsText}
 `.trim();
 }
 
-function normalizeDuplicateResult(parsed = {}) {
+function normalizeDuplicateResult(parsed: JsonRecord = {}): AiDuplicateResult {
   return {
     isDuplicate: Boolean(parsed.isDuplicate),
     matchedThreadId: parsed.matchedThreadId ? String(parsed.matchedThreadId) : null,
@@ -449,24 +508,34 @@ function extractGoogleAudioData(data = {}) {
   return findGoogleAudioData(data);
 }
 
-function googleTtsError(status) {
+function googleTtsError(status: number): AiError {
   const error = new Error(
     status === 429
       ? 'Google TTS đang giới hạn lượt đọc. Vui lòng thử lại sau.'
       : `Yêu cầu Google TTS thất bại: ${status}`
-  );
+  ) as AiError;
   error.statusCode = status === 429 ? 429 : status >= 500 ? 503 : 502;
   error.providerStatusCode = status;
   return error;
 }
 
 function googleTtsNoAudioError() {
-  const error = new Error('Google TTS chưa trả về audio. Vui lòng thử lại sau.');
+  const error = new Error('Google TTS chưa trả về audio. Vui lòng thử lại sau.') as AiError;
   error.statusCode = 502;
   return error;
 }
 
-async function transcribeOpenAiCompatible({ media, apiKey, baseUrl, model }) {
+async function transcribeOpenAiCompatible({
+  media,
+  apiKey,
+  baseUrl,
+  model
+}: {
+  media: AiMedia;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
+}) {
   assertAudioMedia(media);
   const bytes = Buffer.from(rawBase64(media.data), 'base64');
   const type = audioMimeType(media);
@@ -481,7 +550,7 @@ async function transcribeOpenAiCompatible({ media, apiKey, baseUrl, model }) {
   if (!response.ok) {
     throw new Error(`Yêu cầu gỡ băng thất bại: ${response.status}`);
   }
-  const data = await response.json();
+  const data = (await response.json()) as JsonRecord;
   return String(data.text ?? '').trim();
 }
 
@@ -491,7 +560,7 @@ function createTranscribeOverride() {
     return null;
   }
   if (provider !== 'openai-compatible') {
-    const error = new Error('TRANSCRIBE_PROVIDER hiện chỉ hỗ trợ openai-compatible.');
+    const error = new Error('TRANSCRIBE_PROVIDER hiện chỉ hỗ trợ openai-compatible.') as AiError;
     error.statusCode = 503;
     return {
       async transcribe() {
@@ -511,7 +580,7 @@ function createTranscribeOverride() {
   if (!apiKey || !baseUrl) {
     const error = new Error(
       'Chưa cấu hình speech-to-text provider. Thêm TRANSCRIBE_API_KEY và TRANSCRIBE_BASE_URL vào backend/.env.'
-    );
+    ) as AiError;
     error.statusCode = 503;
     return {
       async transcribe() {
@@ -533,22 +602,26 @@ function withTranscribeOverride(client) {
 }
 
 // Google AI Provider
-function createGoogleProvider() {
+function createGoogleProvider(): AiClient {
   function requireGoogleAiKey() {
     const apiKey = process.env.GOOGLE_AI_API_KEY;
     if (!apiKey) {
-      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.') as AiError;
       error.statusCode = 503;
       throw error;
     }
     return apiKey;
   }
 
-  async function generateContent(parts, systemPrompt, { model, generationConfig } = {}) {
+  async function generateContent(
+    parts: JsonRecord[],
+    systemPrompt?: string,
+    { model, generationConfig }: { model?: string; generationConfig?: JsonRecord } = {}
+  ) {
     const apiKey = requireGoogleAiKey();
     const selectedModel = model ?? process.env.GOOGLE_AI_MODEL ?? 'gemini-1.5-flash';
     const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${selectedModel}:generateContent?key=${apiKey}`;
-    const body = {
+    const body: JsonRecord = {
       contents: [{ role: 'user', parts }],
       generationConfig: { temperature: 0.3, ...generationConfig }
     };
@@ -566,7 +639,7 @@ function createGoogleProvider() {
     return response.json();
   }
 
-  function textFromResponse(data) {
+  function textFromResponse(data: JsonRecord) {
     return data.candidates?.[0]?.content?.parts?.map((part) => part.text).filter(Boolean).join('\n') ?? '';
   }
 
@@ -689,7 +762,7 @@ ${redactSensitiveText(text)}
       return textFromResponse(data).trim();
     },
 
-    async speak(text, { voice, languageCode } = {}) {
+    async speak(text, { voice, languageCode }: AiSpeakOptions = {}) {
       const apiKey = requireGoogleAiKey();
       const model = process.env.GOOGLE_TTS_MODEL || 'gemini-3.1-flash-tts-preview';
       const endpoint = 'https://generativelanguage.googleapis.com/v1beta/interactions';
@@ -730,13 +803,13 @@ ${redactSensitiveText(text)}
 }
 
 // OpenAI-compatible Provider
-function createOpenAiCompatibleProvider() {
+function createOpenAiCompatibleProvider(): AiClient {
   const apiKey = process.env.OPENAI_COMPATIBLE_API_KEY || process.env.OPENAI_API_KEY;
   const baseUrl = process.env.OPENAI_COMPATIBLE_BASE_URL || process.env.OPENAI_BASE_URL;
   const model = process.env.OPENAI_COMPATIBLE_MODEL || process.env.OPENAI_MODEL || 'gpt-4-turbo';
 
   if (!apiKey || !baseUrl) {
-    const error = new Error('Chưa cấu hình OpenAI-compatible provider. Thêm OPENAI_COMPATIBLE_API_KEY và OPENAI_COMPATIBLE_BASE_URL vào backend/.env để dùng tính năng AI này.');
+    const error = new Error('Chưa cấu hình OpenAI-compatible provider. Thêm OPENAI_COMPATIBLE_API_KEY và OPENAI_COMPATIBLE_BASE_URL vào backend/.env để dùng tính năng AI này.') as AiError;
     error.statusCode = 503;
     return {
       async moderate() {
@@ -797,7 +870,7 @@ function createOpenAiCompatibleProvider() {
       throw new Error(`Yêu cầu AI thất bại: ${response.status}`);
     }
 
-    const data = await response.json();
+    const data = (await response.json()) as JsonRecord;
     return data.choices?.[0]?.message?.content ?? '';
   }
 
@@ -840,7 +913,7 @@ ${redactSensitiveText(text)}
         if (!response.ok) {
           throw new Error(`Yêu cầu kiểm duyệt ảnh thất bại: ${response.status}`);
         }
-        const data = await response.json();
+        const data = (await response.json()) as JsonRecord;
         return normalizeModerationResult(extractJson(String(data.choices?.[0]?.message?.content ?? '')));
       } catch {
         return { status: 'Safe', labels: [] };
@@ -938,11 +1011,11 @@ ${redactSensitiveText(text)}
       if (!response.ok) {
         throw new Error(`Yêu cầu mô tả ảnh thất bại: ${response.status}`);
       }
-      const data = await response.json();
+      const data = (await response.json()) as JsonRecord;
       return String(data.choices?.[0]?.message?.content ?? '').trim();
     },
 
-    async speak(text, { voice = 'alloy' } = {}) {
+    async speak(text, { voice = 'alloy' }: AiSpeakOptions = {}) {
       const ttsModel = process.env.OPENAI_TTS_MODEL || 'tts-1';
       const response = await fetchWithTimeout(`${baseUrl}/audio/speech`, {
         method: 'POST',
@@ -963,9 +1036,9 @@ ${redactSensitiveText(text)}
   };
 }
 
-export function createAiClient() {
+export function createAiClient(): AiClient {
   const explicitProvider = process.env.AI_PROVIDER;
-  let client = null;
+  let client: AiClient | null = null;
 
   if (explicitProvider === 'openai-compatible') {
     client = createOpenAiCompatibleProvider();
@@ -995,22 +1068,22 @@ export function createAiClient() {
       throw notConfiguredError();
     },
     async summarize() {
-      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.') as AiError;
       error.statusCode = 503;
       throw error;
     },
     async suggest() {
-      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.') as AiError;
       error.statusCode = 503;
       throw error;
     },
     async rewrite() {
-      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.') as AiError;
       error.statusCode = 503;
       throw error;
     },
     async summarizeReports() {
-      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.');
+      const error = new Error('Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.') as AiError;
       error.statusCode = 503;
       throw error;
     },

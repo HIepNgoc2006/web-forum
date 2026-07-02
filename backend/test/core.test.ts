@@ -10,7 +10,7 @@ import { createS3ImageStorage } from '../src/core/image-storage.ts';
 import { migrateInlineImages } from '../src/core/image-migration.ts';
 import { appendMongoPostCreate, createMongoModels } from '../src/core/mongo-store.js';
 import { publicBoardConfig, publicConfig } from '../src/core/config.ts';
-import { createAiClient, redactSensitiveText } from '../src/core/ai.js';
+import { createAiClient, redactSensitiveText } from '../src/core/ai.ts';
 import {
   createRateLimitStoreFromEnv,
   createRedisRateLimitStore,

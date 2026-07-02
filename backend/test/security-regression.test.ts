@@ -7,7 +7,7 @@ import { createForumService } from '../src/core/forum-service.js';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createHttpServer } from '../src/server/http-app.js';
 import { sanitizeText } from '../src/core/text-format.ts';
-import { redactSensitiveText } from '../src/core/ai.js';
+import { redactSensitiveText } from '../src/core/ai.ts';
 import { signJwt } from '../src/core/security.js';
 
 type TestAi = {

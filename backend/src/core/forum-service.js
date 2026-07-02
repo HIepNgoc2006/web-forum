@@ -11,7 +11,7 @@ import {
   readModerationConfidenceThreshold,
   readPositiveInteger
 } from './config.ts';
-import { redactSensitiveText } from './ai.js';
+import { redactSensitiveText } from './ai.ts';
 import { createInlineImageStorage } from './image-storage.ts';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.js';
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.ts';
