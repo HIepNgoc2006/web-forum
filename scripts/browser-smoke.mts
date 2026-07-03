@@ -13,8 +13,24 @@ let port = requestedPort;
 let chromeDebugPort = requestedChromeDebugPort;
 let baseUrl = '';
 
+type CdpMessage = Record<string, any>;
+type PendingCdpRequest = {
+  resolve: (value: CdpMessage) => void;
+  reject: (reason?: any) => void;
+  timer: ReturnType<typeof setTimeout>;
+};
+type SmokePage = {
+  label: string;
+  url: string;
+  checks: string[];
+  accessibilityCheck?: boolean;
+  before?: () => Promise<void> | void;
+  interaction?: (cdp: CdpSession) => Promise<void> | void;
+  [key: string]: any;
+};
+
 function sleep(ms) {
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     setTimeout(resolve, ms);
   });
 }
@@ -102,7 +118,7 @@ function waitForExit(child, timeoutMs = 5000) {
   if (child.exitCode !== null || child.signalCode !== null) {
     return Promise.resolve();
   }
-  return new Promise((resolve) => {
+  return new Promise<void>((resolve) => {
     const timer = setTimeout(resolve, timeoutMs);
     child.once('exit', () => {
       clearTimeout(timer);
@@ -345,7 +361,7 @@ async function createDeletedAppealThread(adminToken) {
 }
 
 function connectWebSocket(url) {
-  return new Promise((resolve, reject) => {
+  return new Promise<WebSocket>((resolve, reject) => {
     const ws = new WebSocket(url);
     const fail = (event) => reject(event.error || new Error('Could not connect to Chrome DevTools WebSocket.'));
     ws.addEventListener('open', () => resolve(ws), { once: true });
@@ -354,15 +370,21 @@ function connectWebSocket(url) {
 }
 
 class CdpSession {
-  constructor(ws) {
+  ws: WebSocket;
+  nextId: number;
+  pending: Map<number, PendingCdpRequest>;
+  events: CdpMessage[];
+
+  constructor(ws: WebSocket) {
     this.ws = ws;
     this.nextId = 1;
     this.pending = new Map();
     this.events = [];
     ws.addEventListener('message', (event) => {
-      const message = JSON.parse(String(event.data));
-      if (message.id && this.pending.has(message.id)) {
-        const { resolve, reject, timer } = this.pending.get(message.id);
+      const message: CdpMessage = JSON.parse(String(event.data));
+      const pending = message.id ? this.pending.get(message.id) : undefined;
+      if (message.id && pending) {
+        const { resolve, reject, timer } = pending;
         clearTimeout(timer);
         this.pending.delete(message.id);
         if (message.error) {
@@ -378,11 +400,11 @@ class CdpSession {
     });
   }
 
-  send(method, params = {}, timeoutMs = 10000) {
+  send(method: string, params: CdpMessage = {}, timeoutMs = 10000): Promise<CdpMessage> {
     const id = this.nextId;
     this.nextId += 1;
     this.ws.send(JSON.stringify({ id, method, params }));
-    return new Promise((resolve, reject) => {
+    return new Promise<CdpMessage>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new Error(`CDP timeout: ${method}`));
@@ -664,7 +686,7 @@ async function main() {
     let approvePendingThread = null;
     let deletePendingThread = null;
     let appealSmoke = null;
-    const pages = [
+    const pages: SmokePage[] = [
       {
         label: 'home desktop',
         url: `${baseUrl}/#home`,

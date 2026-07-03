@@ -70,7 +70,7 @@ Backend TypeScript source-mode rules:
 
 ## Testing Guidelines
 
-Backend tests use Node's built-in `node:test` with `node:assert/strict`. Name files `*.test.js` under `backend/test/`; if you add a new test file, import it from `backend/test/run-tests.js`. Cover moderation, security, formatting, and HTTP behavior when those areas change. Run `npm test` for backend behavior and `npm run check` before submitting changes. Run a single suite directly with `node --test backend/test/http.test.js` (each `*.test.js` is self-contained and also imported by `run-tests.js`). `npm run release:verify` chains tests, checks, build, and the `scripts/browser-smoke.mjs` e2e smoke.
+Backend tests use Node's built-in `node:test` with `node:assert/strict`. Name files `*.test.ts` under `backend/test/`; if you add a new test file, import it from `backend/test/run-tests.ts`. Cover moderation, security, formatting, and HTTP behavior when those areas change. Run `npm test` for backend behavior and `npm run check` before submitting changes. Run a single suite directly with `node --test backend/test/http.test.ts` (each `*.test.ts` is self-contained and also imported by `run-tests.ts`). `npm run release:verify` chains tests, checks, build, and the `scripts/browser-smoke.mts` e2e smoke.
 
 ## Review Guidelines
 

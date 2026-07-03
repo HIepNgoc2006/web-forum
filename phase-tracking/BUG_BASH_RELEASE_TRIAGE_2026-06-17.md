@@ -6,7 +6,7 @@ Issue: #58 - Full web bug bash and release blocker triage
 
 No P0 product blocker was found in the local beta bug bash pass.
 
-One P1 release-verification blocker was found, filed as #111, and fixed in this branch: `npm run release:verify` failed in `scripts/browser-smoke.mjs` because the temporary smoke backend did not set `NODE_ENV=test`, so production admin 2FA enforcement rejected the smoke dashboard login before the dashboard assertions ran.
+One P1 release-verification blocker was found, filed as #111, and fixed in this branch: `npm run release:verify` failed in `scripts/browser-smoke.mts` because the temporary smoke backend did not set `NODE_ENV=test`, so production admin 2FA enforcement rejected the smoke dashboard login before the dashboard assertions ran.
 
 The fix keeps production admin 2FA enforcement covered by backend tests and makes the browser smoke harness explicitly run its disposable backend in test mode.
 
@@ -14,7 +14,7 @@ The fix keeps production admin 2FA enforcement covered by backend tests and make
 
 | Scope | Evidence | Result |
 | --- | --- | --- |
-| Homepage | `scripts/browser-smoke.mjs` home desktop/mobile checks; `backend/test/http.test.ts` homepage stats/latest/hot boards/campus pulse tests | Pass |
+| Homepage | `scripts/browser-smoke.mts` home desktop/mobile checks; `backend/test/http.test.ts` homepage stats/latest/hot boards/campus pulse tests | Pass |
 | Board/thread/catalog/archive | Browser smoke board/thread/catalog checks; `backend/test/http.test.ts` archive/admin archive tests; `backend/test/core.test.ts` archive lifecycle tests | Pass |
 | Posting/commenting | Browser smoke seed thread/comment flow; backend HTTP thread/comment tests; rate-limit and moderation tests | Pass |
 | Uploads | `backend/test/http.test.ts` local upload serving tests; `backend/test/security-regression.test.ts` invalid MIME and oversize tests; `backend/test/image-storage.test.ts` storage adapter tests | Pass |
@@ -45,7 +45,7 @@ This command runs:
 - `npm test`
 - `npm run check`
 - `npm run build`
-- `npm run test:e2e` (`scripts/browser-smoke.mjs`)
+- `npm run test:e2e` (`scripts/browser-smoke.mts`)
 
 ## Residual QA Risk
 
