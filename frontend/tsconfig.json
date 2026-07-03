@@ -9,7 +9,6 @@
     "isolatedModules": true
   },
   "include": [
-    "src/**/*.js",
     "src/**/*.ts",
     "src/**/*.d.ts",
     "eslint.config.*",

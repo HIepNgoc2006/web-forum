@@ -174,7 +174,7 @@ describe('backup scheduler', () => {
 
 describe('backup CLI arguments', () => {
   it('defaults to dry-run and keeps the scheduler disabled', () => {
-    const args = parseBackupArgs(['node', 'backup-scheduler.js', 'schedule'], {
+    const args = parseBackupArgs(['node', 'backup-scheduler.ts', 'schedule'], {
       NODE_ENV: 'development'
     });
 
@@ -184,7 +184,7 @@ describe('backup CLI arguments', () => {
   });
 
   it('uses Mongo by default in production and enables explicit write mode', () => {
-    const args = parseBackupArgs(['node', 'backup-scheduler.js', 'run', '--write'], {
+    const args = parseBackupArgs(['node', 'backup-scheduler.ts', 'run', '--write'], {
       NODE_ENV: 'production'
     });
 
@@ -194,7 +194,7 @@ describe('backup CLI arguments', () => {
 
   it('rejects conflicting dry-run and write flags', () => {
     assert.throws(
-      () => parseBackupArgs(['node', 'backup-scheduler.js', 'run', '--dry-run', '--write'], {}),
+      () => parseBackupArgs(['node', 'backup-scheduler.ts', 'run', '--dry-run', '--write'], {}),
       /either --dry-run or --write/i
     );
   });

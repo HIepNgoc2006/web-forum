@@ -72,7 +72,7 @@ describe('collectReferencedUploadKeys', () => {
 
 describe('cleanup upload CLI state source', () => {
   it('defaults production cleanup to the Mongo store source', () => {
-    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.js'], {
+    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.ts'], {
       NODE_ENV: 'production',
       IMAGE_STORAGE_DRIVER: 's3'
     });
@@ -84,14 +84,14 @@ describe('cleanup upload CLI state source', () => {
 
   it('rejects conflicting dry-run and delete flags', () => {
     assert.throws(
-      () => parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--dry-run', '--delete'], {}),
+      () => parseCleanupArgs(['node', 'cleanup-orphan-uploads.ts', '--dry-run', '--delete'], {}),
       /either --dry-run or --delete/i
     );
   });
 
   it('rejects production delete mode with a non-Mongo state source', () => {
     assert.throws(
-      () => parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--store-driver', 'json', '--delete'], {
+      () => parseCleanupArgs(['node', 'cleanup-orphan-uploads.ts', '--store-driver', 'json', '--delete'], {
         NODE_ENV: 'production'
       }),
       /production upload cleanup delete requires store_driver=mongo/i
@@ -104,7 +104,7 @@ describe('cleanup upload CLI state source', () => {
       comments: []
     };
     let closed = false;
-    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--store-driver', 'mongo'], {});
+    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.ts', '--store-driver', 'mongo'], {});
 
     const result = await readForumStateForCleanup(args, {
       createJsonStoreImpl: () => {
@@ -127,7 +127,7 @@ describe('cleanup upload CLI state source', () => {
   it('uses the explicit JSON data path only for json store cleanup', async () => {
     const root = await tempDir();
     const forumPath = path.join(root, 'forum.json');
-    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.js', '--store-driver', 'json', '--data', forumPath], {});
+    const args = parseCleanupArgs(['node', 'cleanup-orphan-uploads.ts', '--store-driver', 'json', '--data', forumPath], {});
     let jsonPath = null;
 
     await readForumStateForCleanup(args, {

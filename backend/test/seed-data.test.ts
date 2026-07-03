@@ -297,9 +297,9 @@ describe('seed data import safety', () => {
 
 describe('seed data CLI arguments', () => {
   it('defaults imports to dry-run and enables write/replace explicitly', () => {
-    const dryRunArgs = parseSeedArgs(['node', 'seed-data.js', 'import', '--in', 'seed.json'], {});
-    const writeArgs = parseSeedArgs(['node', 'seed-data.js', 'import', '--in', 'seed.json', '--write', '--replace'], {});
-    const restoreArgs = parseSeedArgs(['node', 'seed-data.js', 'restore', '--in', 'rollback.json'], {});
+    const dryRunArgs = parseSeedArgs(['node', 'seed-data.ts', 'import', '--in', 'seed.json'], {});
+    const writeArgs = parseSeedArgs(['node', 'seed-data.ts', 'import', '--in', 'seed.json', '--write', '--replace'], {});
+    const restoreArgs = parseSeedArgs(['node', 'seed-data.ts', 'restore', '--in', 'rollback.json'], {});
 
     assert.equal(dryRunArgs.dryRun, true);
     assert.equal(path.basename(path.dirname(dryRunArgs.forumPath)), 'data');
@@ -311,7 +311,7 @@ describe('seed data CLI arguments', () => {
 
   it('rejects conflicting import modes', () => {
     assert.throws(
-      () => parseSeedArgs(['node', 'seed-data.js', 'import', '--in', 'seed.json', '--dry-run', '--write'], {}),
+      () => parseSeedArgs(['node', 'seed-data.ts', 'import', '--in', 'seed.json', '--dry-run', '--write'], {}),
       /either --dry-run or --write/i
     );
   });

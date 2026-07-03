@@ -5,7 +5,7 @@ Thanks for your interest. This guide covers the essentials; see
 
 ## Prerequisites
 
-- Node.js 20 or newer.
+- Node.js 22.18.0 or newer.
 
 ## Setup
 
@@ -35,14 +35,14 @@ npm run build          # frontend production build
 
 ## Coding Style
 
-- Modern ESM JavaScript, 2-space indentation, single quotes, trailing semicolons.
-- kebab-case filenames (`forum-service.js`); camelCase for functions/variables.
+- Modern ESM TypeScript, 2-space indentation, single quotes, trailing semicolons.
+- kebab-case filenames (`forum-service.ts`); camelCase for functions/variables.
 - Business rules live in `backend/src/core/`; route/socket wiring in
   `backend/src/server/`.
 - Keep the frontend plain Vite/vanilla DOM unless a refactor is explicitly
   requested. UI text is Vietnamese.
-- Add tests under `backend/test/` as `*.test.js` and import them from
-  `backend/test/run-tests.js`.
+- Add tests under `backend/test/` as `*.test.ts` and import them from
+  `backend/test/run-tests.ts`.
 
 ## Pull Requests
 

@@ -11,12 +11,8 @@ function isTypeScriptSourceFile(file: string): boolean {
   return file.endsWith('.ts') && !file.endsWith('.d.ts');
 }
 
-function isJavaScriptSourceFile(file: string): boolean {
-  return file.endsWith('.js');
-}
-
 function isCheckedSourceFile(file: string): boolean {
-  return isJavaScriptSourceFile(file) || isTypeScriptSourceFile(file);
+  return isTypeScriptSourceFile(file);
 }
 
 async function collectSourceFiles(target: string): Promise<string[]> {
@@ -46,16 +42,6 @@ const files = (await Promise.all(roots.map((target) => collectSourceFiles(target
   .sort((left, right) => left.localeCompare(right));
 
 let failed = false;
-for (const file of files) {
-  if (isTypeScriptSourceFile(file)) {
-    continue;
-  }
-  const result = spawnSync(process.execPath, ['--check', file], { stdio: 'inherit' });
-  if (result.status !== 0) {
-    failed = true;
-  }
-}
-
 if (files.some(isTypeScriptSourceFile)) {
   const tscPath = path.resolve(root, '..', 'node_modules', 'typescript', 'bin', 'tsc');
   const tsc = spawnSync(

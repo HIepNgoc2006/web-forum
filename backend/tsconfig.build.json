@@ -9,9 +9,7 @@
   },
   "include": [
     "server.ts",
-    "src/**/*.js",
     "src/**/*.ts",
-    "scripts/**/*.js",
     "scripts/**/*.ts"
   ],
   "exclude": [

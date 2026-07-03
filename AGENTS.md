@@ -2,21 +2,21 @@
 
 ## Project Structure & Module Organization
 
-This repository is an npm workspace for the 36chan web app. `backend/` contains the Node.js API, realtime server, moderation, persistence, and static serving. Core backend logic lives in `backend/src/core/`, HTTP and realtime glue in `backend/src/server/`, and the entry point is `backend/server.js`. Backend tests live in `backend/test/`. `frontend/` is a Vite browser UI with `frontend/src/app.js`, `frontend/src/styles.css`, and `frontend/index.html`. `phase-tracking/` contains roadmap, ADRs, API inventory, backup/restore notes, and progress tracking. `.code-review-graph/` contains the local code review graph database and generated graph artifacts. Generated runtime data such as `backend/data/forum.json`, logs, and `.env` files are ignored.
+This repository is an npm workspace for the 36chan web app. `backend/` contains the Node.js API, realtime server, moderation, persistence, and static serving. Core backend logic lives in `backend/src/core/`, HTTP and realtime glue in `backend/src/server/`, and the entry point is `backend/server.ts`. Backend tests live in `backend/test/`. `frontend/` is a Vite browser UI with `frontend/src/app.ts`, `frontend/src/styles.css`, and `frontend/index.html`. `phase-tracking/` contains roadmap, ADRs, API inventory, backup/restore notes, and progress tracking. `.code-review-graph/` contains the local code review graph database and generated graph artifacts. Generated runtime data such as `backend/data/forum.json`, logs, and `.env` files are ignored.
 
 ## Architecture Overview
 
-`backend/server.js` is the composition root: it loads `.env` (hand-parsed, no dotenv), selects drivers from env, and dependency-injects a store, AI client, realtime hub, and image storage into `createForumService`, then injects that service plus auth secrets into `createHttpServer`. To trace any request, start there and follow the injected object.
+`backend/server.ts` is the composition root: it loads `.env` (hand-parsed, no dotenv), selects drivers from env, and dependency-injects a store, AI client, realtime hub, and image storage into `createForumService`, then injects that service plus auth secrets into `createHttpServer`. To trace any request, start there and follow the injected object.
 
 Swappable interfaces (pick by env, same shape across implementations):
-- **Store** (`forum-store.js` memory/json, `mongo-store.js`): all expose `read()` / `write(normalizeState(...))`. The model is whole-state read-modify-write — `forum-service.js` loads the full forum snapshot, mutates, and writes it back; all business rules live there. `STORE_DRIVER` defaults to `json` in dev but production **requires** `mongo` (server throws otherwise).
-- **AI** (`ai.js`): `google` or `openai-compatible` provider, auto-detected from env keys; moderation has a local heuristic fallback so it works with no key, but summary/suggestions need a key.
-- **Image storage** (`image-storage.js`): `local` disk (served at `/uploads/*`) or `s3`-compatible.
+- **Store** (`forum-store.ts` memory/json, `mongo-store.ts`): all expose `read()` / `write(normalizeState(...))`. The model is whole-state read-modify-write — `forum-service.ts` loads the full forum snapshot, mutates, and writes it back; all business rules live there. `STORE_DRIVER` defaults to `json` in dev but production **requires** `mongo` (server throws otherwise).
+- **AI** (`ai.ts`): `google` or `openai-compatible` provider, auto-detected from env keys; moderation has a local heuristic fallback so it works with no key, but summary/suggestions need a key.
+- **Image storage** (`image-storage.ts`): `local` disk (served at `/uploads/*`) or `s3`-compatible.
 
 Gotchas:
-- `express` and `socket.io` are in `backend/package.json` but **not used for routing**. HTTP is a hand-rolled `node:http` router in `server/http-app.js` (custom `ok`/`fail` helpers, byte-capped `readJson`, Vietnamese error strings). Realtime is **Server-Sent Events** in `server/realtime.js` (`text/event-stream`, `publish()` broadcasts) — not WebSockets.
-- The frontend is **vanilla DOM**, not React: `frontend/index.html` holds the full markup and `frontend/src/app.js` is one imperative module with a central `state` object and hash-based routing (`#board/...`, `#thread/...`). React-listed deps are incidental; `@simplewebauthn/browser` drives passkey login. UI text is Vietnamese.
-- Auth is layered: JWT admin tokens, separate account tokens, TOTP 2FA (`totp-service.js`), and WebAuthn passkeys (`webauthn-service.js`). Moderation uses hashed IP/poster fingerprints (`security.js`) — raw IPs and tokens are never returned to public clients or sent to AI.
+- `express` and `socket.io` are in `backend/package.json` but **not used for routing**. HTTP is a hand-rolled `node:http` router in `server/http-app.ts` (custom `ok`/`fail` helpers, byte-capped `readJson`, Vietnamese error strings). Realtime is **Server-Sent Events** in `server/realtime.ts` (`text/event-stream`, `publish()` broadcasts) — not WebSockets.
+- The frontend is **vanilla DOM**, not React: `frontend/index.html` holds the full markup and `frontend/src/app.ts` is one imperative module with a central `state` object and hash-based routing (`#board/...`, `#thread/...`). React-listed deps are incidental; `@simplewebauthn/browser` drives passkey login. UI text is Vietnamese.
+- Auth is layered: JWT admin tokens, separate account tokens, TOTP 2FA (`totp-service.ts`), and WebAuthn passkeys (`webauthn-service.ts`). Moderation uses hashed IP/poster fingerprints (`security.ts`) — raw IPs and tokens are never returned to public clients or sent to AI.
 
 ## Build, Test, and Development Commands
 
@@ -24,25 +24,27 @@ Use Node.js 22.18.0 or newer. Backend source-mode TypeScript relies on Node buil
 
 - `npm run dev`: start the backend in watch mode on port 3000.
 - `npm run dev:frontend`: start the Vite frontend; it proxies `/api` and `/events` to the backend.
-- `npm test`: run backend tests through `backend/test/run-tests.js`.
+- `npm test`: run backend tests through `backend/test/run-tests.ts`.
 - `npm run build`: build backend compiled output into `backend/dist`, then build the frontend with Vite.
-- `npm run build:backend`: compile backend JS/TS source to `backend/dist` with rewritten ESM import extensions.
+- `npm run build:backend`: compile backend TypeScript source to `backend/dist` with rewritten ESM import extensions.
 - `npm run build:frontend`: build the frontend with Vite.
 - `npm run check`: run backend syntax checks and frontend ESLint.
 - `npm --prefix backend install` and `npm --prefix frontend install`: install workspace dependencies when needed.
 
 ## Coding Style & Naming Conventions
 
-Use modern ESM JavaScript and TypeScript during migration. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.js`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and route/socket wiring in `backend/src/server/`. Frontend changes should preserve the current plain Vite structure unless a larger refactor is explicitly requested.
+Use modern ESM TypeScript. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.ts`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and route/socket wiring in `backend/src/server/`. Frontend changes should preserve the current plain Vite structure unless a larger refactor is explicitly requested.
 
 ## TypeScript Migration Guidelines
+
+Current status: repository-owned source, scripts, tests, and frontend files are TypeScript. Keep new repository-owned code TypeScript; use mixed JS/TS settings only in a dedicated future migration setup if needed.
 
 Port JavaScript to TypeScript incrementally. Do not do a repo-wide `.js` to `.ts` rename in a single PR unless explicitly requested. Use small, reviewable migration passes that keep runtime behavior unchanged.
 
 Recommended order:
 1. Add TypeScript infrastructure first: `typescript`, package-level `tsconfig.json` files, shared compiler settings if useful, and `typecheck` scripts that can be wired into `npm run check`.
-2. Enable mixed JS/TS with `allowJs` at the start so `.ts` files can coexist with existing `.js` files. Start with permissive settings, then tighten after the code compiles.
-3. Convert leaf modules before entry points: pure helpers, validators, formatters, security utilities, and service types before `backend/server.js` or frontend app bootstrap files.
+2. Mixed JS/TS with `allowJs` was only for migration bootstrap; the current config is TypeScript-only. If future repository-owned JavaScript appears, isolate any temporary mixed-mode setup in its own PR and remove it after conversion.
+3. Convert leaf modules before entry points: pure helpers, validators, formatters, security utilities, and service types before `backend/server.ts` or frontend app bootstrap files.
 4. Define shared domain types for boards, threads, posts, users/accounts, moderation results, store state, realtime events, image metadata, and API payloads before typing large service functions.
 5. Convert tests alongside the code they cover. Keep existing `node:test` behavior unless the test runner is intentionally changed.
 6. Convert frontend files with Vite-compatible TypeScript. Keep the current vanilla DOM architecture; do not introduce React or JSX as part of the TypeScript migration.
@@ -75,9 +77,9 @@ Backend tests use Node's built-in `node:test` with `node:assert/strict`. Name fi
 ## Review Guidelines
 
 For repo-wide reviews, do a read-only audit first. Do not edit files until a separate correction pass is requested. Start by mapping:
-- runtime entry points and dependency injection from `backend/server.js`
-- HTTP routes, request parsing, response helpers, and byte/body limits in `backend/src/server/http-app.js`
-- Server-Sent Events flow in `backend/src/server/realtime.js`
+- runtime entry points and dependency injection from `backend/server.ts`
+- HTTP routes, request parsing, response helpers, and byte/body limits in `backend/src/server/http-app.ts`
+- Server-Sent Events flow in `backend/src/server/realtime.ts`
 - auth, admin, account token, TOTP, and WebAuthn boundaries
 - moderation, rate limiting, fingerprinting, and IP/token privacy rules
 - store drivers, whole-state read-modify-write behavior, normalization, migrations, and backup/restore paths
