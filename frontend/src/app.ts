@@ -1,4 +1,8 @@
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
+import { api } from './api';
+import { els } from './dom';
+import { state } from './state';
+
 import type { AnyRecord } from './types';
 import {
   REASON_MACROS,
@@ -26,11 +30,9 @@ import {
   aiNotConfiguredMessage,
   MAX_MEDIA_PER_POST,
   SUPPORTED_VIDEO_TYPES,
-  SUPPORTED_THEMES,
-  API_BASE_URL
+  SUPPORTED_THEMES
 } from './constants';
 import {
-  withUrlBase,
   realtimeEndpoint,
   escapeHtml,
   reportCategoryLabel,
@@ -71,7 +73,6 @@ import {
   clamp
 } from './format';
 import {
-  getPosterToken,
   readThreadLastSeen,
   writeThreadLastSeen,
   readJsonLocal,
@@ -98,79 +99,6 @@ import {
   readReaction,
   writeReaction
 } from './storage';
-
-
-const state: AnyRecord = {
-  boards: [],
-  boardGroups: [],
-  aiConfigured: false,
-  hcaptchaSiteKey: '',
-  hcaptchaReady: null,
-  boardSlug: 'confession',
-  threadId: '',
-  threadDetail: null,
-  threadLoadRequestId: 0,
-  threadGlobalNumber: '',
-  threadPosterHash: '',
-  threadLastSeenBefore: 0,
-  threadCurrentMaxNumber: 0,
-  token: localStorage.getItem('adminToken') || '',
-  accountToken: localStorage.getItem('accountToken') || '',
-  account: null,
-  accountPostNumbers: new Set(),
-  temp2FAToken: null,
-  adminTemp2FAToken: null,
-  accountPrivateData: null,
-  accountPrivateSaveTimer: null,
-  posterToken: getPosterToken(),
-  selectedImage: [],
-  commentImage: [],
-  quickReplyImage: [],
-  audioRecorders: {},
-  audioTranscribing: new Set(),
-  audioTranscriptionControllers: new Map(),
-  refPreviewCache: new Map(),
-  refPreviewRequestId: 0,
-  refPreviewHideTimer: null,
-  quickReplyDrag: null,
-  replyComposerOpen: false,
-  threadIsArchived: false,
-  threadIsLocked: false,
-  boardPage: 1,
-  boardPageSize: 15,
-  boardSearchTerm: '',
-  boardSort: 'bump',
-  boardFilter: 'all',
-  boardPageMeta: null,
-  threadCommentPage: 1,
-  threadCommentPageSize: 50,
-  threadCommentPageMeta: null,
-  threadSearchTerm: '',
-  commentsSort: 'old',
-  autoUpdate: true,
-  autoCountdown: 7,
-  autoTimer: null,
-  realtimeSource: null,
-  realtimeContextKey: '',
-  browserNotificationIds: new Set(),
-  watchedThreadSummaries: [],
-  boardThreads: [],
-  boardThreadsCache: new Map(),
-  catalogThreads: [],
-  catalogSort: 'bump',
-  catalogImageSize: 'small',
-  catalogFilter: 'all',
-  theme: localStorage.getItem('theme') || 'yotsuba-b',
-  archiveThreads: [],
-  adminTab: 'pending',
-  adminItems: [],
-  moderationConfidenceThreshold: 0,
-  lifecycle: {
-    maxActiveThreadsPerBoard: 150,
-    bumpLimit: 300,
-    replyLimit: 500
-  }
-};
 
 function showReportModal(globalNumber) {
   return new Promise<any>((resolve) => {
@@ -1245,257 +1173,6 @@ async function resolveBrowserWatchedThreadPreference(requested) {
   }
 }
 
-const els: AnyRecord = {
-  homeScreen: document.querySelector('#homeScreen'),
-  policyScreen: document.querySelector('#policyScreen'),
-  appealForm: document.querySelector('#appealForm'),
-  appealToken: document.querySelector('#appealToken'),
-  appealReason: document.querySelector('#appealReason'),
-  appealError: document.querySelector('#appealError'),
-  appealResult: document.querySelector('#appealResult'),
-  homeBoards: document.querySelector('#homeBoards'),
-  homeBoardSearchForm: document.querySelector('#homeBoardSearchForm'),
-  homeBoardSearchInput: document.querySelector('#homeBoardSearchInput'),
-  popularThreads: document.querySelector('#popularThreads'),
-  latestPosts: document.querySelector('#latestPosts'),
-  watchedThreads: document.querySelector('#watchedThreads'),
-  watchedSortSelect: document.querySelector('#watchedSortSelect'),
-  watchedUnreadToggle: document.querySelector('#watchedUnreadToggle'),
-  watchedMarkAllRead: document.querySelector('#watchedMarkAllRead'),
-  myPosts: document.querySelector('#myPosts'),
-  subscribedBoards: document.querySelector('#subscribedBoards'),
-  hotBoards: document.querySelector('#hotBoards'),
-  campusPulse: document.querySelector('#campusPulse'),
-  homeStats: document.querySelector('#homeStats'),
-  serverStats: document.querySelector('#serverStats'),
-  boardNav: document.querySelector('#boardNav'),
-  accountLoginLink: document.querySelector('#accountLoginLink'),
-  accountRegisterLink: document.querySelector('#accountRegisterLink'),
-  accountSettingsLink: document.querySelector('#accountSettingsLink'),
-  accountLogoutButton: document.querySelector('#accountLogoutButton'),
-  socketStatus: document.querySelector('#socketStatus'),
-  boardScreen: document.querySelector('#boardScreen'),
-  catalogScreen: document.querySelector('#catalogScreen'),
-  archiveScreen: document.querySelector('#archiveScreen'),
-  threadScreen: document.querySelector('#threadScreen'),
-  registerScreen: document.querySelector('#registerScreen'),
-  loginScreen: document.querySelector('#loginScreen'),
-  accountScreen: document.querySelector('#accountScreen'),
-  adminScreen: document.querySelector('#adminScreen'),
-  boardTitle: document.querySelector('#boardTitle'),
-  boardPath: document.querySelector('#boardPath'),
-  boardDescription: document.querySelector('#boardDescription'),
-  boardSearchInput: document.querySelector('#boardSearchInput'),
-  saveBoardSearchButton: document.querySelector('#saveBoardSearchButton'),
-  boardCatalogLink: document.querySelector('#boardCatalogLink'),
-  boardArchiveLink: document.querySelector('#boardArchiveLink'),
-  boardJsonFeedLink: document.querySelector('#boardJsonFeedLink'),
-  boardRssFeedLink: document.querySelector('#boardRssFeedLink'),
-  boardCatalogLinkBottom: document.querySelector('#boardCatalogLinkBottom'),
-  boardArchiveLinkBottom: document.querySelector('#boardArchiveLinkBottom'),
-  boardJsonFeedLinkBottom: document.querySelector('#boardJsonFeedLinkBottom'),
-  boardRssFeedLinkBottom: document.querySelector('#boardRssFeedLinkBottom'),
-  threadList: document.querySelector('#threadList'),
-  boardPagination: document.querySelector('#boardPagination'),
-  catalogTitle: document.querySelector('#catalogTitle'),
-  catalogDescription: document.querySelector('#catalogDescription'),
-  catalogSearchInput: document.querySelector('#catalogSearchInput'),
-  catalogGrid: document.querySelector('#catalogGrid'),
-  catalogReturnTop: document.querySelector('#catalogReturnTop'),
-  catalogReturnBottom: document.querySelector('#catalogReturnBottom'),
-  archiveTitle: document.querySelector('#archiveTitle'),
-  archiveDescription: document.querySelector('#archiveDescription'),
-  archiveReturnTop: document.querySelector('#archiveReturnTop'),
-  archiveReturnBottom: document.querySelector('#archiveReturnBottom'),
-  archiveList: document.querySelector('#archiveList'),
-  startThreadButton: document.querySelector('#startThreadButton'),
-  threadStartThreadButton: document.querySelector('#threadStartThreadButton'),
-  threadComposer: document.querySelector('#threadComposer'),
-  threadForm: document.querySelector('#threadForm'),
-  threadBody: document.querySelector('#threadBody'),
-  threadPollOptions: document.querySelector('#threadPollOptions'),
-  threadPrivacyWarning: document.querySelector('#threadPrivacyWarning'),
-  threadRewriteButton: document.querySelector('#threadRewriteButton'),
-  threadRewriteTone: document.querySelector('#threadRewriteTone'),
-  threadAiRewriteLabel: document.querySelector('#threadAiRewriteLabel'),
-  threadImage: document.querySelector('#threadImage'),
-  threadAudio: document.querySelector('#threadAudio'),
-  threadRecordButton: document.querySelector('#threadRecordButton'),
-  threadCaptionButton: document.querySelector('#threadCaptionButton'),
-  threadOcrButton: document.querySelector('#threadOcrButton'),
-  translateTarget: document.querySelector('#translateTarget'),
-  threadCaptcha: document.querySelector('#threadCaptcha'),
-  imagePreview: document.querySelector('#imagePreview'),
-  refreshThreads: document.querySelector('#refreshThreads'),
-  boardSummaryButton: document.querySelector('#boardSummaryButton'),
-  boardSummary: document.querySelector('#boardSummary'),
-  backToBoard: document.querySelector('#backToBoard'),
-  threadTitle: document.querySelector('#threadTitle'),
-  threadAdminActions: document.querySelector('#threadAdminActions'),
-  threadBoardPath: document.querySelector('#threadBoardPath'),
-  threadBoardDescription: document.querySelector('#threadBoardDescription'),
-  threadToolbarTop: document.querySelector('#threadToolbarTop'),
-  threadToolbarBottom: document.querySelector('#threadToolbarBottom'),
-  threadSummaryButton: document.querySelector('#threadSummaryButton'),
-  threadSummary: document.querySelector('#threadSummary'),
-  postReplyToggle: document.querySelector('#postReplyToggle'),
-  replyComposer: document.querySelector('#replyComposer'),
-  threadDetail: document.querySelector('#threadDetail'),
-  threadPagination: document.querySelector('#threadPagination'),
-  commentForm: document.querySelector('#commentForm'),
-  commentBody: document.querySelector('#commentBody'),
-  commentPrivacyWarning: document.querySelector('#commentPrivacyWarning'),
-  commentCaptcha: document.querySelector('#commentCaptcha'),
-  commentImage: document.querySelector('#commentImage'),
-  commentAudio: document.querySelector('#commentAudio'),
-  commentRecordButton: document.querySelector('#commentRecordButton'),
-  commentCaptionButton: document.querySelector('#commentCaptionButton'),
-  commentOcrButton: document.querySelector('#commentOcrButton'),
-  commentImagePreview: document.querySelector('#commentImagePreview'),
-  suggestButton: document.querySelector('#suggestButton'),
-  rewriteButton: document.querySelector('#rewriteButton'),
-  rewriteTone: document.querySelector('#rewriteTone'),
-  commentAiRewriteLabel: document.querySelector('#commentAiRewriteLabel'),
-  suggestions: document.querySelector('#suggestions'),
-  adminTitle: document.querySelector('#adminTitle'),
-  loginForm: document.querySelector('#loginForm'),
-  adminUsername: document.querySelector('#adminUsername'),
-  adminPassword: document.querySelector('#adminPassword'),
-  admin2FAVerifyForm: document.querySelector('#admin2FAVerifyForm'),
-  admin2FAVerifyError: document.querySelector('#admin2FAVerifyError'),
-  admin2FACode: document.querySelector('#admin2FACode'),
-  admin2FACancelButton: document.querySelector('#admin2FACancelButton'),
-  admin2FASetupPanel: document.querySelector('#admin2FASetupPanel'),
-  admin2FASetupStart: document.querySelector('#admin2FASetupStart'),
-  adminStart2FAButton: document.querySelector('#adminStart2FAButton'),
-  admin2FASetupQR: document.querySelector('#admin2FASetupQR'),
-  admin2FAQRImage: document.querySelector('#admin2FAQRImage'),
-  admin2FABackupCodes: document.querySelector('#admin2FABackupCodes'),
-  admin2FASetupCode: document.querySelector('#admin2FASetupCode'),
-  adminVerify2FASetupButton: document.querySelector('#adminVerify2FASetupButton'),
-  adminLoginPasskeyButton: document.querySelector('#adminLoginPasskeyButton'),
-  adminPasskeysPanel: document.querySelector('#adminPasskeysPanel'),
-  adminPasskeysList: document.querySelector('#adminPasskeysList'),
-  adminAddPasskeyButton: document.querySelector('#adminAddPasskeyButton'),
-  logoutButton: document.querySelector('#logoutButton'),
-  adminTools: document.querySelector('#adminTools'),
-  adminBoardFilter: document.querySelector('#adminBoardFilter'),
-  adminLabelFilter: document.querySelector('#adminLabelFilter'),
-  adminReportCategoryFilterWrap: document.querySelector('#adminReportCategoryFilterWrap'),
-  adminReportCategoryFilter: document.querySelector('#adminReportCategoryFilter'),
-  adminTimeFilter: document.querySelector('#adminTimeFilter'),
-  adminPriorityFilterWrap: document.querySelector('#adminPriorityFilterWrap'),
-  adminPriorityFilter: document.querySelector('#adminPriorityFilter'),
-  adminConfidenceFilterWrap: document.querySelector('#adminConfidenceFilterWrap'),
-  adminConfidenceFilter: document.querySelector('#adminConfidenceFilter'),
-  adminPrioritySortWrap: document.querySelector('#adminPrioritySortWrap'),
-  adminPrioritySort: document.querySelector('#adminPrioritySort'),
-  adminQueueThresholdInput: document.querySelector('#adminQueueThresholdInput'),
-  adminSaveModerationSettings: document.querySelector('#adminSaveModerationSettings'),
-  adminRefresh: document.querySelector('#adminRefresh'),
-  adminExport: document.querySelector('#adminExport'),
-  adminBulkBar: document.querySelector('#adminBulkBar'),
-  adminSelectAll: document.querySelector('#adminSelectAll'),
-  adminBulkApprove: document.querySelector('#adminBulkApprove'),
-  adminBulkDelete: document.querySelector('#adminBulkDelete'),
-  pendingList: document.querySelector('#pendingList'),
-  reportSection: document.querySelector('#reportSection'),
-  reportList: document.querySelector('#reportList'),
-  moderationSection: document.querySelector('#moderationSection'),
-  moderationActions: document.querySelector('#moderationActions'),
-  registerForm: document.querySelector('#registerForm'),
-  registerUsername: document.querySelector('#registerUsername'),
-  registerPassword: document.querySelector('#registerPassword'),
-  registerCaptcha: document.querySelector('#registerCaptcha'),
-  registerError: document.querySelector('#registerError'),
-  registerRecoveryNotice: document.querySelector('#registerRecoveryNotice'),
-  registerRecoveryCode: document.querySelector('#registerRecoveryCode'),
-  registerRecoveryCopy: document.querySelector('#registerRecoveryCopy'),
-  registerRecoveryContinue: document.querySelector('#registerRecoveryContinue'),
-  forgotScreen: document.querySelector('#forgotScreen'),
-  forgotPasswordForm: document.querySelector('#forgotPasswordForm'),
-  forgotUsername: document.querySelector('#forgotUsername'),
-  forgotRecoveryCode: document.querySelector('#forgotRecoveryCode'),
-  forgotNewPassword: document.querySelector('#forgotNewPassword'),
-  forgotCaptcha: document.querySelector('#forgotCaptcha'),
-  forgotError: document.querySelector('#forgotError'),
-  forgotSuccess: document.querySelector('#forgotSuccess'),
-  forgotNewRecoveryCode: document.querySelector('#forgotNewRecoveryCode'),
-  forgotRecoveryCopy: document.querySelector('#forgotRecoveryCopy'),
-  accountRecoveryPanel: document.querySelector('#accountRecoveryPanel'),
-  recoveryCodeForm: document.querySelector('#recoveryCodeForm'),
-  recoveryCodeError: document.querySelector('#recoveryCodeError'),
-  recoveryCodePassword: document.querySelector('#recoveryCodePassword'),
-  recoveryCodeResult: document.querySelector('#recoveryCodeResult'),
-  recoveryCodeResultValue: document.querySelector('#recoveryCodeResultValue'),
-  recoveryCodeCopy: document.querySelector('#recoveryCodeCopy'),
-  accountLoginForm: document.querySelector('#accountLoginForm'),
-  accountUsername: document.querySelector('#accountUsername'),
-  accountPassword: document.querySelector('#accountPassword'),
-  accountLoginCaptcha: document.querySelector('#accountLoginCaptcha'),
-  accountLoginError: document.querySelector('#accountLoginError'),
-  account2FAVerifyForm: document.querySelector('#account2FAVerifyForm'),
-  account2FAVerifyError: document.querySelector('#account2FAVerifyError'),
-  login2FACode: document.querySelector('#login2FACode'),
-  loginBackupCode: document.querySelector('#loginBackupCode'),
-  submitBackupCodeButton: document.querySelector('#submitBackupCodeButton'),
-  backupCodeInputSection: document.querySelector('#backupCodeInputSection'),
-  useBackupCodeLink: document.querySelector('#useBackupCodeLink'),
-  useTotpLink: document.querySelector('#useTotpLink'),
-  accountStatus: document.querySelector('#accountStatus'),
-  accountSettingsForm: document.querySelector('#accountSettingsForm'),
-  accountSettingsError: document.querySelector('#accountSettingsError'),
-  accountTheme: document.querySelector('#accountTheme'),
-  accountHomeBoard: document.querySelector('#accountHomeBoard'),
-  accountSyncDrafts: document.querySelector('#accountSyncDrafts'),
-  accountCompactThreads: document.querySelector('#accountCompactThreads'),
-  accountHideThumbnails: document.querySelector('#accountHideThumbnails'),
-  accountWatchedUnreadOnly: document.querySelector('#accountWatchedUnreadOnly'),
-  accountWatchedSort: document.querySelector('#accountWatchedSort'),
-  accountEmailNotifications: document.querySelector('#accountEmailNotifications'),
-  accountNotifyWatchedThreads: document.querySelector('#accountNotifyWatchedThreads'),
-  accountNotifyBoardSubscriptions: document.querySelector('#accountNotifyBoardSubscriptions'),
-  accountBrowserNotifyWatchedThreads: document.querySelector('#accountBrowserNotifyWatchedThreads'),
-  accountBrowserNotificationsStatus: document.querySelector('#accountBrowserNotificationsStatus'),
-  accountBoardSubscriptions: document.querySelector('#accountBoardSubscriptions'),
-  accountSettingsLogout: document.querySelector('#accountSettingsLogout'),
-  accountPrivateDataPanel: document.querySelector('#accountPrivateDataPanel'),
-  accountPrivateDataSummary: document.querySelector('#accountPrivateDataSummary'),
-  accountPasskeysPanel: document.querySelector('#accountPasskeysPanel'),
-  accountPasskeysList: document.querySelector('#accountPasskeysList'),
-  addPasskeyButton: document.querySelector('#addPasskeyButton'),
-  loginPasskeyButton: document.querySelector('#loginPasskeyButton'),
-  account2FADisabledSection: document.querySelector('#account2FADisabledSection'),
-  enable2FAButton: document.querySelector('#enable2FAButton'),
-  account2FASetupSection: document.querySelector('#account2FASetupSection'),
-  qrcodeImage: document.querySelector('#qrcodeImage'),
-  backupCodesDisplay: document.querySelector('#backupCodesDisplay'),
-  verify2FACode: document.querySelector('#verify2FACode'),
-  verify2FASetupButton: document.querySelector('#verify2FASetupButton'),
-  cancel2FASetupButton: document.querySelector('#cancel2FASetupButton'),
-  account2FAEnabledSection: document.querySelector('#account2FAEnabledSection'),
-  disable2FAPassword: document.querySelector('#disable2FAPassword'),
-  disable2FAButton: document.querySelector('#disable2FAButton'),
-  accountLoggedOut: document.querySelector('#accountLoggedOut'),
-  accountDisplayOptions: document.querySelectorAll('[data-account-display-option]'),
-  useAccountNameInputs: document.querySelectorAll('[data-use-account-name]'),
-  capcodeOptions: document.querySelectorAll('[data-capcode-option]'),
-  capcodeInputs: document.querySelectorAll('[data-capcode-input]'),
-  deletePasswordInputs: document.querySelectorAll('[data-delete-password-input]'),
-  toast: document.querySelector('#toast'),
-  refPreview: document.querySelector('#refPreview'),
-  quickReply: document.querySelector('#quickReply'),
-  quickReplyHandle: document.querySelector('#quickReplyHandle'),
-  quickReplyTitle: document.querySelector('#quickReplyTitle'),
-  quickReplyClose: document.querySelector('#quickReplyClose'),
-  quickReplyForm: document.querySelector('#quickReplyForm'),
-  quickReplyBody: document.querySelector('#quickReplyBody'),
-  quickReplyPrivacyWarning: document.querySelector('#quickReplyPrivacyWarning'),
-  quickReplyCaptcha: document.querySelector('#quickReplyCaptcha'),
-  quickReplyFile: document.querySelector('#quickReplyFile'),
-  quickReplyFileName: document.querySelector('#quickReplyFileName')
-};
-
 function showToast(message) {
   els.toast.textContent = message;
   els.toast.classList.remove('hidden');
@@ -2514,75 +2191,6 @@ async function loadAccountSettings() {
   }
   fillAccountSettings();
   window.scrollTo({ top: 0 });
-}
-
-async function api(path, options: AnyRecord = {}) {
-  const {
-    auth = 'admin',
-    timeoutMs,
-    timeoutMessage = 'AI phản hồi quá lâu, vui lòng thử lại.',
-    signal,
-    ...fetchOptions
-  } = options;
-  const headers = { ...(options.headers || {}) };
-  if (options.body && !headers['content-type']) {
-    headers['content-type'] = 'application/json';
-  }
-  if (auth === 'account' && state.accountToken) {
-    headers.authorization = `Bearer ${state.accountToken}`;
-  } else if (auth === 'admin' && state.token) {
-    headers.authorization = `Bearer ${state.token}`;
-  }
-
-  let timeoutId = null;
-  let timedOut = false;
-  let abortListener = null;
-  if ((timeoutMs || signal) && window.AbortController) {
-    const controller = new AbortController();
-    fetchOptions.signal = controller.signal;
-    if (signal?.aborted) {
-      controller.abort(signal.reason);
-    } else if (signal) {
-      abortListener = () => controller.abort(signal.reason);
-      signal.addEventListener('abort', abortListener, { once: true });
-    }
-    if (timeoutMs) {
-      timeoutId = window.setTimeout(() => {
-        timedOut = true;
-        controller.abort();
-      }, timeoutMs);
-    }
-  } else if (signal) {
-    fetchOptions.signal = signal;
-  }
-
-  let response;
-  try {
-    response = await fetch(withUrlBase(path, API_BASE_URL), { ...fetchOptions, headers });
-  } catch (error) {
-    if (timedOut) {
-      const timeoutError = new Error(timeoutMessage, { cause: error });
-      timeoutError.timedOut = true;
-      throw timeoutError;
-    }
-    throw error;
-  } finally {
-    if (timeoutId) {
-      window.clearTimeout(timeoutId);
-    }
-    if (signal && abortListener) {
-      signal.removeEventListener('abort', abortListener);
-    }
-  }
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    const error = new Error(payload.error?.message || 'Yêu cầu thất bại');
-    error.statusCode = response.status;
-    error.setupRequired = payload.error?.setupRequired;
-    error.requires2FA = payload.error?.requires2FA;
-    throw error;
-  }
-  return payload.data;
 }
 
 function setScreen(name) {
