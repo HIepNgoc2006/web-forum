@@ -1,58 +1,104 @@
 import { startRegistration, startAuthentication } from '@simplewebauthn/browser';
+import type { AnyRecord } from './types';
+import {
+  REASON_MACROS,
+  REPORT_CATEGORIES,
+  THREAD_TEMPLATES,
+  POST_REACTIONS,
+  AUDIO_RECORDING_TYPES,
+  AI_TRANSCRIBE_TIMEOUT_MS,
+  AI_SPEAK_TIMEOUT_MS,
+  AI_TTS_PROVIDER_COOLDOWN_MS,
+  ADMIN_LOAD_TIMEOUT_MS,
+  ADMIN_SETTINGS_REFRESH_MS,
+  watchedThreadsKey,
+  savedSearchesKey,
+  contentFiltersKey,
+  replyTemplatesKey,
+  posterNotesKey,
+  myPostsKey,
+  hiddenThreadsKey,
+  hiddenPostsKey,
+  deletePasswordKey,
+  themeKey,
+  homeBoardKey,
+  boardThreadsCachePrefix,
+  aiNotConfiguredMessage,
+  MAX_MEDIA_PER_POST,
+  SUPPORTED_VIDEO_TYPES,
+  SUPPORTED_THEMES,
+  API_BASE_URL
+} from './constants';
+import {
+  withUrlBase,
+  realtimeEndpoint,
+  escapeHtml,
+  reportCategoryLabel,
+  moderationPriorityHtml,
+  moderationConfidenceText,
+  moderationConfidenceHtml,
+  filterTypeLabel,
+  moderationActionText,
+  appealStatusLabel,
+  adminRoleLabel,
+  moderationLabelText,
+  moderationStatusText,
+  normalizeSearchValue,
+  plainPreview,
+  threadSubject,
+  threadTitle,
+  threadSubjectHtml,
+  scanDraftRisks,
+  formatPostDate,
+  formatEditedDate,
+  formatDateTimeLocal,
+  hoursSince,
+  dataUrlBytes,
+  formatBytes,
+  mediaKind,
+  mediaList,
+  mediaThumbnailSrc,
+  renderInlineMarkup,
+  renderSpoilerText,
+  renderStickerText,
+  fileTextHtml,
+  mediaToggleHtml,
+  commentSortHtml,
+  capcodeBadgeHtml,
+  posterId,
+  postDisplayName,
+  audioExtension,
+  clamp
+} from './format';
+import {
+  getPosterToken,
+  readThreadLastSeen,
+  writeThreadLastSeen,
+  readJsonLocal,
+  writeJsonLocal,
+  readLocalList,
+  normalizeWatchedSort,
+  localDisplayPreferences,
+  writeLocalDisplayPreferences,
+  localNotificationPreferences,
+  writeLocalNotificationPreferences,
+  addLocalSetItem,
+  defaultDeletePassword,
+  normalizeDeletePassword,
+  draftKey,
+  parseDraftKey,
+  localDraftEntries,
+  myPosts,
+  hiddenThreadIds,
+  hiddenPostNumbers,
+  subscribedBoardSlugs,
+  writeSubscribedBoardSlugs,
+  readVote,
+  writeVote,
+  readReaction,
+  writeReaction
+} from './storage';
 
-type AnyRecord = Record<string, any>;
-
-type HCaptchaApi = {
-  render: (...args: any[]) => any;
-  reset: (...args: any[]) => void;
-};
-
-declare global {
-  interface Window {
-    hcaptcha?: HCaptchaApi;
-  }
-
-  interface Element {
-    alt: string;
-    checked: boolean;
-    dataset: DOMStringMap;
-    disabled: boolean;
-    files: FileList | null;
-    focus: () => void;
-    href: string;
-    maxLength: number;
-    reset: () => void;
-    searchTimer: number;
-    selectionEnd: number | null;
-    selectionStart: number | null;
-    setRangeText: (...args: any[]) => void;
-    setSelectionRange: (...args: any[]) => void;
-    src: string;
-    title: string;
-    value: string;
-  }
-
-  interface Event {
-    clientX: number;
-    clientY: number;
-  }
-
-  interface EventTarget {
-    closest: (selectors: string) => any;
-  }
-
-  interface ParentNode {
-    querySelector(selectors: string): any;
-    querySelectorAll(selectors: string): NodeListOf<any>;
-  }
-
-  interface Error {
-    requires2FA?: boolean;
-    setupRequired?: boolean;
-    statusCode?: number;
-    timedOut?: boolean;
-  }
-}
 
 const state: AnyRecord = {
   boards: [],
@@ -125,150 +171,6 @@ const state: AnyRecord = {
     replyLimit: 500
   }
 };
-
-const REASON_MACROS = {
-  approve: [
-    'Nội dung hợp lệ',
-    'Đã xác minh an toàn',
-    'Nội dung không vi phạm'
-  ],
-  delete: [
-    'Vi phạm nội quy',
-    'Nội dung rác/spam',
-    'Chứa thông tin cá nhân',
-    'Nội dung thù ghét',
-    'Tin giả/chưa xác minh'
-  ],
-  ban: [
-    'Spam nhiều lần',
-    'Vi phạm nghiêm trọng',
-    'Quấy rối người khác',
-    'Đăng nội dung bất hợp pháp'
-  ],
-  cooldown: [
-    'Spam nhiều lần',
-    'Đăng quá nhanh',
-    'Quấy rối người khác'
-  ],
-  revoke: [
-    'Hết hạn xử lý',
-    'Xem xét lại, không vi phạm',
-    'Yêu cầu gỡ bỏ'
-  ],
-  restore: [
-    'Khôi phục sau khi xem xét lại',
-    'Xóa nhầm',
-    'Kháng nghị hợp lệ'
-  ],
-  'bulk-approve': [
-    'Nội dung hợp lệ',
-    'Đã xác minh an toàn',
-    'Duyệt hàng loạt theo đợt'
-  ],
-  'bulk-delete': [
-    'Vi phạm nội quy',
-    'Nội dung rác/spam',
-    'Xóa hàng loạt theo đợt'
-  ]
-};
-
-const REPORT_CATEGORIES = [
-  { value: 'Spam', label: 'Spam' },
-  { value: 'Toxic', label: 'Độc hại' },
-  { value: 'PII', label: 'Thông tin cá nhân' },
-  { value: 'Fake News', label: 'Tin giả' },
-  { value: 'Illegal', label: 'Bất hợp pháp' },
-  { value: 'Other', label: 'Khác' }
-];
-
-const THREAD_TEMPLATES = [
-  {
-    key: 'study',
-    label: 'Học tập',
-    body: 'Mình muốn chia sẻ chuyện học tập:\n- Môn hoặc bối cảnh liên quan: ...\n- Điều đang vướng: ...\n- Mình đã thử: ...\nMong mọi người góp ý theo hướng tôn trọng và không nêu tên thật.'
-  },
-  {
-    key: 'relationship',
-    label: 'Tình cảm',
-    body: 'Mình muốn kể một chuyện tình cảm ẩn danh:\n- Bối cảnh chung: ...\n- Điều mình đang phân vân: ...\n- Mình cần lời khuyên về: ...\nMong mọi người góp ý nhẹ nhàng, không đoán danh tính.'
-  },
-  {
-    key: 'feedback',
-    label: 'Góp ý',
-    body: 'Mình muốn góp ý:\n- Vấn đề: ...\n- Ảnh hưởng: ...\n- Gợi ý cải thiện: ...\nMình viết để xây dựng, không nhắm vào cá nhân cụ thể.'
-  }
-];
-
-const WATCHED_THREAD_SORTS = new Set(['unread', 'recent', 'board']);
-const STICKERS = {
-  cheer: { icon: '🎉', label: 'Cổ vũ' },
-  panic: { icon: '😱', label: 'Hoảng' },
-  study: { icon: '📚', label: 'Học' },
-  thanks: { icon: '🙏', label: 'Cảm ơn' }
-};
-
-const POST_REACTIONS = [
-  { type: 'like', icon: '👍', label: 'Thích' },
-  { type: 'laugh', icon: '😂', label: 'Cười' },
-  { type: 'surprise', icon: '😮', label: 'Ngạc nhiên' },
-  { type: 'sad', icon: '😢', label: 'Buồn' },
-  { type: 'angry', icon: '😠', label: 'Bực' },
-  { type: 'thanks', icon: '🙏', label: 'Cảm ơn' }
-];
-
-const AUDIO_RECORDING_TYPES = [
-  'audio/webm;codecs=opus',
-  'audio/webm',
-  'audio/mp4',
-  'audio/ogg;codecs=opus'
-];
-const AI_TRANSCRIBE_TIMEOUT_MS = 60_000;
-const AI_SPEAK_TIMEOUT_MS = 60_000;
-const AI_TTS_PROVIDER_COOLDOWN_MS = 60_000;
-const ADMIN_LOAD_TIMEOUT_MS = 60_000;
-const ADMIN_SETTINGS_REFRESH_MS = 60_000;
-
-function reportCategoryLabel(value) {
-  return REPORT_CATEGORIES.find((category) => category.value === value)?.label || 'Khác';
-}
-
-function moderationPriorityLabel(priority: AnyRecord = {}) {
-  if (priority.level === 'high') {
-    return 'Cao';
-  }
-  if (priority.level === 'medium') {
-    return 'Trung bình';
-  }
-  return 'Thấp';
-}
-
-function moderationPriorityHtml(priority: AnyRecord = {}) {
-  const level = ['high', 'medium', 'low'].includes(priority.level) ? priority.level : 'low';
-  const score = Number(priority.score || 0);
-  const reportCount = Number(priority.reportCount || 0);
-  const details = [
-    `Ưu tiên ${moderationPriorityLabel({ level })}: ${score}`,
-    reportCount > 0 ? `${reportCount} báo cáo` : '',
-    priority.hasPiiRisk ? 'PII' : ''
-  ].filter(Boolean);
-  return `<span class="priority-badge priority-${level}">${escapeHtml(details.join(' · '))}</span>`;
-}
-
-function moderationConfidenceText(value) {
-  const confidence = Number(value);
-  if (!Number.isFinite(confidence)) {
-    return 'Không có';
-  }
-  return `${Math.round(Math.min(1, Math.max(0, confidence)) * 100)}%`;
-}
-
-function moderationConfidenceHtml(value) {
-  const confidence = Number(value);
-  if (!Number.isFinite(confidence)) {
-    return '';
-  }
-  return `<span class="priority-badge priority-confidence">Tin cậy ${moderationConfidenceText(confidence)}</span>`;
-}
 
 function showReportModal(globalNumber) {
   return new Promise<any>((resolve) => {
@@ -549,73 +451,6 @@ function showPostEditModal(globalNumber, initialBody = '', options: AnyRecord = 
   });
 }
 
-function getPosterToken() {
-  const key = 'posterToken';
-  const current = localStorage.getItem(key);
-  if (current) {
-    return current;
-  }
-  const next =
-    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-      ? crypto.randomUUID()
-      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
-  localStorage.setItem(key, next);
-  return next;
-}
-
-function threadLastSeenKey(threadId) {
-  return `threadLastSeen:${threadId}`;
-}
-
-function readThreadLastSeen(threadId) {
-  const value = Number(localStorage.getItem(threadLastSeenKey(threadId)) || 0);
-  return Number.isFinite(value) && value > 0 ? value : 0;
-}
-
-function writeThreadLastSeen(threadId, globalNumber) {
-  const value = Number(globalNumber);
-  if (threadId && Number.isFinite(value) && value > 0) {
-    localStorage.setItem(threadLastSeenKey(threadId), String(Math.floor(value)));
-  }
-}
-
-const watchedThreadsKey = 'watchedThreads';
-const savedSearchesKey = 'savedSearches';
-const contentFiltersKey = 'contentFilters';
-const replyTemplatesKey = 'replyTemplates';
-const posterNotesKey = 'posterNotes';
-const myPostsKey = 'myPosts';
-const hiddenThreadsKey = 'hiddenThreads';
-const hiddenPostsKey = 'hiddenPosts';
-const deletePasswordKey = 'deletePassword';
-const subscribedBoardsKey = 'subscribedBoards';
-const themeKey = 'theme';
-const homeBoardKey = 'homeBoard';
-const displayPreferencesKey = 'displayPreferences';
-const notificationPreferencesKey = 'notificationPreferences';
-const boardThreadsCachePrefix = 'boardThreadsCache:';
-const aiNotConfiguredMessage =
-  'Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.';
-const MAX_MEDIA_PER_POST = 4;
-const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
-const SUPPORTED_THEMES = ['yotsuba-b', 'yotsuba', 'tomorrow', 'burichan'];
-const API_BASE_URL = String(import.meta.env?.VITE_API_BASE_URL || '').replace(/\/+$/, '');
-const REALTIME_URL = String(import.meta.env?.VITE_SOCKET_URL || '/events').trim() || '/events';
-
-function withUrlBase(path, baseUrl) {
-  if (!baseUrl || /^[a-z][a-z\d+\-.]*:/i.test(path)) {
-    return path;
-  }
-  const safePath = path.startsWith('/') ? path : `/${path}`;
-  return `${baseUrl}${safePath}`;
-}
-
-function realtimeEndpoint(contextKey = '') {
-  const url = withUrlBase(REALTIME_URL, API_BASE_URL);
-  const separator = url.includes('?') ? '&' : '?';
-  return `${url}${contextKey ? `${separator}${contextKey}` : ''}`;
-}
-
 function readWatchedThreads() {
   if (state.accountToken && state.accountPrivateData) {
     return Object.fromEntries((state.accountPrivateData.watchlist || []).map((item) => [item.threadId, item]));
@@ -645,28 +480,6 @@ function isThreadWatched(threadId = state.threadId) {
   return Boolean(threadId && readWatchedThreads()[threadId]);
 }
 
-function readJsonLocal(key, fallback) {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key) || '');
-    return parsed && typeof parsed === 'object' ? parsed : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function writeJsonLocal(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
-}
-
-function readLocalList(key) {
-  const value = readJsonLocal(key, []);
-  return Array.isArray(value) ? value : [];
-}
-
-function normalizeWatchedSort(value) {
-  return WATCHED_THREAD_SORTS.has(value) ? value : 'unread';
-}
-
 function syncWatchedControls({
   unreadOnly = localDisplayPreferences().watchedUnreadOnly,
   unreadCount = state.watchedThreadSummaries.filter((item) => Number(item.unreadCount || 0) > 0).length
@@ -688,68 +501,6 @@ function syncWatchedControls({
       ? `Đánh dấu ${unreadCount} chủ đề là đã đọc`
       : 'Không có chủ đề chưa đọc';
   }
-}
-
-function localDisplayPreferences() {
-  const value = readJsonLocal(displayPreferencesKey, {});
-  return {
-    compactThreads: Boolean(value.compactThreads),
-    hideThumbnails: Boolean(value.hideThumbnails),
-    watchedUnreadOnly: Boolean(value.watchedUnreadOnly),
-    watchedSort: normalizeWatchedSort(value.watchedSort)
-  };
-}
-
-function writeLocalDisplayPreferences(preferences: AnyRecord = {}) {
-  const safe = {
-    compactThreads: Boolean(preferences.compactThreads),
-    hideThumbnails: Boolean(preferences.hideThumbnails),
-    watchedUnreadOnly: Boolean(preferences.watchedUnreadOnly),
-    watchedSort: normalizeWatchedSort(preferences.watchedSort)
-  };
-  writeJsonLocal(displayPreferencesKey, safe);
-  return safe;
-}
-
-function localNotificationPreferences() {
-  const value = readJsonLocal(notificationPreferencesKey, {});
-  return {
-    email: Boolean(value.email),
-    watchedThreads: value.watchedThreads !== false,
-    boardSubscriptions: Boolean(value.boardSubscriptions),
-    browserWatchedThreads: Boolean(value.browserWatchedThreads)
-  };
-}
-
-function writeLocalNotificationPreferences(preferences: AnyRecord = {}) {
-  const safe = {
-    email: Boolean(preferences.email),
-    watchedThreads: preferences.watchedThreads !== false,
-    boardSubscriptions: Boolean(preferences.boardSubscriptions),
-    browserWatchedThreads: Boolean(preferences.browserWatchedThreads)
-  };
-  writeJsonLocal(notificationPreferencesKey, safe);
-  return safe;
-}
-
-function addLocalSetItem(key, value) {
-  const items = new Set(readLocalList(key).map(String));
-  items.add(String(value));
-  writeJsonLocal(key, [...items]);
-}
-
-function defaultDeletePassword() {
-  const current = localStorage.getItem(deletePasswordKey);
-  if (current) {
-    return current;
-  }
-  const next = Math.random().toString(36).slice(2, 10);
-  localStorage.setItem(deletePasswordKey, next);
-  return next;
-}
-
-function normalizeDeletePassword(value = '') {
-  return String(value ?? '').trim().slice(0, 120);
 }
 
 function syncDeletePasswordInputs(value = defaultDeletePassword()) {
@@ -778,10 +529,6 @@ function deletePasswordValue(form) {
   localStorage.setItem(deletePasswordKey, password);
   syncDeletePasswordInputs(password);
   return password;
-}
-
-function draftKey(kind, id) {
-  return `draft:${kind}:${id}`;
 }
 
 function defaultAccountPrivateData() {
@@ -1104,28 +851,6 @@ function isPostFiltered(post) {
   return Boolean(contentFilterMatch(post));
 }
 
-function parseDraftKey(key = '') {
-  const [, kind = '', id = ''] = String(key).split(':');
-  return { kind, id };
-}
-
-function localDraftEntries() {
-  const drafts = [];
-  for (let index = 0; index < localStorage.length; index += 1) {
-    const key = localStorage.key(index);
-    if (!key?.startsWith('draft:')) {
-      continue;
-    }
-    const body = localStorage.getItem(key) || '';
-    if (!body) {
-      continue;
-    }
-    const { kind, id } = parseDraftKey(key);
-    drafts.push({ key, kind, id, body, updatedAt: new Date().toISOString() });
-  }
-  return drafts;
-}
-
 function readDraft(key) {
   if (state.accountToken && state.accountPrivateData && accountDraftSyncEnabled()) {
     const draft = (state.accountPrivateData.drafts || []).find((item) => item.key === key);
@@ -1310,10 +1035,6 @@ function dismissThreadTemplate() {
   showToast('Đã bỏ mẫu khỏi nháp.');
 }
 
-function myPosts() {
-  return readLocalList(myPostsKey).filter((item) => item && typeof item === 'object');
-}
-
 // Cached set of the viewer's own post numbers, used to stamp "(You)" on their
 // posts and on quotes pointing at them. Rebuilt lazily and invalidated whenever
 // a new post is remembered.
@@ -1389,24 +1110,6 @@ function rememberMyPost(post, type) {
   if (state.accountToken && state.account) {
     state.accountPostNumbers.add(Number(post.globalNumber));
   }
-}
-
-function hiddenThreadIds() {
-  return new Set(readLocalList(hiddenThreadsKey).map(String));
-}
-
-function hiddenPostNumbers() {
-  return new Set(readLocalList(hiddenPostsKey).map(String));
-}
-
-function subscribedBoardSlugs() {
-  return new Set(readLocalList(subscribedBoardsKey).map(String));
-}
-
-function writeSubscribedBoardSlugs(slugs = []) {
-  const items = [...new Set(slugs.map((slug) => String(slug).trim()).filter(Boolean))];
-  writeJsonLocal(subscribedBoardsKey, items);
-  return items;
 }
 
 function isBoardSubscribed(slug = state.boardSlug) {
@@ -2578,13 +2281,6 @@ function privateBoardOptions() {
   ].join('');
 }
 
-function filterTypeLabel(type = '') {
-  if (type === 'poster') return 'Poster ID';
-  if (type === 'thread') return 'Thread';
-  if (type === 'post') return 'Bài';
-  return 'Từ khóa';
-}
-
 function renderContentFilters() {
   const filters = readContentFilters();
   const list = filters.length
@@ -2975,14 +2671,6 @@ function renderMissingBoard(screen = 'board') {
   closeThreadComposer();
 }
 
-function normalizeSearchValue(value = '') {
-  return String(value)
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .toLowerCase()
-    .trim();
-}
-
 function normalizeBoardSort(value) {
   const sort = String(value || '').trim().toLowerCase();
   return ['bump', 'created', 'replies'].includes(sort) ? sort : 'bump';
@@ -3133,61 +2821,6 @@ function updateBoardPresentation(board) {
   });
 }
 
-function escapeHtml(value: any = '') {
-  return String(value).replace(/[&<>"']/g, (character) => {
-    const entities = {
-      '&': '&amp;',
-      '<': '&lt;',
-      '>': '&gt;',
-      '"': '&quot;',
-      "'": '&#39;'
-    };
-    return entities[character];
-  });
-}
-
-const privacyRiskRules = [
-  {
-    label: 'email',
-    pattern: /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i
-  },
-  {
-    label: 'số điện thoại',
-    pattern: /(?:^|[^\d])(?:\+?84|0)(?:[\s.-]?\d){8,10}(?=$|[^\d])/
-  },
-  {
-    label: 'mã sinh viên',
-    pattern: /(?:^|\s)(?:mssv|mã sinh viên|ma sinh vien|student id)\s*[:#-]?\s*[A-Z0-9]{5,}(?=$|\s|[.,;!?])/i
-  },
-  {
-    label: 'lớp học',
-    pattern: /(?:^|\s)(?:lớp|lop|class)\s*[:#-]?\s*[A-Z0-9._-]{3,}(?=$|\s|[.,;!?])/i
-  },
-  {
-    label: 'tên thật',
-    pattern:
-      /(?:^|\s)(?:tên\s+(?:mình|tôi|bạn ấy|nó)\s+là|mình\s+tên\s+là|bạn ấy\s+tên\s+là|người đó\s+tên\s+là)\s+[\p{L}]+(?:\s+[\p{L}]+){1,3}/iu
-  }
-];
-
-const rumorFrictionRules = [
-  {
-    label: 'thông tin chưa kiểm chứng',
-    pattern: /(?:tin đồn|tin don|nghe nói|nghe noi|đồn là|don la|chưa kiểm chứng|chua kiem chung|bóc phốt|boc phot)/i
-  },
-  {
-    label: 'cáo buộc cá nhân',
-    pattern: /(?:lừa đảo|lua dao|ăn cắp|an cap|quấy rối|quay roi|ngoại tình|ngoai tinh|đánh người|danh nguoi|scam|biến thái|bien thai)/i
-  }
-];
-
-function scanDraftRisks(text = '') {
-  const content = String(text).normalize('NFC');
-  const privacyRisks = privacyRiskRules.filter((rule) => rule.pattern.test(content)).map((rule) => rule.label);
-  const rumorRisks = rumorFrictionRules.filter((rule) => rule.pattern.test(content)).map((rule) => rule.label);
-  return { privacyRisks, rumorRisks, risks: [...privacyRisks, ...rumorRisks] };
-}
-
 function updatePrivacyWarning(text, box) {
   if (!box) {
     return [];
@@ -3297,31 +2930,6 @@ function closeReplyComposer({ clear = false }: AnyRecord = {}) {
     els.suggestions.classList.add('hidden');
   }
   syncReplyComposer();
-}
-
-function plainPreview(lines, fallback = '') {
-  const text = (lines || [])
-    .map((line) => line.text)
-    .join(' ')
-    .replaceAll('&gt;', '>')
-    .replaceAll('&lt;', '<')
-    .replaceAll('&amp;', '&')
-    .replace(/\[\/?spoiler\]/gi, '')
-    .trim();
-  return text || fallback;
-}
-
-function threadSubject(thread) {
-  return String(thread?.subject || '').trim();
-}
-
-function threadTitle(thread, fallback = 'Chưa có nội dung') {
-  return threadSubject(thread) || plainPreview(thread?.bodyLines, fallback);
-}
-
-function threadSubjectHtml(thread) {
-  const subject = threadSubject(thread);
-  return subject ? `<div class="thread-subject">${escapeHtml(subject)}</div>` : '';
 }
 
 function homeBoardList() {
@@ -3940,24 +3548,6 @@ function renderStats(stats) {
   `;
 }
 
-function moderationActionText(action) {
-  return (
-    {
-      'ai:moderate': 'AI kiểm duyệt',
-      'admin:approve': 'Quản trị viên duyệt',
-      'admin:delete': 'Quản trị viên xóa',
-      'admin:note': 'Ghi chú',
-      'admin:cooldown': 'Làm chậm',
-      'admin:ban': 'Tạm khóa',
-      'admin:unsanction': 'Gỡ khóa',
-      'admin:sticky': 'Ghim chủ đề',
-      'admin:unsticky': 'Gỡ ghim chủ đề',
-      'admin:lock': 'Khóa chủ đề',
-      'admin:unlock': 'Mở khóa chủ đề'
-    }[action] || action
-  );
-}
-
 function moderationActionsHtml(actions) {
   if (!actions.length) {
     return '<p class="muted">Chưa có nhật ký kiểm duyệt.</p>';
@@ -4057,13 +3647,6 @@ function compactReportsHtml(reports) {
         .join('')}
     </div>
   `;
-}
-
-function appealStatusLabel(status = '') {
-  if (status === 'open') return 'Đang mở';
-  if (status === 'accepted') return 'Đã chấp nhận';
-  if (status === 'rejected') return 'Đã từ chối';
-  return status || '-';
 }
 
 function appealsHtml(appeals) {
@@ -4783,19 +4366,6 @@ function adminBoardPayload(root, { includeSlug = false }: AnyRecord = {}) {
   return payload;
 }
 
-function formatDateTimeLocal(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  const pad = (number) => String(number).padStart(2, '0');
-  return [
-    date.getFullYear(),
-    pad(date.getMonth() + 1),
-    pad(date.getDate())
-  ].join('-') + 'T' + [pad(date.getHours()), pad(date.getMinutes())].join(':');
-}
-
 function adminUserPayload(root, { includeUsername = false }: AnyRecord = {}) {
   const payload: AnyRecord = {
     role: root.querySelector('[data-admin-user-role]')?.value || 'viewer',
@@ -4912,13 +4482,6 @@ function adminBoardsHtml(boards) {
       <p class="muted">Xóa chỉ áp dụng cho board rỗng. Board đã có nội dung nên dùng Ẩn hoặc Lưu trữ.</p>
     </div>
   `;
-}
-
-function adminRoleLabel(role = '') {
-  if (role === 'owner') return 'Owner';
-  if (role === 'moderator') return 'Moderator';
-  if (role === 'viewer') return 'Viewer';
-  return role || 'User';
 }
 
 function adminRoleOptions(selected = 'viewer') {
@@ -5206,89 +4769,6 @@ function selectedPostQuoteText(postElement) {
   return lines.map((line) => `>${line}`).join('\n');
 }
 
-// Inline text markup on already-sanitized, ref-linked HTML. Bold is matched
-// before italic so the single-asterisk pass does not split `**`. The class
-// names emitted by the ref/spoiler passes contain no `*`/`~`, so generated
-// markup is never re-matched here.
-function renderInlineMarkup(html) {
-  return String(html)
-    .replace(/\*\*([^\n*]+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*([^\n*]+?)\*/g, '<em>$1</em>')
-    .replace(/~~([^\n~]+?)~~/g, '<del>$1</del>');
-}
-
-// Inline [spoiler]...[/spoiler] -> click-to-reveal span. Runs after ref
-// linkification so refs nested inside a spoiler still work once revealed.
-function renderSpoilerText(html) {
-  return String(html).replace(
-    /\[spoiler\]([\s\S]*?)\[\/spoiler\]/gi,
-    (_match, inner) => `<span class="spoiler-text" data-spoiler tabindex="0" title="Bấm để hiện">${inner}</span>`
-  );
-}
-
-function renderStickerText(html) {
-  return String(html).replace(/\[sticker:([a-z0-9-]+)\]/gi, (match, key) => {
-    const sticker = STICKERS[String(key).toLowerCase()];
-    if (!sticker) {
-      return match;
-    }
-    return `<span class="post-sticker" role="img" aria-label="${escapeHtml(sticker.label)}">${escapeHtml(sticker.icon)}</span>`;
-  });
-}
-
-function formatPostDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  const days = ['CN', 'T2', 'T3', 'T4', 'T5', 'T6', 'T7'];
-  const pad = (number) => String(number).padStart(2, '0');
-  return `${pad(date.getMonth() + 1)}/${pad(date.getDate())}/${String(date.getFullYear()).slice(-2)}(${days[date.getDay()]})${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-}
-
-function formatEditedDate(value) {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) {
-    return '';
-  }
-  const pad = (number) => String(number).padStart(2, '0');
-  return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}/${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
-
-function dataUrlBytes(dataUrl = '') {
-  const base64 = String(dataUrl).split(',')[1] || '';
-  const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
-  return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
-}
-
-function imageSizeBytes(image: AnyRecord = {}) {
-  const sizeBytes = Number(image.sizeBytes);
-  if (Number.isFinite(sizeBytes) && sizeBytes > 0) {
-    return Math.round(sizeBytes);
-  }
-  return dataUrlBytes(image.dataUrl);
-}
-
-function formatBytes(bytes) {
-  if (bytes >= 1024 * 1024) {
-    return `${(bytes / 1024 / 1024).toFixed(1)} MB`;
-  }
-  if (bytes >= 1024) {
-    return `${Math.max(1, Math.round(bytes / 1024))} KB`;
-  }
-  return `${bytes} B`;
-}
-
-function imageInfoText(image: AnyRecord = {}) {
-  const size = formatBytes(imageSizeBytes(image));
-  const width = Number(image.width);
-  const height = Number(image.height);
-  if (Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0) {
-    return `${size}, ${Math.round(width)}x${Math.round(height)}`;
-  }
-  return size;
-}
-
 function mediaItemsFromPost(post: AnyRecord = {}) {
   return mediaList(post.images?.length ? post.images : post.image);
 }
@@ -5297,66 +4777,12 @@ function postMediaCount(post: AnyRecord = {}) {
   return mediaItemsFromPost(post).length;
 }
 
-function mediaOriginalSrc(image: AnyRecord = {}) {
-  const value = image || {};
-  return value.url || value.dataUrl || '';
-}
-
-function mediaThumbnailSrc(image: AnyRecord = {}, options: AnyRecord = {}) {
-  const value = image || {};
-  const src = value.thumbnail?.url || value.thumbnail?.dataUrl || '';
-  return src || (options.fallbackOriginal ? mediaOriginalSrc(value) : '');
-}
-
-function fileTextHtml(image) {
-  const name = escapeHtml(image?.name || 'tai-len');
-  const src = escapeHtml(mediaOriginalSrc(image));
-  const info = escapeHtml(imageInfoText(image));
-  return `Tệp: <a href="${src}" target="_blank" rel="noopener noreferrer">${name}</a> (${info})`;
-}
-
-function mediaToggleHtml(image, className = 'post-image') {
-  const name = escapeHtml(image?.name || 'tai-len');
-  const thumbnailSrc = mediaThumbnailSrc(image);
-  const originalSrc = escapeHtml(mediaOriginalSrc(image));
-  const spoiler = Boolean(image?.spoiler);
-  const isVideo = mediaKind(image) === 'video';
-  const mediaLabel = isVideo ? 'video' : 'ảnh';
-  const preview = thumbnailSrc
-    ? `<img class="${className}" src="${escapeHtml(thumbnailSrc)}" alt="${name}" data-full-src="${originalSrc}">`
-    : `<span class="${className} placeholder image-lazy-placeholder" data-full-src="${originalSrc}">${isVideo ? 'Video' : 'Có tệp'}</span>`;
-  const spoilerLabel = spoiler ? '<span class="spoiler-image-label">Spoiler — bấm để hiện</span>' : '';
-  const toggleAttributes = `class="image-toggle" data-image-toggle${spoiler ? ' data-spoiler-image' : ''} data-media-type="${
-    isVideo ? 'video' : 'image'
-  }" data-full-src="${originalSrc}" data-image-name="${name}" data-image-class="${className}" aria-expanded="false" aria-label="Phóng to ${mediaLabel} ${name}"`;
-  const toggleOpen = isVideo ? `<div ${toggleAttributes} role="button" tabindex="0">` : `<button ${toggleAttributes} type="button">`;
-  const toggleClose = isVideo ? '</div>' : '</button>';
-  return `
-    <div class="thread-thumb-wrap${spoiler ? ' spoiler-image' : ''}">
-      <div class="file-text">${fileTextHtml(image)}</div>
-      ${toggleOpen}
-        ${preview}
-        ${spoilerLabel}
-      ${toggleClose}
-    </div>
-  `;
-}
-
 function imageHtml(post) {
   const images = mediaItemsFromPost(post);
   if (!images.length) {
     return '';
   }
   return `<div class="post-media-gallery">${images.map((image) => mediaToggleHtml(image)).join('')}</div>`;
-}
-
-function posterId(post) {
-  const value = post.posterHash || '????';
-  return value.startsWith('ID:') ? value : `ID:${value}`;
-}
-
-function postDisplayName(post) {
-  return String(post.displayName || 'Anonymous').trim() || 'Anonymous';
 }
 
 function postPermalink(post, options: AnyRecord = {}) {
@@ -5401,46 +4827,6 @@ async function copyPostPermalink(permalink) {
   }
 }
 
-function readVote(globalNumber) {
-  try {
-    return localStorage.getItem(`vote:${globalNumber}`) || '';
-  } catch {
-    return '';
-  }
-}
-
-function writeVote(globalNumber, direction) {
-  try {
-    if (direction) {
-      localStorage.setItem(`vote:${globalNumber}`, direction);
-    } else {
-      localStorage.removeItem(`vote:${globalNumber}`);
-    }
-  } catch {
-    /* ignore storage errors */
-  }
-}
-
-function readReaction(globalNumber) {
-  try {
-    return localStorage.getItem(`reaction:${globalNumber}`) || '';
-  } catch {
-    return '';
-  }
-}
-
-function writeReaction(globalNumber, reaction) {
-  try {
-    if (reaction) {
-      localStorage.setItem(`reaction:${globalNumber}`, reaction);
-    } else {
-      localStorage.removeItem(`reaction:${globalNumber}`);
-    }
-  } catch {
-    /* ignore storage errors */
-  }
-}
-
 function reactionControlHtml(post) {
   const reactions = post.reactions && typeof post.reactions === 'object' ? post.reactions : {};
   const myReaction = readReaction(post.globalNumber);
@@ -5471,25 +4857,6 @@ function voteControlHtml(post) {
   `;
 }
 
-const COMMENT_SORT_LABELS = [
-  ['best', 'tốt nhất'],
-  ['top', 'nhiều điểm'],
-  ['new', 'mới nhất'],
-  ['controversial', 'gây tranh cãi'],
-  ['old', 'cũ nhất']
-];
-
-function commentSortHtml(current = 'old') {
-  const options = COMMENT_SORT_LABELS.map(
-    ([value, label]) => `<option value="${value}"${value === current ? ' selected' : ''}>${label}</option>`
-  ).join('');
-  return `
-    <div class="comment-sort">
-      <label>sắp xếp theo: <select data-comment-sort aria-label="Sắp xếp bình luận">${options}</select></label>
-    </div>
-  `;
-}
-
 function normalizeThreadSearchTerm(value: any = '') {
   return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
@@ -5515,19 +4882,6 @@ function threadSearchHtml(detail: AnyRecord = {}) {
       <span class="thread-search-status">${escapeHtml(status)}</span>
     </form>
   `;
-}
-
-const CAPCODE_LABELS = {
-  admin: '## Quản trị viên',
-  moderator: '## Điều hành viên'
-};
-
-function capcodeBadgeHtml(post) {
-  const label = CAPCODE_LABELS[post?.capcode];
-  if (!label) {
-    return '';
-  }
-  return `<span class="capcode capcode-${post.capcode}" title="Chức danh đã xác minh">${label}</span>`;
 }
 
 function adminPostEditButtonHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
@@ -5843,28 +5197,6 @@ function threadToolbarHtml(detail, position) {
   `;
 }
 
-function moderationLabelText(label) {
-  return (
-    {
-      Toxic: 'Độc hại',
-      Spam: 'Nội dung rác',
-      'Hate Speech': 'Thù ghét',
-      'Fake News': 'Tin giả',
-      'PII Risk': 'Rủi ro thông tin cá nhân'
-    }[label] || label
-  );
-}
-
-function moderationStatusText(status) {
-  return (
-    {
-      Safe: 'An toàn',
-      Flagged: 'Bị gắn cờ',
-      ApprovedByAdmin: 'Quản trị viên đã duyệt'
-    }[status] || status
-  );
-}
-
 function syncAutoUpdateControls() {
   document.querySelectorAll('[data-auto-update]').forEach((checkbox) => {
     checkbox.checked = state.autoUpdate;
@@ -6052,19 +5384,6 @@ function catalogThreadHtml(thread) {
       <p>${escapeHtml(bodyPreview || title)}${bodyPreview.length >= 260 ? '...' : ''}</p>
     </a>
   `;
-}
-
-function timestamp(value) {
-  const time = new Date(value).getTime();
-  return Number.isFinite(time) ? time : 0;
-}
-
-function hoursSince(value) {
-  const time = timestamp(value);
-  if (!time) {
-    return 0;
-  }
-  return Math.max(0, (Date.now() - time) / (60 * 60 * 1000));
 }
 
 function catalogRecommendationScore(thread) {
@@ -6670,17 +5989,6 @@ function isSupportedMediaFile(file) {
   return Boolean(file?.type?.startsWith('image/') || SUPPORTED_VIDEO_TYPES.has(file?.type));
 }
 
-function mediaKind(media: AnyRecord = {}) {
-  return String(media.type || '').startsWith('video/') ? 'video' : 'image';
-}
-
-function mediaList(value) {
-  if (Array.isArray(value)) {
-    return value.filter(Boolean);
-  }
-  return value ? [value] : [];
-}
-
 function fileToDataUrl(file) {
   return new Promise<any>((resolve, reject) => {
     const reader = new FileReader();
@@ -7242,10 +6550,6 @@ async function selfDeletePost(globalNumber, { fileOnly = false, sourceElement = 
   }
 }
 
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(value, max));
-}
-
 function positionQuickReply(event) {
   const width = Math.min(332, window.innerWidth - 8);
   const height = Math.min(334, window.innerHeight - 8);
@@ -7646,23 +6950,6 @@ function preferredAudioRecordingType() {
     return '';
   }
   return AUDIO_RECORDING_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) || '';
-}
-
-function audioExtension(mimeType = '') {
-  const type = String(mimeType).toLowerCase();
-  if (type.includes('mp4')) {
-    return 'm4a';
-  }
-  if (type.includes('ogg')) {
-    return 'ogg';
-  }
-  if (type.includes('mpeg') || type.includes('mp3')) {
-    return 'mp3';
-  }
-  if (type.includes('wav')) {
-    return 'wav';
-  }
-  return 'webm';
 }
 
 function stopAudioStream(stream) {
