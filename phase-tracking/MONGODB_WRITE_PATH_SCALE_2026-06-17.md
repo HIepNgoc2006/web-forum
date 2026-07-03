@@ -38,7 +38,7 @@ thresholds.
 
 ## Load-Test Thresholds
 
-Pass/fail budget for `scripts/load-test-write-path.mjs` (measures end-to-end
+Pass/fail budget for `scripts/load-test-write-path.mts` (measures end-to-end
 HTTP create latency through the real write path):
 
 | Metric | Target (pass) | Warning | Fail |
@@ -62,7 +62,7 @@ $env:STORE_DRIVER = "mongo"; rtk npm run dev
 
 # Terminal 2: drive the write path
 $env:THREADS = "500"; $env:COMMENTS_PER = "10"; $env:CONCURRENCY = "10"
-node scripts/load-test-write-path.mjs
+node scripts/load-test-write-path.mts
 ```
 
 Record p50/p95/p99 for thread and comment creates at: empty dataset, mid

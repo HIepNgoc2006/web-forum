@@ -10,7 +10,7 @@
 // end-to-end write path (HTTP -> forum-service mutate queue -> store.write).
 //
 // Usage (against a running server, ideally STORE_DRIVER=mongo):
-//   node scripts/load-test-write-path.mjs
+//   node scripts/load-test-write-path.mts
 //
 // Env:
 //   BASE_URL          default http://localhost:3000
