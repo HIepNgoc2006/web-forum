@@ -53,6 +53,20 @@ import {
   safeReplyTemplateBody
 } from './account';
 import { els } from './dom';
+import {
+  composerTextarea,
+  confirmPrivacyBeforeSubmit,
+  defaultReplyTemplateTitle,
+  fileToDataUrl,
+  imagePreviewHtml,
+  insertComposerBlock,
+  insertThreadTemplate,
+  dismissThreadTemplate,
+  insertComposerToken,
+  isSupportedMediaFile,
+  updatePrivacyWarning,
+  writeTextareaValue
+} from './composer';
 import { handleBrokenThumbnailError } from './events';
 import { eventInTextInput, moveKeyboardNavigation } from './keyboard';
 import { showReasonModal, showReportModal } from './modals';
@@ -93,7 +107,6 @@ import {
 } from './thread-dom';
 import type { AnyRecord } from './types';
 import {
-  THREAD_TEMPLATES,
   POST_REACTIONS,
   AUDIO_RECORDING_TYPES,
   AI_TRANSCRIBE_TIMEOUT_MS,
@@ -115,7 +128,6 @@ import {
   boardThreadsCachePrefix,
   aiNotConfiguredMessage,
   MAX_MEDIA_PER_POST,
-  SUPPORTED_VIDEO_TYPES,
   SUPPORTED_THEMES
 } from './constants';
 import {
@@ -129,17 +141,14 @@ import {
   plainPreview,
   threadTitle,
   threadSubjectHtml,
-  scanDraftRisks,
   formatPostDate,
   formatEditedDate,
-  dataUrlBytes,
   mediaKind,
   mediaList,
   mediaThumbnailSrc,
   renderInlineMarkup,
   renderSpoilerText,
   renderStickerText,
-  fileTextHtml,
   mediaToggleHtml,
   commentSortHtml,
   capcodeBadgeHtml,
@@ -632,59 +641,13 @@ function removeDraft(key) {
   }
 }
 
-function writeTextareaValue(textarea, value) {
-  textarea.value = value;
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
-}
-
-function composerTextarea(target) {
-  if (target === 'thread') {
-    return els.threadBody;
-  }
-  if (target === 'comment') {
-    return els.commentBody;
-  }
-  if (target === 'quickReply') {
-    return els.quickReplyBody;
-  }
-  return null;
-}
-
-function insertComposerBlock(target, text) {
-  const textarea = composerTextarea(target);
-  const body = safeReplyTemplateBody(text);
-  if (!textarea || !body) {
-    return;
-  }
-  const value = textarea.value;
-  const start = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : value.length;
-  const end = Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : start;
-  const prefix = start > 0 && !value.slice(0, start).endsWith('\n') ? '\n' : '';
-  const suffix = value[end] && !value.slice(end).startsWith('\n') ? '\n' : '';
-  const insertText = `${prefix}${body}${suffix}`;
-  const maxLength = Number(textarea.maxLength);
-  if (Number.isFinite(maxLength) && maxLength > 0 && value.length - (end - start) + insertText.length > maxLength) {
-    showToast('Nháp đã đạt giới hạn ký tự.');
-    textarea.focus();
-    return;
-  }
-  textarea.setRangeText(insertText, start, end, 'end');
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  textarea.focus();
-}
-
 function insertReplyTemplate(target, id) {
   const template = readReplyTemplates().find((item) => item.id === id);
   if (!template) {
     showToast('Không tìm thấy mẫu trả lời.');
     return;
   }
-  insertComposerBlock(target, template.body);
-}
-
-function defaultReplyTemplateTitle(body = '') {
-  const firstLine = safePrivateText(String(body).split('\n').find((line) => line.trim()) || '', 80);
-  return firstLine || 'Mẫu trả lời';
+  insertComposerBlock(target, template.body, { showToast });
 }
 
 function saveComposerReplyTemplate(target) {
@@ -702,80 +665,6 @@ function saveComposerReplyTemplate(target) {
   });
   showToast('Đã lưu mẫu trả lời.');
 }
-
-function insertComposerToken(target, token) {
-  const textarea = composerTextarea(target);
-  if (!textarea || !token) {
-    return;
-  }
-  const value = textarea.value;
-  const start = Number.isFinite(textarea.selectionStart) ? textarea.selectionStart : value.length;
-  const end = Number.isFinite(textarea.selectionEnd) ? textarea.selectionEnd : start;
-  const prefix = start > 0 && !/\s/.test(value[start - 1]) ? ' ' : '';
-  const suffix = value[end] && !/\s/.test(value[end]) ? ' ' : '';
-  const insertText = `${prefix}${token}${suffix}`;
-  const maxLength = Number(textarea.maxLength);
-  if (Number.isFinite(maxLength) && maxLength > 0 && value.length - (end - start) + insertText.length > maxLength) {
-    showToast('Nội dung đã đạt giới hạn ký tự.');
-    textarea.focus();
-    return;
-  }
-  textarea.setRangeText(insertText, start, end, 'end');
-  textarea.dispatchEvent(new Event('input', { bubbles: true }));
-  textarea.focus();
-}
-
-function insertThreadTemplate(key) {
-  const template = THREAD_TEMPLATES.find((item) => item.key === key);
-  if (!template) {
-    return;
-  }
-  const value = els.threadBody.value;
-  const canReplaceSelection =
-    document.activeElement === els.threadBody &&
-    Number.isFinite(els.threadBody.selectionStart) &&
-    els.threadBody.selectionStart !== els.threadBody.selectionEnd;
-  let nextValue = template.body;
-  let cursorStart = template.body.length;
-  if (canReplaceSelection) {
-    const start = els.threadBody.selectionStart;
-    const end = els.threadBody.selectionEnd;
-    nextValue = `${value.slice(0, start)}${template.body}${value.slice(end)}`;
-    cursorStart = start + template.body.length;
-  } else if (value.trim()) {
-    const spacer = value.endsWith('\n') ? '\n' : '\n\n';
-    nextValue = `${value}${spacer}${template.body}`;
-    cursorStart = nextValue.length;
-  }
-  els.threadBody.dataset.threadTemplateKey = template.key;
-  writeTextareaValue(els.threadBody, nextValue);
-  els.threadBody.setSelectionRange(cursorStart, cursorStart);
-  els.threadBody.focus();
-  showToast(`Đã chèn mẫu ${template.label}. Bạn có thể sửa trước khi gửi.`);
-}
-
-function dismissThreadTemplate() {
-  const key = els.threadBody.dataset.threadTemplateKey;
-  const template = THREAD_TEMPLATES.find((item) => item.key === key);
-  if (!template) {
-    els.threadBody.focus();
-    return;
-  }
-  const value = els.threadBody.value;
-  if (value === template.body) {
-    writeTextareaValue(els.threadBody, '');
-  } else if (value.includes(template.body)) {
-    writeTextareaValue(els.threadBody, value.replace(template.body, '').replace(/\n{3,}/g, '\n\n').trimStart());
-  } else {
-    showToast('Mẫu đã được sửa; xóa phần không cần trong ô bình luận.');
-    els.threadBody.focus();
-    return;
-  }
-  delete els.threadBody.dataset.threadTemplateKey;
-  els.threadBody.focus();
-  showToast('Đã bỏ mẫu khỏi nháp.');
-}
-
 // Cached set of the viewer's own post numbers, used to stamp "(You)" on their
 // posts and on quotes pointing at them. Rebuilt lazily and invalidated whenever
 // a new post is remembered.
@@ -1970,37 +1859,6 @@ function updateBoardPresentation(board) {
       }
     }
   });
-}
-
-function updatePrivacyWarning(text, box) {
-  if (!box) {
-    return [];
-  }
-  const { privacyRisks, rumorRisks, risks } = scanDraftRisks(text);
-  if (!risks.length) {
-    box.textContent = '';
-    box.classList.add('hidden');
-    return risks;
-  }
-  const hasRumorRisk = rumorRisks.length > 0;
-  const detail = privacyRisks.length
-    ? 'Hãy sửa trước khi đăng nếu đây là thông tin thật.'
-    : 'Hãy viết lại trung lập hoặc thêm ngữ cảnh nếu đây chỉ là tin đồn/cáo buộc.';
-  box.innerHTML = `<strong>${hasRumorRisk ? 'Chưa kiểm chứng:' : 'Cảnh báo riêng tư:'}</strong> Có thể chứa ${risks
-    .map((risk) => escapeHtml(risk))
-    .join(', ')}. ${detail}`;
-  box.classList.remove('hidden');
-  return risks;
-}
-
-function confirmPrivacyBeforeSubmit(text, box) {
-  const risks = updatePrivacyWarning(text, box);
-  if (!risks.length) {
-    return true;
-  }
-  return window.confirm(
-    `Bài viết có thể chứa ${risks.join(', ')}. Hãy sửa nếu có thông tin cá nhân hoặc cáo buộc chưa kiểm chứng. Bạn vẫn muốn gửi nội dung này?`
-  );
 }
 
 function renderBoards() {
@@ -4085,181 +3943,6 @@ function route() {
   setupRealtime();
 }
 
-function isSupportedMediaFile(file) {
-  return Boolean(file?.type?.startsWith('image/') || SUPPORTED_VIDEO_TYPES.has(file?.type));
-}
-
-function fileToDataUrl(file) {
-  return new Promise<any>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onerror = () => reject(new Error('Không thể đọc tệp'));
-    reader.onload = () => {
-      const dataUrl = String(reader.result || '');
-      if (file.type.startsWith('video/')) {
-        resolve(videoFileMetadata(file, dataUrl));
-        return;
-      }
-      const image = new Image();
-      image.onload = () => {
-        const selectedImage: AnyRecord = {
-          name: file.name,
-          type: file.type,
-          sizeBytes: file.size,
-          width: image.naturalWidth,
-          height: image.naturalHeight,
-          dataUrl
-        };
-        const thumbnail = createImageThumbnail(image, file);
-        if (thumbnail) {
-          selectedImage.thumbnail = thumbnail;
-        }
-        resolve(selectedImage);
-      };
-      image.onerror = () =>
-        resolve({
-          name: file.name,
-          type: file.type,
-          sizeBytes: file.size,
-          dataUrl
-        });
-      image.src = dataUrl;
-    };
-    reader.readAsDataURL(file);
-  });
-}
-
-function videoFileMetadata(file, dataUrl) {
-  return new Promise<any>((resolve) => {
-    const video = document.createElement('video');
-    let settled = false;
-    const timeout = window.setTimeout(() => finish(), 2500);
-
-    const finish = (thumbnail = null) => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      window.clearTimeout(timeout);
-      const selectedVideo: AnyRecord = {
-        name: file.name,
-        type: file.type,
-        mediaType: 'video',
-        sizeBytes: file.size,
-        dataUrl
-      };
-      const width = Number(video.videoWidth || 0);
-      const height = Number(video.videoHeight || 0);
-      if (width > 0 && height > 0) {
-        selectedVideo.width = width;
-        selectedVideo.height = height;
-      }
-      if (thumbnail) {
-        selectedVideo.thumbnail = thumbnail;
-      }
-      video.removeAttribute('src');
-      video.load();
-      resolve(selectedVideo);
-    };
-
-    video.muted = true;
-    video.preload = 'metadata';
-    video.playsInline = true;
-    video.onerror = () => finish();
-    video.onloadedmetadata = () => {
-      if (!video.videoWidth || !video.videoHeight) {
-        finish();
-        return;
-      }
-      try {
-        video.currentTime = Math.min(Math.max(Number(video.duration || 0) * 0.1, 0), 1);
-      } catch {
-        finish();
-      }
-    };
-    video.onloadeddata = () => {
-      if (!settled && video.currentTime === 0) {
-        finish(createVideoThumbnail(video, file));
-      }
-    };
-    video.onseeked = () => finish(createVideoThumbnail(video, file));
-    video.src = dataUrl;
-  });
-}
-
-function createImageThumbnail(image, file) {
-  const width = Number(image.naturalWidth || image.width || 0);
-  const height = Number(image.naturalHeight || image.height || 0);
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return null;
-  }
-
-  const maxEdge = 240;
-  const scale = Math.min(1, maxEdge / Math.max(width, height));
-  const thumbnailWidth = Math.max(1, Math.round(width * scale));
-  const thumbnailHeight = Math.max(1, Math.round(height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = thumbnailWidth;
-  canvas.height = thumbnailHeight;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    return null;
-  }
-
-  context.drawImage(image, 0, 0, thumbnailWidth, thumbnailHeight);
-  const type = 'image/jpeg';
-  const dataUrl = canvas.toDataURL(type, 0.7);
-  if (!dataUrl.startsWith('data:image/')) {
-    return null;
-  }
-
-  const baseName = String(file.name || 'thumbnail').replace(/\.[^.]+$/, '');
-  return {
-    name: `${baseName}-thumb.jpg`,
-    type,
-    dataUrl,
-    sizeBytes: dataUrlBytes(dataUrl),
-    width: thumbnailWidth,
-    height: thumbnailHeight
-  };
-}
-
-function createVideoThumbnail(video, file) {
-  const width = Number(video.videoWidth || 0);
-  const height = Number(video.videoHeight || 0);
-  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
-    return null;
-  }
-
-  const maxEdge = 240;
-  const scale = Math.min(1, maxEdge / Math.max(width, height));
-  const thumbnailWidth = Math.max(1, Math.round(width * scale));
-  const thumbnailHeight = Math.max(1, Math.round(height * scale));
-  const canvas = document.createElement('canvas');
-  canvas.width = thumbnailWidth;
-  canvas.height = thumbnailHeight;
-  const context = canvas.getContext('2d');
-  if (!context) {
-    return null;
-  }
-
-  context.drawImage(video, 0, 0, thumbnailWidth, thumbnailHeight);
-  const type = 'image/jpeg';
-  const dataUrl = canvas.toDataURL(type, 0.72);
-  if (!dataUrl.startsWith('data:image/')) {
-    return null;
-  }
-
-  const baseName = String(file.name || 'video').replace(/\.[^.]+$/, '');
-  return {
-    name: `${baseName}-poster.jpg`,
-    type,
-    dataUrl,
-    sizeBytes: dataUrlBytes(dataUrl),
-    width: thumbnailWidth,
-    height: thumbnailHeight
-  };
-}
-
 function pollHtml(poll, canVote = true) {
   if (!poll?.options?.length) {
     return '';
@@ -4287,23 +3970,7 @@ function pollHtml(poll, canVote = true) {
   `;
 }
 
-function imagePreviewHtml(image) {
-  if (Array.isArray(image)) {
-    return image.map((item) => imagePreviewHtml(item)).join('');
-  }
-  const thumbnailSrc = mediaThumbnailSrc(image, { fallbackOriginal: mediaKind(image) !== 'video' });
-  const preview = thumbnailSrc
-    ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(image.name)}">`
-    : `<span class="post-image placeholder image-lazy-placeholder">${mediaKind(image) === 'video' ? 'Video' : 'Có tệp'}</span>`;
-  return `
-    <div class="image-preview-item">
-      ${preview}
-      <div class="file-text">${fileTextHtml(image)}</div>
-    </div>
-  `;
-}
-
-// Shared change handler for a file input that stages an image on `state[stateKey]`.
+// Shared change handler for a file input that stages an image on state[stateKey].
 // Optionally renders a preview panel and/or updates a filename label.
 function handleImageInputChange(input, { stateKey, preview = null, fileNameEl = null }) {
   return async () => {
@@ -5872,7 +5539,7 @@ function bindEvents() {
     const composerInsertButton = event.target.closest('[data-composer-insert]');
     if (composerInsertButton) {
       const pickerRoot = composerInsertButton.closest('[data-composer-picker]');
-      insertComposerToken(pickerRoot?.dataset.composerPicker, composerInsertButton.dataset.composerInsert);
+      insertComposerToken(pickerRoot?.dataset.composerPicker, composerInsertButton.dataset.composerInsert, { showToast });
       return;
     }
 
@@ -6062,13 +5729,13 @@ function bindEvents() {
 
     const threadTemplateButton = event.target.closest('[data-thread-template]');
     if (threadTemplateButton) {
-      insertThreadTemplate(threadTemplateButton.dataset.threadTemplate);
+      insertThreadTemplate(threadTemplateButton.dataset.threadTemplate, { showToast });
       return;
     }
 
     const threadTemplateDismissButton = event.target.closest('[data-thread-template-dismiss]');
     if (threadTemplateDismissButton) {
-      dismissThreadTemplate();
+      dismissThreadTemplate({ showToast });
       return;
     }
 
@@ -7188,4 +6855,8 @@ async function init() {
 }
 
 init().catch((error) => showToast(error.message));
+
+
+
+
 
