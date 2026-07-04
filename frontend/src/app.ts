@@ -3,6 +3,18 @@ import { resetHcaptcha, setupHcaptcha } from './hcaptcha';
 
 import { api } from './api';
 import {
+  boardHeading,
+  boardPostCount,
+  boardRulesForDisplay,
+  findBoardByQuery,
+  normalizeBoardFilter,
+  normalizeBoardSort,
+  normalizeBoardThreadsPayload,
+  omittedRepliesHtml,
+  popularThreadsFrom,
+  threadMatchesSearch
+} from './board';
+import {
   archiveThreadHtml,
   catalogThreadHtml,
   catalogThreadMatchesFilter,
@@ -29,7 +41,25 @@ import {
   syncBrowserNotificationControls
 } from './notifications';
 import { setupRealtime as setupRealtimeConnection } from './realtime';
-
+import {
+  adminLockButtonHtml,
+  adminStickyButtonHtml,
+  backlinksHtml,
+  diceRollsHtml,
+  firstUnreadPostNumber,
+  imageHtml,
+  latestPostHref,
+  maxThreadPostNumber,
+  mediaItemsFromPost,
+  normalizeThreadSearchTerm,
+  postMediaCount,
+  postPermalink,
+  stickyLabelHtml,
+  threadFeedLinksHtml,
+  threadMediaGalleryHtml,
+  threadNavigationLinksHtml,
+  watchedThreadHref
+} from './thread';
 import type { AnyRecord } from './types';
 import {
   REASON_MACROS,
@@ -73,7 +103,6 @@ import {
   moderationStatusText,
   normalizeSearchValue,
   plainPreview,
-  threadSubject,
   threadTitle,
   threadSubjectHtml,
   scanDraftRisks,
@@ -1953,16 +1982,6 @@ function renderMissingBoard(screen = 'board') {
   closeThreadComposer();
 }
 
-function normalizeBoardSort(value) {
-  const sort = String(value || '').trim().toLowerCase();
-  return ['bump', 'created', 'replies'].includes(sort) ? sort : 'bump';
-}
-
-function normalizeBoardFilter(value) {
-  const filter = String(value || '').trim().toLowerCase();
-  return ['all', 'media', 'video', 'poll', 'unanswered'].includes(filter) ? filter : 'all';
-}
-
 function boardThreadsCacheKey({
   boardSlug = state.boardSlug,
   page = state.boardPage,
@@ -1989,14 +2008,6 @@ function firstBoardPageFromThreads(threads = [], { page = 1, pageSize = state.bo
     totalPages: Math.max(1, Math.ceil(total / safePageSize)),
     hasMore: offset + safePageSize < total
   };
-}
-
-function normalizeBoardThreadsPayload(payload) {
-  if (Array.isArray(payload)) {
-    return { threads: payload, meta: null };
-  }
-  const threads = Array.isArray(payload?.items) ? payload.items : [];
-  return { threads, meta: payload && typeof payload === 'object' ? payload : null };
 }
 
 function writeBoardThreadsCache(boardSlug, payload, options: AnyRecord = {}) {
@@ -2040,31 +2051,6 @@ function readBoardThreadsCache(options: AnyRecord = {}) {
     /* ignore stale cache */
   }
   return null;
-}
-
-function findBoardByQuery(query) {
-  const normalized = normalizeSearchValue(query);
-  if (!normalized) {
-    return null;
-  }
-  return state.boards.find((board) => {
-    const slug = normalizeSearchValue(board.slug);
-    const path = normalizeSearchValue(board.path).replaceAll('/', '');
-    const name = normalizeSearchValue(board.name);
-    return slug === normalized || path === normalized.replaceAll('/', '') || name.includes(normalized);
-  });
-}
-
-function boardHeading(board) {
-  if (!board) {
-    return '36chan';
-  }
-  return `${board.path} - ${board.name}`;
-}
-
-function boardRulesForDisplay(board) {
-  const rules = Array.isArray(board?.rules) ? board.rules : [];
-  return rules.length ? rules : [board?.description || 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt.'];
 }
 
 function updateBoardPresentation(board) {
@@ -2231,10 +2217,6 @@ function homeBoardList() {
   });
 }
 
-function boardPostCount(threads = []) {
-  return threads.reduce((total, thread) => total + 1 + Number(thread.replyCount || 0), 0);
-}
-
 function watchedThreadEntryFromDetail(detail, existing: AnyRecord = {}, { markSeen = false }: AnyRecord = {}) {
   const board = state.boards.find((item) => item.slug === detail.thread.boardSlug);
   const posts = [detail.thread, ...(detail.comments || [])];
@@ -2329,15 +2311,6 @@ function visibleWatchedThreadSummaries(watchedThreads = state.watchedThreadSumma
         })
     )
     .sort((left, right) => sortWatchedThreads(left, right, preferences.watchedSort));
-}
-
-function firstUnreadPostNumber(posts = [], lastSeen = 0) {
-  const seenNumber = Number(lastSeen || 0);
-  const firstUnread = posts
-    .map((post) => Number(post.globalNumber || 0))
-    .filter((globalNumber) => Number.isFinite(globalNumber) && globalNumber > seenNumber)
-    .sort((left, right) => left - right)[0];
-  return firstUnread || 0;
 }
 
 async function loadWatchedThreadSummaries() {
@@ -2440,18 +2413,6 @@ function markAllWatchedThreadsRead() {
   return unreadThreadIds.length;
 }
 
-function watchedThreadHref(item: AnyRecord = {}) {
-  if (item.unavailable || !item.threadId) {
-    return '#home';
-  }
-  const threadPath = `#thread/${encodeURIComponent(item.threadId)}`;
-  const firstUnreadNumber = Number(item.firstUnreadNumber || 0);
-  const fallbackUnreadNumber =
-    Number(item.maxNumber || 0) > Number(item.lastSeen || 0) ? Number(item.maxNumber || 0) : 0;
-  const unreadNumber = firstUnreadNumber || fallbackUnreadNumber;
-  return unreadNumber > 0 ? `${threadPath}?p=${encodeURIComponent(unreadNumber)}` : threadPath;
-}
-
 async function loadHomeThreadsByBoard() {
   const entries = await Promise.all(
     state.boards.map(async (board) => {
@@ -2511,13 +2472,6 @@ function renderHomeBoards(threadsByBoard: AnyRecord = {}, stats: AnyRecord = {})
   `;
 }
 
-function popularThreadsFrom(threadsByBoard: AnyRecord) {
-  return Object.values(threadsByBoard)
-    .flat()
-    .sort((left, right) => right.bumpedAt.localeCompare(left.bumpedAt))
-    .slice(0, 8);
-}
-
 function spoilerSummaryLabelHtml() {
   return '<span class="summary-spoiler-label">Spoiler</span>';
 }
@@ -2566,14 +2520,6 @@ function renderPopularThreads(threads) {
       `;
     })
     .join('');
-}
-
-function latestPostHref(post) {
-  const threadId = post.threadId || post.id;
-  if (!threadId) {
-    return '#home';
-  }
-  return `#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`;
 }
 
 function renderLatestPosts(posts) {
@@ -4051,30 +3997,6 @@ function selectedPostQuoteText(postElement) {
   return lines.map((line) => `>${line}`).join('\n');
 }
 
-function mediaItemsFromPost(post: AnyRecord = {}) {
-  return mediaList(post.images?.length ? post.images : post.image);
-}
-
-function postMediaCount(post: AnyRecord = {}) {
-  return mediaItemsFromPost(post).length;
-}
-
-function imageHtml(post) {
-  const images = mediaItemsFromPost(post);
-  if (!images.length) {
-    return '';
-  }
-  return `<div class="post-media-gallery">${images.map((image) => mediaToggleHtml(image)).join('')}</div>`;
-}
-
-function postPermalink(post, options: AnyRecord = {}) {
-  const threadId = options.threadId || post.threadId || post.id || state.threadId;
-  if (!threadId || !post.globalNumber) {
-    return '#';
-  }
-  return `#thread/${encodeURIComponent(threadId)}?p=${encodeURIComponent(post.globalNumber)}`;
-}
-
 function absolutePostPermalink(permalink) {
   if (!permalink || permalink === '#') {
     return window.location.href;
@@ -4137,10 +4059,6 @@ function voteControlHtml(post) {
       <button class="vote-button vote-down${myVote === 'down' ? ' active' : ''}" data-vote="down" data-vote-target="${post.globalNumber}" type="button" title="Downvote" aria-label="Downvote">▼</button>
     </span>
   `;
-}
-
-function normalizeThreadSearchTerm(value: any = '') {
-  return String(value ?? '').replace(/\s+/g, ' ').trim().slice(0, 160);
 }
 
 function threadSearchHtml(detail: AnyRecord = {}) {
@@ -4218,7 +4136,7 @@ function meta(post, options: AnyRecord = {}) {
   const accountEditAction = showPostActions ? accountPostEditButtonHtml(post) : '';
   const selfEditAction = showPostActions ? selfEditPostButtonHtml(post) : '';
   const selfDeleteActions = showPostActions ? selfDeletePostActionsHtml(post) : '';
-  const permalink = postPermalink(post, options);
+  const permalink = postPermalink(post, options, state.threadId);
   const opNumber = Number(options.opNumber || 0);
   const isOpReply =
     opNumber > 0 &&
@@ -4279,43 +4197,6 @@ function meta(post, options: AnyRecord = {}) {
   `;
 }
 
-function backlinksHtml(backlinks = []) {
-  if (!backlinks.length) {
-    return '';
-  }
-  return `
-    <div class="backlinks">
-      ${backlinks
-        .map((number) => `<button class="ref-link" data-ref="${number}" type="button">&gt;&gt;${number}</button>`)
-        .join(' ')}
-    </div>
-  `;
-}
-
-function diceRollsHtml(diceRolls = []) {
-  if (!Array.isArray(diceRolls) || diceRolls.length === 0) {
-    return '';
-  }
-  return `
-    <div class="dice-rolls" aria-label="Kết quả gieo xúc xắc">
-      ${diceRolls
-        .map((roll) => {
-          const rolls = Array.isArray(roll.rolls) ? roll.rolls.map((value) => Number(value)).filter(Number.isFinite) : [];
-          const modifier = Number(roll.modifier) || 0;
-          const modifierText = modifier > 0 ? ` + ${modifier}` : modifier < 0 ? ` - ${Math.abs(modifier)}` : '';
-          return `
-            <span class="dice-roll">
-              <span class="dice-expression">${escapeHtml(roll.expression || '')}</span>
-              <span class="dice-values">[${escapeHtml(rolls.join(', '))}${escapeHtml(modifierText)}]</span>
-              <strong>${escapeHtml(roll.total ?? '')}</strong>
-            </span>
-          `;
-        })
-        .join('')}
-    </div>
-  `;
-}
-
 function postHtml(post, type = 'post', options: AnyRecord = {}) {
   const classes = String(type)
     .split(/\s+/)
@@ -4363,77 +4244,6 @@ function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply }: AnyR
       })}`;
     })
     .join('');
-}
-
-function threadMediaGalleryItems(detail: AnyRecord = {}) {
-  return [detail.thread, ...(detail.comments || [])]
-    .filter(Boolean)
-    .flatMap((post) =>
-      mediaItemsFromPost(post).map((image, index) => ({
-        image,
-        index,
-        post
-      }))
-    );
-}
-
-function threadMediaGalleryHtml(detail) {
-  const items = threadMediaGalleryItems(detail);
-  if (!items.length) {
-    return '';
-  }
-
-  return `
-    <nav class="thread-media-index" aria-label="Media trong thread">
-      <div class="thread-media-index-title">Media trong thread (${items.length})</div>
-      <div class="thread-media-index-list">
-        ${items
-          .map(({ image, index, post }) => {
-            const thumbnailSrc = mediaThumbnailSrc(image, { fallbackOriginal: mediaKind(image) !== 'video' });
-            const href = postPermalink(post, { threadId: detail.thread.id });
-            const postNumber = escapeHtml(post.globalNumber);
-            const name = escapeHtml(image?.name || 'tai-len');
-            const kind = mediaKind(image) === 'video' ? 'Video' : 'Ảnh';
-            const preview = thumbnailSrc
-              ? `<img src="${escapeHtml(thumbnailSrc)}" alt="${kind} ${name} trong bài số ${postNumber}">`
-              : `<span>${escapeHtml(kind)}</span>`;
-            return `
-              <a class="thread-media-index-item" href="${escapeHtml(href)}" data-thread-media-jump="${postNumber}" title="${name}">
-                ${preview}
-                <span>No.${postNumber}${index > 0 ? `.${index + 1}` : ''}</span>
-              </a>
-            `;
-          })
-          .join('')}
-      </div>
-    </nav>
-  `;
-}
-
-function threadFeedLinksHtml(detail) {
-  if (!detail.thread?.id) {
-    return '';
-  }
-  const threadId = encodeURIComponent(detail.thread.id);
-  return `
-      [<a data-thread-json-feed href="/feeds/threads/${threadId}/posts.json" target="_blank" rel="noopener noreferrer">JSON</a>]
-      [<a data-thread-rss-feed href="/feeds/threads/${threadId}/posts.rss" target="_blank" rel="noopener noreferrer">RSS</a>]`;
-}
-
-function threadNavigationLinksHtml(detail) {
-  const navigation = detail.threadNavigation || {};
-  const links = [];
-  if (navigation.previous?.id) {
-    const label = navigation.previous.globalNumber ? `Trước No.${navigation.previous.globalNumber}` : 'Trước';
-    links.push(
-      `[<a data-thread-nav="previous" href="#thread/${encodeURIComponent(navigation.previous.id)}">${escapeHtml(label)}</a>]`
-    );
-  }
-  if (navigation.next?.id) {
-    const label = navigation.next.globalNumber ? `Sau No.${navigation.next.globalNumber}` : 'Sau';
-    links.push(`[<a data-thread-nav="next" href="#thread/${encodeURIComponent(navigation.next.id)}">${escapeHtml(label)}</a>]`);
-  }
-  return links.join('\n      ');
 }
 
 function threadToolbarHtml(detail, position) {
@@ -4543,35 +4353,6 @@ function currentPermalinkPost() {
   return new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('p') || '';
 }
 
-function maxThreadPostNumber(detail) {
-  return [detail.thread, ...(detail.comments || [])].reduce(
-    (maxNumber, post) => Math.max(maxNumber, Number(post.globalNumber) || 0),
-    0
-  );
-}
-
-function stickyLabelHtml(thread) {
-  return thread?.isSticky ? '<span class="sticky-label">Đã ghim</span>' : '';
-}
-
-function adminStickyButtonHtml(thread) {
-  if (!thread?.id || thread.isArchived) {
-    return '';
-  }
-  const nextSticky = !thread.isSticky;
-  const label = nextSticky ? 'Ghim' : 'Gỡ ghim';
-  return `<button class="ghost-button" data-admin-sticky-thread="${escapeHtml(thread.id)}" data-sticky-next="${nextSticky}" type="button">[${label}]</button>`;
-}
-
-function adminLockButtonHtml(thread) {
-  if (!thread?.id || thread.isArchived) {
-    return '';
-  }
-  const nextLocked = !thread.isLocked;
-  const label = nextLocked ? 'Khóa' : 'Mở khóa';
-  return `<button class="ghost-button" data-admin-lock-thread="${escapeHtml(thread.id)}" data-lock-next="${nextLocked}" type="button">[${label}]</button>`;
-}
-
 function canModerateFromAdminToken() {
   const payload = decodeJwtPayload(state.token);
   return Boolean(payload && ['admin', 'owner', 'moderator'].includes(payload.role));
@@ -4610,25 +4391,11 @@ function focusPermalinkPost(globalNumber, { scroll = false }: AnyRecord = {}) {
   }
 }
 
-function threadMatchesSearch(thread, term) {
-  const normalizedTerm = normalizeSearchValue(term);
-  if (!normalizedTerm) {
-    return true;
-  }
-  const haystack = normalizeSearchValue(
-    `${boardHeading(state.boards.find((board) => board.slug === thread.boardSlug))} ${threadSubject(thread)} ${plainPreview(
-      thread.bodyLines,
-      ''
-    )} No.${thread.globalNumber}`
-  );
-  return haystack.includes(normalizedTerm);
-}
-
 function renderCatalogThreads(threads) {
   const term = els.catalogSearchInput.value.trim();
   const visibleThreads = sortedCatalogThreads(
     threads.filter((thread) =>
-      !isPostFiltered(thread) && catalogThreadMatchesFilter(thread, state.catalogFilter) && threadMatchesSearch(thread, term)
+      !isPostFiltered(thread) && catalogThreadMatchesFilter(thread, state.catalogFilter) && threadMatchesSearch(thread, term, state.boards)
     ),
     state.catalogSort
   );
@@ -4717,15 +4484,6 @@ async function loadArchive() {
   renderArchiveThreads(threads);
 }
 
-function omittedRepliesHtml(thread) {
-  const replyCount = Number(thread.omittedReplyCount || 0);
-  const imageCount = Number(thread.omittedImageCount || 0);
-  if (replyCount <= 0 && imageCount <= 0) return "";
-  const replyText = replyCount > 0 ? `${replyCount} phản hồi` : '';
-  const imageText = imageCount > 0 ? `${imageCount} tệp` : '';
-  return `<div class="omitted-replies">Bỏ qua ${[replyText, imageText].filter(Boolean).join(' và ')}.</div>`;
-}
-
 function boardReplyPreviewsHtml(thread) {
   const comments = (Array.isArray(thread.previewComments) ? thread.previewComments : []).filter(
     (comment) => !isPostFiltered(comment)
@@ -4758,7 +4516,7 @@ function renderBoardThreads(threads) {
   });
   const hidden = hiddenThreadIds();
   const visibleThreads = threads.filter(
-    (thread) => !hidden.has(String(thread.id)) && !isPostFiltered(thread) && threadMatchesSearch(thread, term)
+    (thread) => !hidden.has(String(thread.id)) && !isPostFiltered(thread) && threadMatchesSearch(thread, term, state.boards)
   );
   if (!visibleThreads.length) {
     els.threadList.innerHTML = term
@@ -6952,7 +6710,7 @@ function bindEvents() {
   );
   els.homeBoardSearchForm.addEventListener('submit', (event) => {
     event.preventDefault();
-    const board = findBoardByQuery(els.homeBoardSearchInput.value);
+    const board = findBoardByQuery(els.homeBoardSearchInput.value, state.boards);
     if (!board) {
       showToast('Không tìm thấy bảng phù hợp.');
       return;
