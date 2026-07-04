@@ -22,10 +22,17 @@ phase-tracking/
 skills-lock.json
 
 # Local tooling and scratch
+.agents/
 .claude/
 .vscode/
 .playwright-mcp/
 .code-review-graph/
+.codex
+.codex-dev-logs/
+.tmp-production-start-test/
+.verify/
+qa-screenshots/
+task-report/
 CLAUDE.md
 # Root-level screenshots/scratch images (frontend assets live under frontend/)
 /*.png
