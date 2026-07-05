@@ -24,7 +24,6 @@ import {
 } from './admin';
 import {
   boardHeading,
-  boardPostCount,
   boardRulesForDisplay,
   findBoardByQuery,
   normalizeBoardFilter,
@@ -68,6 +67,17 @@ import {
   writeTextareaValue
 } from './composer';
 import { handleBrokenThumbnailError } from './events';
+import {
+  loadHomeThreadsByBoard as loadHomeThreadsByBoardWithDependencies,
+  renderCampusPulse,
+  renderHomeBoards,
+  renderHotBoards,
+  renderLatestPosts as renderLatestPostsWithDependencies,
+  renderMyPosts,
+  renderPopularThreads as renderPopularThreadsWithDependencies,
+  renderStats,
+  renderSubscribedBoards
+} from './home';
 import { eventInTextInput, moveKeyboardNavigation } from './keyboard';
 import { showReasonModal, showReportModal } from './modals';
 import { state } from './state';
@@ -83,9 +93,7 @@ import {
   adminStickyButtonHtml,
   backlinksHtml,
   diceRollsHtml,
-  firstUnreadPostNumber,
   imageHtml,
-  latestPostHref,
   maxThreadPostNumber,
   mediaItemsFromPost,
   normalizeThreadSearchTerm,
@@ -94,8 +102,7 @@ import {
   stickyLabelHtml,
   threadFeedLinksHtml,
   threadMediaGalleryHtml,
-  threadNavigationLinksHtml,
-  watchedThreadHref
+  threadNavigationLinksHtml
 } from './thread';
 import {
   setMediaToggleExpanded,
@@ -106,6 +113,19 @@ import {
   toggleAllThreadPostsCollapsed
 } from './thread-dom';
 import type { AnyRecord } from './types';
+import {
+  isThreadWatched,
+  readWatchedThreads,
+  syncWatchedControls,
+  watchedThreadEntryFromDetail,
+  writeWatchedThreads as writeWatchedThreadsWithDependencies,
+  syncWatchedThreadFromDetail as syncWatchedThreadFromDetailWithDependencies,
+  removeWatchedThread as removeWatchedThreadWithDependencies,
+  loadWatchedThreadSummaries as loadWatchedThreadSummariesWithDependencies,
+  markWatchedThreadRead as markWatchedThreadReadWithDependencies,
+  markAllWatchedThreadsRead as markAllWatchedThreadsReadWithDependencies,
+  renderWatchedThreads as renderWatchedThreadsWithDependencies
+} from './watchlist';
 import {
   POST_REACTIONS,
   AUDIO_RECORDING_TYPES,
@@ -145,7 +165,6 @@ import {
   formatEditedDate,
   mediaKind,
   mediaList,
-  mediaThumbnailSrc,
   renderInlineMarkup,
   renderSpoilerText,
   renderStickerText,
@@ -325,58 +344,45 @@ function showPostEditModal(globalNumber, initialBody = '', options: AnyRecord = 
   });
 }
 
-function readWatchedThreads() {
-  if (state.accountToken && state.accountPrivateData) {
-    return Object.fromEntries((state.accountPrivateData.watchlist || []).map((item) => [item.threadId, item]));
-  }
-  try {
-    const parsed: AnyRecord = JSON.parse(localStorage.getItem(watchedThreadsKey) || '{}');
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-      return {};
-    }
-    return Object.fromEntries(
-      Object.entries(parsed).filter(([threadId, item]) => threadId && item && typeof item === 'object')
-    );
-  } catch {
-    return {};
-  }
-}
-
 function writeWatchedThreads(watchedThreads) {
-  localStorage.setItem(watchedThreadsKey, JSON.stringify(watchedThreads));
-  if (state.accountToken && state.accountPrivateData) {
-    state.accountPrivateData.watchlist = Object.values(watchedThreads as AnyRecord).filter((item) => item?.threadId);
-    scheduleAccountPrivateDataSave();
-  }
+  return writeWatchedThreadsWithDependencies(watchedThreads, { scheduleAccountPrivateDataSave });
 }
 
-function isThreadWatched(threadId = state.threadId) {
-  return Boolean(threadId && readWatchedThreads()[threadId]);
+function syncWatchedThreadFromDetail(detail) {
+  return syncWatchedThreadFromDetailWithDependencies(detail, { scheduleAccountPrivateDataSave });
 }
 
-function syncWatchedControls({
-  unreadOnly = localDisplayPreferences().watchedUnreadOnly,
-  unreadCount = state.watchedThreadSummaries.filter((item) => Number(item.unreadCount || 0) > 0).length
-}: AnyRecord = {}) {
-  if (!els?.watchedUnreadToggle && !els?.watchedMarkAllRead && !els?.watchedSortSelect) {
-    return;
-  }
-  if (els.watchedSortSelect) {
-    els.watchedSortSelect.value = localDisplayPreferences().watchedSort;
-  }
-  if (els.watchedUnreadToggle) {
-    els.watchedUnreadToggle.textContent = unreadCount ? `chưa đọc ${unreadCount}` : 'chưa đọc';
-    els.watchedUnreadToggle.classList.toggle('active', unreadOnly);
-    els.watchedUnreadToggle.setAttribute('aria-pressed', String(unreadOnly));
-  }
-  if (els.watchedMarkAllRead) {
-    els.watchedMarkAllRead.disabled = unreadCount === 0;
-    els.watchedMarkAllRead.title = unreadCount
-      ? `Đánh dấu ${unreadCount} chủ đề là đã đọc`
-      : 'Không có chủ đề chưa đọc';
-  }
+function removeWatchedThread(threadId) {
+  return removeWatchedThreadWithDependencies(threadId, { scheduleAccountPrivateDataSave });
 }
 
+async function loadWatchedThreadSummaries() {
+  return loadWatchedThreadSummariesWithDependencies({ isPostFiltered, scheduleAccountPrivateDataSave });
+}
+
+function markWatchedThreadRead(threadId) {
+  return markWatchedThreadReadWithDependencies(threadId, { scheduleAccountPrivateDataSave });
+}
+
+function markAllWatchedThreadsRead() {
+  return markAllWatchedThreadsReadWithDependencies({ scheduleAccountPrivateDataSave });
+}
+
+function loadHomeThreadsByBoard() {
+  return loadHomeThreadsByBoardWithDependencies({ writeBoardThreadsCache });
+}
+
+function renderPopularThreads(threads) {
+  return renderPopularThreadsWithDependencies(threads, { isPostFiltered });
+}
+
+function renderLatestPosts(posts) {
+  return renderLatestPostsWithDependencies(posts, { isPostFiltered });
+}
+
+function renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
+  return renderWatchedThreadsWithDependencies(watchedThreads, { isPostFiltered });
+}
 function syncDeletePasswordInputs(value = defaultDeletePassword()) {
   const password = String(value ?? '');
   els.deletePasswordInputs.forEach((input) => {
@@ -1941,61 +1947,6 @@ function closeReplyComposer({ clear = false }: AnyRecord = {}) {
   syncReplyComposer();
 }
 
-function homeBoardList() {
-  const publicBoardsBySlug = new Map(state.boards.map((board) => [board.slug, board]));
-  const groupedBoards = state.boardGroups
-    .flatMap((group) => group.boards || [])
-    .map((board) => publicBoardsBySlug.get(board.slug))
-    .filter(Boolean);
-  const source = groupedBoards.length ? [...groupedBoards, ...state.boards] : state.boards;
-  const seen = new Set();
-  return source.filter((board) => {
-    if (!board || seen.has(board.slug)) {
-      return false;
-    }
-    seen.add(board.slug);
-    return true;
-  });
-}
-
-function watchedThreadEntryFromDetail(detail, existing: AnyRecord = {}, { markSeen = false }: AnyRecord = {}) {
-  const board = state.boards.find((item) => item.slug === detail.thread.boardSlug);
-  const posts = [detail.thread, ...(detail.comments || [])];
-  const currentMaxNumber = detail.commentPage?.currentMaxGlobalNumber || maxThreadPostNumber(detail);
-  const fileCount = posts.reduce((total, post) => total + postMediaCount(post), 0);
-  return {
-    threadId: detail.thread.id,
-    boardSlug: detail.thread.boardSlug,
-    boardPath: board?.path || `/${detail.thread.boardSlug}/`,
-    boardName: board?.name || detail.thread.boardSlug,
-    globalNumber: detail.thread.globalNumber,
-    preview: plainPreview(detail.thread.bodyLines, 'Không có nội dung').slice(0, 180),
-    lastSeen: markSeen ? currentMaxNumber : Number(existing.lastSeen || 0),
-    maxNumber: currentMaxNumber,
-    replyCount: detail.thread.replyCount ?? detail.comments.length,
-    fileCount: Math.max(Number(existing.fileCount || 0), fileCount),
-    isArchived: Boolean(detail.thread.isArchived),
-    updatedAt: detail.thread.bumpedAt || detail.thread.createdAt || new Date().toISOString()
-  };
-}
-
-function syncWatchedThreadFromDetail(detail) {
-  if (!isThreadWatched(detail.thread.id)) {
-    return;
-  }
-  const watchedThreads = readWatchedThreads();
-  watchedThreads[detail.thread.id] = watchedThreadEntryFromDetail(detail, watchedThreads[detail.thread.id], {
-    markSeen: true
-  });
-  writeWatchedThreads(watchedThreads);
-}
-
-function removeWatchedThread(threadId) {
-  const watchedThreads = readWatchedThreads();
-  delete watchedThreads[threadId];
-  writeWatchedThreads(watchedThreads);
-}
-
 function toggleCurrentThreadWatch() {
   if (!state.threadDetail?.thread?.id) {
     return;
@@ -2017,395 +1968,6 @@ function toggleCurrentThreadWatch() {
   els.threadToolbarBottom.innerHTML = threadToolbarHtml(state.threadDetail, 'bottom');
 }
 
-function sortWatchedThreads(left, right, sort = localDisplayPreferences().watchedSort) {
-  const unavailableCompare = Number(Boolean(left.unavailable)) - Number(Boolean(right.unavailable));
-  if (unavailableCompare !== 0) {
-    return unavailableCompare;
-  }
-  if (sort === 'board') {
-    const boardCompare = String(left.boardSlug || '').localeCompare(String(right.boardSlug || ''));
-    if (boardCompare !== 0) {
-      return boardCompare;
-    }
-    return Number(left.globalNumber || 0) - Number(right.globalNumber || 0);
-  }
-  if (sort === 'recent') {
-    return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''));
-  }
-  const unreadDelta = Number(right.unreadCount || 0) - Number(left.unreadCount || 0);
-  if (unreadDelta !== 0) {
-    return unreadDelta;
-  }
-  return String(right.updatedAt || '').localeCompare(String(left.updatedAt || ''));
-}
-
-function visibleWatchedThreadSummaries(watchedThreads = state.watchedThreadSummaries) {
-  const preferences = localDisplayPreferences();
-  return watchedThreads
-    .filter(
-      (item) =>
-        !isPostFiltered({
-          ...item,
-          id: item.threadId,
-          body: item.preview,
-          globalNumber: item.globalNumber
-        })
-    )
-    .sort((left, right) => sortWatchedThreads(left, right, preferences.watchedSort));
-}
-
-async function loadWatchedThreadSummaries() {
-  const watchedEntries = Object.values(readWatchedThreads());
-  if (!watchedEntries.length) {
-    state.watchedThreadSummaries = [];
-    syncWatchedControls({ unreadCount: 0 });
-    return [];
-  }
-
-  const results = await Promise.all(
-    watchedEntries.map(async (entry) => {
-      try {
-        const detail = await api(`/api/threads/${encodeURIComponent(entry.threadId)}`);
-        const posts = [detail.thread, ...(detail.comments || [])];
-        const unreadCount = posts.filter((post) => Number(post.globalNumber) > Number(entry.lastSeen || 0)).length;
-        return {
-          ...watchedThreadEntryFromDetail(detail, entry),
-          unreadCount,
-          firstUnreadNumber: firstUnreadPostNumber(posts, entry.lastSeen),
-          unavailable: false
-        };
-      } catch {
-        return {
-          ...entry,
-          unreadCount: 0,
-          unavailable: true
-        };
-      }
-    })
-  );
-
-  const watchedThreads = readWatchedThreads();
-  results.forEach((item) => {
-    if (!item.unavailable) {
-      watchedThreads[item.threadId] = {
-        threadId: item.threadId,
-        boardSlug: item.boardSlug,
-        boardPath: item.boardPath,
-        boardName: item.boardName,
-        globalNumber: item.globalNumber,
-        preview: item.preview,
-        lastSeen: item.lastSeen,
-        maxNumber: item.maxNumber,
-        replyCount: item.replyCount,
-        fileCount: item.fileCount,
-        isArchived: item.isArchived,
-        updatedAt: item.updatedAt
-      };
-    }
-  });
-  writeWatchedThreads(watchedThreads);
-  state.watchedThreadSummaries = visibleWatchedThreadSummaries(results);
-  return state.watchedThreadSummaries;
-}
-
-function markWatchedThreadRead(threadId) {
-  if (!threadId) {
-    return false;
-  }
-  const watchedThreads = readWatchedThreads();
-  const watched = watchedThreads[threadId];
-  if (!watched) {
-    return false;
-  }
-
-  const summary = state.watchedThreadSummaries.find((item) => item.threadId === threadId);
-  const maxNumber = Math.max(
-    Number(watched.maxNumber || 0),
-    Number(watched.lastSeen || 0),
-    Number(summary?.maxNumber || 0)
-  );
-  watchedThreads[threadId] = {
-    ...watched,
-    maxNumber,
-    lastSeen: maxNumber
-  };
-  writeWatchedThreads(watchedThreads);
-  writeThreadLastSeen(threadId, maxNumber);
-  state.watchedThreadSummaries = state.watchedThreadSummaries.map((item) => {
-    if (item.threadId !== threadId) {
-      return item;
-    }
-    return {
-      ...item,
-      lastSeen: Math.max(Number(item.maxNumber || 0), maxNumber),
-      unreadCount: 0,
-      firstUnreadNumber: 0
-    };
-  });
-  return true;
-}
-
-function markAllWatchedThreadsRead() {
-  const unreadThreadIds = state.watchedThreadSummaries
-    .filter((item) => Number(item.unreadCount || 0) > 0 && !item.unavailable)
-    .map((item) => item.threadId)
-    .filter(Boolean);
-  unreadThreadIds.forEach((threadId) => markWatchedThreadRead(threadId));
-  return unreadThreadIds.length;
-}
-
-async function loadHomeThreadsByBoard() {
-  const entries = await Promise.all(
-    state.boards.map(async (board) => {
-      try {
-        const threads = await api(`/api/boards/${board.slug}/threads`);
-        writeBoardThreadsCache(board.slug, threads, { page: 1, pageSize: state.boardPageSize });
-        return [board.slug, threads];
-      } catch {
-        return [board.slug, []];
-      }
-    })
-  );
-  return Object.fromEntries(entries);
-}
-
-function renderHomeBoards(threadsByBoard: AnyRecord = {}, stats: AnyRecord = {}) {
-  const rows = homeBoardList()
-    .map((board) => {
-      const postCount = boardPostCount(threadsByBoard[board.slug]);
-      const boardUsers = Number(stats.boardUsers?.[board.slug] || 0);
-      return `
-        <tr>
-          <td class="portal-board-icon-cell"><span class="board-row-icon" aria-hidden="true"></span></td>
-          <td class="portal-board-name-cell">
-            <a class="portal-board-link" href="#board/${board.slug}" title="${escapeHtml(board.description)}">
-              <span class="board-path">${escapeHtml(board.path)}</span> - ${escapeHtml(board.name)}
-            </a>
-          </td>
-          <td class="portal-board-desc-cell">${escapeHtml(board.description)}</td>
-          <td class="portal-board-number-cell">${boardUsers.toLocaleString()}</td>
-          <td class="portal-board-number-cell">${postCount.toLocaleString()}</td>
-        </tr>
-      `;
-    })
-    .join('');
-
-  els.homeBoards.innerHTML = `
-    <table class="portal-board-table">
-      <colgroup>
-        <col class="portal-board-icon-col">
-        <col class="portal-board-name-col">
-        <col class="portal-board-desc-col">
-        <col class="portal-board-number-col">
-        <col class="portal-board-number-col">
-      </colgroup>
-      <thead>
-        <tr>
-          <th class="portal-board-icon-head" scope="col"></th>
-          <th scope="col">Bảng</th>
-          <th scope="col">Mô Tả</th>
-          <th scope="col">Người Dùng</th>
-          <th scope="col">Bài Viết</th>
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
-  `;
-}
-
-function spoilerSummaryLabelHtml() {
-  return '<span class="summary-spoiler-label">Spoiler</span>';
-}
-
-function popularThumbnailHtml(firstMedia, initials) {
-  const thumbnailSrc = mediaThumbnailSrc(firstMedia);
-  if (!firstMedia || !thumbnailSrc) {
-    return `<span class="popular-placeholder">${escapeHtml(initials)}</span>`;
-  }
-  const spoiler = Boolean(firstMedia.spoiler);
-  return `
-    <span class="popular-thumb${spoiler ? ' spoiler-summary-thumb' : ''}">
-      <img src="${escapeHtml(thumbnailSrc)}" alt="${escapeHtml(firstMedia.name)}">
-      ${spoiler ? spoilerSummaryLabelHtml() : ''}
-    </span>
-  `;
-}
-
-function renderPopularThreads(threads) {
-  const visibleThreads = threads.filter((thread) => !isPostFiltered(thread));
-  if (!visibleThreads.length) {
-    els.popularThreads.classList.add('popular-empty');
-    els.popularThreads.innerHTML = `
-      <p>
-        Chưa có chủ đề nổi bật. Chủ đề công khai sẽ xuất hiện ở đây sau khi có người đăng bài.
-      </p>
-    `;
-    return;
-  }
-
-  els.popularThreads.classList.remove('popular-empty');
-  els.popularThreads.innerHTML = visibleThreads
-    .map((thread) => {
-      const board = state.boards.find((item) => item.slug === thread.boardSlug);
-      const href = `#thread/${thread.id}`;
-      const title = plainPreview(thread.bodyLines, board?.description).slice(0, 120);
-      const initials = (board?.name || thread.boardSlug).slice(0, 2).toUpperCase();
-      const firstMedia = mediaItemsFromPost(thread)[0];
-
-      return `
-        <a class="popular-item" href="${href}">
-          <strong>${board?.name || thread.boardSlug}</strong>
-          ${popularThumbnailHtml(firstMedia, initials)}
-          <span>${title}${title.length >= 120 ? '...' : ''}</span>
-        </a>
-      `;
-    })
-    .join('');
-}
-
-function renderLatestPosts(posts) {
-  const visiblePosts = posts.filter((post) => !isPostFiltered(post));
-  if (!visiblePosts.length) {
-    els.latestPosts.innerHTML = '<p class="latest-empty">Chưa có bài công khai.</p>';
-    return;
-  }
-
-  els.latestPosts.innerHTML = visiblePosts
-    .map((post) => {
-      const board = state.boards.find((item) => item.slug === post.boardSlug);
-      const preview = plainPreview(post.bodyLines, 'Không có nội dung').slice(0, 140);
-      const kind = post.type === 'comment' ? 'Phản hồi' : 'Chủ đề';
-      return `
-        <a class="latest-post-item" href="${latestPostHref(post)}">
-          <span class="latest-post-board">${escapeHtml(board?.path || `/${post.boardSlug}/`)}</span>
-          <span class="latest-post-number">No.${post.globalNumber}</span>
-          <span class="latest-post-kind">${kind}</span>
-          <span class="latest-post-preview">${escapeHtml(preview)}${preview.length >= 140 ? '...' : ''}</span>
-          <span class="latest-post-date">${formatPostDate(post.createdAt)}</span>
-        </a>
-      `;
-    })
-    .join('');
-}
-
-function renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
-  const allVisibleThreads = visibleWatchedThreadSummaries(watchedThreads);
-  const unreadOnly = localDisplayPreferences().watchedUnreadOnly;
-  const unreadCount = allVisibleThreads.filter((item) => Number(item.unreadCount || 0) > 0).length;
-  const visibleThreads = unreadOnly
-    ? allVisibleThreads.filter((item) => Number(item.unreadCount || 0) > 0)
-    : allVisibleThreads;
-  syncWatchedControls({ unreadOnly, unreadCount });
-
-  if (!visibleThreads.length) {
-    els.watchedThreads.innerHTML = allVisibleThreads.length
-      ? '<p class="latest-empty">Không có chủ đề chưa đọc trong watchlist.</p>'
-      : '<p class="latest-empty">Chưa theo dõi chủ đề nào. Vào một thread và bấm [Theo dõi].</p>';
-    return;
-  }
-
-  els.watchedThreads.innerHTML = visibleThreads
-    .map((item) => {
-      const boardLabel = item.boardPath || `/${item.boardSlug || '?'}/`;
-      const preview = item.unavailable
-        ? 'Chủ đề không còn truy cập được hoặc đã bị xóa.'
-        : item.preview || 'Không có nội dung';
-      const href = watchedThreadHref(item);
-      const hasUnread = Number(item.unreadCount || 0) > 0;
-      const unreadBadge = item.unreadCount
-        ? `<span class="watch-unread">+${Number(item.unreadCount).toLocaleString()} mới</span>`
-        : '<span class="watch-seen">đã đọc</span>';
-      const stats = item.unavailable
-        ? '<span class="watch-status">không khả dụng</span>'
-        : `<span>${Number(item.replyCount || 0).toLocaleString()} trả lời</span><span>${Number(
-            item.fileCount || 0
-          ).toLocaleString()} tệp</span>`;
-
-      return `
-        <div class="watch-item ${item.unavailable ? 'watch-item-unavailable' : ''}">
-          <a class="watch-thread-link" href="${href}">
-            <span class="watch-board">${escapeHtml(boardLabel)}</span>
-            <span class="watch-number">No.${escapeHtml(item.globalNumber || '?')}</span>
-            ${unreadBadge}
-            <span class="watch-preview">${escapeHtml(preview)}${preview.length >= 180 ? '...' : ''}</span>
-            <span class="watch-stats">${stats}</span>
-          </a>
-          <span class="watch-actions">
-            ${
-              hasUnread
-                ? `<button class="link-button watch-read" data-mark-watch-read="${escapeHtml(item.threadId)}" type="button">[Đã đọc]</button>`
-                : ''
-            }
-            <button class="link-button watch-remove" data-unwatch-thread="${escapeHtml(item.threadId)}" type="button">[Bỏ]</button>
-          </span>
-        </div>
-      `;
-    })
-    .join('');
-}
-
-function renderMyPosts() {
-  const items = myPosts();
-  if (!items.length) {
-    els.myPosts.innerHTML = '<p class="latest-empty">Chưa có bài nào được ghi nhớ trên trình duyệt này.</p>';
-    return;
-  }
-
-  els.myPosts.innerHTML = items
-    .slice(0, 10)
-    .map((item) => {
-      const href = `#thread/${encodeURIComponent(item.threadId)}?p=${encodeURIComponent(item.globalNumber)}`;
-      const type = item.type === 'comment' ? 'Phản hồi' : 'Chủ đề';
-      const preview = item.preview || 'Không có nội dung';
-      return `
-        <div class="watch-item">
-          <a class="watch-thread-link" href="${href}">
-            <span class="watch-board">/${escapeHtml(item.boardSlug || '?')}/</span>
-            <span class="watch-number">No.${escapeHtml(item.globalNumber)}</span>
-            <span class="watch-seen">${type}</span>
-            <span class="watch-preview">${escapeHtml(preview)}${preview.length >= 160 ? '...' : ''}</span>
-            <span class="watch-stats">${formatPostDate(item.createdAt)}</span>
-          </a>
-        </div>
-      `;
-    })
-    .join('');
-}
-
-function renderSubscribedBoards() {
-  const slugs = subscribedBoardSlugs();
-  const boards = state.boards.filter((board) => slugs.has(board.slug));
-  if (!boards.length) {
-    els.subscribedBoards.innerHTML = '<p class="latest-empty">Chưa theo dõi bảng nào. Vào board và bấm [Theo dõi bảng].</p>';
-    return;
-  }
-
-  els.subscribedBoards.innerHTML = `
-    <table class="hot-board-table">
-      <thead>
-        <tr>
-          <th scope="col">Bảng</th>
-          <th scope="col">Mô tả</th>
-          <th scope="col">Mở</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${boards
-          .map(
-            (board) => `
-              <tr>
-                <td><a href="#board/${board.slug}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</a></td>
-                <td>${escapeHtml(board.description)}</td>
-                <td><a href="#catalog/${board.slug}">Danh mục</a></td>
-              </tr>
-            `
-          )
-          .join('')}
-      </tbody>
-    </table>
-  `;
-}
-
 function pageControlsHtml(meta, actionName) {
   if (!meta || Number(meta.totalPages || 1) <= 1) {
     return '';
@@ -2421,99 +1983,6 @@ function pageControlsHtml(meta, actionName) {
       page >= totalPages ? 'disabled' : ''
     }>Sau</button>]
     <span>${Number(meta.total || 0).toLocaleString()} mục</span>
-  `;
-}
-
-function renderHotBoards(boards) {
-  if (!boards.length) {
-    els.hotBoards.innerHTML = '<p class="latest-empty">Chưa có bảng nào nóng trong 24 giờ qua.</p>';
-    return;
-  }
-
-  els.hotBoards.innerHTML = `
-    <table class="hot-board-table">
-      <thead>
-        <tr>
-          <th scope="col">Bảng</th>
-          <th scope="col">Bài 24h</th>
-          <th scope="col">Chủ đề</th>
-          <th scope="col">Phản hồi</th>
-          <th scope="col">Hoạt động cuối</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${boards
-          .map((item) => {
-            const board = state.boards.find((entry) => entry.slug === item.boardSlug);
-            const latest = item.latestActivityAt ? formatPostDate(item.latestActivityAt) : '-';
-            return `
-              <tr>
-                <td><a href="#board/${item.boardSlug}">${escapeHtml(board?.path || `/${item.boardSlug}/`)}</a></td>
-                <td>${Number(item.postCountLast24h || 0).toLocaleString()}</td>
-                <td>${Number(item.threadCountLast24h || 0).toLocaleString()}</td>
-                <td>${Number(item.replyCountLast24h || 0).toLocaleString()}</td>
-                <td>${escapeHtml(latest)}</td>
-              </tr>
-            `;
-          })
-          .join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderCampusPulse(items) {
-  if (!items.length) {
-    els.campusPulse.innerHTML = '<p class="latest-empty">Chưa đủ dữ liệu công khai trong 24 giờ qua.</p>';
-    return;
-  }
-  els.campusPulse.innerHTML = `
-    <table class="hot-board-table">
-      <thead>
-        <tr>
-          <th scope="col">Từ khóa</th>
-          <th scope="col">Lần nhắc</th>
-          <th scope="col">Bảng</th>
-          <th scope="col">Mới nhất</th>
-        </tr>
-      </thead>
-      <tbody>
-        ${items
-          .map(
-            (item) => `
-              <tr>
-                <td>${escapeHtml(item.keyword)}</td>
-                <td>${item.count}</td>
-                <td>${item.boardCount}</td>
-                <td>${escapeHtml(item.latestActivityAt ? formatPostDate(item.latestActivityAt) : '-')}</td>
-              </tr>
-            `
-          )
-          .join('')}
-      </tbody>
-    </table>
-  `;
-}
-
-function renderStats(stats) {
-  els.homeStats.innerHTML = `
-    <span><strong>Tổng bài viết:</strong> ${stats.totalPosts.toLocaleString()}</span>
-    <span><strong>Người dùng hiện tại:</strong> ${stats.currentUsers.toLocaleString()}</span>
-    <span><strong>Dung lượng nội dung:</strong> ${stats.activeContentMb.toLocaleString()} MB</span>
-    <span><strong>Bảng đang hoạt động:</strong> ${stats.activeBoards.toLocaleString()}</span>
-  `;
-  els.serverStats.innerHTML = `
-    <p>
-      Hiện có <strong>${stats.publicBoardCount.toLocaleString()}</strong> bảng công khai,
-      tổng cộng <strong>${stats.totalBoardCount.toLocaleString()}</strong>.
-      Trên toàn hệ thống, <strong>${stats.postCountLast24h.toLocaleString()}</strong> bài viết
-      đã được đăng trong ngày qua, <strong>${stats.postCountLastHour.toLocaleString()}</strong>
-      bài trong giờ qua, tổng cộng <strong>${stats.totalPosts.toLocaleString()}</strong>.
-    </p>
-    <p>
-      <strong>${stats.fileCount.toLocaleString()}</strong> tệp đang được phục vụ,
-      tổng cộng <strong>${stats.fileMegabytes.toLocaleString()}MB</strong>.
-    </p>
   `;
 }
 
