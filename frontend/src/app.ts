@@ -35,7 +35,7 @@ import {
   popularThreadsFrom,
   threadMatchesSearch
 } from './board';
-import { bindBoardNavigationEvents } from './board-events';
+import { bindBoardNavigationEvents, handleBoardCatalogControlClick } from './board-events';
 import {
   archiveThreadHtml,
   catalogThreadHtml,
@@ -3547,59 +3547,18 @@ function bindEvents() {
       await adminPasskeyClick;
       return;
     }
-    const boardSubscriptionButton = event.target.closest('[data-toggle-board-subscription]');
-    if (boardSubscriptionButton) {
-      await toggleBoardSubscription();
-      syncBoardSubscriptionButtons();
-      return;
-    }
-
-    const catalogRefreshButton = event.target.closest('[data-catalog-refresh]');
-    if (catalogRefreshButton) {
-      await loadCatalog().catch((error) => showToast(error.message));
-      return;
-    }
-
-    const catalogSortButton = event.target.closest('[data-catalog-sort]');
-    if (catalogSortButton) {
-      state.catalogSort = normalizeCatalogSort(catalogSortButton.dataset.catalogSort);
-      renderCatalogThreads(state.catalogThreads);
-      return;
-    }
-
-    const boardSortButton = event.target.closest('[data-board-sort]');
-    if (boardSortButton) {
-      state.boardSort = normalizeBoardSort(boardSortButton.dataset.boardSort);
-      state.boardPage = 1;
-      await loadBoard().catch((error) => showToast(error.message));
-      return;
-    }
-
-    const boardFilterButton = event.target.closest('[data-board-filter]');
-    if (boardFilterButton) {
-      state.boardFilter = normalizeBoardFilter(boardFilterButton.dataset.boardFilter);
-      state.boardPage = 1;
-      await loadBoard().catch((error) => showToast(error.message));
-      return;
-    }
-
-    const catalogFilterButton = event.target.closest('[data-catalog-filter]');
-    if (catalogFilterButton) {
-      state.catalogFilter = catalogFilterButton.dataset.catalogFilter;
-      renderCatalogThreads(state.catalogThreads);
-      return;
-    }
-
-    const catalogSizeButton = event.target.closest('[data-catalog-size]');
-    if (catalogSizeButton) {
-      state.catalogImageSize = catalogSizeButton.dataset.catalogSize;
-      renderCatalogThreads(state.catalogThreads);
-      return;
-    }
-
-    const archiveRefreshButton = event.target.closest('[data-archive-refresh]');
-    if (archiveRefreshButton) {
-      await loadArchive().catch((error) => showToast(error.message));
+    const boardCatalogControlClick = handleBoardCatalogControlClick(event, {
+      state,
+      showToast,
+      loadBoard,
+      loadCatalog,
+      loadArchive,
+      renderCatalogThreads,
+      toggleBoardSubscription,
+      syncBoardSubscriptionButtons
+    });
+    if (boardCatalogControlClick) {
+      await boardCatalogControlClick;
       return;
     }
 
