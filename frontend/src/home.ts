@@ -12,6 +12,23 @@ import { latestPostHref, mediaItemsFromPost } from './thread';
 import type { AnyRecord } from './types';
 import { myPosts, subscribedBoardSlugs } from './storage';
 
+export function createHomeController(dependencies: AnyRecord = {}) {
+  const { isPostFiltered, writeBoardThreadsCache } = dependencies;
+
+  return {
+    loadHomeThreadsByBoard() {
+      return loadHomeThreadsByBoard({ writeBoardThreadsCache });
+    },
+    renderPopularThreads(threads) {
+      return renderPopularThreads(threads, { isPostFiltered });
+    },
+    renderLatestPosts(posts) {
+      return renderLatestPosts(posts, { isPostFiltered });
+    }
+  };
+}
+
+
 export function homeBoardList() {
   const publicBoardsBySlug = new Map(state.boards.map((board) => [board.slug, board]));
   const groupedBoards = state.boardGroups
@@ -317,3 +334,4 @@ export function renderStats(stats) {
     </p>
   `;
 }
+

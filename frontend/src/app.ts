@@ -1,5 +1,4 @@
 import { resetHcaptcha, setupHcaptcha } from './hcaptcha';
-
 import { createAiActions } from './ai-actions';
 import { bindAiActionEvents } from './ai-events';
 import { createAdminModerationSettingsController } from './admin-moderation-settings';
@@ -36,6 +35,7 @@ import {
   threadMatchesSearch
 } from './board';
 import { bindBoardNavigationEvents, handleBoardCatalogControlClick } from './board-events';
+import { createAccountStateController } from './account-state';
 import {
   archiveThreadHtml,
   catalogThreadHtml,
@@ -44,15 +44,7 @@ import {
   sortedCatalogThreads
 } from './catalog';
 import {
-  defaultAccountPrivateData,
-  mergeByKey,
-  normalizeAccountPrivateData,
-  normalizeContentFilters,
-  normalizePosterNotes,
-  normalizeReplyTemplates,
-  privateItemId,
-  safePrivateText,
-  safeReplyTemplateBody
+  defaultAccountPrivateData
 } from './account';
 import { bindAccountPasskeyEvents, bindAccountPrivateDataEvents, bindAdminPasskeyEvents } from './account-events';
 import { bindAccountFormEvents } from './account-form-events';
@@ -63,7 +55,7 @@ import {
   bindComposerMediaInputEvents,
   composerTextarea,
   confirmPrivacyBeforeSubmit,
-  defaultReplyTemplateTitle,
+  createReplyTemplateComposerController,
   fileToDataUrl,
   imagePreviewHtml,
   insertComposerBlock,
@@ -76,13 +68,11 @@ import {
 } from './composer';
 import { handleBrokenThumbnailError } from './events';
 import {
-  loadHomeThreadsByBoard as loadHomeThreadsByBoardWithDependencies,
+  createHomeController,
   renderCampusPulse,
   renderHomeBoards,
   renderHotBoards,
-  renderLatestPosts as renderLatestPostsWithDependencies,
   renderMyPosts,
-  renderPopularThreads as renderPopularThreadsWithDependencies,
   renderStats,
   renderSubscribedBoards
 } from './home';
@@ -136,26 +126,14 @@ import {
 } from './thread-dom';
 import type { AnyRecord } from './types';
 import {
+  createWatchlistController,
   isThreadWatched,
   readWatchedThreads,
   syncWatchedControls,
-  watchedThreadEntryFromDetail,
-  writeWatchedThreads as writeWatchedThreadsWithDependencies,
-  syncWatchedThreadFromDetail as syncWatchedThreadFromDetailWithDependencies,
-  removeWatchedThread as removeWatchedThreadWithDependencies,
-  loadWatchedThreadSummaries as loadWatchedThreadSummariesWithDependencies,
-  markWatchedThreadRead as markWatchedThreadReadWithDependencies,
-  markAllWatchedThreadsRead as markAllWatchedThreadsReadWithDependencies,
-  renderWatchedThreads as renderWatchedThreadsWithDependencies
+  watchedThreadEntryFromDetail
 } from './watchlist';
 import {
   ADMIN_LOAD_TIMEOUT_MS,
-  watchedThreadsKey,
-  savedSearchesKey,
-  contentFiltersKey,
-  replyTemplatesKey,
-  posterNotesKey,
-  myPostsKey,
   hiddenThreadsKey,
   hiddenPostsKey,
   themeKey,
@@ -204,9 +182,6 @@ import {
   defaultDeletePassword,
   normalizeDeletePassword,
   draftKey,
-  parseDraftKey,
-  localDraftEntries,
-  myPosts,
   hiddenThreadIds,
   hiddenPostNumbers,
   subscribedBoardSlugs,
@@ -214,7 +189,6 @@ import {
   writeVote,
   writeReaction
 } from './storage';
-
 const showPostEditModal = createPostEditModal({
   showToast,
   maxMediaPerPost: MAX_MEDIA_PER_POST,
@@ -222,385 +196,63 @@ const showPostEditModal = createPostEditModal({
   fileToDataUrl,
   imagePreviewHtml
 });
-
 const { copyPostPermalink } = createPostClipboardActions({ showToast });
-
-function writeWatchedThreads(watchedThreads) {
-  return writeWatchedThreadsWithDependencies(watchedThreads, { scheduleAccountPrivateDataSave });
-}
-
-function syncWatchedThreadFromDetail(detail) {
-  return syncWatchedThreadFromDetailWithDependencies(detail, { scheduleAccountPrivateDataSave });
-}
-
-function removeWatchedThread(threadId) {
-  return removeWatchedThreadWithDependencies(threadId, { scheduleAccountPrivateDataSave });
-}
-
-async function loadWatchedThreadSummaries() {
-  return loadWatchedThreadSummariesWithDependencies({ isPostFiltered, scheduleAccountPrivateDataSave });
-}
-
-function markWatchedThreadRead(threadId) {
-  return markWatchedThreadReadWithDependencies(threadId, { scheduleAccountPrivateDataSave });
-}
-
-function markAllWatchedThreadsRead() {
-  return markAllWatchedThreadsReadWithDependencies({ scheduleAccountPrivateDataSave });
-}
-
-function loadHomeThreadsByBoard() {
-  return loadHomeThreadsByBoardWithDependencies({ writeBoardThreadsCache });
-}
-
-function renderPopularThreads(threads) {
-  return renderPopularThreadsWithDependencies(threads, { isPostFiltered });
-}
-
-function renderLatestPosts(posts) {
-  return renderLatestPostsWithDependencies(posts, { isPostFiltered });
-}
-
-function renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
-  return renderWatchedThreadsWithDependencies(watchedThreads, { isPostFiltered });
-}
-function accountDraftSyncEnabled() {
-  return state.account?.settings?.syncDrafts !== false;
-}
-
-function readSavedSearches() {
-  if (state.accountToken && state.accountPrivateData) {
-    return Array.isArray(state.accountPrivateData.savedSearches) ? state.accountPrivateData.savedSearches : [];
-  }
-  return readLocalList(savedSearchesKey).filter((item) => item && typeof item === 'object');
-}
-
-function writeSavedSearches(savedSearches) {
-  const items = savedSearches.filter((item) => item?.boardSlug && item?.query).slice(0, 50);
-  writeJsonLocal(savedSearchesKey, items);
-  if (state.accountToken && state.accountPrivateData) {
-    state.accountPrivateData.savedSearches = items;
-    scheduleAccountPrivateDataSave();
-  }
-}
-
-
-
-function readContentFilters() {
-  if (state.accountToken && state.accountPrivateData) {
-    return normalizeContentFilters(state.accountPrivateData.contentFilters);
-  }
-  return normalizeContentFilters(readLocalList(contentFiltersKey));
-}
-
-function writeContentFilters(filters) {
-  const items = normalizeContentFilters(filters);
-  writeJsonLocal(contentFiltersKey, items);
-  if (state.accountToken && state.accountPrivateData) {
-    state.accountPrivateData.contentFilters = items;
-    scheduleAccountPrivateDataSave();
-  }
-  return items;
-}
-
-function addContentFilter(filter) {
-  const next = writeContentFilters([{ id: privateItemId(), createdAt: new Date().toISOString(), ...filter }, ...readContentFilters()]);
-  renderAccountPrivateData();
-  return next;
-}
-
-function removeContentFilter(id) {
-  const next = writeContentFilters(readContentFilters().filter((filter) => filter.id !== id));
-  renderAccountPrivateData();
-  return next;
-}
-
-function readReplyTemplates() {
-  if (state.accountToken && state.accountPrivateData) {
-    return normalizeReplyTemplates(state.accountPrivateData.replyTemplates);
-  }
-  return normalizeReplyTemplates(readLocalList(replyTemplatesKey));
-}
-
-function writeReplyTemplates(templates) {
-  const items = normalizeReplyTemplates(templates);
-  writeJsonLocal(replyTemplatesKey, items);
-  if (state.accountToken && state.accountPrivateData) {
-    state.accountPrivateData.replyTemplates = items;
-    scheduleAccountPrivateDataSave();
-  }
-  return items;
-}
-
-function addReplyTemplate(template) {
-  const next = writeReplyTemplates([
-    { id: privateItemId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...template },
-    ...readReplyTemplates()
-  ]);
-  renderAccountPrivateData();
-  renderReplyTemplatePickers();
-  return next;
-}
-
-function removeReplyTemplate(id) {
-  const next = writeReplyTemplates(readReplyTemplates().filter((template) => template.id !== id));
-  renderAccountPrivateData();
-  renderReplyTemplatePickers();
-  return next;
-}
-
-function readPosterNotes() {
-  if (state.accountToken && state.accountPrivateData) {
-    return normalizePosterNotes(state.accountPrivateData.posterNotes);
-  }
-  return normalizePosterNotes(readLocalList(posterNotesKey));
-}
-
-function writePosterNotes(notes) {
-  const items = normalizePosterNotes(notes);
-  writeJsonLocal(posterNotesKey, items);
-  if (state.accountToken && state.accountPrivateData) {
-    state.accountPrivateData.posterNotes = items;
-    scheduleAccountPrivateDataSave();
-  }
-  return items;
-}
-
-function addPosterNote(note) {
-  const posterIdValue = safePrivateText(note.posterId, 80);
-  const boardSlug = safePrivateText(note.boardSlug, 80);
-  const next = writePosterNotes([
-    { id: privateItemId(), createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), ...note, posterId: posterIdValue, boardSlug },
-    ...readPosterNotes().filter(
-      (item) => item.boardSlug !== boardSlug || normalizeSearchValue(item.posterId) !== normalizeSearchValue(posterIdValue)
-    )
-  ]);
-  renderAccountPrivateData();
-  return next;
-}
-
-function removePosterNote(id) {
-  const next = writePosterNotes(readPosterNotes().filter((note) => note.id !== id));
-  renderAccountPrivateData();
-  return next;
-}
-
-function posterNoteForPost(post: AnyRecord = {}) {
-  const poster = normalizeSearchValue(posterId(post));
-  const posterHash = normalizeSearchValue(post.posterHash || '');
-  if (!poster || poster === 'id:????') {
-    return null;
-  }
-  const boardSlug = String(post.boardSlug || state.boardSlug || '');
-  const notes = readPosterNotes();
-  const matchesPoster = (note) => {
-    const notePoster = normalizeSearchValue(note.posterId);
-    return notePoster === poster || (posterHash && notePoster === posterHash);
-  };
-  return (
-    notes.find((note) => matchesPoster(note) && note.boardSlug === boardSlug) ||
-    notes.find((note) => matchesPoster(note) && !note.boardSlug) ||
-    null
-  );
-}
-
-function postPlainText(post: AnyRecord = {}) {
-  return [
-    post.subject,
-    post.body,
-    post.preview,
-    plainPreview(post.bodyLines, ''),
-    postDisplayName(post),
-    post.tripcode,
-    post.capcode,
-    posterId(post),
-    post.globalNumber ? 'No.' + post.globalNumber : ''
-  ]
-    .filter(Boolean)
-    .join(' ');
-}
-
-function contentFilterMatch(post: AnyRecord = {}) {
-  const filters = readContentFilters();
-  if (!filters.length || !post) {
-    return null;
-  }
-  const boardSlug = String(post.boardSlug || state.boardSlug || '');
-  const haystack = normalizeSearchValue(postPlainText(post));
-  const poster = normalizeSearchValue(posterId(post));
-  const threadId = String(post.threadId || post.id || '');
-  const globalNumber = String(post.globalNumber || '');
-  return (
-    filters.find((filter) => {
-      if (filter.boardSlug && filter.boardSlug !== boardSlug) {
-        return false;
-      }
-      const value = normalizeSearchValue(filter.value);
-      if (!value) {
-        return false;
-      }
-      if (filter.type === 'keyword') {
-        return haystack.includes(value);
-      }
-      if (filter.type === 'poster') {
-        return poster === value || poster.includes(value);
-      }
-      if (filter.type === 'thread') {
-        return threadId === filter.value || globalNumber === filter.value;
-      }
-      if (filter.type === 'post') {
-        return globalNumber === filter.value;
-      }
-      return false;
-    }) || null
-  );
-}
-
-function isPostFiltered(post) {
-  return Boolean(contentFilterMatch(post));
-}
-
-function readDraft(key) {
-  if (state.accountToken && state.accountPrivateData && accountDraftSyncEnabled()) {
-    const draft = (state.accountPrivateData.drafts || []).find((item) => item.key === key);
-    if (draft) {
-      return draft.body || '';
+const {
+  accountDraftSyncEnabled,
+  readSavedSearches,
+  writeSavedSearches,
+  readContentFilters,
+  writeContentFilters,
+  addContentFilter,
+  removeContentFilter,
+  readReplyTemplates,
+  writeReplyTemplates,
+  addReplyTemplate,
+  removeReplyTemplate,
+  readPosterNotes,
+  writePosterNotes,
+  addPosterNote,
+  removePosterNote,
+  posterNoteForPost,
+  postPlainText,
+  contentFilterMatch,
+  isPostFiltered,
+  readDraft,
+  writeDraft,
+  removeDraft,
+  isMyPost,
+  myPostDeletePassword,
+  isAccountPost,
+  refreshAccountPostNumbers,
+  rememberMyPost,
+  mergeAccountPrivateData,
+  saveAccountPrivateData,
+  scheduleAccountPrivateDataSave,
+  loadAccountPrivateData,
+  finishAccountLogin,
+  clearAccountPrivateData
+} = createAccountStateController({
+  api,
+  showToast,
+  setAccountSession,
+  renderAccountPrivateData,
+  renderReplyTemplatePickers: () => {
+    if (replyTemplateController?.renderReplyTemplatePickers) {
+      replyTemplateController.renderReplyTemplatePickers();
     }
   }
-  return localStorage.getItem(key) || '';
-}
-
-function writeDraft(key, body) {
-  localStorage.setItem(key, body);
-  if (!state.accountToken || !state.accountPrivateData || !accountDraftSyncEnabled()) {
-    return;
-  }
-  const { kind, id } = parseDraftKey(key);
-  const drafts = (state.accountPrivateData.drafts || []).filter((item) => item.key !== key);
-  if (body) {
-    drafts.unshift({
-      key,
-      kind,
-      id,
-      boardSlug: kind === 'thread' ? id : state.boardSlug,
-      threadId: kind === 'comment' || kind === 'quickReply' ? id : '',
-      body,
-      updatedAt: new Date().toISOString()
-    });
-  }
-  state.accountPrivateData.drafts = drafts.slice(0, 40);
-  scheduleAccountPrivateDataSave();
-}
-
-function removeDraft(key) {
-  localStorage.removeItem(key);
-  if (state.accountToken && state.accountPrivateData && accountDraftSyncEnabled()) {
-    state.accountPrivateData.drafts = (state.accountPrivateData.drafts || []).filter((item) => item.key !== key);
-    scheduleAccountPrivateDataSave();
-  }
-}
-
-function insertReplyTemplate(target, id) {
-  const template = readReplyTemplates().find((item) => item.id === id);
-  if (!template) {
-    showToast('Không tìm thấy mẫu trả lời.');
-    return;
-  }
-  insertComposerBlock(target, template.body, { showToast });
-}
-
-function saveComposerReplyTemplate(target) {
-  const textarea = composerTextarea(target);
-  const body = safeReplyTemplateBody(textarea?.value || '');
-  if (!body) {
-    showToast('Nhập nội dung trước khi lưu mẫu.');
-    textarea?.focus();
-    return;
-  }
-  addReplyTemplate({
-    title: defaultReplyTemplateTitle(body),
-    body,
-    boardSlug: state.boardSlug || ''
-  });
-  showToast('Đã lưu mẫu trả lời.');
-}
-// Cached set of the viewer's own post numbers, used to stamp "(You)" on their
-// posts and on quotes pointing at them. Rebuilt lazily and invalidated whenever
-// a new post is remembered.
-let myPostNumberCache = null;
-function myPostNumberSet() {
-  if (!myPostNumberCache) {
-    myPostNumberCache = new Set(myPosts().map((item) => Number(item.globalNumber)));
-  }
-  return myPostNumberCache;
-}
-
-function isMyPost(post) {
-  const number = Number(post?.globalNumber);
-  return Number.isFinite(number) && myPostNumberSet().has(number);
-}
-
-function myPostEntry(globalNumber) {
-  const number = Number(globalNumber);
-  if (!Number.isFinite(number)) {
-    return null;
-  }
-  return myPosts().find((item) => Number(item.globalNumber) === number) || null;
-}
-
-function myPostDeletePassword(globalNumber) {
-  const entry = myPostEntry(globalNumber);
-  return normalizeDeletePassword(entry?.deletePassword) || defaultDeletePassword();
-}
-
-function isAccountPost(post) {
-  const number = Number(post?.globalNumber);
-  return Boolean(state.accountToken && state.account && Number.isFinite(number) && state.accountPostNumbers.has(number));
-}
-
-async function refreshAccountPostNumbers() {
-  if (!state.accountToken || !state.account) {
-    state.accountPostNumbers = new Set();
-    return;
-  }
-  try {
-    const items = await api('/api/account/posts', { auth: 'account' });
-    state.accountPostNumbers = new Set(
-      (items || [])
-        .map((item) => Number((item.post || item)?.globalNumber))
-        .filter(Number.isFinite)
-    );
-  } catch (error) {
-    if (/đăng nhập|Phiên/.test(error.message)) {
-      setAccountSession();
-      return;
-    }
-    console.warn('Không tải được danh sách bài của tài khoản:', error);
-  }
-}
-function rememberMyPost(post, type) {
-  if (!post?.globalNumber) {
-    return;
-  }
-  const accountOwned = Boolean(state.accountToken && state.account);
-  const items = myPosts().filter((item) => Number(item.globalNumber) !== Number(post.globalNumber));
-  items.unshift({
-    type,
-    owner: accountOwned ? 'account' : 'anonymous',
-    deletePassword: accountOwned ? undefined : defaultDeletePassword(),
-    threadId: post.threadId || post.id || state.threadId,
-    boardSlug: post.boardSlug || state.boardSlug,
-    globalNumber: post.globalNumber,
-    preview: plainPreview(post.bodyLines, post.body || 'Không có nội dung').slice(0, 160),
-    createdAt: post.createdAt || new Date().toISOString()
-  });
-  writeJsonLocal(myPostsKey, items.slice(0, 50));
-  myPostNumberCache = null;
-  if (state.accountToken && state.account) {
-    state.accountPostNumbers.add(Number(post.globalNumber));
-  }
-}
-
+});
+const watchlistController = createWatchlistController({ isPostFiltered, scheduleAccountPrivateDataSave });
+const homeController = createHomeController({ isPostFiltered, writeBoardThreadsCache });
+const replyTemplateController = createReplyTemplateComposerController({
+  state,
+  readReplyTemplates,
+  addReplyTemplate,
+  showToast,
+  composerTextarea,
+  insertComposerBlock
+});
+const { renderReplyTemplatePickers, insertReplyTemplate, saveComposerReplyTemplate } = replyTemplateController;
 function isBoardSubscribed(slug = state.boardSlug) {
   return subscribedBoardSlugs().has(String(slug));
 }
@@ -609,10 +261,10 @@ async function toggleBoardSubscription(slug = state.boardSlug) {
   const items = subscribedBoardSlugs();
   if (items.has(slug)) {
     items.delete(slug);
-    showToast('Đã bỏ theo dõi bảng.');
+    showToast('\u0110\u00e3 b\u1ecf theo d\u00f5i b\u1ea3ng.');
   } else {
     items.add(slug);
-    showToast('Đã theo dõi bảng.');
+    showToast('\u0110\u00e3 theo d\u00f5i b\u1ea3ng.');
   }
   writeSubscribedBoardSlugs([...items]);
   await persistAccountSettings({ silent: true });
@@ -720,7 +372,7 @@ async function persistAccountSettings({ silent = false }: AnyRecord = {}) {
     if (!silent) {
       throw error;
     }
-    if (/đăng nhập|Phiên/.test(error.message)) {
+    if (/\u0111\u0103ng nh\u1eadp|Phi\u00ean/.test(error.message)) {
       setAccountSession();
     }
     return null;
@@ -744,121 +396,6 @@ function setAccountSession({ token = '', account = null }: AnyRecord = {}) {
   updateAccountNav();
   renderAccountPrivateData();
 }
-
-function mergeAccountPrivateData(serverData = defaultAccountPrivateData()) {
-  const localWatchlist = Object.values(readJsonLocal(watchedThreadsKey, {}) as AnyRecord).filter((item) => item?.threadId);
-  const localSearches = readLocalList(savedSearchesKey).filter((item) => item?.boardSlug && item?.query);
-  const localFilters = normalizeContentFilters(readLocalList(contentFiltersKey));
-  const localTemplates = normalizeReplyTemplates(readLocalList(replyTemplatesKey));
-  const localPosterNotes = normalizePosterNotes(readLocalList(posterNotesKey));
-  const drafts = accountDraftSyncEnabled()
-    ? mergeByKey([...(serverData.drafts || []), ...localDraftEntries()], (item) => item.key)
-    : serverData.drafts || [];
-  return normalizeAccountPrivateData({
-    watchlist: mergeByKey([...(serverData.watchlist || []), ...localWatchlist], (item) => item.threadId),
-    drafts,
-    savedSearches: mergeByKey(
-      [...(serverData.savedSearches || []), ...localSearches],
-      (item) => `${item.boardSlug}:${item.query}`
-    ),
-    contentFilters: mergeByKey(
-      [...(serverData.contentFilters || []), ...localFilters],
-      (item) => `${item.type}:${item.boardSlug || ''}:${item.value}`
-    ),
-    replyTemplates: mergeByKey(
-      [...(serverData.replyTemplates || []), ...localTemplates],
-      (item) => `${item.boardSlug || ''}:${item.title}:${item.body}`
-    ),
-    posterNotes: mergeByKey(
-      [...(serverData.posterNotes || []), ...localPosterNotes],
-      (item) => `${item.boardSlug || ''}:${item.posterId}`
-    )
-  });
-}
-
-async function saveAccountPrivateData() {
-  if (!state.accountToken || !state.accountPrivateData) {
-    return null;
-  }
-  const data = await api('/api/account/private-data', {
-    auth: 'account',
-    method: 'PUT',
-    body: JSON.stringify(state.accountPrivateData)
-  });
-  state.accountPrivateData = normalizeAccountPrivateData(data);
-  return state.accountPrivateData;
-}
-
-function scheduleAccountPrivateDataSave() {
-  if (!state.accountToken || !state.accountPrivateData) {
-    return;
-  }
-  window.clearTimeout(state.accountPrivateSaveTimer);
-  state.accountPrivateSaveTimer = window.setTimeout(() => {
-    saveAccountPrivateData().catch((error) => {
-      if (/đăng nhập|Phiên/.test(error.message)) {
-        setAccountSession();
-      }
-    });
-  }, 600);
-}
-
-async function loadAccountPrivateData({ mergeLocal = false }: AnyRecord = {}) {
-  if (!state.accountToken) {
-    state.accountPrivateData = null;
-    return null;
-  }
-  const data = await api('/api/account/private-data', { auth: 'account' });
-  state.accountPrivateData = mergeLocal ? mergeAccountPrivateData(data) : normalizeAccountPrivateData(data);
-  if (mergeLocal) {
-    await saveAccountPrivateData();
-  }
-  renderAccountPrivateData();
-  return state.accountPrivateData;
-}
-
-async function finishAccountLogin(result, { mergeLocal = true }: AnyRecord = {}) {
-  setAccountSession({ token: result.token, account: result.account });
-  state.accountPrivateData = mergeLocal ? mergeAccountPrivateData() : normalizeAccountPrivateData();
-  renderAccountPrivateData();
-  try {
-    await loadAccountPrivateData({ mergeLocal });
-    await refreshAccountPostNumbers();
-  } catch (error) {
-    console.warn('Unable to sync account data after login', error);
-    showToast('Đã đăng nhập, nhưng chưa đồng bộ được dữ liệu cá nhân. Vui lòng thử lại sau.');
-  }
-}
-async function clearAccountPrivateData(section = '') {
-  if (!state.accountToken) {
-    return;
-  }
-  const data = await api(`/api/account/private-data${section ? `?section=${encodeURIComponent(section)}` : ''}`, {
-    auth: 'account',
-    method: 'DELETE'
-  });
-  state.accountPrivateData = normalizeAccountPrivateData(data);
-  if (!section || section === 'watchlist') {
-    writeJsonLocal(watchedThreadsKey, {});
-  }
-  if (!section || section === 'savedSearches') {
-    writeJsonLocal(savedSearchesKey, []);
-  }
-  if (!section || section === 'drafts') {
-    localDraftEntries().forEach((draft) => localStorage.removeItem(draft.key));
-  }
-  if (!section || section === 'contentFilters') {
-    writeJsonLocal(contentFiltersKey, []);
-  }
-  if (!section || section === 'replyTemplates') {
-    writeJsonLocal(replyTemplatesKey, []);
-  }
-  if (!section || section === 'posterNotes') {
-    writeJsonLocal(posterNotesKey, []);
-  }
-  renderAccountPrivateData();
-}
-
 function updateAccountDisplayOptions() {
   const loggedIn = Boolean(state.accountToken && state.account?.username);
   els.accountDisplayOptions.forEach((element) => element.classList.toggle('hidden', !loggedIn));
@@ -868,11 +405,9 @@ function updateAccountDisplayOptions() {
     });
   }
 }
-
 function isCapcodeEligible() {
   return Boolean(state.accountToken) && ['admin', 'moderator'].includes(state.account?.role);
 }
-
 function updateCapcodeOptions() {
   const eligible = isCapcodeEligible();
   els.capcodeOptions.forEach((element) => element.classList.toggle('hidden', !eligible));
@@ -882,7 +417,6 @@ function updateCapcodeOptions() {
     });
   }
 }
-
 function decodeJwtPayload(token) {
   try {
     const part = String(token || '').split('.')[1];
@@ -895,7 +429,6 @@ function decodeJwtPayload(token) {
     return null;
   }
 }
-
 function adminUsernameFromToken() {
   if (!state.token) {
     return '';
@@ -903,7 +436,6 @@ function adminUsernameFromToken() {
   const payload = decodeJwtPayload(state.token);
   return payload && ['admin', 'owner', 'moderator', 'viewer'].includes(payload.role) ? payload.username || '' : '';
 }
-
 function updateAccountNav() {
   const loggedIn = Boolean(state.accountToken && state.account);
   const adminUsername = loggedIn ? '' : adminUsernameFromToken();
@@ -925,7 +457,6 @@ function updateAccountNav() {
   updateAccountDisplayOptions();
   updateCapcodeOptions();
 }
-
 function syncAccountHomeBoardOptions() {
   if (!els.accountHomeBoard) {
     return;
@@ -934,7 +465,6 @@ function syncAccountHomeBoardOptions() {
     .map((board) => `<option value="${escapeHtml(board.slug)}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</option>`)
     .join('');
 }
-
 function fillAccountSettings(account = state.account) {
   const settings = account?.settings || accountSettingsFromLocal();
   const displayPreferences = settings.displayPreferences || localDisplayPreferences();
@@ -965,7 +495,6 @@ function fillAccountSettings(account = state.account) {
   renderPasskeys();
   renderAccountRecoveryPanel();
 }
-
 function render2FAState() {
   if (!els.account2FADisabledSection || !els.account2FASetupSection || !els.account2FAEnabledSection) {
     return;
@@ -978,7 +507,6 @@ function render2FAState() {
   if (els.verify2FACode) els.verify2FACode.value = '';
   if (els.disable2FAPassword) els.disable2FAPassword.value = '';
 }
-
 const { renderPasskeys, handleAccountPasskeyClick } = bindAccountPasskeyEvents({
   els,
   state,
@@ -988,7 +516,6 @@ const { renderPasskeys, handleAccountPasskeyClick } = bindAccountPasskeyEvents({
   setButtonLoading,
   finishAccountLogin
 });
-
 const { handleAccountPrivateDataClick } = bindAccountPrivateDataEvents({
   showToast,
   removeSavedSearch,
@@ -1001,7 +528,6 @@ const { handleAccountPrivateDataClick } = bindAccountPrivateDataEvents({
   clearAccountPrivateData,
   renderAccountPrivateData
 });
-
 const { renderAdminPasskeys, handleAdminPasskeyClick } = bindAdminPasskeyEvents({
   els,
   state,
@@ -1010,7 +536,6 @@ const { renderAdminPasskeys, handleAdminPasskeyClick } = bindAdminPasskeyEvents(
   setButtonLoading,
   loadAdmin
 });
-
 const {
   loadAdminModerationSettingsInBackground,
   resetAdminModerationSettingsCache,
@@ -1023,7 +548,6 @@ const {
   showToast,
   setButtonLoading
 });
-
 const {
   bindReferencePreviewEvents,
   handleReferencePreviewClick,
@@ -1066,14 +590,12 @@ function renderSavedSearches() {
     })
     .join('');
 }
-
 function privateBoardOptions() {
   return [
     '<option value="">Tất cả bảng</option>',
     ...state.boards.map((board) => `<option value="${escapeHtml(board.slug)}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</option>`)
   ].join('');
 }
-
 function renderContentFilters() {
   const filters = readContentFilters();
   const list = filters.length
@@ -1109,7 +631,6 @@ function renderContentFilters() {
     </div>
   `;
 }
-
 function renderReplyTemplates() {
   const templates = readReplyTemplates();
   const list = templates.length
@@ -1142,7 +663,6 @@ function renderReplyTemplates() {
     </div>
   `;
 }
-
 function renderPosterNotes() {
   const notes = readPosterNotes();
   const list = notes.length
@@ -1176,28 +696,6 @@ function renderPosterNotes() {
     </div>
   `;
 }
-
-function renderReplyTemplatePickers() {
-  const templates = readReplyTemplates();
-  document.querySelectorAll('[data-reply-template-picker]').forEach((root) => {
-    const target = root.dataset.replyTemplatePicker;
-    const scopedTemplates = templates.filter((template) => !template.boardSlug || template.boardSlug === state.boardSlug);
-    const options = scopedTemplates
-      .map((template) => `<option value="${escapeHtml(template.id)}">${escapeHtml(template.title)}</option>`)
-      .join('');
-    root.innerHTML = `
-      <span>Mẫu đã lưu</span>
-      <select data-reply-template-select ${scopedTemplates.length ? '' : 'disabled'} aria-label="Mẫu đã lưu">
-        ${scopedTemplates.length ? options : '<option value="">Chưa có mẫu</option>'}
-      </select>
-      <button class="link-button" data-insert-reply-template="${escapeHtml(target)}" type="button" ${
-        scopedTemplates.length ? '' : 'disabled'
-      }>[Chèn]</button>
-      <button class="link-button" data-save-reply-template="${escapeHtml(target)}" type="button">[Lưu mẫu]</button>
-    `;
-  });
-}
-
 function renderAccountPrivateData() {
   if (!els.accountPrivateDataPanel || !els.accountPrivateDataSummary) {
     renderReplyTemplatePickers();
@@ -1239,7 +737,6 @@ function renderAccountPrivateData() {
   `;
   renderReplyTemplatePickers();
 }
-
 function saveCurrentBoardSearch() {
   const query = (els.boardSearchInput.value || state.boardSearchTerm || '').trim();
   if (!query) {
@@ -1268,14 +765,12 @@ function saveCurrentBoardSearch() {
   renderAccountPrivateData();
   showToast(state.accountToken ? 'Đã lưu tìm kiếm vào tài khoản.' : 'Đã lưu tìm kiếm trên trình duyệt.');
 }
-
 function removeSavedSearch(key) {
   const searches = readSavedSearches().filter((item) => `${item.boardSlug}:${item.query}` !== key);
   writeSavedSearches(searches);
   renderAccountPrivateData();
   showToast('Đã xóa tìm kiếm đã lưu.');
 }
-
 async function loadAccountSession() {
   updateAccountNav();
   if (!state.accountToken) {
@@ -1294,7 +789,6 @@ async function loadAccountSession() {
     return null;
   }
 }
-
 async function loadAccountSettings() {
   setScreen('account');
   setFormError(els.accountSettingsError);
@@ -1308,7 +802,6 @@ async function loadAccountSettings() {
   fillAccountSettings();
   window.scrollTo({ top: 0 });
 }
-
 function setScreen(name) {
   if (name !== 'thread') {
     stopAutoUpdateTimer();
@@ -1359,11 +852,9 @@ function setScreen(name) {
     els.boardScreen.classList.add('active');
   }
 }
-
 function currentBoard() {
   return state.boards.find((board) => board.slug === state.boardSlug) || null;
 }
-
 function renderMissingBoard(screen = 'board') {
   const slug = state.boardSlug || 'unknown';
   setScreen(screen);
@@ -1377,7 +868,6 @@ function renderMissingBoard(screen = 'board') {
     els.catalogGrid.innerHTML = '<p class="muted">Hãy chọn một bảng khác từ thanh điều hướng.</p>';
     return;
   }
-
   els.boardTitle.textContent = 'Không tìm thấy bảng';
   els.boardPath.textContent = `/${slug}/`;
   els.boardDescription.textContent = 'Bảng này không tồn tại hoặc đã bị ẩn.';
@@ -1394,7 +884,6 @@ function renderMissingBoard(screen = 'board') {
   els.boardPagination.innerHTML = '';
   closeThreadComposer();
 }
-
 function boardThreadsCacheKey({
   boardSlug = state.boardSlug,
   page = state.boardPage,
@@ -1407,7 +896,6 @@ function boardThreadsCacheKey({
   const safePageSize = Math.max(1, Math.floor(Number(pageSize) || state.boardPageSize));
   return [boardSlug, safePage, safePageSize, normalizeSearchValue(q), normalizeBoardSort(sort), normalizeBoardFilter(filter)].join('|');
 }
-
 function firstBoardPageFromThreads(threads = [], { page = 1, pageSize = state.boardPageSize }: AnyRecord = {}) {
   const safePage = Math.max(1, Math.floor(Number(page) || 1));
   const safePageSize = Math.max(1, Math.floor(Number(pageSize) || state.boardPageSize));
@@ -1422,7 +910,6 @@ function firstBoardPageFromThreads(threads = [], { page = 1, pageSize = state.bo
     hasMore: offset + safePageSize < total
   };
 }
-
 function writeBoardThreadsCache(boardSlug, payload, options: AnyRecord = {}) {
   const { threads, meta } = normalizeBoardThreadsPayload(payload);
   const pagePayload = meta || firstBoardPageFromThreads(threads, options);
@@ -1447,7 +934,6 @@ function writeBoardThreadsCache(boardSlug, payload, options: AnyRecord = {}) {
   }
   return entry;
 }
-
 function readBoardThreadsCache(options: AnyRecord = {}) {
   const key = boardThreadsCacheKey(options);
   const memoryEntry = state.boardThreadsCache.get(key);
@@ -1465,7 +951,6 @@ function readBoardThreadsCache(options: AnyRecord = {}) {
   }
   return null;
 }
-
 function updateBoardPresentation(board) {
   const label = board?.name?.toLowerCase() || '36chan';
   const rules = boardRulesForDisplay(board);
@@ -1481,7 +966,6 @@ function updateBoardPresentation(board) {
     }));
     section.classList.toggle('hidden', rules.length === 0);
   });
-
   document.querySelectorAll('[data-board-banner]').forEach((ad) => {
     const text = ad.querySelector('[data-board-banner-text]');
     const image = ad.querySelector('[data-board-banner-image]');
@@ -1501,7 +985,6 @@ function updateBoardPresentation(board) {
     }
   });
 }
-
 function renderBoards() {
   els.boardNav.innerHTML = state.boards
     .map(
@@ -1510,7 +993,6 @@ function renderBoards() {
     )
     .join('');
 }
-
 async function refreshPublicBoards({ fallbackBoards = state.boards }: AnyRecord = {}) {
   try {
     state.boards = await api('/api/boards');
@@ -1521,14 +1003,12 @@ async function refreshPublicBoards({ fallbackBoards = state.boards }: AnyRecord 
   syncAdminBoardFilter();
   return state.boards;
 }
-
 function syncBoardSubscriptionButtons() {
   const label = isBoardSubscribed(state.boardSlug) ? 'Bỏ theo dõi bảng' : 'Theo dõi bảng';
   document.querySelectorAll('[data-toggle-board-subscription]').forEach((button) => {
     button.textContent = label;
   });
 }
-
 function openThreadComposer({ focus = true }: AnyRecord = {}) {
   els.threadComposer.classList.remove('hidden');
   els.startThreadButton.classList.add('hidden');
@@ -1541,12 +1021,10 @@ function openThreadComposer({ focus = true }: AnyRecord = {}) {
     window.setTimeout(() => els.threadBody.focus(), 0);
   }
 }
-
 function closeThreadComposer() {
   els.threadComposer.classList.add('hidden');
   els.startThreadButton.classList.remove('hidden');
 }
-
 function syncReplyComposer() {
   const canReply = !state.threadIsArchived && !state.threadIsLocked;
   els.replyComposer.classList.toggle('hidden', !state.replyComposerOpen || !canReply);
@@ -1555,7 +1033,6 @@ function syncReplyComposer() {
     els.suggestions.classList.add('hidden');
   }
 }
-
 function openReplyComposer({ focus = true }: AnyRecord = {}) {
   if (state.threadIsArchived || state.threadIsLocked) {
     showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
@@ -1572,7 +1049,6 @@ function openReplyComposer({ focus = true }: AnyRecord = {}) {
     window.setTimeout(() => els.commentBody.focus(), 0);
   }
 }
-
 function closeReplyComposer({ clear = false }: AnyRecord = {}) {
   state.replyComposerOpen = false;
   if (clear) {
@@ -1581,28 +1057,24 @@ function closeReplyComposer({ clear = false }: AnyRecord = {}) {
   }
   syncReplyComposer();
 }
-
 function toggleCurrentThreadWatch() {
   if (!state.threadDetail?.thread?.id) {
     return;
   }
-
   const watchedThreads = readWatchedThreads();
   const threadId = state.threadDetail.thread.id;
   if (watchedThreads[threadId]) {
     delete watchedThreads[threadId];
-    writeWatchedThreads(watchedThreads);
+    watchlistController.writeWatchedThreads(watchedThreads);
     showToast('Đã bỏ theo dõi chủ đề.');
   } else {
     watchedThreads[threadId] = watchedThreadEntryFromDetail(state.threadDetail, {}, { markSeen: true });
-    writeWatchedThreads(watchedThreads);
+    watchlistController.writeWatchedThreads(watchedThreads);
     showToast('Đã theo dõi chủ đề.');
   }
-
   els.threadToolbarTop.innerHTML = threadToolbarHtml(state.threadDetail, 'top');
   els.threadToolbarBottom.innerHTML = threadToolbarHtml(state.threadDetail, 'bottom');
 }
-
 function pageControlsHtml(meta, actionName) {
   if (!meta || Number(meta.totalPages || 1) <= 1) {
     return '';
@@ -1620,12 +1092,10 @@ function pageControlsHtml(meta, actionName) {
     <span>${Number(meta.total || 0).toLocaleString()} mục</span>
   `;
 }
-
 function deletedPostsHtml(posts) {
   if (!posts.length) {
     return '<p class="muted">Chưa có bài đã xóa.</p>';
   }
-
   return posts
     .map(
       (post) => `
@@ -1647,12 +1117,10 @@ function deletedPostsHtml(posts) {
     )
     .join('');
 }
-
 function pendingPostsHtml(posts) {
   if (!posts.length) {
     return '<p class="muted">Hàng đợi trống.</p>';
   }
-
   return posts
     .map(
       (post) => `
@@ -1683,7 +1151,6 @@ function pendingPostsHtml(posts) {
     )
     .join('');
 }
-
 function editHistoryMediaHtml(images = []) {
   const media = mediaList(images);
   if (!media.length) {
@@ -1691,12 +1158,10 @@ function editHistoryMediaHtml(images = []) {
   }
   return `<div class="post-media-gallery">${media.map((image) => mediaToggleHtml(image, 'thumb')).join('')}</div>`;
 }
-
 function editHistoryHtml(history = []) {
   if (!history.length) {
     return '<p class="muted">Chưa có lịch sử chỉnh sửa.</p>';
   }
-
   return `
     <div class="admin-edit-history">
       ${history
@@ -1727,7 +1192,6 @@ function editHistoryHtml(history = []) {
     </div>
   `;
 }
-
 function adminPostDetailHtml(detail, options: AnyRecord = {}) {
   const post = detail.post;
   const actions = detail.actions || [];
@@ -1778,7 +1242,6 @@ function adminPostDetailHtml(detail, options: AnyRecord = {}) {
     </div>
   `;
 }
-
 function renderAdminAnalytics(analytics) {
   renderAdminTabs();
   els.pendingList.innerHTML = adminAnalyticsHtml(analytics, state.boards);
@@ -1786,7 +1249,6 @@ function renderAdminAnalytics(analytics) {
     els.adminSelectAll.checked = false;
   }
 }
-
 function renderAdminHealth(data) {
   renderAdminTabs();
   els.pendingList.innerHTML = adminHealthHtml(data);
@@ -1794,7 +1256,6 @@ function renderAdminHealth(data) {
     els.adminSelectAll.checked = false;
   }
 }
-
 function adminQueryString() {
   const params = new URLSearchParams();
   const boardFilter = els.adminBoardFilter?.value || '';
@@ -1828,7 +1289,6 @@ function adminQueryString() {
   }
   return params.toString();
 }
-
 function adminEndpoint() {
   const query = adminQueryString();
   const suffix = query ? `?${query}` : '';
@@ -1864,15 +1324,12 @@ function adminEndpoint() {
   }
   return `/api/admin/pending${suffix}`;
 }
-
 function isAdminSessionError(error) {
   return error?.statusCode === 401 || error?.requires2FA;
 }
-
 function isAbortError(error) {
   return error?.name === 'AbortError';
 }
-
 function renderAdminTabs() {
   document.querySelectorAll('[data-admin-tab]').forEach((button) => {
     button.classList.toggle('active', button.dataset.adminTab === state.adminTab);
@@ -1887,7 +1344,6 @@ function renderAdminTabs() {
   els.reportSection.classList.toggle('hidden', true);
   els.moderationSection.classList.toggle('hidden', true);
 }
-
 function renderAdminItems(items) {
   state.adminItems = items;
   renderAdminTabs();
@@ -1912,7 +1368,6 @@ function renderAdminItems(items) {
     els.adminSelectAll.checked = false;
   }
 }
-
 function exportAdminCsv() {
   const rows = [['tab', 'time', 'board', 'globalNumber', 'typeOrAction', 'confidence', 'reason']];
   for (const item of state.adminItems) {
@@ -1935,7 +1390,6 @@ function exportAdminCsv() {
   link.click();
   URL.revokeObjectURL(url);
 }
-
 function syncAdminBoardFilter() {
   if (!els.adminBoardFilter) {
     return;
@@ -1951,7 +1405,6 @@ function syncAdminBoardFilter() {
     els.adminBoardFilter.value = selectedBoard;
   }
 }
-
 async function loadAdminDetail(globalNumber, host, options: AnyRecord = {}) {
   const detail = await api(`/api/admin/posts/${globalNumber}`, {
     timeoutMs: ADMIN_LOAD_TIMEOUT_MS,
@@ -1962,14 +1415,12 @@ async function loadAdminDetail(globalNumber, host, options: AnyRecord = {}) {
   container.innerHTML = adminPostDetailHtml(detail, options);
   host.appendChild(container);
 }
-
 function adminTableDetailHost(button) {
   const row = button.closest('tr');
   const table = row?.closest('.moderation-log-table');
   if (!row || !table) {
     return null;
   }
-
   const globalNumber = button.dataset.adminDetail;
   const next = row.nextElementSibling;
   if (next?.classList.contains('admin-detail-row') && next.dataset.detailFor === globalNumber) {
@@ -1977,7 +1428,6 @@ function adminTableDetailHost(button) {
     button.setAttribute('aria-expanded', 'false');
     return null;
   }
-
   table.querySelectorAll('.admin-detail-row').forEach((detailRow) => detailRow.remove());
   table.querySelectorAll('[data-admin-detail][aria-expanded="true"]').forEach((detailButton) => {
     detailButton.setAttribute('aria-expanded', 'false');
@@ -1993,11 +1443,9 @@ function adminTableDetailHost(button) {
   button.setAttribute('aria-expanded', 'true');
   return cell;
 }
-
 function selectedPendingIds() {
   return [...document.querySelectorAll('[data-admin-select]:checked')].map((input) => input.dataset.adminSelect);
 }
-
 async function bulkModerate(action) {
   const ids = selectedPendingIds();
   if (!ids.length) {
@@ -2017,7 +1465,6 @@ async function bulkModerate(action) {
   showToast(action === 'approve' ? 'Đã duyệt hàng loạt.' : 'Đã xóa hàng loạt.');
   await loadAdmin();
 }
-
 async function loadHome() {
   setScreen('home');
   renderBoards();
@@ -2025,25 +1472,24 @@ async function loadHome() {
   renderMyPosts();
   renderSubscribedBoards();
   const [threadsByBoard, latestPosts, watchedThreads, hotBoards, campusPulse, stats] = await Promise.all([
-    loadHomeThreadsByBoard(),
+    homeController.loadHomeThreadsByBoard(),
     api('/api/posts/latest?limit=10'),
-    loadWatchedThreadSummaries(),
+    watchlistController.loadWatchedThreadSummaries(),
     api('/api/boards/hot?limit=8'),
     api('/api/pulse?limit=12'),
     api('/api/stats')
   ]);
   renderHomeBoards(threadsByBoard, stats);
-  renderPopularThreads(popularThreadsFrom(threadsByBoard));
-  renderLatestPosts(latestPosts);
+  homeController.renderPopularThreads(popularThreadsFrom(threadsByBoard));
+  homeController.renderLatestPosts(latestPosts);
   state.watchedThreadSummaries = watchedThreads;
-  renderWatchedThreads();
+  watchlistController.renderWatchedThreads();
   renderMyPosts();
   renderSubscribedBoards();
   renderHotBoards(hotBoards);
   renderCampusPulse(campusPulse);
   renderStats(stats);
 }
-
 function renderPostLines(lines, options: AnyRecord = {}) {
   const opNumber = Number(options.opNumber || 0);
   const knownBoards = new Set((state.boards || []).map((board) => board.slug));
@@ -2063,7 +1509,7 @@ function renderPostLines(lines, options: AnyRecord = {}) {
       html = html.replace(/&gt;&gt;(\d+)/g, (_match, number) => {
         const refNumber = Number(number);
         const isOpReference = opNumber > 0 && refNumber === opNumber;
-        const isYouReference = myPostNumberSet().has(refNumber);
+        const isYouReference = isMyPost({ globalNumber: refNumber });
         const className = ['ref-link', isOpReference ? 'op-ref' : '', isYouReference ? 'you-ref' : '']
           .filter(Boolean)
           .join(' ');
@@ -2078,7 +1524,6 @@ function renderPostLines(lines, options: AnyRecord = {}) {
     })
     .join('');
 }
-
 function meta(post, options: AnyRecord = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -2150,7 +1595,6 @@ function meta(post, options: AnyRecord = {}) {
     </div>
   `;
 }
-
 function postHtml(post, type = 'post', options: AnyRecord = {}) {
   const classes = String(type)
     .split(/\s+/)
@@ -2158,7 +1602,6 @@ function postHtml(post, type = 'post', options: AnyRecord = {}) {
   if (!classes.includes('post')) {
     classes.unshift('post');
   }
-
   return `
     <article class="${classes.join(' ')}" id="p${post.globalNumber}">
       ${imageHtml(post)}
@@ -2171,14 +1614,12 @@ function postHtml(post, type = 'post', options: AnyRecord = {}) {
     </article>
   `;
 }
-
 function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply }: AnyRecord = {}) {
   if (!comments.length) {
     return state.threadSearchTerm
       ? '<p class="muted">Không có bình luận khớp tìm kiếm trong thread.</p>'
       : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>';
   }
-
   const lastSeen = Number(state.threadLastSeenBefore || 0);
   let markerShown = false;
   return comments
@@ -2199,7 +1640,6 @@ function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply }: AnyR
     })
     .join('');
 }
-
 function threadToolbarHtml(detail, position) {
   const posts = [detail.thread, ...detail.comments];
   const fileCount = posts.reduce((total, post) => total + postMediaCount(post), 0);
@@ -2219,7 +1659,6 @@ function threadToolbarHtml(detail, position) {
   const slowModeLabel = detail.thread.slowModeUntil
     ? `<span class="archived-label">Chế độ chậm ${Number(detail.thread.slowModeSeconds || 0)}s</span>`
     : '';
-
   return `
     <div class="toolbar-links">
       [<a href="#board/${state.boardSlug}">Quay lại</a>]
@@ -2242,7 +1681,6 @@ function threadToolbarHtml(detail, position) {
     ${commentMeta ? `<div class="toolbar-pages">${pageControlsHtml(commentMeta, 'thread-comments')}</div>` : ''}
   `;
 }
-
 function syncAutoUpdateControls() {
   document.querySelectorAll('[data-auto-update]').forEach((checkbox) => {
     checkbox.checked = state.autoUpdate;
@@ -2251,26 +1689,22 @@ function syncAutoUpdateControls() {
     counter.textContent = state.autoUpdate ? String(state.autoCountdown) : '';
   });
 }
-
 function stopAutoUpdateTimer() {
   if (state.autoTimer) {
     window.clearInterval(state.autoTimer);
     state.autoTimer = null;
   }
 }
-
 function audioWorkInProgress() {
   return (
     state.audioTranscribing.size > 0 ||
     Object.values(state.audioRecorders as AnyRecord).some((item) => item?.recorder?.state === 'recording')
   );
 }
-
 function postponeAutoUpdateForAudio() {
   state.autoCountdown = 7;
   syncAutoUpdateControls();
 }
-
 function resetAutoUpdateTimer() {
   stopAutoUpdateTimer();
   state.autoCountdown = 7;
@@ -2297,21 +1731,17 @@ function resetAutoUpdateTimer() {
     syncAutoUpdateControls();
   }, 1000);
 }
-
 function setAutoUpdate(enabled) {
   state.autoUpdate = enabled;
   resetAutoUpdateTimer();
 }
-
 function currentPermalinkPost() {
   return new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('p') || '';
 }
-
 function canModerateFromAdminToken() {
   const payload = decodeJwtPayload(state.token);
   return Boolean(payload && ['admin', 'owner', 'moderator'].includes(payload.role));
 }
-
 function threadHeaderActionsHtml(detail: AnyRecord = {}) {
   if (!canModerateFromAdminToken()) {
     return '';
@@ -2322,18 +1752,15 @@ function threadHeaderActionsHtml(detail: AnyRecord = {}) {
   }
   return `<div class="thread-admin-action-group">${actions.join(' ')}</div>`;
 }
-
 function focusPermalinkPost(globalNumber, { scroll = false }: AnyRecord = {}) {
   const postNumber = String(globalNumber || '').trim();
   if (!postNumber) {
     return;
   }
-
   const target = document.getElementById(`p${postNumber}`);
   if (!target) {
     return;
   }
-
   document.querySelectorAll('.permalink-target').forEach((post) => {
     post.classList.remove('permalink-target');
   });
@@ -2344,7 +1771,6 @@ function focusPermalinkPost(globalNumber, { scroll = false }: AnyRecord = {}) {
     }, 0);
   }
 }
-
 function renderCatalogThreads(threads) {
   const term = els.catalogSearchInput.value.trim();
   const visibleThreads = sortedCatalogThreads(
@@ -2373,10 +1799,8 @@ function renderCatalogThreads(threads) {
     els.catalogGrid.innerHTML = '<p class="muted">Không có OP khớp tìm kiếm.</p>';
     return;
   }
-
   els.catalogGrid.innerHTML = visibleThreads.map(catalogThreadHtml).join('');
 }
-
 async function loadCatalog() {
   const board = currentBoard();
   if (!board) {
@@ -2390,7 +1814,6 @@ async function loadCatalog() {
   els.catalogReturnTop.href = `#board/${board.slug}`;
   els.catalogReturnBottom.href = `#board/${board.slug}`;
   els.catalogSearchInput.value = '';
-
   const threads = await api(`/api/boards/${board.slug}/threads`);
   writeBoardThreadsCache(board.slug, threads, { page: 1, pageSize: state.boardPageSize });
   state.catalogThreads = threads;
@@ -2398,10 +1821,8 @@ async function loadCatalog() {
     els.catalogGrid.innerHTML = '<p class="muted">Chưa có chủ đề công khai.</p>';
     return;
   }
-
   renderCatalogThreads(threads);
 }
-
 function renderArchiveThreads(threads) {
   const visibleThreads = threads.filter((thread) => !isPostFiltered(thread));
   if (!visibleThreads.length) {
@@ -2410,7 +1831,6 @@ function renderArchiveThreads(threads) {
   }
   els.archiveList.innerHTML = visibleThreads.map(archiveThreadHtml).join('');
 }
-
 async function loadArchive() {
   const board = state.boards.find((item) => item.slug === state.boardSlug);
   setScreen('archive');
@@ -2432,12 +1852,10 @@ async function loadArchive() {
     els.archiveList.innerHTML = '<p class="muted">Kho lưu trữ không công khai.</p>';
     return;
   }
-
   const threads = await api(`/api/boards/${board.slug}/archive`);
   state.archiveThreads = threads;
   renderArchiveThreads(threads);
 }
-
 function boardReplyPreviewsHtml(thread) {
   const comments = (Array.isArray(thread.previewComments) ? thread.previewComments : []).filter(
     (comment) => !isPostFiltered(comment)
@@ -2455,7 +1873,6 @@ function boardReplyPreviewsHtml(thread) {
     </div>
   `;
 }
-
 function renderBoardThreads(threads) {
   const term = els.boardSearchInput.value.trim();
   document.querySelectorAll('[data-board-sort]').forEach((button) => {
@@ -2479,7 +1896,6 @@ function renderBoardThreads(threads) {
     els.boardPagination.innerHTML = pageControlsHtml(state.boardPageMeta, 'board');
     return;
   }
-
   els.threadList.innerHTML = visibleThreads
     .map((thread) => {
       return `
@@ -2509,7 +1925,6 @@ function renderBoardThreads(threads) {
     .join('');
   els.boardPagination.innerHTML = pageControlsHtml(state.boardPageMeta, 'board');
 }
-
 async function loadBoard() {
   const board = currentBoard();
   if (!board) {
@@ -2542,7 +1957,6 @@ async function loadBoard() {
   } else {
     closeThreadComposer();
   }
-
   const cacheOptions = {
     boardSlug: board.slug,
     page: state.boardPage,
@@ -2563,7 +1977,6 @@ async function loadBoard() {
     els.threadList.innerHTML = '<p class="muted">Đang tải chủ đề...</p>';
     els.boardPagination.innerHTML = '';
   }
-
   const query = new URLSearchParams({
     page: String(state.boardPage),
     pageSize: String(state.boardPageSize),
@@ -2588,7 +2001,6 @@ async function loadBoard() {
   state.boardPageMeta = entry.meta;
   renderBoardThreads(entry.threads);
 }
-
 async function loadThread({ resetReply = false, focusPost = '' }: AnyRecord = {}) {
   setScreen('thread');
   els.threadSummary.classList.add('hidden');
@@ -2622,7 +2034,7 @@ async function loadThread({ resetReply = false, focusPost = '' }: AnyRecord = {}
   state.threadSearchTerm = state.threadSearchTerm || detail.commentPage?.search || detail.commentsSearch || '';
   state.commentsSort = detail.commentPage?.sort || detail.commentsSort || state.commentsSort;
   writeThreadLastSeen(state.threadId, currentMaxNumber);
-  syncWatchedThreadFromDetail(detail);
+  watchlistController.syncWatchedThreadFromDetail(detail);
   state.boardSlug = detail.thread.boardSlug;
   setupRealtime();
   state.threadGlobalNumber = detail.thread.globalNumber;
@@ -2686,10 +2098,8 @@ async function loadThread({ resetReply = false, focusPost = '' }: AnyRecord = {}
   syncThreadPostCollapseToolbarState();
   resetAutoUpdateTimer();
 }
-
 let adminLoadRequestId = 0;
 let adminLoadController = null;
-
 async function loadAdmin() {
   const requestId = ++adminLoadRequestId;
   const requestedTab = state.adminTab;
@@ -2717,12 +2127,10 @@ async function loadAdmin() {
     els.moderationSection.classList.add('hidden');
     return;
   }
-
   renderAdminPasskeys();
   renderAdminTabs();
   els.pendingList.innerHTML = adminLoadingHtml();
   loadAdminModerationSettingsInBackground();
-
   try {
     const endpoint = adminEndpoint();
     const data = await api(endpoint, {
@@ -2772,7 +2180,6 @@ async function loadAdmin() {
     }
   }
 }
-
 function loadPolicy(section = '') {
   setScreen('policy');
   const sectionId = {
@@ -2789,7 +2196,6 @@ function loadPolicy(section = '') {
     window.scrollTo({ top: 0 });
   }
 }
-
 function route() {
   hideReferencePreview();
   const hash = window.location.hash || '#home';
@@ -2848,13 +2254,10 @@ function route() {
   }
   setupRealtime();
 }
-
-
 const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController({
   deletePasswordInputs: els.deletePasswordInputs,
   formValue
 });
-
 async function confirmDuplicateThreadIfNeeded(body) {
   try {
     const result = await api(`/api/boards/${state.boardSlug}/threads/check-duplicate`, {
@@ -2875,7 +2278,6 @@ async function confirmDuplicateThreadIfNeeded(body) {
     return true;
   }
 }
-
 async function submitThread(event) {
   event.preventDefault();
   const body = els.threadBody.value;
@@ -2951,7 +2353,6 @@ async function submitThread(event) {
     restoreButton();
   }
 }
-
 async function submitAppeal(event) {
   event.preventDefault();
   setFormError(els.appealError);
@@ -2962,7 +2363,6 @@ async function submitAppeal(event) {
     setFormError(els.appealError, 'Nhập mã kháng nghị và lý do.');
     return;
   }
-
   const button = event.submitter || els.appealForm?.querySelector('[type="submit"]');
   const restoreButton = setButtonLoading(button, 'Đang gửi...');
   try {
@@ -2983,7 +2383,6 @@ async function submitAppeal(event) {
     restoreButton();
   }
 }
-
 async function submitComment(event) {
   event.preventDefault();
   if (state.threadIsArchived || state.threadIsLocked) {
@@ -3038,7 +2437,6 @@ async function submitComment(event) {
     restoreButton();
   }
 }
-
 async function createComment(body, captchaToken) {
   const useQuickReply = !els.quickReply.classList.contains('hidden');
   const form = useQuickReply ? els.quickReplyForm : els.commentForm;
@@ -3058,7 +2456,6 @@ async function createComment(body, captchaToken) {
     })
   });
 }
-
 async function selfEditPost(globalNumber, currentBody = '') {
   const edit = await showPostEditModal(globalNumber, currentBody, { showReason: false });
   if (!edit) {
@@ -3080,7 +2477,6 @@ async function selfEditPost(globalNumber, currentBody = '') {
   showToast(result.status === 'pending' ? 'Đã sửa bài. Nội dung đang chờ duyệt lại.' : 'Đã sửa bài.');
   await refreshCurrentScreen();
 }
-
 async function selfDeletePost(globalNumber, { fileOnly = false, sourceElement = null }: AnyRecord = {}) {
   const label = fileOnly ? 'xóa tệp khỏi bài' : 'xóa bài';
   const password = window.prompt(`Mật khẩu để ${label} No.${globalNumber}:`, myPostDeletePassword(globalNumber));
@@ -3115,7 +2511,6 @@ async function selfDeletePost(globalNumber, { fileOnly = false, sourceElement = 
     await refreshCurrentScreen();
   }
 }
-
 function positionQuickReply(event) {
   const width = Math.min(332, window.innerWidth - 8);
   const height = Math.min(334, window.innerHeight - 8);
@@ -3124,7 +2519,6 @@ function positionQuickReply(event) {
   els.quickReply.style.left = `${left}px`;
   els.quickReply.style.top = `${top}px`;
 }
-
 function addQuoteToQuickReply(number) {
   const quote = `>>${number}`;
   const lines = els.quickReplyBody.value
@@ -3137,7 +2531,6 @@ function addQuoteToQuickReply(number) {
   els.quickReplyBody.value = `${lines.join('\n')}\n`;
   updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
 }
-
 function openQuickReply(number, event) {
   if (state.threadIsArchived || state.threadIsLocked) {
     showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
@@ -3161,13 +2554,11 @@ function openQuickReply(number, event) {
   els.refPreview.classList.add('hidden');
   window.setTimeout(() => els.quickReplyBody.focus(), 0);
 }
-
 function closeQuickReply() {
   els.quickReply.classList.add('hidden');
   updatePrivacyWarning('', els.quickReplyPrivacyWarning);
   state.quickReplyDrag = null;
 }
-
 async function submitQuickReply(event) {
   event.preventDefault();
   if (state.threadIsArchived || state.threadIsLocked) {
@@ -3205,7 +2596,6 @@ async function submitQuickReply(event) {
     restoreButton();
   }
 }
-
 function resetForgotPasswordForm() {
   if (!els.forgotPasswordForm) {
     return;
@@ -3216,7 +2606,6 @@ function resetForgotPasswordForm() {
   setFormError(els.forgotError);
   resetHcaptcha(els.forgotCaptcha);
 }
-
 function renderAccountRecoveryPanel() {
   if (!els.accountRecoveryPanel) {
     return;
@@ -3228,15 +2617,13 @@ function renderAccountRecoveryPanel() {
   els.recoveryCodeResultValue.textContent = '';
   setFormError(els.recoveryCodeError);
 }
-
 function notifyWatchedThreadPost(payload: AnyRecord = {}) {
   notifyWatchedThreadPostWithDependencies(payload, {
     readWatchedThreads,
-    writeWatchedThreads,
+    writeWatchedThreads: watchlistController.writeWatchedThreads,
     browserNotificationIds: state.browserNotificationIds
   });
 }
-
 function setupRealtime() {
   setupRealtimeConnection({
     loadHome,
@@ -3248,7 +2635,6 @@ function setupRealtime() {
     notifyWatchedThreadPost
   });
 }
-
 function refreshCurrentScreen() {
   const hash = window.location.hash || '#home';
   if (hash.startsWith('#thread/')) {
@@ -3265,7 +2651,6 @@ function refreshCurrentScreen() {
   }
   return loadHome();
 }
-
 function handleKeyboardShortcut(event) {
   if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || eventInTextInput(event)) {
     return;
@@ -3292,7 +2677,6 @@ function handleKeyboardShortcut(event) {
     window.location.hash = `#board/${state.boardSlug}`;
   }
 }
-
 function bindEvents() {
   const ai = createAiActions({
     showToast,
@@ -3301,7 +2685,6 @@ function bindEvents() {
     syncAutoUpdateControls,
     audioWorkInProgress
   });
-
   window.addEventListener('hashchange', route);
   window.addEventListener('keydown', handleKeyboardShortcut);
   // Image error events don't bubble, so listen in the capture phase. When a
@@ -3346,9 +2729,7 @@ function bindEvents() {
   bindAiActionEvents({ els, ai });
   bindComposerMediaInputEvents({ els, state, showToast });
   bindThreadSearchEvents({ body: document.body, state, loadThread, normalizeThreadSearchTerm, showToast });
-
   bindThreadMediaKeyboardEvents({ body: document.body });
-
   document.body.addEventListener('click', async (event) => {
     const composerInsertButton = event.target.closest('[data-composer-insert]');
     if (composerInsertButton) {
@@ -3356,7 +2737,6 @@ function bindEvents() {
       insertComposerToken(pickerRoot?.dataset.composerPicker, composerInsertButton.dataset.composerInsert, { showToast });
       return;
     }
-
     const insertReplyTemplateButton = event.target.closest('[data-insert-reply-template]');
     if (insertReplyTemplateButton) {
       const picker = insertReplyTemplateButton.closest('[data-reply-template-picker]');
@@ -3364,31 +2744,25 @@ function bindEvents() {
       insertReplyTemplate(insertReplyTemplateButton.dataset.insertReplyTemplate, selectedId);
       return;
     }
-
     const saveReplyTemplateButton = event.target.closest('[data-save-reply-template]');
     if (saveReplyTemplateButton) {
       saveComposerReplyTemplate(saveReplyTemplateButton.dataset.saveReplyTemplate);
       return;
     }
-
-
     const threadMediaJump = event.target.closest('[data-thread-media-jump]');
     if (threadMediaJump) {
       event.preventDefault();
       focusPermalinkPost(threadMediaJump.dataset.threadMediaJump, { scroll: true });
       return;
     }
-
     if (handleThreadMediaClick(event, { showToast })) {
       return;
     }
-
     const quickReplyNumber = event.target.closest('[data-quick-reply]');
     if (quickReplyNumber) {
       openQuickReply(quickReplyNumber.dataset.quickReply, event);
       return;
     }
-
     const selfDeletePostButton = event.target.closest('[data-self-delete-post]');
     if (selfDeletePostButton) {
       try {
@@ -3401,7 +2775,6 @@ function bindEvents() {
       }
       return;
     }
-
     const selfEditPostButton = event.target.closest('[data-self-edit-post]');
     if (selfEditPostButton) {
       try {
@@ -3414,7 +2787,6 @@ function bindEvents() {
       }
       return;
     }
-
     const accountEditPostButton = event.target.closest('[data-account-edit-post]');
     if (accountEditPostButton) {
       const globalNumber = accountEditPostButton.dataset.accountEditPost;
@@ -3456,24 +2828,21 @@ function bindEvents() {
       await loadThread().catch((error) => showToast(error.message));
       return;
     }
-
     const watchButton = event.target.closest('[data-toggle-watch]');
     if (watchButton) {
       toggleCurrentThreadWatch();
       return;
     }
-
     const unwatchThreadButton = event.target.closest('[data-unwatch-thread]');
     if (unwatchThreadButton) {
-      removeWatchedThread(unwatchThreadButton.dataset.unwatchThread);
+      watchlistController.removeWatchedThread(unwatchThreadButton.dataset.unwatchThread);
       showToast('Đã bỏ theo dõi chủ đề.');
       if ((window.location.hash || '#home').startsWith('#home')) {
-        state.watchedThreadSummaries = await loadWatchedThreadSummaries();
-        renderWatchedThreads();
+        state.watchedThreadSummaries = await watchlistController.loadWatchedThreadSummaries();
+        watchlistController.renderWatchedThreads();
       }
       return;
     }
-
     const watchedUnreadToggle = event.target.closest('#watchedUnreadToggle');
     if (watchedUnreadToggle) {
       const preferences = localDisplayPreferences();
@@ -3481,57 +2850,50 @@ function bindEvents() {
         ...preferences,
         watchedUnreadOnly: !preferences.watchedUnreadOnly
       });
-      renderWatchedThreads();
+      watchlistController.renderWatchedThreads();
       persistAccountSettings({ silent: true });
       showToast(displayPreferences.watchedUnreadOnly ? 'Đang chỉ hiện thread chưa đọc.' : 'Đang hiện toàn bộ watchlist.');
       return;
     }
-
     const watchedMarkAllRead = event.target.closest('#watchedMarkAllRead');
     if (watchedMarkAllRead) {
-      const count = markAllWatchedThreadsRead();
-      renderWatchedThreads();
+      const count = watchlistController.markAllWatchedThreadsRead();
+      watchlistController.renderWatchedThreads();
       if (count) {
         persistAccountSettings({ silent: true });
         showToast(`Đã đánh dấu ${count.toLocaleString()} chủ đề là đã đọc.`);
       }
       return;
     }
-
     const markWatchReadButton = event.target.closest('[data-mark-watch-read]');
     if (markWatchReadButton) {
-      if (markWatchedThreadRead(markWatchReadButton.dataset.markWatchRead)) {
-        renderWatchedThreads();
+      if (watchlistController.markWatchedThreadRead(markWatchReadButton.dataset.markWatchRead)) {
+        watchlistController.renderWatchedThreads();
         persistAccountSettings({ silent: true });
         showToast('Đã đánh dấu chủ đề là đã đọc.');
       }
       return;
     }
-
     const boardRefreshButton = event.target.closest('[data-board-refresh]');
     if (boardRefreshButton) {
       await loadBoard().catch((error) => showToast(error.message));
       return;
     }
-
     const threadTemplateButton = event.target.closest('[data-thread-template]');
     if (threadTemplateButton) {
       insertThreadTemplate(threadTemplateButton.dataset.threadTemplate, { showToast });
       return;
     }
-
     const threadTemplateDismissButton = event.target.closest('[data-thread-template-dismiss]');
     if (threadTemplateDismissButton) {
       dismissThreadTemplate({ showToast });
       return;
     }
-
     const removeSavedSearchButton = event.target.closest('[data-remove-saved-search]');
     if (removeSavedSearchButton) {
       removeSavedSearch(removeSavedSearchButton.dataset.removeSavedSearch);
       return;
     }
-
     const accountPrivateDataClick = handleAccountPrivateDataClick(event);
     if (accountPrivateDataClick) {
       await accountPrivateDataClick;
@@ -3561,20 +2923,17 @@ function bindEvents() {
       await boardCatalogControlClick;
       return;
     }
-
     const replyLink = event.target.closest('[data-open-reply]');
     if (replyLink) {
       openReplyComposer();
       els.replyComposer.scrollIntoView({ block: 'center' });
       return;
     }
-
     const pageTopButton = event.target.closest('[data-scroll-page-top]');
     if (pageTopButton) {
       window.scrollTo({ top: 0, behavior: 'smooth' });
       return;
     }
-
     const pageButton = event.target.closest('[data-page-action]');
     if (pageButton && !pageButton.disabled) {
       const nextPage = Math.max(1, Number(pageButton.dataset.page) || 1);
@@ -3587,7 +2946,6 @@ function bindEvents() {
       }
       return;
     }
-
     const hideThreadButton = event.target.closest('[data-hide-thread]');
     if (hideThreadButton) {
       addLocalSetItem(hiddenThreadsKey, hideThreadButton.dataset.hideThread);
@@ -3595,7 +2953,6 @@ function bindEvents() {
       showToast('Đã ẩn chủ đề trên trình duyệt này.');
       return;
     }
-
     const hidePostButton = event.target.closest('[data-hide-post]');
     if (hidePostButton) {
       addLocalSetItem(hiddenPostsKey, hidePostButton.dataset.hidePost);
@@ -3608,7 +2965,6 @@ function bindEvents() {
       showToast('Đã ẩn bài trên trình duyệt này.');
       return;
     }
-
     const filterPosterButton = event.target.closest('[data-filter-poster]');
     if (filterPosterButton) {
       const posterIdValue = filterPosterButton.dataset.filterPoster || '';
@@ -3625,7 +2981,6 @@ function bindEvents() {
       showToast('Đã thêm bộ lọc Poster ID.');
       return;
     }
-
     const notePosterButton = event.target.closest('[data-note-poster]');
     if (notePosterButton) {
       const posterIdValue = notePosterButton.dataset.notePoster || '';
@@ -3647,36 +3002,30 @@ function bindEvents() {
       showToast('Đã lưu ghi chú Poster ID.');
       return;
     }
-
     const translatePostButton = event.target.closest('[data-translate-post]');
     if (translatePostButton) {
       await ai.translatePost(translatePostButton);
       return;
     }
-
     const ttsPostButton = event.target.closest('[data-tts-post]');
     if (ttsPostButton) {
       await ai.speakPost(ttsPostButton);
       return;
     }
-
     const copyPostLinkButton = event.target.closest('[data-copy-post-link]');
     if (copyPostLinkButton) {
       await copyPostPermalink(copyPostLinkButton.dataset.copyPostLink);
       return;
     }
-
     if (handleThreadPostCollapseClick(event, { showToast })) {
       return;
     }
-
     const scrollButton = event.target.closest('[data-scroll-thread]');
     if (scrollButton) {
       const target = scrollButton.dataset.scrollThread === 'bottom' ? els.threadToolbarBottom : els.threadScreen;
       target.scrollIntoView({ block: scrollButton.dataset.scrollThread === 'bottom' ? 'end' : 'start' });
       return;
     }
-
     const quoteButton = event.target.closest('[data-quote]');
     if (quoteButton) {
       const quote = quoteButton.dataset.quote;
@@ -3689,13 +3038,11 @@ function bindEvents() {
       els.commentBody.focus();
       return;
     }
-
     const spoilerText = event.target.closest('.spoiler-text');
     if (spoilerText && !spoilerText.classList.contains('revealed')) {
       spoilerText.classList.add('revealed');
       return;
     }
-
     const referencePreviewClick = await handleReferencePreviewClick(event);
     if (referencePreviewClick) {
       return;
@@ -3707,7 +3054,6 @@ function bindEvents() {
       els.commentBody.focus();
       return;
     }
-
     const pollOption = event.target.closest('[data-poll-option]');
     if (pollOption) {
       try {
@@ -3722,7 +3068,6 @@ function bindEvents() {
       }
       return;
     }
-
     const reactionButton = event.target.closest('[data-reaction]');
     if (reactionButton) {
       const globalNumber = reactionButton.dataset.reactionTarget;
@@ -3740,7 +3085,6 @@ function bindEvents() {
       }
       return;
     }
-
     const voteButton = event.target.closest('[data-vote]');
     if (voteButton) {
       const globalNumber = voteButton.dataset.voteTarget;
@@ -3761,7 +3105,6 @@ function bindEvents() {
       }
       return;
     }
-
     const reportButton = event.target.closest('[data-report]');
     if (reportButton) {
       const report = await showReportModal(reportButton.dataset.report);
@@ -3779,29 +3122,24 @@ function bindEvents() {
       }
       return;
     }
-
     const adminTabButton = event.target.closest('[data-admin-tab]');
     if (adminTabButton) {
       state.adminTab = adminTabButton.dataset.adminTab;
       await loadAdmin();
       return;
     }
-
     if (event.target.closest('#adminRefresh, [data-admin-retry]')) {
       await loadAdmin();
       return;
     }
-
     if (event.target.closest('#adminExport')) {
       exportAdminCsv();
       return;
     }
-
     if (event.target.closest('#adminSaveModerationSettings')) {
       await saveAdminModerationSettings();
       return;
     }
-
     const adminBoardCreateButton = event.target.closest('[data-admin-board-create]');
     if (adminBoardCreateButton) {
       const form = adminBoardCreateButton.closest('[data-admin-board-create-form]');
@@ -3821,7 +3159,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminBoardSaveButton = event.target.closest('[data-admin-board-save]');
     if (adminBoardSaveButton) {
       const row = adminBoardSaveButton.closest('[data-admin-board-row]');
@@ -3845,7 +3182,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminBoardDeleteButton = event.target.closest('[data-admin-board-delete]');
     if (adminBoardDeleteButton) {
       const row = adminBoardDeleteButton.closest('[data-admin-board-row]');
@@ -3866,7 +3202,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminUserCreateButton = event.target.closest('[data-admin-user-create]');
     if (adminUserCreateButton) {
       const form = adminUserCreateButton.closest('[data-admin-user-create-form]');
@@ -3882,7 +3217,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminUserSaveButton = event.target.closest('[data-admin-user-save]');
     if (adminUserSaveButton) {
       const row = adminUserSaveButton.closest('[data-admin-user-row]');
@@ -3902,7 +3236,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminUserDisableButton = event.target.closest('[data-admin-user-disable]');
     if (adminUserDisableButton) {
       const row = adminUserDisableButton.closest('[data-admin-user-row]');
@@ -3920,17 +3253,14 @@ function bindEvents() {
       }
       return;
     }
-
     if (event.target.closest('#adminBulkApprove')) {
       await bulkModerate('approve');
       return;
     }
-
     if (event.target.closest('#adminBulkDelete')) {
       await bulkModerate('delete');
       return;
     }
-
     const appealResolveButton = event.target.closest('[data-admin-resolve-appeal]');
     if (appealResolveButton) {
       const status = appealResolveButton.dataset.status === 'accepted' ? 'accepted' : 'rejected';
@@ -3953,7 +3283,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminDetailButton = event.target.closest('[data-admin-detail]');
     if (adminDetailButton) {
       const isTableDetail = Boolean(adminDetailButton.closest('tr')?.closest('.moderation-log-table'));
@@ -3977,7 +3306,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminReportsSummaryButton = event.target.closest('[data-admin-reports-summary]');
     if (adminReportsSummaryButton) {
       const globalNumber = adminReportsSummaryButton.dataset.adminReportsSummary;
@@ -4001,7 +3329,6 @@ function bindEvents() {
       }
       return;
     }
-
     const boardDigestButton = event.target.closest('[data-board-digest]');
     if (boardDigestButton) {
       const box = document.querySelector('[data-board-digest-result]');
@@ -4024,7 +3351,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminNoteButton = event.target.closest('[data-admin-note]');
     if (adminNoteButton) {
       const note = window.prompt(`Ghi chú nội bộ cho No.${adminNoteButton.dataset.adminNote}:`, '') || '';
@@ -4043,7 +3369,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminEditPostButton = event.target.closest('[data-admin-edit-post]');
     if (adminEditPostButton) {
       const globalNumber = adminEditPostButton.dataset.adminEditPost;
@@ -4071,7 +3396,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminRestorePostButton = event.target.closest('[data-admin-restore-post]');
     if (adminRestorePostButton) {
       const globalNumber = adminRestorePostButton.dataset.adminRestorePost;
@@ -4098,7 +3422,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminDeletePostButton = event.target.closest('[data-admin-delete-post]');
     if (adminDeletePostButton) {
       const globalNumber = adminDeletePostButton.dataset.adminDeletePost;
@@ -4129,7 +3452,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminStickyButton = event.target.closest('[data-admin-sticky-thread]');
     if (adminStickyButton) {
       const threadId = adminStickyButton.dataset.adminStickyThread;
@@ -4156,7 +3478,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminLockButton = event.target.closest('[data-admin-lock-thread]');
     if (adminLockButton) {
       const threadId = adminLockButton.dataset.adminLockThread;
@@ -4183,7 +3504,6 @@ function bindEvents() {
       }
       return;
     }
-
     const adminSanctionButton = event.target.closest('[data-admin-sanction]');
     if (adminSanctionButton) {
       const kind = adminSanctionButton.dataset.adminSanction;
@@ -4209,7 +3529,6 @@ function bindEvents() {
       }
       return;
     }
-
     const revokeSanctionButton = event.target.closest('[data-admin-revoke-sanction]');
     if (revokeSanctionButton) {
       const reason = await showReasonModal('Lý do gỡ lệnh làm chậm/tạm khóa:', 'revoke');
@@ -4228,7 +3547,6 @@ function bindEvents() {
       }
       return;
     }
-
     const pendingButton = event.target.closest('[data-action]');
     if (pendingButton) {
       const item = pendingButton.closest('.pending-item');
@@ -4257,48 +3575,41 @@ function bindEvents() {
       }
     }
   });
-
   document.body.addEventListener('change', (event) => {
     const autoUpdate = event.target.closest('[data-auto-update]');
     if (autoUpdate) {
       setAutoUpdate(autoUpdate.checked);
     }
-
     if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminReportCategoryFilter, #adminTimeFilter, #adminPriorityFilter, #adminConfidenceFilter, #adminPrioritySort')) {
       loadAdmin().catch((error) => showToast(error.message));
     }
-
     if (event.target.closest('#adminSelectAll')) {
       document.querySelectorAll('[data-admin-select]').forEach((input) => {
         input.checked = els.adminSelectAll.checked;
       });
     }
-
     const themeSelect = event.target.closest('[data-theme-select]');
     if (themeSelect) {
       applyTheme(themeSelect.value);
       persistAccountSettings({ silent: true });
     }
-
     const commentSort = event.target.closest('[data-comment-sort]');
     if (commentSort) {
       state.commentsSort = commentSort.value;
       state.threadCommentPage = 1;
       loadThread().catch((error) => showToast(error.message));
     }
-
     const watchedSortSelect = event.target.closest('#watchedSortSelect');
     if (watchedSortSelect) {
       applyDisplayPreferences({
         ...localDisplayPreferences(),
         watchedSort: normalizeWatchedSort(watchedSortSelect.value)
       });
-      renderWatchedThreads();
+      watchlistController.renderWatchedThreads();
       persistAccountSettings({ silent: true });
       showToast('Đã đổi cách sắp xếp watchlist.');
     }
   });
-
   bindAccountFormEvents({
     els,
     state,
@@ -4323,7 +3634,6 @@ function bindEvents() {
     homeBoardKey,
     render2FAState
   });
-
   bindAdminAuthEvents({
     els,
     state,
@@ -4333,7 +3643,6 @@ function bindEvents() {
     loadAdmin
   });
 }
-
 async function init() {
   bindEvents();
   syncDeletePasswordInputs();
@@ -4355,5 +3664,15 @@ async function init() {
   syncAdminBoardFilter();
   route();
 }
-
 init().catch((error) => showToast(error.message));
+
+
+
+
+
+
+
+
+
+
+

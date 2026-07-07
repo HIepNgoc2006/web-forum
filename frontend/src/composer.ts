@@ -432,3 +432,71 @@ export function insertComposerToken(target, token, { showToast }: AnyRecord = {}
   textarea.dispatchEvent(new Event('input', { bubbles: true }));
   textarea.focus();
 }
+
+
+export function createReplyTemplateComposerController({
+  state,
+  readReplyTemplates,
+  addReplyTemplate,
+  showToast,
+  composerTextarea: resolveComposerTextarea = composerTextarea,
+  insertComposerBlock: insertBlock = insertComposerBlock
+}: AnyRecord) {
+  function renderReplyTemplatePickers() {
+    const templates = readReplyTemplates();
+    document.querySelectorAll('[data-reply-template-picker]').forEach((root) => {
+      const target = root.dataset.replyTemplatePicker;
+      const scopedTemplates = templates.filter((template) => !template.boardSlug || template.boardSlug === state.boardSlug);
+      const options = scopedTemplates
+        .map((template) => '<option value="' + escapeHtml(template.id) + '">' + escapeHtml(template.title) + '</option>')
+        .join('');
+      root.innerHTML =
+        '<span>Mẫu đã lưu</span>' +
+        '<select data-reply-template-select ' +
+        (scopedTemplates.length ? '' : 'disabled') +
+        ' aria-label="Mẫu đã lưu">' +
+        (scopedTemplates.length ? options : '<option value="">Chưa có mẫu</option>') +
+        '</select>' +
+        '<button class="link-button" data-insert-reply-template="' +
+        escapeHtml(target) +
+        '" type="button" ' +
+        (scopedTemplates.length ? '' : 'disabled') +
+        '>[Chèn]</button>' +
+        '<button class="link-button" data-save-reply-template="' +
+        escapeHtml(target) +
+        '" type="button">[Lưu mẫu]</button>';
+    });
+  }
+
+  function insertReplyTemplate(target, id) {
+    const template = readReplyTemplates().find((item) => item.id === id);
+    if (!template) {
+      showToast('Không tìm thấy mẫu trả lời.');
+      return;
+    }
+    insertBlock(target, template.body, { showToast });
+  }
+
+  function saveComposerReplyTemplate(target) {
+    const textarea = resolveComposerTextarea(target);
+    const body = safeReplyTemplateBody(textarea?.value || '');
+    if (!body) {
+      showToast('Nhập nội dung trước khi lưu mẫu.');
+      textarea?.focus();
+      return;
+    }
+    addReplyTemplate({
+      title: defaultReplyTemplateTitle(body),
+      body,
+      boardSlug: state.boardSlug || ''
+    });
+    showToast('Đã lưu mẫu trả lời.');
+  }
+
+  return {
+    renderReplyTemplatePickers,
+    insertReplyTemplate,
+    saveComposerReplyTemplate
+  };
+}
+

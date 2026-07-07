@@ -15,6 +15,38 @@ import {
   writeThreadLastSeen
 } from './storage';
 
+export function createWatchlistController(dependencies: AnyRecord = {}) {
+  const { isPostFiltered, scheduleAccountPrivateDataSave } = dependencies;
+
+  return {
+    writeWatchedThreads(watchedThreads) {
+      return writeWatchedThreads(watchedThreads, { scheduleAccountPrivateDataSave });
+    },
+    syncWatchedThreadFromDetail(detail) {
+      return syncWatchedThreadFromDetail(detail, { scheduleAccountPrivateDataSave });
+    },
+    removeWatchedThread(threadId) {
+      return removeWatchedThread(threadId, { scheduleAccountPrivateDataSave });
+    },
+    loadWatchedThreadSummaries() {
+      return loadWatchedThreadSummaries({
+        isPostFiltered,
+        scheduleAccountPrivateDataSave
+      });
+    },
+    markWatchedThreadRead(threadId) {
+      return markWatchedThreadRead(threadId, { scheduleAccountPrivateDataSave });
+    },
+    markAllWatchedThreadsRead() {
+      return markAllWatchedThreadsRead({ scheduleAccountPrivateDataSave });
+    },
+    renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
+      return renderWatchedThreads(watchedThreads, { isPostFiltered });
+    }
+  };
+}
+
+
 function persistWatchedThreads(watchedThreads, { scheduleAccountPrivateDataSave }: AnyRecord = {}) {
   localStorage.setItem(watchedThreadsKey, JSON.stringify(watchedThreads));
   if (state.accountToken && state.accountPrivateData) {
@@ -301,3 +333,4 @@ export function renderWatchedThreads(watchedThreads = state.watchedThreadSummari
     })
     .join('');
 }
+
