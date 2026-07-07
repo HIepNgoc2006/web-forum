@@ -101,7 +101,7 @@ import { bindQuickReplyEvents } from './quick-reply-events';
 import { reactionControlHtml, voteControlHtml } from './post-controls';
 import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
 import { pollHtml } from './post-poll';
-import { threadSearchHtml } from './thread-search';
+import { bindThreadSearchEvents, threadSearchHtml } from './thread-search';
 import { state } from './state';
 import {
   applyNotificationPreferences,
@@ -3346,6 +3346,7 @@ function bindEvents() {
   bindReferencePreviewEvents();
   bindAiActionEvents({ els, ai });
   bindComposerMediaInputEvents({ els, state, showToast });
+  bindThreadSearchEvents({ body: document.body, state, loadThread, normalizeThreadSearchTerm, showToast });
 
   document.body.addEventListener('keydown', (event) => {
     const mediaToggle = event.target.closest('[data-image-toggle][role="button"]');
@@ -3356,16 +3357,6 @@ function bindEvents() {
     mediaToggle.click();
   });
 
-  document.body.addEventListener('submit', (event) => {
-    const threadSearchForm = event.target.closest('#threadSearchForm');
-    if (!threadSearchForm) {
-      return;
-    }
-    event.preventDefault();
-    state.threadSearchTerm = normalizeThreadSearchTerm(String(new FormData(threadSearchForm).get('q') || ''));
-    state.threadCommentPage = 1;
-    loadThread().catch((error) => showToast(error.message));
-  });
 
   document.body.addEventListener('click', async (event) => {
     const composerInsertButton = event.target.closest('[data-composer-insert]');
@@ -3389,13 +3380,6 @@ function bindEvents() {
       return;
     }
 
-    const clearThreadSearchButton = event.target.closest('[data-clear-thread-search]');
-    if (clearThreadSearchButton) {
-      state.threadSearchTerm = '';
-      state.threadCommentPage = 1;
-      await loadThread().catch((error) => showToast(error.message));
-      return;
-    }
 
     const threadMediaJump = event.target.closest('[data-thread-media-jump]');
     if (threadMediaJump) {

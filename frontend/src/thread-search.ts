@@ -23,3 +23,26 @@ export function threadSearchHtml(detail: AnyRecord = {}, threadSearchTerm = ''):
     </form>
   `;
 }
+
+export function bindThreadSearchEvents({ body = document.body, state, loadThread, normalizeThreadSearchTerm, showToast }: AnyRecord) {
+  body.addEventListener('submit', (event) => {
+    const threadSearchForm = event.target.closest('#threadSearchForm');
+    if (!threadSearchForm) {
+      return;
+    }
+    event.preventDefault();
+    state.threadSearchTerm = normalizeThreadSearchTerm(String(new FormData(threadSearchForm).get('q') || ''));
+    state.threadCommentPage = 1;
+    loadThread().catch((error) => showToast(error.message));
+  });
+
+  body.addEventListener('click', async (event) => {
+    const clearThreadSearchButton = event.target.closest('[data-clear-thread-search]');
+    if (!clearThreadSearchButton) {
+      return;
+    }
+    state.threadSearchTerm = '';
+    state.threadCommentPage = 1;
+    await loadThread().catch((error) => showToast(error.message));
+  });
+}
