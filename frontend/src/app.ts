@@ -130,10 +130,9 @@ import {
 import {
   bindThreadMediaKeyboardEvents,
   handleThreadMediaClick,
-  setPostCollapsed,
+  handleThreadPostCollapseClick,
   syncThreadMediaToolbarState,
-  syncThreadPostCollapseToolbarState,
-  toggleAllThreadPostsCollapsed
+  syncThreadPostCollapseToolbarState
 } from './thread-dom';
 import type { AnyRecord } from './types';
 import {
@@ -3708,19 +3707,7 @@ function bindEvents() {
       return;
     }
 
-    const collapsePostButton = event.target.closest('[data-collapse-post]');
-    if (collapsePostButton) {
-      const post = collapsePostButton.closest('article.post');
-      const collapsed = !post?.classList.contains('post-collapsed');
-      setPostCollapsed(post, collapsed);
-      syncThreadPostCollapseToolbarState();
-      return;
-    }
-
-    const collapseThreadPostsButton = event.target.closest('[data-thread-collapse-posts]');
-    if (collapseThreadPostsButton) {
-      const collapsed = toggleAllThreadPostsCollapsed();
-      showToast(collapsed ? 'Đã thu toàn bộ bài trong thread.' : 'Đã mở toàn bộ bài trong thread.');
+    if (handleThreadPostCollapseClick(event, { showToast })) {
       return;
     }
 

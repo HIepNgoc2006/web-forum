@@ -90,6 +90,30 @@ export function handleThreadMediaClick(event, { showToast }: AnyRecord = {}) {
   return false;
 }
 
+export function handleThreadPostCollapseClick(event, { showToast }: AnyRecord = {}) {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  const collapsePostButton = target.closest('[data-collapse-post]');
+  if (collapsePostButton) {
+    const post = collapsePostButton.closest('article.post');
+    const collapsed = !post?.classList.contains('post-collapsed');
+    setPostCollapsed(post, collapsed);
+    syncThreadPostCollapseToolbarState();
+    return true;
+  }
+
+  const collapseThreadPostsButton = target.closest('[data-thread-collapse-posts]');
+  if (collapseThreadPostsButton) {
+    const collapsed = toggleAllThreadPostsCollapsed();
+    showToast(collapsed ? 'Đã thu toàn bộ bài trong thread.' : 'Đã mở toàn bộ bài trong thread.');
+    return true;
+  }
+
+  return false;
+}
 export function setMediaToggleExpanded(imageToggle, expanded, { revealSpoiler = false }: AnyRecord = {}) {
   if (!imageToggle) {
     return;
