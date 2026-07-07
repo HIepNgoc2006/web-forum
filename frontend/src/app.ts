@@ -96,6 +96,7 @@ import {
 } from './post-form';
 import { createPostClipboardActions, selectedPostQuoteText } from './post-clipboard';
 import { reactionControlHtml, voteControlHtml } from './post-controls';
+import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
 import { state } from './state';
 import {
   applyNotificationPreferences,
@@ -2097,32 +2098,6 @@ function threadSearchHtml(detail: AnyRecord = {}) {
   `;
 }
 
-function accountPostEditButtonHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
-  if (!isAccountPost(post) || !post?.globalNumber) {
-    return '';
-  }
-  const encodedBody = encodeURIComponent(post.body || '');
-  return `<button class="${className}" data-account-edit-post="${post.globalNumber}" data-account-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
-}
-
-function selfDeletePostActionsHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
-  if (!post?.globalNumber || post.isDeleted) {
-    return '';
-  }
-  const deleteFileButton = postMediaCount(post)
-    ? `<button class="${className}" data-self-delete-post="${post.globalNumber}" data-file-only="true" type="button">[Xóa tệp]</button>`
-    : '';
-  return `${deleteFileButton}<button class="${className}" data-self-delete-post="${post.globalNumber}" type="button">[Xóa bài]</button>`;
-}
-
-function selfEditPostButtonHtml(post, { className = 'quote-button' }: AnyRecord = {}) {
-  if (!post?.globalNumber || post.isDeleted) {
-    return '';
-  }
-  const encodedBody = encodeURIComponent(post.body || '');
-  return `<button class="${className}" data-self-edit-post="${post.globalNumber}" data-self-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
-}
-
 function meta(post, options: AnyRecord = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -2131,7 +2106,7 @@ function meta(post, options: AnyRecord = {}) {
   const showReplyAction = options.replyAction !== false;
   const canReply = options.canReply !== false;
   const showPostActions = options.actions !== false;
-  const accountEditAction = showPostActions ? accountPostEditButtonHtml(post) : '';
+  const accountEditAction = showPostActions ? accountPostEditButtonHtml(post, { isAccountPost }) : '';
   const selfEditAction = showPostActions ? selfEditPostButtonHtml(post) : '';
   const selfDeleteActions = showPostActions ? selfDeletePostActionsHtml(post) : '';
   const permalink = postPermalink(post, options, state.threadId);
