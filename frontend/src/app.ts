@@ -97,6 +97,7 @@ import {
 import { createPostClipboardActions, selectedPostQuoteText } from './post-clipboard';
 import { reactionControlHtml, voteControlHtml } from './post-controls';
 import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
+import { pollHtml } from './post-poll';
 import { state } from './state';
 import {
   applyNotificationPreferences,
@@ -2866,33 +2867,6 @@ function route() {
     loadBoard().catch((error) => showToast(error.message));
   }
   setupRealtime();
-}
-
-function pollHtml(poll, canVote = true) {
-  if (!poll?.options?.length) {
-    return '';
-  }
-  const totalVotes = Number(poll.totalVotes || 0);
-  return `
-    <div class="poll-box">
-      <div class="poll-title">Thăm dò ẩn danh · ${totalVotes} vote</div>
-      ${poll.options
-        .map((option) => {
-          const votes = Number(option.votes || 0);
-          const percent = totalVotes ? Math.round((votes / totalVotes) * 100) : 0;
-          return `
-            <div class="poll-option">
-              <button data-poll-option="${escapeHtml(option.id)}" type="button" ${canVote ? '' : 'disabled'}>
-                ${escapeHtml(option.text)}
-              </button>
-              <span class="poll-meter"><span style="width: ${percent}%"></span></span>
-              <span>${votes} (${percent}%)</span>
-            </div>
-          `;
-        })
-        .join('')}
-    </div>
-  `;
 }
 
 // Shared change handler for a file input that stages an image on state[stateKey].
