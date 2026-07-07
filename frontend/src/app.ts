@@ -94,6 +94,7 @@ import {
   hasOption,
   withImageSpoiler
 } from './post-form';
+import { createPostClipboardActions, selectedPostQuoteText } from './post-clipboard';
 import { state } from './state';
 import {
   applyNotificationPreferences,
@@ -218,6 +219,8 @@ const showPostEditModal = createPostEditModal({
   fileToDataUrl,
   imagePreviewHtml
 });
+
+const { copyPostPermalink } = createPostClipboardActions({ showToast });
 
 function writeWatchedThreads(watchedThreads) {
   return writeWatchedThreadsWithDependencies(watchedThreads, { scheduleAccountPrivateDataSave });
@@ -2071,60 +2074,6 @@ function renderPostLines(lines, options: AnyRecord = {}) {
       return `<div class="post-line ${line.type === 'greentext' ? 'greentext' : ''}">${html || '&nbsp;'}</div>`;
     })
     .join('');
-}
-
-function selectedPostQuoteText(postElement) {
-  const selection = window.getSelection?.();
-  const body = postElement?.querySelector('.post-body');
-  if (!selection || selection.isCollapsed || selection.rangeCount === 0 || !body) {
-    return '';
-  }
-  const range = selection.getRangeAt(0);
-  if (!range.intersectsNode(body)) {
-    return '';
-  }
-  const lines = selection
-    .toString()
-    .replace(/\r/g, '')
-    .slice(0, 800)
-    .split('\n')
-    .map((line) => line.replace(/\s+/g, ' ').trim())
-    .filter(Boolean);
-  return lines.map((line) => `>${line}`).join('\n');
-}
-
-function absolutePostPermalink(permalink) {
-  if (!permalink || permalink === '#') {
-    return window.location.href;
-  }
-  return `${window.location.origin}${window.location.pathname}${permalink}`;
-}
-
-async function copyTextToClipboard(text) {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(text);
-    return true;
-  }
-  const textarea = document.createElement('textarea');
-  textarea.value = text;
-  textarea.setAttribute('readonly', '');
-  textarea.style.position = 'fixed';
-  textarea.style.left = '-9999px';
-  document.body.appendChild(textarea);
-  textarea.select();
-  const copied = document.execCommand('copy');
-  textarea.remove();
-  return copied;
-}
-
-async function copyPostPermalink(permalink) {
-  const absolutePermalink = absolutePostPermalink(permalink);
-  try {
-    const copied = await copyTextToClipboard(absolutePermalink);
-    showToast(copied ? 'Đã sao chép link bài viết.' : absolutePermalink);
-  } catch {
-    showToast(absolutePermalink);
-  }
 }
 
 function reactionControlHtml(post) {
