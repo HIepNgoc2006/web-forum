@@ -26,6 +26,7 @@ type SmokePage = {
   accessibilityCheck?: boolean;
   before?: () => Promise<void> | void;
   interaction?: (cdp: CdpSession) => Promise<void> | void;
+  ignoreBrowserError?: (event: CdpMessage) => boolean;
   [key: string]: any;
 };
 
@@ -620,8 +621,14 @@ async function smokePage(page) {
       await writeFile(page.screenshotPath, image);
     }
 
-    const runtimeErrors = cdp.events.filter((event) => event.method === 'Runtime.exceptionThrown');
-    const logErrors = cdp.events.filter((event) => event.method === 'Log.entryAdded' && event.params?.entry?.level === 'error');
+    const browserErrors = cdp.events.filter((event) => {
+      if (page.ignoreBrowserError?.(event)) {
+        return false;
+      }
+      return event.method === 'Runtime.exceptionThrown' || (event.method === 'Log.entryAdded' && event.params?.entry?.level === 'error');
+    });
+    const runtimeErrors = browserErrors.filter((event) => event.method === 'Runtime.exceptionThrown');
+    const logErrors = browserErrors.filter((event) => event.method === 'Log.entryAdded');
     if (runtimeErrors.length || logErrors.length) {
       throw new Error(`${page.label} emitted browser errors.`);
     }
@@ -1644,6 +1651,15 @@ async function main() {
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'yotsuba-thread-file-delete-desktop.png'),
         checks: ['Smoke subject title', 'Bài kiểm thử browser smoke cho CI đã sửa', '[Xóa tệp]'],
+        ignoreBrowserError(event) {
+          const entry = event.method === 'Log.entryAdded' ? event.params?.entry : null;
+          return (
+            entry?.level === 'error' &&
+            entry?.source === 'network' &&
+            String(entry.url || '').startsWith(`${baseUrl}/uploads/`) &&
+            String(entry.text || '').includes('net::ERR_ABORTED')
+          );
+        },
         async interaction(cdp) {
           const result = await cdp.send('Runtime.evaluate', {
             expression: `(async () => {
