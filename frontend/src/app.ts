@@ -96,6 +96,7 @@ import {
   withImageSpoiler
 } from './post-form';
 import { createPostClipboardActions, selectedPostQuoteText } from './post-clipboard';
+import { bindQuickReplyEvents } from './quick-reply-events';
 import { reactionControlHtml, voteControlHtml } from './post-controls';
 import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
 import { pollHtml } from './post-poll';
@@ -3387,31 +3388,7 @@ function bindEvents() {
     writeDraft(draftKey('quickReply', state.threadId), els.quickReplyBody.value);
     updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
   });
-  els.quickReplyClose.addEventListener('click', closeQuickReply);
-  els.quickReplyHandle.addEventListener('mousedown', (event) => {
-    if (event.target.closest('button')) {
-      return;
-    }
-    const rect = els.quickReply.getBoundingClientRect();
-    state.quickReplyDrag = {
-      offsetX: event.clientX - rect.left,
-      offsetY: event.clientY - rect.top
-    };
-    event.preventDefault();
-  });
-  window.addEventListener('mousemove', (event) => {
-    if (!state.quickReplyDrag) {
-      return;
-    }
-    const rect = els.quickReply.getBoundingClientRect();
-    const left = clamp(event.clientX - state.quickReplyDrag.offsetX, 4, window.innerWidth - rect.width - 4);
-    const top = clamp(event.clientY - state.quickReplyDrag.offsetY, 4, window.innerHeight - rect.height - 4);
-    els.quickReply.style.left = `${left}px`;
-    els.quickReply.style.top = `${top}px`;
-  });
-  window.addEventListener('mouseup', () => {
-    state.quickReplyDrag = null;
-  });
+  bindQuickReplyEvents({ els, state, closeQuickReply });
   bindReferencePreviewEvents();
   bindAiActionEvents({ els, ai });
   els.threadImage.addEventListener(
