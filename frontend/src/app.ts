@@ -55,6 +55,7 @@ import {
 } from './account';
 import { bindAccountPasskeyEvents, bindAccountPrivateDataEvents, bindAdminPasskeyEvents } from './account-events';
 import { bindAccountFormEvents } from './account-form-events';
+import { createDeletePasswordController } from './delete-password';
 import { els } from './dom';
 import {
   composerTextarea,
@@ -142,7 +143,6 @@ import {
   myPostsKey,
   hiddenThreadsKey,
   hiddenPostsKey,
-  deletePasswordKey,
   themeKey,
   homeBoardKey,
   boardThreadsCachePrefix,
@@ -249,34 +249,6 @@ function renderLatestPosts(posts) {
 function renderWatchedThreads(watchedThreads = state.watchedThreadSummaries) {
   return renderWatchedThreadsWithDependencies(watchedThreads, { isPostFiltered });
 }
-function syncDeletePasswordInputs(value = defaultDeletePassword()) {
-  const password = String(value ?? '');
-  els.deletePasswordInputs.forEach((input) => {
-    if (input.value !== password) {
-      input.value = password;
-    }
-  });
-}
-
-function updateDeletePassword(value) {
-  const password = normalizeDeletePassword(value);
-  if (password) {
-    localStorage.setItem(deletePasswordKey, password);
-  } else {
-    localStorage.removeItem(deletePasswordKey);
-  }
-  syncDeletePasswordInputs(password);
-  return password;
-}
-
-function deletePasswordValue(form) {
-  const typedPassword = normalizeDeletePassword(formValue(form, 'deletePassword'));
-  const password = typedPassword || defaultDeletePassword();
-  localStorage.setItem(deletePasswordKey, password);
-  syncDeletePasswordInputs(password);
-  return password;
-}
-
 function accountDraftSyncEnabled() {
   return state.account?.settings?.syncDrafts !== false;
 }
@@ -3102,6 +3074,11 @@ function formValue(form, name) {
   return String(new FormData(form).get(name) || '');
 }
 
+const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController({
+  deletePasswordInputs: els.deletePasswordInputs,
+  formValue
+});
+
 function displayNameValue(form) {
   if (form?.elements?.useAccountName?.checked && state.account?.username) {
     return state.account.username;
@@ -3619,9 +3596,7 @@ function bindEvents() {
   els.appealForm?.addEventListener('submit', submitAppeal);
   els.commentForm.addEventListener('submit', submitComment);
   els.quickReplyForm.addEventListener('submit', submitQuickReply);
-  els.deletePasswordInputs.forEach((input) => {
-    input.addEventListener('input', () => updateDeletePassword(input.value));
-  });
+  bindDeletePasswordInputs();
   els.threadBody.addEventListener('input', () => {
     writeDraft(draftKey('thread', state.boardSlug), els.threadBody.value);
     updatePrivacyWarning(els.threadBody.value, els.threadPrivacyWarning);
