@@ -57,6 +57,39 @@ export function bindThreadMediaKeyboardEvents({ body = document.body }: AnyRecor
   });
 }
 
+export function handleThreadMediaClick(event, { showToast }: AnyRecord = {}) {
+  const target = event.target;
+  if (!(target instanceof Element)) {
+    return false;
+  }
+
+  const imageToggle = target.closest('[data-image-toggle]');
+  if (imageToggle) {
+    if (imageToggle.classList.contains('expanded') && target.closest('video')) {
+      return true;
+    }
+    // A spoilered image reveals on its first click instead of zooming.
+    if (imageToggle.hasAttribute('data-spoiler-image') && !imageToggle.classList.contains('spoiler-revealed')) {
+      imageToggle.classList.add('spoiler-revealed');
+      imageToggle.closest('.thread-thumb-wrap')?.classList.remove('spoiler-image');
+      syncThreadMediaToolbarState();
+      return true;
+    }
+    setMediaToggleExpanded(imageToggle, !imageToggle.classList.contains('expanded'));
+    syncThreadMediaToolbarState();
+    return true;
+  }
+
+  const threadMediaButton = target.closest('[data-thread-media-toggle]');
+  if (threadMediaButton) {
+    const expanded = toggleAllThreadMedia();
+    showToast(expanded ? 'Đã mở toàn bộ media trong thread.' : 'Đã thu toàn bộ media trong thread.');
+    return true;
+  }
+
+  return false;
+}
+
 export function setMediaToggleExpanded(imageToggle, expanded, { revealSpoiler = false }: AnyRecord = {}) {
   if (!imageToggle) {
     return;

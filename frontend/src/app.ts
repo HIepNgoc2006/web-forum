@@ -129,11 +129,10 @@ import {
 } from './thread';
 import {
   bindThreadMediaKeyboardEvents,
-  setMediaToggleExpanded,
+  handleThreadMediaClick,
   setPostCollapsed,
   syncThreadMediaToolbarState,
   syncThreadPostCollapseToolbarState,
-  toggleAllThreadMedia,
   toggleAllThreadPostsCollapsed
 } from './thread-dom';
 import type { AnyRecord } from './types';
@@ -3381,27 +3380,7 @@ function bindEvents() {
       return;
     }
 
-    const imageToggle = event.target.closest('[data-image-toggle]');
-    if (imageToggle) {
-      if (imageToggle.classList.contains('expanded') && event.target.closest('video')) {
-        return;
-      }
-      // A spoilered image reveals on its first click instead of zooming.
-      if (imageToggle.hasAttribute('data-spoiler-image') && !imageToggle.classList.contains('spoiler-revealed')) {
-        imageToggle.classList.add('spoiler-revealed');
-        imageToggle.closest('.thread-thumb-wrap')?.classList.remove('spoiler-image');
-        syncThreadMediaToolbarState();
-        return;
-      }
-      setMediaToggleExpanded(imageToggle, !imageToggle.classList.contains('expanded'));
-      syncThreadMediaToolbarState();
-      return;
-    }
-
-    const threadMediaButton = event.target.closest('[data-thread-media-toggle]');
-    if (threadMediaButton) {
-      const expanded = toggleAllThreadMedia();
-      showToast(expanded ? 'Đã mở toàn bộ media trong thread.' : 'Đã thu toàn bộ media trong thread.');
+    if (handleThreadMediaClick(event, { showToast })) {
       return;
     }
 
