@@ -41,6 +41,22 @@ function threadMediaToggles() {
   return els.threadDetail ? [...els.threadDetail.querySelectorAll('[data-image-toggle]')] : [];
 }
 
+export function bindThreadMediaKeyboardEvents({ body = document.body }: AnyRecord = {}) {
+  body.addEventListener('keydown', (event) => {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return;
+    }
+
+    const mediaToggle = target.closest('[data-image-toggle][role="button"]');
+    if (!(mediaToggle instanceof HTMLElement) || (event.key !== 'Enter' && event.key !== ' ')) {
+      return;
+    }
+    event.preventDefault();
+    mediaToggle.click();
+  });
+}
+
 export function setMediaToggleExpanded(imageToggle, expanded, { revealSpoiler = false }: AnyRecord = {}) {
   if (!imageToggle) {
     return;

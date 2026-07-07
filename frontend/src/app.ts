@@ -128,6 +128,7 @@ import {
   threadNavigationLinksHtml
 } from './thread';
 import {
+  bindThreadMediaKeyboardEvents,
   setMediaToggleExpanded,
   setPostCollapsed,
   syncThreadMediaToolbarState,
@@ -3348,15 +3349,7 @@ function bindEvents() {
   bindComposerMediaInputEvents({ els, state, showToast });
   bindThreadSearchEvents({ body: document.body, state, loadThread, normalizeThreadSearchTerm, showToast });
 
-  document.body.addEventListener('keydown', (event) => {
-    const mediaToggle = event.target.closest('[data-image-toggle][role="button"]');
-    if (!mediaToggle || (event.key !== 'Enter' && event.key !== ' ')) {
-      return;
-    }
-    event.preventDefault();
-    mediaToggle.click();
-  });
-
+  bindThreadMediaKeyboardEvents({ body: document.body });
 
   document.body.addEventListener('click', async (event) => {
     const composerInsertButton = event.target.closest('[data-composer-insert]');
