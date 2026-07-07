@@ -28,7 +28,6 @@ import {
 import {
   boardHeading,
   boardRulesForDisplay,
-  findBoardByQuery,
   normalizeBoardFilter,
   normalizeBoardSort,
   normalizeBoardThreadsPayload,
@@ -36,6 +35,7 @@ import {
   popularThreadsFrom,
   threadMatchesSearch
 } from './board';
+import { bindBoardNavigationEvents } from './board-events';
 import {
   archiveThreadHtml,
   catalogThreadHtml,
@@ -3354,31 +3354,15 @@ function bindEvents() {
   // thumbnail fails to load (e.g. a stale storage URL returning 404), swap the
   // broken-image icon for a neutral placeholder instead of leaving it ugly.
   document.addEventListener('error', handleBrokenThumbnailError, true);
-  els.homeBoardSearchForm.addEventListener('submit', (event) => {
-    event.preventDefault();
-    const board = findBoardByQuery(els.homeBoardSearchInput.value, state.boards);
-    if (!board) {
-      showToast('Không tìm thấy bảng phù hợp.');
-      return;
-    }
-    window.location.hash = `#board/${board.slug}`;
-  });
-  els.refreshThreads.addEventListener('click', () => loadBoard().catch((error) => showToast(error.message)));
-  els.saveBoardSearchButton.addEventListener('click', saveCurrentBoardSearch);
-  els.boardSearchInput.addEventListener('input', () => {
-    state.boardSearchTerm = els.boardSearchInput.value;
-    state.boardPage = 1;
-    window.clearTimeout(els.boardSearchInput.searchTimer);
-    els.boardSearchInput.searchTimer = window.setTimeout(() => loadBoard().catch((error) => showToast(error.message)), 250);
-  });
-  els.catalogSearchInput.addEventListener('input', () => renderCatalogThreads(state.catalogThreads));
-  els.startThreadButton.addEventListener('click', () => openThreadComposer());
-  els.postReplyToggle.addEventListener('click', () => openReplyComposer());
-  els.threadStartThreadButton.addEventListener('click', () => {
-    window.location.hash = `#board/${state.boardSlug}?new=1`;
-  });
-  els.backToBoard.addEventListener('click', () => {
-    window.location.hash = `#board/${state.boardSlug}`;
+  bindBoardNavigationEvents({
+    els,
+    state,
+    showToast,
+    loadBoard,
+    saveCurrentBoardSearch,
+    renderCatalogThreads,
+    openThreadComposer,
+    openReplyComposer
   });
   els.threadForm.addEventListener('submit', submitThread);
   els.appealForm?.addEventListener('submit', submitAppeal);
