@@ -88,6 +88,7 @@ import {
   syncBrowserNotificationControls
 } from './notifications';
 import { setupRealtime as setupRealtimeConnection } from './realtime';
+import { createReferencePreviewController } from './reference-preview';
 import {
   adminLockButtonHtml,
   adminStickyButtonHtml,
@@ -1194,6 +1195,25 @@ const { renderAdminPasskeys, handleAdminPasskeyClick } = bindAdminPasskeyEvents(
   showToast,
   setButtonLoading,
   loadAdmin
+});
+
+const {
+  bindReferencePreviewEvents,
+  handleReferencePreviewClick,
+  hideReferencePreview
+} = createReferencePreviewController({
+  state,
+  refPreview: els.refPreview,
+  fetchPost: async (number) => (await api('/api/posts/' + number)).post,
+  renderPostPreviewHtml: (post) =>
+    postHtml(post, 'post preview-post', {
+      actions: false,
+      checkbox: false,
+      replyAction: false,
+      canReply: false,
+      opNumber: state.threadGlobalNumber,
+      opPosterHash: state.threadPosterHash
+    })
 });
 function renderSavedSearches() {
   const searches = readSavedSearches();
@@ -4144,135 +4164,6 @@ async function toggleAudioRecording({ key, button, textarea }) {
   }
 }
 
-function referencePreviewPositionSource(source) {
-  const target = source?.target?.closest?.('.ref-link') || source?.currentTarget || source;
-  if (Number.isFinite(source?.clientX) && Number.isFinite(source?.clientY)) {
-    return { x: source.clientX + 10, y: source.clientY + 10 };
-  }
-  const rect = target?.getBoundingClientRect?.();
-  if (rect) {
-    return { x: rect.right + 10, y: rect.bottom + 6 };
-  }
-  return { x: 12, y: 12 };
-}
-
-function positionReferencePreview(source) {
-  const previewWidth = Math.max(220, Math.min(420, window.innerWidth - 12));
-  const previewHeight = Math.min(420, els.refPreview.offsetHeight || 226);
-  const position = referencePreviewPositionSource(source);
-  const left = clamp(position.x, 6, Math.max(6, window.innerWidth - previewWidth - 6));
-  const top = clamp(position.y, 6, Math.max(6, window.innerHeight - previewHeight - 6));
-  els.refPreview.style.left = `${left}px`;
-  els.refPreview.style.top = `${top}px`;
-  els.refPreview.style.maxWidth = `${previewWidth}px`;
-}
-
-function renderReferencePreviewPost(post, source) {
-  els.refPreview.classList.remove('ref-preview-loading', 'ref-preview-error');
-  els.refPreview.innerHTML = postHtml(post, 'post preview-post', {
-    actions: false,
-    checkbox: false,
-    replyAction: false,
-    canReply: false,
-    opNumber: state.threadGlobalNumber,
-    opPosterHash: state.threadPosterHash
-  });
-  positionReferencePreview(source);
-}
-
-function renderReferencePreviewMessage(message, className, source) {
-  els.refPreview.classList.remove('ref-preview-loading', 'ref-preview-error');
-  if (className) {
-    els.refPreview.classList.add(className);
-  }
-  els.refPreview.textContent = message;
-  positionReferencePreview(source);
-}
-
-async function showReference(number, source) {
-  const refNumber = String(number || '').trim();
-  if (!refNumber) {
-    return;
-  }
-  window.clearTimeout(state.refPreviewHideTimer);
-  const requestId = ++state.refPreviewRequestId;
-  positionReferencePreview(source);
-  els.refPreview.classList.remove('hidden', 'ref-preview-error');
-  els.refPreview.classList.add('ref-preview-loading');
-  els.refPreview.textContent = `Đang tải >>${refNumber}...`;
-
-  const cached = state.refPreviewCache.get(refNumber);
-  if (cached) {
-    if (cached.ok) {
-      renderReferencePreviewPost(cached.post, source);
-    } else {
-      renderReferencePreviewMessage(cached.message, 'ref-preview-error', source);
-    }
-    return;
-  }
-
-  try {
-    const result = await api(`/api/posts/${refNumber}`);
-    if (requestId !== state.refPreviewRequestId) {
-      return;
-    }
-    state.refPreviewCache.set(refNumber, { ok: true, post: result.post });
-    renderReferencePreviewPost(result.post, source);
-  } catch {
-    if (requestId !== state.refPreviewRequestId) {
-      return;
-    }
-    const message = `Bài >>${refNumber} không tồn tại hoặc chưa công khai.`;
-    state.refPreviewCache.set(refNumber, { ok: false, message });
-    renderReferencePreviewMessage(message, 'ref-preview-error', source);
-  }
-}
-
-function hideReferencePreview() {
-  state.refPreviewRequestId += 1;
-  window.clearTimeout(state.refPreviewHideTimer);
-  els.refPreview.classList.add('hidden');
-  els.refPreview.classList.remove('ref-preview-loading', 'ref-preview-error');
-  els.refPreview.innerHTML = '';
-}
-
-function scheduleHideReferencePreview() {
-  window.clearTimeout(state.refPreviewHideTimer);
-  state.refPreviewHideTimer = window.setTimeout(hideReferencePreview, 140);
-}
-
-function handleReferencePointerEnter(event) {
-  const ref = event.target.closest('.ref-link[data-ref]');
-  if (!ref || ref.contains(event.relatedTarget)) {
-    return;
-  }
-  showReference(ref.dataset.ref, event).catch(() => {});
-}
-
-function handleReferencePointerLeave(event) {
-  const ref = event.target.closest('.ref-link[data-ref]');
-  if (!ref || ref.contains(event.relatedTarget) || els.refPreview.contains(event.relatedTarget)) {
-    return;
-  }
-  scheduleHideReferencePreview();
-}
-
-function handleReferenceFocusIn(event) {
-  const ref = event.target.closest('.ref-link[data-ref]');
-  if (!ref) {
-    return;
-  }
-  showReference(ref.dataset.ref, ref).catch(() => {});
-}
-
-function handleReferenceFocusOut(event) {
-  const ref = event.target.closest('.ref-link[data-ref]');
-  if (!ref || els.refPreview.contains(event.relatedTarget)) {
-    return;
-  }
-  scheduleHideReferencePreview();
-}
-
 async function submitAccountRegister(event) {
   event.preventDefault();
   setFormError(els.registerError);
@@ -4703,11 +4594,7 @@ function bindEvents() {
   window.addEventListener('mouseup', () => {
     state.quickReplyDrag = null;
   });
-  window.addEventListener('keydown', (event) => {
-    if (event.key === 'Escape') {
-      hideReferencePreview();
-    }
-  });
+  bindReferencePreviewEvents();
   els.boardSummaryButton.addEventListener('click', () => showSummary('board'));
   els.threadSummaryButton.addEventListener('click', () => showSummary('thread'));
   els.suggestButton.addEventListener('click', loadSuggestions);
@@ -4773,13 +4660,6 @@ function bindEvents() {
     event.preventDefault();
     mediaToggle.click();
   });
-
-  document.body.addEventListener('mouseover', handleReferencePointerEnter);
-  document.body.addEventListener('mouseout', handleReferencePointerLeave);
-  document.body.addEventListener('focusin', handleReferenceFocusIn);
-  document.body.addEventListener('focusout', handleReferenceFocusOut);
-  els.refPreview.addEventListener('mouseenter', () => window.clearTimeout(state.refPreviewHideTimer));
-  els.refPreview.addEventListener('mouseleave', scheduleHideReferencePreview);
 
   document.body.addEventListener('submit', (event) => {
     const threadSearchForm = event.target.closest('#threadSearchForm');
@@ -5219,19 +5099,10 @@ function bindEvents() {
       return;
     }
 
-    const ref = event.target.closest('.ref-link');
-    if (ref) {
-      // Cross-board refs without a post number are plain anchors; let the
-      // browser navigate to the board instead of fetching a post preview.
-      if (ref.dataset.ref) {
-        await showReference(ref.dataset.ref, event);
-      }
+    const referencePreviewClick = await handleReferencePreviewClick(event);
+    if (referencePreviewClick) {
       return;
     }
-    if (!event.target.closest('.ref-preview')) {
-      hideReferencePreview();
-    }
-
     const suggestion = event.target.closest('[data-suggestion]');
     if (suggestion) {
       els.commentBody.value = decodeURIComponent(suggestion.dataset.suggestion);
@@ -5981,8 +5852,3 @@ async function init() {
 }
 
 init().catch((error) => showToast(error.message));
-
-
-
-
-
