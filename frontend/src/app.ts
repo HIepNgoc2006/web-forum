@@ -51,7 +51,7 @@ import {
   safePrivateText,
   safeReplyTemplateBody
 } from './account';
-import { bindAccountPasskeyEvents, bindAccountTwoFactorEvents } from './account-events';
+import { bindAccountPasskeyEvents, bindAccountPrivateDataEvents, bindAccountTwoFactorEvents } from './account-events';
 import { els } from './dom';
 import {
   composerTextarea,
@@ -1175,6 +1175,18 @@ const { renderPasskeys, handleAccountPasskeyClick } = bindAccountPasskeyEvents({
   finishAccountLogin
 });
 
+const { handleAccountPrivateDataClick } = bindAccountPrivateDataEvents({
+  showToast,
+  removeSavedSearch,
+  addContentFilter,
+  removeContentFilter,
+  addReplyTemplate,
+  removeReplyTemplate,
+  addPosterNote,
+  removePosterNote,
+  clearAccountPrivateData,
+  renderAccountPrivateData
+});
 async function loginAdminWithPasskey() {
   const username = (els.adminUsername.value || '').trim();
   if (!username) {
@@ -5076,87 +5088,11 @@ function bindEvents() {
       return;
     }
 
-    const addContentFilterButton = event.target.closest('[data-add-content-filter]');
-    if (addContentFilterButton) {
-      const form = addContentFilterButton.closest('.content-filter-form');
-      const type = form?.querySelector('[data-content-filter-type]')?.value || 'keyword';
-      const value = form?.querySelector('[data-content-filter-value]')?.value.trim() || '';
-      const boardSlug = form?.querySelector('[data-content-filter-board]')?.value || '';
-      if (!value) {
-        showToast('Nhập giá trị bộ lọc trước.');
-        return;
-      }
-      addContentFilter({ type, value, boardSlug });
-      renderAccountPrivateData();
-      showToast('Đã thêm bộ lọc nội dung.');
+    const accountPrivateDataClick = handleAccountPrivateDataClick(event);
+    if (accountPrivateDataClick) {
+      await accountPrivateDataClick;
       return;
     }
-
-    const removeContentFilterButton = event.target.closest('[data-remove-content-filter]');
-    if (removeContentFilterButton) {
-      removeContentFilter(removeContentFilterButton.dataset.removeContentFilter);
-      renderAccountPrivateData();
-      showToast('Đã xóa bộ lọc nội dung.');
-      return;
-    }
-
-    const addReplyTemplateButton = event.target.closest('[data-add-reply-template]');
-    if (addReplyTemplateButton) {
-      const form = addReplyTemplateButton.closest('.reply-template-form');
-      const title = form?.querySelector('[data-reply-template-title]')?.value.trim() || '';
-      const body = form?.querySelector('[data-reply-template-body]')?.value.trim() || '';
-      const boardSlug = form?.querySelector('[data-reply-template-board]')?.value || '';
-      if (!body) {
-        showToast('Nhập nội dung mẫu trước.');
-        return;
-      }
-      addReplyTemplate({ title: title || body.slice(0, 40), body, boardSlug });
-      renderAccountPrivateData();
-      showToast('Đã thêm mẫu trả lời.');
-      return;
-    }
-
-    const removeReplyTemplateButton = event.target.closest('[data-remove-reply-template]');
-    if (removeReplyTemplateButton) {
-      removeReplyTemplate(removeReplyTemplateButton.dataset.removeReplyTemplate);
-      renderAccountPrivateData();
-      showToast('Đã xóa mẫu trả lời.');
-      return;
-    }
-
-    const addPosterNoteButton = event.target.closest('[data-add-poster-note]');
-    if (addPosterNoteButton) {
-      const form = addPosterNoteButton.closest('.poster-note-form');
-      const posterId = form?.querySelector('[data-poster-note-id]')?.value.trim() || '';
-      const label = form?.querySelector('[data-poster-note-label]')?.value.trim() || '';
-      const note = form?.querySelector('[data-poster-note-text]')?.value.trim() || '';
-      const boardSlug = form?.querySelector('[data-poster-note-board]')?.value || '';
-      if (!posterId) {
-        showToast('Nhập Poster ID trước.');
-        return;
-      }
-      addPosterNote({ posterId, label, note, boardSlug });
-      renderAccountPrivateData();
-      showToast('Đã thêm ghi chú Poster ID.');
-      return;
-    }
-
-    const removePosterNoteButton = event.target.closest('[data-remove-poster-note]');
-    if (removePosterNoteButton) {
-      removePosterNote(removePosterNoteButton.dataset.removePosterNote);
-      renderAccountPrivateData();
-      showToast('Đã xóa ghi chú Poster ID.');
-      return;
-    }
-
-    const clearAccountPrivateButton = event.target.closest('[data-clear-account-private]');
-    if (clearAccountPrivateButton) {
-      const section = clearAccountPrivateButton.dataset.clearAccountPrivate;
-      await clearAccountPrivateData(section).catch((error) => showToast(error.message));
-      showToast(section ? 'Đã xóa mục dữ liệu riêng.' : 'Đã xóa toàn bộ dữ liệu riêng.');
-      return;
-    }
-
     const accountPasskeyClick = handleAccountPasskeyClick(event);
     if (accountPasskeyClick) {
       await accountPasskeyClick;

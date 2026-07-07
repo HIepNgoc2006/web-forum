@@ -218,3 +218,117 @@ export function bindAccountTwoFactorEvents({
   els.cancel2FASetupButton?.addEventListener('click', render2FAState);
   els.disable2FAButton?.addEventListener('click', disable2FA);
 }
+export function bindAccountPrivateDataEvents({
+  showToast,
+  removeSavedSearch,
+  addContentFilter,
+  removeContentFilter,
+  addReplyTemplate,
+  removeReplyTemplate,
+  addPosterNote,
+  removePosterNote,
+  clearAccountPrivateData,
+  renderAccountPrivateData
+}: AnyRecord) {
+  const fieldValue = (root: AnyRecord, selector: string) => String(root?.querySelector(selector)?.value || '');
+
+  function handleAccountPrivateDataClick(event: AnyRecord) {
+    const target = event.target;
+    if (!(target instanceof Element)) {
+      return false;
+    }
+
+    const removeSavedSearchButton = target.closest('[data-remove-saved-search]') as AnyRecord | null;
+    if (removeSavedSearchButton) {
+      removeSavedSearch(removeSavedSearchButton.dataset.removeSavedSearch);
+      return true;
+    }
+    const addContentFilterButton = target.closest('[data-add-content-filter]') as AnyRecord | null;
+    if (addContentFilterButton) {
+      const form = addContentFilterButton.closest('.content-filter-form') as AnyRecord | null;
+      const type = fieldValue(form, '[data-content-filter-type]') || 'keyword';
+      const value = fieldValue(form, '[data-content-filter-value]').trim();
+      const boardSlug = fieldValue(form, '[data-content-filter-board]');
+      if (!value) {
+        showToast('Nhập giá trị bộ lọc trước.');
+        return true;
+      }
+      addContentFilter({ type, value, boardSlug });
+      renderAccountPrivateData();
+      showToast('Đã thêm bộ lọc nội dung.');
+      return true;
+    }
+
+    const removeContentFilterButton = target.closest('[data-remove-content-filter]') as AnyRecord | null;
+    if (removeContentFilterButton) {
+      removeContentFilter(removeContentFilterButton.dataset.removeContentFilter);
+      renderAccountPrivateData();
+      showToast('Đã xóa bộ lọc nội dung.');
+      return true;
+    }
+
+    const addReplyTemplateButton = target.closest('[data-add-reply-template]') as AnyRecord | null;
+    if (addReplyTemplateButton) {
+      const form = addReplyTemplateButton.closest('.reply-template-form') as AnyRecord | null;
+      const title = fieldValue(form, '[data-reply-template-title]').trim();
+      const body = fieldValue(form, '[data-reply-template-body]').trim();
+      const boardSlug = fieldValue(form, '[data-reply-template-board]');
+      if (!body) {
+        showToast('Nhập nội dung mẫu trước.');
+        return true;
+      }
+      addReplyTemplate({ title: title || body.slice(0, 40), body, boardSlug });
+      renderAccountPrivateData();
+      showToast('Đã thêm mẫu trả lời.');
+      return true;
+    }
+
+    const removeReplyTemplateButton = target.closest('[data-remove-reply-template]') as AnyRecord | null;
+    if (removeReplyTemplateButton) {
+      removeReplyTemplate(removeReplyTemplateButton.dataset.removeReplyTemplate);
+      renderAccountPrivateData();
+      showToast('Đã xóa mẫu trả lời.');
+      return true;
+    }
+
+    const addPosterNoteButton = target.closest('[data-add-poster-note]') as AnyRecord | null;
+    if (addPosterNoteButton) {
+      const form = addPosterNoteButton.closest('.poster-note-form') as AnyRecord | null;
+      const posterId = fieldValue(form, '[data-poster-note-id]').trim();
+      const label = fieldValue(form, '[data-poster-note-label]').trim();
+      const note = fieldValue(form, '[data-poster-note-text]').trim();
+      const boardSlug = fieldValue(form, '[data-poster-note-board]');
+      if (!posterId) {
+        showToast('Nhập Poster ID trước.');
+        return true;
+      }
+      addPosterNote({ posterId, label, note, boardSlug });
+      renderAccountPrivateData();
+      showToast('Đã thêm ghi chú Poster ID.');
+      return true;
+    }
+
+    const removePosterNoteButton = target.closest('[data-remove-poster-note]') as AnyRecord | null;
+    if (removePosterNoteButton) {
+      removePosterNote(removePosterNoteButton.dataset.removePosterNote);
+      renderAccountPrivateData();
+      showToast('Đã xóa ghi chú Poster ID.');
+      return true;
+    }
+
+    const clearAccountPrivateButton = target.closest('[data-clear-account-private]') as AnyRecord | null;
+    if (clearAccountPrivateButton) {
+      const section = clearAccountPrivateButton.dataset.clearAccountPrivate;
+      return (async () => {
+        await clearAccountPrivateData(section).catch((error) => showToast(error.message));
+        showToast(section ? 'Đã xóa mục dữ liệu riêng.' : 'Đã xóa toàn bộ dữ liệu riêng.');
+      })();
+    }
+
+    return false;
+  }
+
+  return {
+    handleAccountPrivateDataClick
+  };
+}
