@@ -98,6 +98,7 @@ import { createPostClipboardActions, selectedPostQuoteText } from './post-clipbo
 import { reactionControlHtml, voteControlHtml } from './post-controls';
 import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
 import { pollHtml } from './post-poll';
+import { threadSearchHtml } from './thread-search';
 import { state } from './state';
 import {
   applyNotificationPreferences,
@@ -2076,29 +2077,6 @@ function renderPostLines(lines, options: AnyRecord = {}) {
     .join('');
 }
 
-function threadSearchHtml(detail: AnyRecord = {}) {
-  const term = state.threadSearchTerm;
-  const total = Number(detail.commentPage?.total ?? 0);
-  const status = term
-    ? `${total.toLocaleString()} phản hồi khớp trong thread`
-    : 'Tìm theo nội dung, số bài hoặc ID poster';
-  return `
-    <form class="thread-search" id="threadSearchForm">
-      <label>
-        <span>Tìm trong thread</span>
-        <input id="threadSearchInput" name="q" value="${escapeHtml(term)}" placeholder="từ khóa, No. hoặc ID" autocomplete="off">
-      </label>
-      <button class="ghost-button" type="submit">[Tìm]</button>
-      ${
-        term
-          ? '<button class="link-button" data-clear-thread-search type="button">[Xóa]</button>'
-          : ''
-      }
-      <span class="thread-search-status">${escapeHtml(status)}</span>
-    </form>
-  `;
-}
-
 function meta(post, options: AnyRecord = {}) {
   const labels = post.moderationLabels?.length
     ? `AI:${post.moderationLabels.map(moderationLabelText).join(',')}`
@@ -2689,7 +2667,7 @@ async function loadThread({ resetReply = false, focusPost = '' }: AnyRecord = {}
       canReply
     })}
     ${threadMediaGalleryHtml(detail)}
-    ${threadSearchHtml(detail)}
+    ${threadSearchHtml(detail, state.threadSearchTerm)}
     ${commentSortHtml(state.commentsSort)}
     <div class="comment-list">
       ${threadCommentsHtml(visibleComments, {
