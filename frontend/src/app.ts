@@ -57,6 +57,7 @@ import { bindAccountPasskeyEvents, bindAccountPrivateDataEvents, bindAdminPasske
 import { bindAccountFormEvents } from './account-form-events';
 import { createDeletePasswordController } from './delete-password';
 import { els } from './dom';
+import { setButtonLoading, setFormError, showToast } from './feedback';
 import {
   composerTextarea,
   confirmPrivacyBeforeSubmit,
@@ -640,34 +641,6 @@ function applyDisplayPreferences(preferences = localDisplayPreferences()) {
   }
   syncWatchedControls({ unreadOnly: safe.watchedUnreadOnly });
   return safe;
-}
-
-function showToast(message) {
-  els.toast.textContent = message;
-  els.toast.classList.remove('hidden');
-  window.clearTimeout((showToast as AnyRecord).timer);
-  (showToast as AnyRecord).timer = window.setTimeout(() => els.toast.classList.add('hidden'), 3400);
-}
-
-function setButtonLoading(button, label = 'Đang gửi...') {
-  if (!button) {
-    return () => {};
-  }
-  const previousText = button.textContent;
-  button.disabled = true;
-  button.textContent = label;
-  return () => {
-    button.disabled = false;
-    button.textContent = previousText;
-  };
-}
-
-function setFormError(element, message = '') {
-  if (!element) {
-    return;
-  }
-  element.textContent = message;
-  element.classList.toggle('hidden', !message);
 }
 
 function accountSettingsFromLocal() {
