@@ -60,6 +60,7 @@ import { createDeletePasswordController } from './delete-password';
 import { els } from './dom';
 import { setButtonLoading, setFormError, showToast } from './feedback';
 import {
+  bindComposerMediaInputEvents,
   composerTextarea,
   confirmPrivacyBeforeSubmit,
   defaultReplyTemplateTitle,
@@ -2849,53 +2850,6 @@ function route() {
   setupRealtime();
 }
 
-// Shared change handler for a file input that stages an image on state[stateKey].
-// Optionally renders a preview panel and/or updates a filename label.
-function handleImageInputChange(input, { stateKey, preview = null, fileNameEl = null }) {
-  return async () => {
-    const reset = () => {
-      state[stateKey] = [];
-      if (preview) {
-        preview.innerHTML = '';
-        preview.classList.add('hidden');
-      }
-      if (fileNameEl) {
-        fileNameEl.textContent = 'Chưa chọn tệp';
-      }
-    };
-    const files = Array.from(input.files || []) as File[];
-    if (!files.length) {
-      reset();
-      return;
-    }
-    if (files.length > MAX_MEDIA_PER_POST) {
-      showToast(`Tối đa ${MAX_MEDIA_PER_POST} tệp mỗi bài viết.`);
-      input.value = '';
-      reset();
-      return;
-    }
-    if (files.some((file) => !isSupportedMediaFile(file))) {
-      showToast('Chỉ hỗ trợ ảnh, MP4 hoặc WebM.');
-      input.value = '';
-      reset();
-      return;
-    }
-    try {
-      state[stateKey] = await Promise.all(files.map((file) => fileToDataUrl(file)));
-      if (preview) {
-        preview.innerHTML = imagePreviewHtml(state[stateKey]);
-        preview.classList.remove('hidden');
-      }
-      if (fileNameEl) {
-        fileNameEl.textContent = files.length === 1 ? files[0].name : `${files.length} tệp đã chọn`;
-      }
-    } catch (error) {
-      showToast(error.message);
-      input.value = '';
-      reset();
-    }
-  };
-}
 
 const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController({
   deletePasswordInputs: els.deletePasswordInputs,
@@ -3391,18 +3345,8 @@ function bindEvents() {
   bindQuickReplyEvents({ els, state, closeQuickReply });
   bindReferencePreviewEvents();
   bindAiActionEvents({ els, ai });
-  els.threadImage.addEventListener(
-    'change',
-    handleImageInputChange(els.threadImage, { stateKey: 'selectedImage', preview: els.imagePreview })
-  );
-  els.commentImage.addEventListener(
-    'change',
-    handleImageInputChange(els.commentImage, { stateKey: 'commentImage', preview: els.commentImagePreview })
-  );
-  els.quickReplyFile.addEventListener(
-    'change',
-    handleImageInputChange(els.quickReplyFile, { stateKey: 'quickReplyImage', fileNameEl: els.quickReplyFileName })
-  );
+  bindComposerMediaInputEvents({ els, state, showToast });
+
   document.body.addEventListener('keydown', (event) => {
     const mediaToggle = event.target.closest('[data-image-toggle][role="button"]');
     if (!mediaToggle || (event.key !== 'Enter' && event.key !== ' ')) {

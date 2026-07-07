@@ -1,5 +1,5 @@
 import { safePrivateText, safeReplyTemplateBody } from './account';
-import { SUPPORTED_VIDEO_TYPES, THREAD_TEMPLATES } from './constants';
+import { MAX_MEDIA_PER_POST, SUPPORTED_VIDEO_TYPES, THREAD_TEMPLATES } from './constants';
 import { els } from './dom';
 import {
   dataUrlBytes,
@@ -231,6 +231,87 @@ export function imagePreviewHtml(image) {
       <div class="file-text">${fileTextHtml(image)}</div>
     </div>
   `;
+}
+
+// Shared change handler for a file input that stages media on state[stateKey].
+// Optionally renders a preview panel and/or updates a filename label.
+function handleImageInputChange(input, { state, stateKey, preview = null, fileNameEl = null, showToast, maxMediaPerPost }) {
+  return async () => {
+    const reset = () => {
+      state[stateKey] = [];
+      if (preview) {
+        preview.innerHTML = '';
+        preview.classList.add('hidden');
+      }
+      if (fileNameEl) {
+        fileNameEl.textContent = 'Chưa chọn tệp';
+      }
+    };
+    const files = Array.from(input.files || []) as File[];
+    if (!files.length) {
+      reset();
+      return;
+    }
+    if (files.length > maxMediaPerPost) {
+      showToast(`Tối đa ${maxMediaPerPost} tệp mỗi bài viết.`);
+      input.value = '';
+      reset();
+      return;
+    }
+    if (files.some((file) => !isSupportedMediaFile(file))) {
+      showToast('Chỉ hỗ trợ ảnh, MP4 hoặc WebM.');
+      input.value = '';
+      reset();
+      return;
+    }
+    try {
+      state[stateKey] = await Promise.all(files.map((file) => fileToDataUrl(file)));
+      if (preview) {
+        preview.innerHTML = imagePreviewHtml(state[stateKey]);
+        preview.classList.remove('hidden');
+      }
+      if (fileNameEl) {
+        fileNameEl.textContent = files.length === 1 ? files[0].name : `${files.length} tệp đã chọn`;
+      }
+    } catch (error) {
+      showToast(error.message);
+      input.value = '';
+      reset();
+    }
+  };
+}
+
+export function bindComposerMediaInputEvents({ els, state, showToast, maxMediaPerPost = MAX_MEDIA_PER_POST }: AnyRecord) {
+  els.threadImage.addEventListener(
+    'change',
+    handleImageInputChange(els.threadImage, {
+      state,
+      stateKey: 'selectedImage',
+      preview: els.imagePreview,
+      showToast,
+      maxMediaPerPost
+    })
+  );
+  els.commentImage.addEventListener(
+    'change',
+    handleImageInputChange(els.commentImage, {
+      state,
+      stateKey: 'commentImage',
+      preview: els.commentImagePreview,
+      showToast,
+      maxMediaPerPost
+    })
+  );
+  els.quickReplyFile.addEventListener(
+    'change',
+    handleImageInputChange(els.quickReplyFile, {
+      state,
+      stateKey: 'quickReplyImage',
+      fileNameEl: els.quickReplyFileName,
+      showToast,
+      maxMediaPerPost
+    })
+  );
 }
 
 export function writeTextareaValue(textarea, value) {
