@@ -85,6 +85,14 @@ import {
 } from './home';
 import { eventInTextInput, moveKeyboardNavigation } from './keyboard';
 import { createPostEditModal, showReasonModal, showReportModal } from './modals';
+import {
+  capcodeValue,
+  clearDisplayName,
+  displayNameValue,
+  formValue,
+  hasOption,
+  withImageSpoiler
+} from './post-form';
 import { state } from './state';
 import {
   applyNotificationPreferences,
@@ -3070,48 +3078,10 @@ function handleImageInputChange(input, { stateKey, preview = null, fileNameEl = 
   };
 }
 
-function formValue(form, name) {
-  return String(new FormData(form).get(name) || '');
-}
-
 const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController({
   deletePasswordInputs: els.deletePasswordInputs,
   formValue
 });
-
-function displayNameValue(form) {
-  if (form?.elements?.useAccountName?.checked && state.account?.username) {
-    return state.account.username;
-  }
-  return formValue(form, 'displayName');
-}
-
-function clearDisplayName(form) {
-  if (form?.elements?.displayName) {
-    form.elements.displayName.value = '';
-  }
-  if (form?.elements?.useAccountName) {
-    form.elements.useAccountName.checked = false;
-  }
-}
-
-function hasOption(value, option) {
-  return String(value)
-    .toLowerCase()
-    .split(/[\s,]+/)
-    .includes(option);
-}
-
-// Attaches the per-post "hide image (spoiler)" choice to the upload payload.
-function withImageSpoiler(image, form) {
-  return mediaList(image).map((item) => ({ ...item, spoiler: Boolean(form?.elements?.imageSpoiler?.checked) }));
-}
-
-// Whether the poster opted to stamp this post with their staff capcode. Only
-// honored server-side for verified admin/moderator accounts.
-function capcodeValue(form) {
-  return isCapcodeEligible() && Boolean(form?.elements?.capcode?.checked);
-}
 
 async function confirmDuplicateThreadIfNeeded(body) {
   try {
@@ -3162,11 +3132,11 @@ async function submitThread(event) {
         .map((option) => option.trim())
         .filter(Boolean),
       options,
-      displayName: displayNameValue(els.threadForm),
+      displayName: displayNameValue(els.threadForm, state.account),
       deletePassword: deletePasswordValue(els.threadForm),
       captchaToken,
       posterToken: state.posterToken,
-      capcode: capcodeValue(els.threadForm),
+      capcode: capcodeValue(els.threadForm, { isCapcodeEligible }),
       images: withImageSpoiler(state.selectedImage, els.threadForm)
     };
     const result = await api(`/api/boards/${state.boardSlug}/threads`, {
@@ -3309,10 +3279,10 @@ async function createComment(body, captchaToken) {
       images: withImageSpoiler(image, form),
       captchaToken,
       posterToken: state.posterToken,
-      displayName: displayNameValue(form),
+      displayName: displayNameValue(form, state.account),
       options: formValue(form, 'options'),
       deletePassword: deletePasswordValue(form),
-      capcode: capcodeValue(form)
+      capcode: capcodeValue(form, { isCapcodeEligible })
     })
   });
 }
