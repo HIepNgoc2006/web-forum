@@ -37,6 +37,7 @@ import {
 import { bindBoardNavigationEvents, handleBoardCatalogControlClick } from './board-events';
 import { createAccountStateController } from './account-state';
 import { createAccountUiController } from './account-ui';
+import { createAccountScreenController } from './account-screen';
 import { handleAdminChange, handleAdminClick } from './admin-events';
 import {
   archiveThreadHtml,
@@ -189,8 +190,14 @@ const showPostEditModal = createPostEditModal({
   imagePreviewHtml
 });
 const { copyPostPermalink } = createPostClipboardActions({ showToast });
-let renderAccountPrivateData = () => {};
 let syncAdminBoardFilter = () => {};
+let renderAccountPrivateData = () => {};
+let renderPasskeys = () => {};
+let renderAccountRecoveryPanel = () => {};
+let applyAccountNavState = () => {};
+function updateAccountNav() {
+  applyAccountNavState();
+}
 const accountPreferencesController = createAccountPreferencesController({
   state,
   els,
@@ -207,13 +214,12 @@ const {
   applyAccountSyncedSettings,
   persistAccountSettings,
   setAccountSession,
-  updateAccountDisplayOptions,
   isCapcodeEligible,
-  updateCapcodeOptions
+  updateCapcodeOptions,
+  updateAccountDisplayOptions
 } = accountPreferencesController;
 const syncAccountHomeBoardOptions = accountPreferencesController.syncAccountHomeBoardOptions;
 const {
-  accountDraftSyncEnabled,
   readSavedSearches,
   writeSavedSearches,
   readContentFilters,
@@ -291,6 +297,31 @@ const replyTemplateController = createReplyTemplateComposerController({
   insertComposerBlock
 });
 const { renderReplyTemplatePickers, insertReplyTemplate, saveComposerReplyTemplate } = replyTemplateController;
+const accountScreenController = createAccountScreenController({
+  state,
+  els,
+  accountSettingsFromLocal,
+  syncAccountBoardSubscriptionOptions,
+  updateCapcodeOptions,
+  updateAccountDisplayOptions,
+  localDisplayPreferences,
+  localNotificationPreferences,
+  syncBrowserNotificationControls,
+  renderPasskeys: () => renderPasskeys(),
+  renderAccountPrivateData: () => renderAccountPrivateData(),
+  renderAccountRecoveryPanel: () => renderAccountRecoveryPanel(),
+  adminUsernameFromToken,
+  render2FAState
+});
+const {
+  fillAccountSettings,
+  render2FASection,
+  updateAccountNavState
+} = accountScreenController;
+applyAccountNavState = updateAccountNavState;
+function render2FAState() {
+  render2FASection();
+}
 const accountUiController = createAccountUiController({
   state,
   els,
@@ -316,13 +347,14 @@ const accountUiController = createAccountUiController({
 });
 const {
   renderAccountPrivateData: renderAccountPrivateDataFromController,
-  renderAccountRecoveryPanel,
+  renderAccountRecoveryPanel: renderAccountRecoveryPanelFromController,
   saveCurrentBoardSearch,
   removeSavedSearch,
   loadAccountSession,
   loadAccountSettings
 } = accountUiController;
 renderAccountPrivateData = renderAccountPrivateDataFromController;
+renderAccountRecoveryPanel = renderAccountRecoveryPanelFromController;
 function decodeJwtPayload(token) {
   try {
     const part = String(token || '').split('.')[1];
@@ -342,70 +374,7 @@ function adminUsernameFromToken() {
   const payload = decodeJwtPayload(state.token);
   return payload && ['admin', 'owner', 'moderator', 'viewer'].includes(payload.role) ? payload.username || '' : '';
 }
-function updateAccountNav() {
-  const loggedIn = Boolean(state.accountToken && state.account);
-  const adminUsername = loggedIn ? '' : adminUsernameFromToken();
-  const adminOnly = Boolean(adminUsername);
-  els.accountLoginLink.classList.toggle('hidden', loggedIn || adminOnly);
-  els.accountRegisterLink.classList.toggle('hidden', loggedIn || adminOnly);
-  els.accountSettingsLink.classList.toggle('hidden', !loggedIn && !adminOnly);
-  els.accountLogoutButton.classList.toggle('hidden', !loggedIn);
-  if (loggedIn) {
-    els.accountSettingsLink.textContent = `@${state.account.username}`;
-    els.accountSettingsLink.setAttribute('href', '#account');
-  } else if (adminOnly) {
-    els.accountSettingsLink.textContent = `@${adminUsername}`;
-    els.accountSettingsLink.setAttribute('href', '#admin');
-  } else {
-    els.accountSettingsLink.textContent = 'Tài khoản';
-    els.accountSettingsLink.setAttribute('href', '#account');
-  }
-  updateAccountDisplayOptions();
-  updateCapcodeOptions();
-}
-function fillAccountSettings(account = state.account) {
-  const settings = account?.settings || accountSettingsFromLocal();
-  const displayPreferences = settings.displayPreferences || localDisplayPreferences();
-  const notificationPreferences = settings.notificationPreferences || {
-    ...localNotificationPreferences(),
-    email: Boolean(settings.emailNotifications)
-  };
-  els.accountStatus.textContent = account
-    ? `Đang đăng nhập @${account.username}. Tài khoản không thay thế Anonymous trên bài công khai.`
-    : 'Chưa đăng nhập. Cài đặt bên dưới chỉ lưu trên trình duyệt này.';
-  els.accountSettingsForm.classList.remove('hidden');
-  els.accountLoggedOut.classList.toggle('hidden', Boolean(account));
-  els.accountSettingsLogout.classList.toggle('hidden', !account);
-  els.accountTheme.value = settings.theme || state.theme || 'yotsuba-b';
-  els.accountHomeBoard.value = settings.homeBoard || state.boardSlug || 'confession';
-  els.accountSyncDrafts.checked = settings.syncDrafts !== false;
-  els.accountCompactThreads.checked = Boolean(displayPreferences.compactThreads);
-  els.accountHideThumbnails.checked = Boolean(displayPreferences.hideThumbnails);
-  els.accountWatchedUnreadOnly.checked = Boolean(displayPreferences.watchedUnreadOnly);
-  els.accountWatchedSort.value = normalizeWatchedSort(displayPreferences.watchedSort);
-  els.accountEmailNotifications.checked = Boolean(notificationPreferences.email ?? settings.emailNotifications);
-  els.accountNotifyWatchedThreads.checked = notificationPreferences.watchedThreads !== false;
-  els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
-  syncBrowserNotificationControls(notificationPreferences);
-  syncAccountBoardSubscriptionOptions(settings);
-  renderAccountPrivateData();
-  render2FAState();
-  renderPasskeys();
-  renderAccountRecoveryPanel();
-}
-function render2FAState() {
-  if (!els.account2FADisabledSection || !els.account2FASetupSection || !els.account2FAEnabledSection) {
-    return;
-  }
-  const loggedIn = Boolean(state.accountToken && state.account);
-  const enabled = Boolean(state.account?.twoFactorEnabled);
-  els.account2FADisabledSection.classList.toggle('hidden', !loggedIn || enabled);
-  els.account2FASetupSection.classList.add('hidden');
-  els.account2FAEnabledSection.classList.toggle('hidden', !loggedIn || !enabled);
-  if (els.verify2FACode) els.verify2FACode.value = '';
-  if (els.disable2FAPassword) els.disable2FAPassword.value = '';
-}
-const { renderPasskeys, handleAccountPasskeyClick } = bindAccountPasskeyEvents({
+const { renderPasskeys: renderPasskeysFromController, handleAccountPasskeyClick } = bindAccountPasskeyEvents({
   els,
   state,
   api,
@@ -414,6 +383,7 @@ const { renderPasskeys, handleAccountPasskeyClick } = bindAccountPasskeyEvents({
   setButtonLoading,
   finishAccountLogin
 });
+renderPasskeys = renderPasskeysFromController;
 const { handleAccountPrivateDataClick } = bindAccountPrivateDataEvents({
   showToast,
   removeSavedSearch,
@@ -1516,8 +1486,6 @@ async function init() {
   route();
 }
 init().catch((error) => showToast(error.message));
-
-
 
 
 
