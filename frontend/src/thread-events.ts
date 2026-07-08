@@ -1,4 +1,5 @@
 import type { AnyRecord } from './types';
+import { focusPermalinkPost } from './thread-dom';
 
 type ThreadEventDependencies = {
   body?: EventTarget | null;
@@ -20,7 +21,6 @@ type ThreadEventDependencies = {
   rememberMyPost: (post: AnyRecord, type: string) => void;
   refreshAccountPostNumbers: () => Promise<any>;
   renderMyPosts: () => void;
-  focusPermalinkPost: (globalNumber: string, options?: AnyRecord) => void;
   insertComposerToken: (picker: string | undefined, token: string | undefined, options?: AnyRecord) => void;
   insertThreadTemplate: (templateId: string | undefined, options?: AnyRecord) => void;
   saveComposerReplyTemplate: (scope?: string) => void;
@@ -82,7 +82,6 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
     rememberMyPost,
     refreshAccountPostNumbers,
     renderMyPosts,
-    focusPermalinkPost,
     insertComposerToken,
     insertThreadTemplate,
     saveComposerReplyTemplate,

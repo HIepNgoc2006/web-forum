@@ -1,6 +1,26 @@
 import { els } from './dom';
 import type { AnyRecord } from './types';
 
+export function focusPermalinkPost(globalNumber: string, { scroll = false }: AnyRecord = {}) {
+  const postNumber = String(globalNumber || '').trim();
+  if (!postNumber) {
+    return;
+  }
+  const target = document.getElementById(`p${postNumber}`);
+  if (!target) {
+    return;
+  }
+  document.querySelectorAll('.permalink-target').forEach((post) => {
+    post.classList.remove('permalink-target');
+  });
+  target.classList.add('permalink-target');
+  if (scroll) {
+    window.setTimeout(() => {
+      target.scrollIntoView({ block: 'center' });
+    }, 0);
+  }
+}
+
 function loadFullMediaForToggle(imageToggle) {
   const fullSrc = imageToggle.dataset.fullSrc;
   if (!fullSrc) {
