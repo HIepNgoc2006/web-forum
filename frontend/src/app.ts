@@ -86,6 +86,7 @@ import { createPostEditModal, showReasonModal, showReportModal } from './modals'
 import { createPostClipboardActions, selectedPostQuoteText } from './post-clipboard';
 import { bindThreadEvents } from './thread-events';
 import { bindQuickReplyEvents } from './quick-reply-events';
+import { bindEvents } from './app-events';
 import { reactionControlHtml, voteControlHtml } from './post-controls';
 import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
 import { pollHtml } from './post-poll';
@@ -992,75 +993,35 @@ screenHelpers = createScreenHelpers({
   threadToolbarHtml,
   boardThreadsCachePrefix
 });
-function bindEvents() {
-  const ai = createAiActions({
-    showToast,
-    setButtonLoading,
-    postponeAutoUpdateForAudio,
-    syncAutoUpdateControls,
-    audioWorkInProgress
-  });
-  window.addEventListener('hashchange', route);
-  window.addEventListener('keydown', handleKeyboardShortcut);
-  // Image error events don't bubble, so listen in the capture phase. When a
-  // thumbnail fails to load (e.g. a stale storage URL returning 404), swap the
-  // broken-image icon for a neutral placeholder instead of leaving it ugly.
-  document.addEventListener('error', handleBrokenThumbnailError, true);
-  bindBoardNavigationEvents({
+async function init() {
+  bindEvents({
     els,
     state,
     showToast,
-    loadBoard,
+    setButtonLoading,
+    route,
+    handleKeyboardShortcut,
+    submitThread,
+    submitAppeal,
+    submitComment,
+    submitQuickReply,
+    bindDeletePasswordInputs,
+    bindComposerInputEvents,
+    postponeAutoUpdateForAudio,
+    syncAutoUpdateControls,
+    audioWorkInProgress,
     saveCurrentBoardSearch,
     renderCatalogThreads,
     openThreadComposer,
-    openReplyComposer
-  });
-  els.threadForm.addEventListener('submit', submitThread);
-  els.appealForm?.addEventListener('submit', submitAppeal);
-  els.commentForm.addEventListener('submit', submitComment);
-  els.quickReplyForm.addEventListener('submit', submitQuickReply);
-  bindDeletePasswordInputs();
-  bindComposerInputEvents();
-  bindQuickReplyEvents({ els, state, closeQuickReply });
-  bindReferencePreviewEvents();
-  bindAiActionEvents({ els, ai });
-  bindComposerMediaInputEvents({ els, state, showToast });
-  bindThreadSearchEvents({ body: document.body, state, loadThread, normalizeThreadSearchTerm, showToast });
-  bindThreadMediaKeyboardEvents({ body: document.body });
-  const adminEventDependencies = {
-    els,
-    state,
-    showToast,
-    setButtonLoading,
-    api,
-    loadAdmin,
-    loadThread,
-    loadBoard,
-    refreshPublicBoards: homeController.refreshPublicBoards,
-    saveAdminModerationSettings,
-    exportAdminCsv,
-    adminBoardPayload,
-    adminUserPayload,
-    loadAdminDetail,
-    adminTableDetailHost,
-    showReasonModal,
-    showPostEditModal,
-    bulkModerate
-  };
-  bindThreadEvents({
-    body: document.body,
-    els,
-    state,
-    showToast,
+    openReplyComposer,
     api,
     loadThread,
-    loadBoard,
     loadCatalog,
     loadArchive,
     refreshCurrentScreen,
     openQuickReply,
-    openReplyComposer,
+    loadBoard,
+    setAutoUpdate,
     updatePrivacyWarning,
     selfDeletePost,
     selfEditPost,
@@ -1096,78 +1057,18 @@ function bindEvents() {
     localDisplayPreferences,
     applyDisplayPreferences,
     normalizeWatchedSort,
-    setAutoUpdate,
     showReportModal,
-    translatePost: ai.translatePost,
-    speakPost: ai.speakPost,
     writeReaction,
-    writeVote
-  });
-  const boardCatalogEventDependencies = {
-    state,
-    showToast,
-    loadBoard,
-    loadCatalog,
-    loadArchive,
-    renderCatalogThreads,
-    toggleBoardSubscription: homeController.toggleBoardSubscription,
-    syncBoardSubscriptionButtons: homeController.syncBoardSubscriptionButtons
-  };
-  document.body.addEventListener('click', async (event) => {
-    const boardCatalogControlClick = handleBoardCatalogControlClick(event, boardCatalogEventDependencies);
-    if (boardCatalogControlClick) {
-      await boardCatalogControlClick;
-      return;
-    }
-    if (await handleAdminClick(event, adminEventDependencies)) {
-      return;
-    }
-  });
-  document.body.addEventListener('change', (event) => {
-    if (handleAdminChange(event, adminEventDependencies)) {
-      return;
-    }
-    const autoUpdate = event.target.closest('[data-auto-update]');
-    if (autoUpdate) {
-      setAutoUpdate(autoUpdate.checked);
-    }
-    const themeSelect = event.target.closest('[data-theme-select]');
-    if (themeSelect) {
-      applyTheme(themeSelect.value);
-      persistAccountSettings({ silent: true });
-    }
-    const commentSort = event.target.closest('[data-comment-sort]');
-    if (commentSort) {
-      state.commentsSort = commentSort.value;
-      state.threadCommentPage = 1;
-      loadThread().catch((error) => showToast(error.message));
-    }
-    const watchedSortSelect = event.target.closest('#watchedSortSelect');
-    if (watchedSortSelect) {
-      applyDisplayPreferences({
-        ...localDisplayPreferences(),
-        watchedSort: normalizeWatchedSort(watchedSortSelect.value)
-      });
-      watchlistController.renderWatchedThreads();
-      persistAccountSettings({ silent: true });
-      showToast('Đã đổi cách sắp xếp watchlist.');
-    }
-  });
-  bindAccountFormEvents({
-    els,
-    state,
-    api,
-    showToast,
+    writeVote,
+    bindReferencePreviewEvents,
+    normalizeThreadSearchTerm,
     setFormError,
-    setButtonLoading,
     resetHcaptcha,
     finishAccountLogin,
     setAccountSession,
     fillAccountSettings,
     updateAccountNav,
     applyAccountSyncedSettings,
-    applyTheme,
-    applyDisplayPreferences,
     applyNotificationPreferences,
     resolveBrowserWatchedThreadPreference,
     writeLocalDisplayPreferences,
@@ -1175,19 +1076,20 @@ function bindEvents() {
     writeSubscribedBoardSlugs,
     syncBoardSubscriptionButtons: homeController.syncBoardSubscriptionButtons,
     homeBoardKey,
-    render2FAState
+    render2FAState,
+    saveAdminModerationSettings,
+    exportAdminCsv,
+    adminBoardPayload,
+    adminUserPayload,
+    loadAdminDetail,
+    adminTableDetailHost,
+    bulkModerate,
+    showReasonModal,
+    refreshPublicBoards: homeController.refreshPublicBoards,
+    toggleBoardSubscription: homeController.toggleBoardSubscription,
+    loadAdmin,
+    closeQuickReply
   });
-  bindAdminAuthEvents({
-    els,
-    state,
-    api,
-    showToast,
-    setFormError,
-    loadAdmin
-  });
-}
-async function init() {
-  bindEvents();
   syncDeletePasswordInputs();
   applyTheme();
   applyDisplayPreferences();
@@ -1208,6 +1110,8 @@ async function init() {
   route();
 }
 init().catch((error) => showToast(error.message));
+
+
 
 
 
