@@ -65,6 +65,7 @@ import {
   writeTextareaValue
 } from './composer';
 import { createComposerController } from './composer-events';
+import { createAutoUpdateController } from './autoupdate';
 import { handleBrokenThumbnailError } from './events';
 import { formValue } from './post-form';
 import {
@@ -729,60 +730,19 @@ function threadToolbarHtml(detail, position) {
     ${commentMeta ? `<div class="toolbar-pages">${pageControlsHtml(commentMeta, 'thread-comments')}</div>` : ''}
   `;
 }
-function syncAutoUpdateControls() {
-  document.querySelectorAll('[data-auto-update]').forEach((checkbox) => {
-    checkbox.checked = state.autoUpdate;
-  });
-  document.querySelectorAll('.auto-countdown').forEach((counter) => {
-    counter.textContent = state.autoUpdate ? String(state.autoCountdown) : '';
-  });
-}
-function stopAutoUpdateTimer() {
-  if (state.autoTimer) {
-    window.clearInterval(state.autoTimer);
-    state.autoTimer = null;
-  }
-}
-function audioWorkInProgress() {
-  return (
-    state.audioTranscribing.size > 0 ||
-    Object.values(state.audioRecorders as AnyRecord).some((item) => item?.recorder?.state === 'recording')
-  );
-}
-function postponeAutoUpdateForAudio() {
-  state.autoCountdown = 7;
-  syncAutoUpdateControls();
-}
-function resetAutoUpdateTimer() {
-  stopAutoUpdateTimer();
-  state.autoCountdown = 7;
-  syncAutoUpdateControls();
-  if (!state.autoUpdate || !(window.location.hash || '').startsWith('#thread/')) {
-    return;
-  }
-  state.autoTimer = window.setInterval(() => {
-    if (!(window.location.hash || '').startsWith('#thread/')) {
-      stopAutoUpdateTimer();
-      return;
-    }
-    if (audioWorkInProgress()) {
-      postponeAutoUpdateForAudio();
-      return;
-    }
-    state.autoCountdown -= 1;
-    if (state.autoCountdown <= 0) {
-      state.autoCountdown = 7;
-      syncAutoUpdateControls();
-      loadThread().catch((error) => showToast(error.message));
-      return;
-    }
-    syncAutoUpdateControls();
-  }, 1000);
-}
-function setAutoUpdate(enabled) {
-  state.autoUpdate = enabled;
-  resetAutoUpdateTimer();
-}
+const autoUpdateController = createAutoUpdateController({
+  state,
+  loadThread: () => loadThread(),
+  showToast
+});
+const {
+  syncAutoUpdateControls,
+  stopAutoUpdateTimer,
+  audioWorkInProgress,
+  postponeAutoUpdateForAudio,
+  resetAutoUpdateTimer,
+  setAutoUpdate
+} = autoUpdateController;
 function currentPermalinkPost() {
   return new URLSearchParams((window.location.hash || '').split('?')[1] || '').get('p') || '';
 }
@@ -1556,6 +1516,7 @@ async function init() {
   route();
 }
 init().catch((error) => showToast(error.message));
+
 
 
 
