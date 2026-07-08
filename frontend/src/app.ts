@@ -36,6 +36,8 @@ import {
 } from './board';
 import { bindBoardNavigationEvents, handleBoardCatalogControlClick } from './board-events';
 import { createAccountStateController } from './account-state';
+import { createAccountUiController } from './account-ui';
+import { handleAdminChange, handleAdminClick } from './admin-events';
 import {
   archiveThreadHtml,
   catalogThreadHtml,
@@ -43,9 +45,6 @@ import {
   normalizeCatalogSort,
   sortedCatalogThreads
 } from './catalog';
-import {
-  defaultAccountPrivateData
-} from './account';
 import { bindAccountPasskeyEvents, bindAccountPrivateDataEvents, bindAdminPasskeyEvents } from './account-events';
 import { bindAccountFormEvents } from './account-form-events';
 import { createDeletePasswordController } from './delete-password';
@@ -79,8 +78,10 @@ import {
   renderSubscribedBoards
 } from './home';
 import { eventInTextInput, moveKeyboardNavigation } from './keyboard';
+import { createRouterController } from './router';
 import { createPostEditModal, showReasonModal, showReportModal } from './modals';
 import { createPostClipboardActions, selectedPostQuoteText } from './post-clipboard';
+import { bindThreadEvents } from './thread-events';
 import { bindQuickReplyEvents } from './quick-reply-events';
 import { reactionControlHtml, voteControlHtml } from './post-controls';
 import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
@@ -140,7 +141,6 @@ import {
   escapeHtml,
   moderationPriorityHtml,
   moderationConfidenceHtml,
-  filterTypeLabel,
   moderationLabelText,
   moderationStatusText,
   normalizeSearchValue,
@@ -191,6 +191,7 @@ const showPostEditModal = createPostEditModal({
   imagePreviewHtml
 });
 const { copyPostPermalink } = createPostClipboardActions({ showToast });
+let renderAccountPrivateData = () => {};
 const {
   accountDraftSyncEnabled,
   readSavedSearches,
@@ -229,7 +230,7 @@ const {
   api,
   showToast,
   setAccountSession,
-  renderAccountPrivateData,
+  renderAccountPrivateData: () => renderAccountPrivateData(),
   renderReplyTemplatePickers: () => {
     if (replyTemplateController?.renderReplyTemplatePickers) {
       replyTemplateController.renderReplyTemplatePickers();
@@ -237,7 +238,13 @@ const {
   }
 });
 const watchlistController = createWatchlistController({ isPostFiltered, scheduleAccountPrivateDataSave });
-const homeController = createHomeController({ isPostFiltered, writeBoardThreadsCache });
+const homeController = createHomeController({
+  isPostFiltered,
+  writeBoardThreadsCache,
+  persistAccountSettings,
+  syncAdminBoardFilter,
+  showToast
+});
 const replyTemplateController = createReplyTemplateComposerController({
   state,
   readReplyTemplates,
@@ -247,23 +254,39 @@ const replyTemplateController = createReplyTemplateComposerController({
   insertComposerBlock
 });
 const { renderReplyTemplatePickers, insertReplyTemplate, saveComposerReplyTemplate } = replyTemplateController;
+const accountUiController = createAccountUiController({
+  state,
+  els,
+  api,
+  showToast,
+  setScreen,
+  setFormError,
+  syncAccountHomeBoardOptions,
+  applyAccountSyncedSettings,
+  fillAccountSettings,
+  updateAccountNav,
+  readSavedSearches,
+  writeSavedSearches,
+  readContentFilters,
+  readReplyTemplates,
+  readPosterNotes,
+  renderReplyTemplatePickers,
+  setAccountSession,
+  refreshAccountPostNumbers,
+  loadAccountPrivateData,
+  loadCurrentBoard: currentBoard,
+  render2FAState
+});
+const {
+  renderAccountPrivateData: renderAccountPrivateDataFromController,
+  renderAccountRecoveryPanel,
+  saveCurrentBoardSearch,
+  removeSavedSearch,
+  loadAccountSession,
+  loadAccountSettings
+} = accountUiController;
+renderAccountPrivateData = renderAccountPrivateDataFromController;
 
-function isBoardSubscribed(slug = state.boardSlug) {
-  return subscribedBoardSlugs().has(String(slug));
-}
-
-async function toggleBoardSubscription(slug = state.boardSlug) {
-  const items = subscribedBoardSlugs();
-  if (items.has(slug)) {
-    items.delete(slug);
-    showToast('\u0110\u00e3 b\u1ecf theo d\u00f5i b\u1ea3ng.');
-  } else {
-    items.add(slug);
-    showToast('\u0110\u00e3 theo d\u00f5i b\u1ea3ng.');
-  }
-  writeSubscribedBoardSlugs([...items]);
-  await persistAccountSettings({ silent: true });
-}
 
 function applyTheme(theme = state.theme) {
   const safeTheme = SUPPORTED_THEMES.includes(theme) ? theme : 'yotsuba-b';
@@ -343,7 +366,7 @@ function applyAccountSyncedSettings(account = state.account) {
   applyDisplayPreferences(settings.displayPreferences);
   applyNotificationPreferences(settings.notificationPreferences || { email: settings.emailNotifications });
   writeSubscribedBoardSlugs(Array.isArray(settings.boardSubscriptions) ? settings.boardSubscriptions : []);
-  syncBoardSubscriptionButtons();
+  homeController.syncBoardSubscriptionButtons();
   syncAccountBoardSubscriptionOptions(settings);
   if ((window.location.hash || '#home').startsWith('#home')) {
     renderSubscribedBoards();
@@ -561,242 +584,6 @@ const {
       opPosterHash: state.threadPosterHash
     })
 });
-function renderSavedSearches() {
-  const searches = readSavedSearches();
-  if (!searches.length) {
-    return '<p class="latest-empty">Chưa lưu tìm kiếm nào.</p>';
-  }
-  return searches
-    .slice(0, 10)
-    .map((item) => {
-      const board = state.boards.find((entry) => entry.slug === item.boardSlug);
-      const label = item.label || `${board?.path || `/${item.boardSlug}/`} ${item.query}`;
-      return `
-        <div class="watch-item">
-          <a class="watch-thread-link" href="#board/${encodeURIComponent(item.boardSlug)}?q=${encodeURIComponent(item.query)}">
-            <span class="watch-board">${escapeHtml(board?.path || `/${item.boardSlug}/`)}</span>
-            <span class="watch-preview">${escapeHtml(label)}</span>
-          </a>
-          <button class="link-button watch-remove" data-remove-saved-search="${escapeHtml(
-            `${item.boardSlug}:${item.query}`
-          )}" type="button">[Xóa]</button>
-        </div>
-      `;
-    })
-    .join('');
-}
-function privateBoardOptions() {
-  return [
-    '<option value="">Tất cả bảng</option>',
-    ...state.boards.map((board) => `<option value="${escapeHtml(board.slug)}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</option>`)
-  ].join('');
-}
-function renderContentFilters() {
-  const filters = readContentFilters();
-  const list = filters.length
-    ? filters
-        .map((filter) => {
-          const board = filter.boardSlug ? `/${filter.boardSlug}/` : 'Tất cả';
-          const label = filter.label || filter.value;
-          return `
-            <div class="watch-item">
-              <div class="watch-thread-link">
-                <span class="watch-board">${escapeHtml(filterTypeLabel(filter.type))}</span>
-                <span class="watch-preview">${escapeHtml(label)}</span>
-                <span class="watch-stats">${escapeHtml(board)}</span>
-              </div>
-              <button class="link-button watch-remove" data-remove-content-filter="${escapeHtml(filter.id)}" type="button">[Xóa]</button>
-            </div>
-          `;
-        })
-        .join('')
-    : '<p class="latest-empty">Chưa có bộ lọc nội dung nào.</p>';
-  return `
-    <div class="content-filter-manager">
-      ${list}
-      <div class="content-filter-form">
-        <select data-content-filter-type aria-label="Loại bộ lọc">
-          <option value="keyword">Từ khóa</option>
-          <option value="poster">Poster ID</option>
-        </select>
-        <input data-content-filter-value maxlength="160" placeholder="từ khóa hoặc ID" />
-        <select data-content-filter-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
-        <button class="ghost-button" data-add-content-filter type="button">[Thêm]</button>
-      </div>
-    </div>
-  `;
-}
-function renderReplyTemplates() {
-  const templates = readReplyTemplates();
-  const list = templates.length
-    ? templates
-        .map((template) => {
-          const board = template.boardSlug ? `/${template.boardSlug}/` : 'Tất cả';
-          const preview = template.body.length > 140 ? `${template.body.slice(0, 140)}...` : template.body;
-          return `
-            <div class="watch-item">
-              <div class="watch-thread-link">
-                <span class="watch-board">${escapeHtml(template.title)}</span>
-                <span class="watch-preview">${escapeHtml(preview)}</span>
-                <span class="watch-stats">${escapeHtml(board)}</span>
-              </div>
-              <button class="link-button watch-remove" data-remove-reply-template="${escapeHtml(template.id)}" type="button">[Xóa]</button>
-            </div>
-          `;
-        })
-        .join('')
-    : '<p class="latest-empty">Chưa có mẫu trả lời nào.</p>';
-  return `
-    <div class="reply-template-manager">
-      ${list}
-      <div class="reply-template-form">
-        <input data-reply-template-title maxlength="120" placeholder="tên mẫu" />
-        <select data-reply-template-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
-        <textarea data-reply-template-body maxlength="5000" rows="3" placeholder="nội dung mẫu"></textarea>
-        <button class="ghost-button" data-add-reply-template type="button">[Thêm]</button>
-      </div>
-    </div>
-  `;
-}
-function renderPosterNotes() {
-  const notes = readPosterNotes();
-  const list = notes.length
-    ? notes
-        .map((note) => {
-          const board = note.boardSlug ? `/${note.boardSlug}/` : 'Tất cả';
-          const label = note.label || note.note || note.posterId;
-          return `
-            <div class="watch-item">
-              <div class="watch-thread-link">
-                <span class="watch-board">${escapeHtml(note.posterId)}</span>
-                <span class="watch-preview">${escapeHtml(label)}</span>
-                <span class="watch-stats">${escapeHtml(board)}</span>
-              </div>
-              <button class="link-button watch-remove" data-remove-poster-note="${escapeHtml(note.id)}" type="button">[Xóa]</button>
-            </div>
-          `;
-        })
-        .join('')
-    : '<p class="latest-empty">Chưa có ghi chú Poster ID nào.</p>';
-  return `
-    <div class="poster-note-manager">
-      ${list}
-      <div class="poster-note-form">
-        <input data-poster-note-id maxlength="80" placeholder="ID:ABCD1234" />
-        <input data-poster-note-label maxlength="120" placeholder="nhãn ngắn" />
-        <select data-poster-note-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
-        <input data-poster-note-text maxlength="500" placeholder="ghi chú" />
-        <button class="ghost-button" data-add-poster-note type="button">[Thêm]</button>
-      </div>
-    </div>
-  `;
-}
-function renderAccountPrivateData() {
-  if (!els.accountPrivateDataPanel || !els.accountPrivateDataSummary) {
-    renderReplyTemplatePickers();
-    return;
-  }
-  const loggedIn = Boolean(state.accountToken && state.account);
-  els.accountPrivateDataPanel.classList.toggle('hidden', !loggedIn);
-  if (!loggedIn) {
-    els.accountPrivateDataSummary.innerHTML = '';
-    renderReplyTemplatePickers();
-    return;
-  }
-  const data = state.accountPrivateData || defaultAccountPrivateData();
-  els.accountPrivateDataSummary.innerHTML = `
-    <section>
-      <h3>Watchlist</h3>
-      <p>${Number(data.watchlist?.length || 0).toLocaleString()} chủ đề đang theo dõi.</p>
-    </section>
-    <section>
-      <h3>Saved searches</h3>
-      ${renderSavedSearches()}
-    </section>
-    <section>
-      <h3>Drafts</h3>
-      <p>${Number(data.drafts?.length || 0).toLocaleString()} draft đang lưu.</p>
-    </section>
-    <section>
-      <h3>Bộ lọc nội dung</h3>
-      ${renderContentFilters()}
-    </section>
-    <section>
-      <h3>Mẫu trả lời</h3>
-      ${renderReplyTemplates()}
-    </section>
-    <section>
-      <h3>Ghi chú Poster ID</h3>
-      ${renderPosterNotes()}
-    </section>
-  `;
-  renderReplyTemplatePickers();
-}
-function saveCurrentBoardSearch() {
-  const query = (els.boardSearchInput.value || state.boardSearchTerm || '').trim();
-  if (!query) {
-    showToast('Nhập từ khóa trước khi lưu tìm kiếm.');
-    return;
-  }
-  const board = currentBoard();
-  if (!board) {
-    showToast('Không tìm thấy bảng để lưu tìm kiếm.');
-    return;
-  }
-  const key = `${board.slug}:${query}`;
-  const searches = readSavedSearches().filter((item) => `${item.boardSlug}:${item.query}` !== key);
-  searches.unshift({
-    id:
-      typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
-        ? crypto.randomUUID()
-        : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`,
-    boardSlug: board.slug,
-    query,
-    label: `${board.path} ${query}`,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString()
-  });
-  writeSavedSearches(searches);
-  renderAccountPrivateData();
-  showToast(state.accountToken ? 'Đã lưu tìm kiếm vào tài khoản.' : 'Đã lưu tìm kiếm trên trình duyệt.');
-}
-function removeSavedSearch(key) {
-  const searches = readSavedSearches().filter((item) => `${item.boardSlug}:${item.query}` !== key);
-  writeSavedSearches(searches);
-  renderAccountPrivateData();
-  showToast('Đã xóa tìm kiếm đã lưu.');
-}
-async function loadAccountSession() {
-  updateAccountNav();
-  if (!state.accountToken) {
-    return null;
-  }
-  try {
-    const account = await api('/api/account/me', { auth: 'account' });
-    state.account = account;
-    applyAccountSyncedSettings(account);
-    updateAccountNav();
-    await loadAccountPrivateData({ mergeLocal: true });
-    await refreshAccountPostNumbers();
-    return account;
-  } catch {
-    setAccountSession();
-    return null;
-  }
-}
-async function loadAccountSettings() {
-  setScreen('account');
-  setFormError(els.accountSettingsError);
-  syncAccountHomeBoardOptions();
-  if (!state.account && state.accountToken) {
-    await loadAccountSession();
-  }
-  if (state.account && state.accountToken && !state.accountPrivateData) {
-    await loadAccountPrivateData({ mergeLocal: true });
-  }
-  fillAccountSettings();
-  window.scrollTo({ top: 0 });
-}
 function setScreen(name) {
   if (name !== 'thread') {
     stopAutoUpdateTimer();
@@ -853,7 +640,7 @@ function currentBoard() {
 function renderMissingBoard(screen = 'board') {
   const slug = state.boardSlug || 'unknown';
   setScreen(screen);
-  renderBoards();
+  homeController.renderBoards();
   updateBoardPresentation(null);
   if (screen === 'catalog') {
     els.catalogTitle.textContent = 'Không tìm thấy bảng';
@@ -980,32 +767,8 @@ function updateBoardPresentation(board) {
     }
   });
 }
-function renderBoards() {
-  els.boardNav.innerHTML = state.boards
-    .map(
-      (board) =>
-        `<a class="${board.slug === state.boardSlug ? 'active' : ''}" href="#board/${board.slug}" title="${board.path}">${board.name}</a>`
-    )
-    .join('');
-}
-async function refreshPublicBoards({ fallbackBoards = state.boards }: AnyRecord = {}) {
-  try {
-    state.boards = await api('/api/boards');
-  } catch {
-    state.boards = fallbackBoards;
-  }
-  renderBoards();
-  syncAdminBoardFilter();
-  return state.boards;
-}
-function syncBoardSubscriptionButtons() {
-  const label = isBoardSubscribed(state.boardSlug) ? 'Bỏ theo dõi bảng' : 'Theo dõi bảng';
-  document.querySelectorAll('[data-toggle-board-subscription]').forEach((button) => {
-    button.textContent = label;
-  });
-}
 function toggleCurrentThreadWatch() {
-  if (!state.threadDetail?.thread?.id) {
+if (!state.threadDetail?.thread?.id) {
     return;
   }
   const watchedThreads = readWatchedThreads();
@@ -1414,7 +1177,7 @@ async function bulkModerate(action) {
 }
 async function loadHome() {
   setScreen('home');
-  renderBoards();
+  homeController.renderBoards();
   renderHomeBoards();
   renderMyPosts();
   renderSubscribedBoards();
@@ -1755,7 +1518,7 @@ async function loadCatalog() {
     return;
   }
   setScreen('catalog');
-  renderBoards();
+  homeController.renderBoards();
   els.catalogTitle.textContent = `${board.path} - ${board.name} Danh mục`;
   els.catalogDescription.textContent = board.description;
   els.catalogReturnTop.href = `#board/${board.slug}`;
@@ -1781,7 +1544,7 @@ function renderArchiveThreads(threads) {
 async function loadArchive() {
   const board = state.boards.find((item) => item.slug === state.boardSlug);
   setScreen('archive');
-  renderBoards();
+  homeController.renderBoards();
   if (!board) {
     els.archiveTitle.textContent = 'Không tìm thấy bảng';
     els.archiveDescription.textContent = `Bảng /${state.boardSlug}/ không tồn tại.`;
@@ -1879,8 +1642,8 @@ async function loadBoard() {
     return;
   }
   setScreen('board');
-  renderBoards();
-  syncBoardSubscriptionButtons();
+  homeController.renderBoards();
+  homeController.syncBoardSubscriptionButtons();
   updateBoardPresentation(board);
   els.boardTitle.textContent = boardHeading(board);
   els.boardPath.textContent = board.path;
@@ -1994,7 +1757,7 @@ async function loadThread({ resetReply = false, focusPost = '' }: AnyRecord = {}
     syncReplyComposer();
   }
   const board = currentBoard();
-  renderBoards();
+  homeController.renderBoards();
   updateBoardPresentation(board);
   els.threadTitle.textContent = threadTitle(detail.thread, boardHeading(board) || detail.thread.boardSlug);
   els.threadAdminActions.innerHTML = threadHeaderActionsHtml(detail);
@@ -2127,85 +1890,67 @@ async function loadAdmin() {
     }
   }
 }
-function loadPolicy(section = '') {
-  setScreen('policy');
-  const sectionId = {
-    rules: 'policy-rules',
-    privacy: 'policy-rules',
-    feedback: 'policy-feedback',
-    report: 'policy-report',
-    appeal: 'policy-appeal',
-    contact: 'policy-contact'
-  }[section];
-  if (sectionId) {
-    document.querySelector(`#${sectionId}`)?.scrollIntoView({ block: 'start' });
-  } else {
-    window.scrollTo({ top: 0 });
-  }
-}
-function route() {
-  hideReferencePreview();
-  const hash = window.location.hash || '#home';
-  const [hashPath, hashQuery = ''] = hash.split('?');
-  const [, name, id] = hashPath.match(/^#([^/]+)\/?(.+)?$/) || [];
-  if (name === 'home' || !name) {
-    loadHome().catch((error) => showToast(error.message));
-  } else if (name === 'policy') {
-    loadPolicy(id || '');
-  } else if (name === 'register') {
-    els.registerForm.classList.remove('hidden');
-    els.registerRecoveryNotice.classList.add('hidden');
-    setScreen('register');
-    setFormError(els.registerError);
-    window.scrollTo({ top: 0 });
-  } else if (name === 'login') {
-    setScreen('login');
-    setFormError(els.accountLoginError);
-    window.scrollTo({ top: 0 });
-  } else if (name === 'forgot') {
-    resetForgotPasswordForm();
-    setScreen('forgot');
-    setFormError(els.forgotError);
-    window.scrollTo({ top: 0 });
-  } else if (name === 'account') {
-    loadAccountSettings().catch((error) => showToast(error.message));
-  } else if (name === 'thread' && id) {
-    const params = new URLSearchParams(hashQuery);
-    const nextThreadId = decodeURIComponent(id);
-    if (state.threadId !== nextThreadId) {
-      state.threadSearchTerm = '';
-    }
-    state.threadId = nextThreadId;
-    state.threadCommentPage = Math.max(1, Number(params.get('cp')) || 1);
-    loadThread({ resetReply: true, focusPost: params.get('p') || '' }).catch((error) => showToast(error.message));
-  } else if (name === 'catalog') {
-    state.boardSlug = id || 'confession';
-    state.boardSearchTerm = '';
-    state.boardPage = 1;
-    loadCatalog().catch((error) => showToast(error.message));
-  } else if (name === 'archive') {
-    state.boardSlug = id || 'confession';
-    state.boardSearchTerm = '';
-    state.boardPage = 1;
-    loadArchive().catch((error) => showToast(error.message));
-  } else if (name === 'admin') {
-    loadAdmin().catch((error) => showToast(error.message));
-  } else {
-    const params = new URLSearchParams(hashQuery);
-    state.boardSlug = id || 'confession';
-    state.boardSearchTerm = params.get('q') || '';
-    state.boardSort = normalizeBoardSort(params.get('sort') || state.boardSort);
-    state.boardFilter = normalizeBoardFilter(params.get('filter') || 'all');
-    state.boardPage = 1;
-    loadBoard().catch((error) => showToast(error.message));
-  }
-  setupRealtime();
+
+let openReplyComposerTarget = (_options: AnyRecord = {}) => {};
+function setupRealtime() {
+  setupRealtimeConnection({
+    loadHome,
+    loadThread,
+    loadCatalog,
+    loadArchive,
+    loadBoard,
+    audioWorkInProgress,
+    notifyWatchedThreadPost
+  });
 }
 const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController({
   deletePasswordInputs: els.deletePasswordInputs,
   formValue
 });
-
+function notifyWatchedThreadPost(payload: AnyRecord = {}) {
+  notifyWatchedThreadPostWithDependencies(payload, {
+    readWatchedThreads,
+    writeWatchedThreads: watchlistController.writeWatchedThreads,
+    browserNotificationIds: state.browserNotificationIds
+  });
+}
+function resetForgotPasswordForm() {
+  if (!els.forgotPasswordForm) {
+    return;
+  }
+  els.forgotPasswordForm.reset();
+  els.forgotPasswordForm.classList.remove('hidden');
+  els.forgotSuccess.classList.add('hidden');
+  setFormError(els.forgotError);
+  resetHcaptcha(els.forgotCaptcha);
+}
+const routerController = createRouterController({
+  els,
+  state,
+  showToast,
+  hideReferencePreview,
+  setFormError,
+  setScreen,
+  loadHome,
+  loadThread,
+  loadCatalog,
+  loadArchive,
+  loadBoard,
+  loadAccountSettings,
+  loadAdmin,
+  resetForgotPasswordForm,
+  normalizeBoardSort,
+  normalizeBoardFilter,
+  setupRealtime,
+  moveKeyboardNavigation,
+  eventInTextInput,
+  openReplyComposer: (options) => openReplyComposerTarget(options)
+});
+const {
+  route,
+  refreshCurrentScreen,
+  handleKeyboardShortcut
+} = routerController;
 const {
   submitThread,
   submitAppeal,
@@ -2244,87 +1989,7 @@ const {
   showPostEditModal,
   postSubmitToast
 });
-function resetForgotPasswordForm() {
-  if (!els.forgotPasswordForm) {
-    return;
-  }
-  els.forgotPasswordForm.reset();
-  els.forgotPasswordForm.classList.remove('hidden');
-  els.forgotSuccess.classList.add('hidden');
-  setFormError(els.forgotError);
-  resetHcaptcha(els.forgotCaptcha);
-}
-function renderAccountRecoveryPanel() {
-  if (!els.accountRecoveryPanel) {
-    return;
-  }
-  const loggedIn = Boolean(state.accountToken && state.account);
-  els.accountRecoveryPanel.classList.toggle('hidden', !loggedIn);
-  // Never keep a previously revealed code on screen across renders.
-  els.recoveryCodeResult.classList.add('hidden');
-  els.recoveryCodeResultValue.textContent = '';
-  setFormError(els.recoveryCodeError);
-}
-function notifyWatchedThreadPost(payload: AnyRecord = {}) {
-  notifyWatchedThreadPostWithDependencies(payload, {
-    readWatchedThreads,
-    writeWatchedThreads: watchlistController.writeWatchedThreads,
-    browserNotificationIds: state.browserNotificationIds
-  });
-}
-function setupRealtime() {
-  setupRealtimeConnection({
-    loadHome,
-    loadThread,
-    loadCatalog,
-    loadArchive,
-    loadBoard,
-    audioWorkInProgress,
-    notifyWatchedThreadPost
-  });
-}
-function refreshCurrentScreen() {
-  const hash = window.location.hash || '#home';
-  if (hash.startsWith('#thread/')) {
-    return loadThread();
-  }
-  if (hash.startsWith('#catalog/')) {
-    return loadCatalog();
-  }
-  if (hash.startsWith('#archive/')) {
-    return loadArchive();
-  }
-  if (hash.startsWith('#board/')) {
-    return loadBoard();
-  }
-  return loadHome();
-}
-function handleKeyboardShortcut(event) {
-  if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey || eventInTextInput(event)) {
-    return;
-  }
-  if (event.key === 't') {
-    event.preventDefault();
-    window.scrollTo({ top: 0, behavior: 'smooth' });
-  } else if (event.key === 'u') {
-    event.preventDefault();
-    refreshCurrentScreen().catch((error) => showToast(error.message));
-  } else if (event.key === 'r' && (window.location.hash || '').startsWith('#thread/')) {
-    event.preventDefault();
-    openReplyComposer();
-  } else if (event.key === 'n') {
-    if (moveKeyboardNavigation(1)) {
-      event.preventDefault();
-    }
-  } else if (event.key === 'p') {
-    if (moveKeyboardNavigation(-1)) {
-      event.preventDefault();
-    }
-  } else if (event.key === 'b' && state.boardSlug) {
-    event.preventDefault();
-    window.location.hash = `#board/${state.boardSlug}`;
-  }
-}
+openReplyComposerTarget = openReplyComposer;
 function bindEvents() {
   const ai = createAiActions({
     showToast,
@@ -2361,864 +2026,112 @@ function bindEvents() {
   bindComposerMediaInputEvents({ els, state, showToast });
   bindThreadSearchEvents({ body: document.body, state, loadThread, normalizeThreadSearchTerm, showToast });
   bindThreadMediaKeyboardEvents({ body: document.body });
+  const adminEventDependencies = {
+    els,
+    state,
+    showToast,
+    setButtonLoading,
+    api,
+    loadAdmin,
+    loadThread,
+    loadBoard,
+    refreshPublicBoards: homeController.refreshPublicBoards,
+    saveAdminModerationSettings,
+    exportAdminCsv,
+    adminBoardPayload,
+    adminUserPayload,
+    loadAdminDetail,
+    adminTableDetailHost,
+    showReasonModal,
+    showPostEditModal,
+    bulkModerate
+  };
+
+  bindThreadEvents({
+    body: document.body,
+    els,
+    state,
+    showToast,
+    api,
+    loadThread,
+    loadBoard,
+    loadCatalog,
+    loadArchive,
+    refreshCurrentScreen,
+    openQuickReply,
+    openReplyComposer,
+    updatePrivacyWarning,
+    selfDeletePost,
+    selfEditPost,
+    showPostEditModal,
+    rememberMyPost,
+    refreshAccountPostNumbers,
+    renderMyPosts,
+    focusPermalinkPost,
+    insertComposerToken,
+    insertThreadTemplate,
+    saveComposerReplyTemplate,
+    dismissThreadTemplate,
+    insertReplyTemplate,
+    handleThreadMediaClick,
+    handleThreadPostCollapseClick,
+    copyPostPermalink,
+    selectedPostQuoteText,
+    handleReferencePreviewClick,
+    addLocalSetItem,
+    hiddenThreadsKey,
+    hiddenPostsKey,
+    renderBoardThreads,
+    addContentFilter,
+    addPosterNote,
+    watchlistController,
+    toggleCurrentThreadWatch,
+    removeSavedSearch,
+    handleAccountPrivateDataClick,
+    handleAccountPasskeyClick,
+    handleAdminPasskeyClick,
+    applyTheme,
+    persistAccountSettings,
+    localDisplayPreferences,
+    applyDisplayPreferences,
+    normalizeWatchedSort,
+    setAutoUpdate,
+    showReportModal,
+    translatePost: ai.translatePost,
+    speakPost: ai.speakPost,
+    writeReaction,
+    writeVote
+  });
+  const boardCatalogEventDependencies = {
+    state,
+    showToast,
+    loadBoard,
+    loadCatalog,
+    loadArchive,
+    renderCatalogThreads,
+    toggleBoardSubscription: homeController.toggleBoardSubscription,
+    syncBoardSubscriptionButtons: homeController.syncBoardSubscriptionButtons
+  };
   document.body.addEventListener('click', async (event) => {
-    const composerInsertButton = event.target.closest('[data-composer-insert]');
-    if (composerInsertButton) {
-      const pickerRoot = composerInsertButton.closest('[data-composer-picker]');
-      insertComposerToken(pickerRoot?.dataset.composerPicker, composerInsertButton.dataset.composerInsert, { showToast });
-      return;
-    }
-    const insertReplyTemplateButton = event.target.closest('[data-insert-reply-template]');
-    if (insertReplyTemplateButton) {
-      const picker = insertReplyTemplateButton.closest('[data-reply-template-picker]');
-      const selectedId = picker?.querySelector('[data-reply-template-select]')?.value || '';
-      insertReplyTemplate(insertReplyTemplateButton.dataset.insertReplyTemplate, selectedId);
-      return;
-    }
-    const saveReplyTemplateButton = event.target.closest('[data-save-reply-template]');
-    if (saveReplyTemplateButton) {
-      saveComposerReplyTemplate(saveReplyTemplateButton.dataset.saveReplyTemplate);
-      return;
-    }
-    const threadMediaJump = event.target.closest('[data-thread-media-jump]');
-    if (threadMediaJump) {
-      event.preventDefault();
-      focusPermalinkPost(threadMediaJump.dataset.threadMediaJump, { scroll: true });
-      return;
-    }
-    if (handleThreadMediaClick(event, { showToast })) {
-      return;
-    }
-    const quickReplyNumber = event.target.closest('[data-quick-reply]');
-    if (quickReplyNumber) {
-      openQuickReply(quickReplyNumber.dataset.quickReply, event);
-      return;
-    }
-    const selfDeletePostButton = event.target.closest('[data-self-delete-post]');
-    if (selfDeletePostButton) {
-      try {
-        await selfDeletePost(selfDeletePostButton.dataset.selfDeletePost, {
-          fileOnly: selfDeletePostButton.dataset.fileOnly === 'true',
-          sourceElement: selfDeletePostButton
-        });
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const selfEditPostButton = event.target.closest('[data-self-edit-post]');
-    if (selfEditPostButton) {
-      try {
-        await selfEditPost(
-          selfEditPostButton.dataset.selfEditPost,
-          decodeURIComponent(selfEditPostButton.dataset.selfEditBody || '')
-        );
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const accountEditPostButton = event.target.closest('[data-account-edit-post]');
-    if (accountEditPostButton) {
-      const globalNumber = accountEditPostButton.dataset.accountEditPost;
-      const currentBody = decodeURIComponent(accountEditPostButton.dataset.accountEditBody || '');
-      const postElement = document.getElementById(`p${globalNumber}`);
-      const currentMediaHtml = postElement?.querySelector('.post-media-gallery')?.innerHTML || '';
-      const edit = await showPostEditModal(globalNumber, currentBody, {
-        allowMedia: true,
-        currentMediaHtml
-      });
-      if (!edit) {
-        return;
-      }
-      const payload: AnyRecord = { body: edit.body };
-      if (edit.replaceImages) {
-        payload.images = edit.images || [];
-      }
-      try {
-        const result = await api(`/api/posts/${globalNumber}`, {
-          auth: 'account',
-          method: 'PUT',
-          body: JSON.stringify(payload)
-        });
-        rememberMyPost(result.post, result.type || 'thread');
-        await refreshAccountPostNumbers();
-        showToast(result.status === 'pending' ? 'Đã sửa bài. Nội dung đang chờ duyệt lại.' : 'Đã sửa bài.');
-        if ((window.location.hash || '#home').startsWith('#home')) {
-          renderMyPosts();
-        } else {
-          await refreshCurrentScreen();
-        }
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const refreshButton = event.target.closest('[data-thread-refresh]');
-    if (refreshButton) {
-      await loadThread().catch((error) => showToast(error.message));
-      return;
-    }
-    const watchButton = event.target.closest('[data-toggle-watch]');
-    if (watchButton) {
-      toggleCurrentThreadWatch();
-      return;
-    }
-    const unwatchThreadButton = event.target.closest('[data-unwatch-thread]');
-    if (unwatchThreadButton) {
-      watchlistController.removeWatchedThread(unwatchThreadButton.dataset.unwatchThread);
-      showToast('Đã bỏ theo dõi chủ đề.');
-      if ((window.location.hash || '#home').startsWith('#home')) {
-        state.watchedThreadSummaries = await watchlistController.loadWatchedThreadSummaries();
-        watchlistController.renderWatchedThreads();
-      }
-      return;
-    }
-    const watchedUnreadToggle = event.target.closest('#watchedUnreadToggle');
-    if (watchedUnreadToggle) {
-      const preferences = localDisplayPreferences();
-      const displayPreferences = applyDisplayPreferences({
-        ...preferences,
-        watchedUnreadOnly: !preferences.watchedUnreadOnly
-      });
-      watchlistController.renderWatchedThreads();
-      persistAccountSettings({ silent: true });
-      showToast(displayPreferences.watchedUnreadOnly ? 'Đang chỉ hiện thread chưa đọc.' : 'Đang hiện toàn bộ watchlist.');
-      return;
-    }
-    const watchedMarkAllRead = event.target.closest('#watchedMarkAllRead');
-    if (watchedMarkAllRead) {
-      const count = watchlistController.markAllWatchedThreadsRead();
-      watchlistController.renderWatchedThreads();
-      if (count) {
-        persistAccountSettings({ silent: true });
-        showToast(`Đã đánh dấu ${count.toLocaleString()} chủ đề là đã đọc.`);
-      }
-      return;
-    }
-    const markWatchReadButton = event.target.closest('[data-mark-watch-read]');
-    if (markWatchReadButton) {
-      if (watchlistController.markWatchedThreadRead(markWatchReadButton.dataset.markWatchRead)) {
-        watchlistController.renderWatchedThreads();
-        persistAccountSettings({ silent: true });
-        showToast('Đã đánh dấu chủ đề là đã đọc.');
-      }
-      return;
-    }
-    const boardRefreshButton = event.target.closest('[data-board-refresh]');
-    if (boardRefreshButton) {
-      await loadBoard().catch((error) => showToast(error.message));
-      return;
-    }
-    const threadTemplateButton = event.target.closest('[data-thread-template]');
-    if (threadTemplateButton) {
-      insertThreadTemplate(threadTemplateButton.dataset.threadTemplate, { showToast });
-      return;
-    }
-    const threadTemplateDismissButton = event.target.closest('[data-thread-template-dismiss]');
-    if (threadTemplateDismissButton) {
-      dismissThreadTemplate({ showToast });
-      return;
-    }
-    const removeSavedSearchButton = event.target.closest('[data-remove-saved-search]');
-    if (removeSavedSearchButton) {
-      removeSavedSearch(removeSavedSearchButton.dataset.removeSavedSearch);
-      return;
-    }
-    const accountPrivateDataClick = handleAccountPrivateDataClick(event);
-    if (accountPrivateDataClick) {
-      await accountPrivateDataClick;
-      return;
-    }
-    const accountPasskeyClick = handleAccountPasskeyClick(event);
-    if (accountPasskeyClick) {
-      await accountPasskeyClick;
-      return;
-    }
-    const adminPasskeyClick = handleAdminPasskeyClick(event);
-    if (adminPasskeyClick) {
-      await adminPasskeyClick;
-      return;
-    }
-    const boardCatalogControlClick = handleBoardCatalogControlClick(event, {
-      state,
-      showToast,
-      loadBoard,
-      loadCatalog,
-      loadArchive,
-      renderCatalogThreads,
-      toggleBoardSubscription,
-      syncBoardSubscriptionButtons
-    });
+    const boardCatalogControlClick = handleBoardCatalogControlClick(event, boardCatalogEventDependencies);
     if (boardCatalogControlClick) {
       await boardCatalogControlClick;
       return;
     }
-    const replyLink = event.target.closest('[data-open-reply]');
-    if (replyLink) {
-      openReplyComposer();
-      els.replyComposer.scrollIntoView({ block: 'center' });
+    if (await handleAdminClick(event, adminEventDependencies)) {
       return;
-    }
-    const pageTopButton = event.target.closest('[data-scroll-page-top]');
-    if (pageTopButton) {
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-      return;
-    }
-    const pageButton = event.target.closest('[data-page-action]');
-    if (pageButton && !pageButton.disabled) {
-      const nextPage = Math.max(1, Number(pageButton.dataset.page) || 1);
-      if (pageButton.dataset.pageAction === 'board') {
-        state.boardPage = nextPage;
-        await loadBoard().catch((error) => showToast(error.message));
-      } else if (pageButton.dataset.pageAction === 'thread-comments') {
-        state.threadCommentPage = nextPage;
-        await loadThread().catch((error) => showToast(error.message));
-      }
-      return;
-    }
-    const hideThreadButton = event.target.closest('[data-hide-thread]');
-    if (hideThreadButton) {
-      addLocalSetItem(hiddenThreadsKey, hideThreadButton.dataset.hideThread);
-      renderBoardThreads(state.boardThreads);
-      showToast('Đã ẩn chủ đề trên trình duyệt này.');
-      return;
-    }
-    const hidePostButton = event.target.closest('[data-hide-post]');
-    if (hidePostButton) {
-      addLocalSetItem(hiddenPostsKey, hidePostButton.dataset.hidePost);
-      const onThreadScreen = (window.location.hash || '').startsWith('#thread/') && state.threadId;
-      if (onThreadScreen) {
-        await loadThread().catch((error) => showToast(error.message));
-      } else {
-        hidePostButton.closest('article.post')?.remove();
-      }
-      showToast('Đã ẩn bài trên trình duyệt này.');
-      return;
-    }
-    const filterPosterButton = event.target.closest('[data-filter-poster]');
-    if (filterPosterButton) {
-      const posterIdValue = filterPosterButton.dataset.filterPoster || '';
-      if (!posterIdValue || posterIdValue === 'ID:????') {
-        showToast('Không có Poster ID để lọc.');
-        return;
-      }
-      addContentFilter({
-        type: 'poster',
-        value: posterIdValue,
-        label: posterIdValue,
-        boardSlug: filterPosterButton.dataset.filterBoard || ''
-      });
-      showToast('Đã thêm bộ lọc Poster ID.');
-      return;
-    }
-    const notePosterButton = event.target.closest('[data-note-poster]');
-    if (notePosterButton) {
-      const posterIdValue = notePosterButton.dataset.notePoster || '';
-      if (!posterIdValue || posterIdValue === 'ID:????') {
-        showToast('Không có Poster ID để ghi chú.');
-        return;
-      }
-      const label = window.prompt('Nhãn cho ' + posterIdValue + ':', posterIdValue) || '';
-      if (!label.trim()) {
-        return;
-      }
-      const note = window.prompt('Ghi chú cho ' + posterIdValue + ':', '') || '';
-      addPosterNote({
-        posterId: posterIdValue,
-        label,
-        note,
-        boardSlug: notePosterButton.dataset.noteBoard || ''
-      });
-      showToast('Đã lưu ghi chú Poster ID.');
-      return;
-    }
-    const translatePostButton = event.target.closest('[data-translate-post]');
-    if (translatePostButton) {
-      await ai.translatePost(translatePostButton);
-      return;
-    }
-    const ttsPostButton = event.target.closest('[data-tts-post]');
-    if (ttsPostButton) {
-      await ai.speakPost(ttsPostButton);
-      return;
-    }
-    const copyPostLinkButton = event.target.closest('[data-copy-post-link]');
-    if (copyPostLinkButton) {
-      await copyPostPermalink(copyPostLinkButton.dataset.copyPostLink);
-      return;
-    }
-    if (handleThreadPostCollapseClick(event, { showToast })) {
-      return;
-    }
-    const scrollButton = event.target.closest('[data-scroll-thread]');
-    if (scrollButton) {
-      const target = scrollButton.dataset.scrollThread === 'bottom' ? els.threadToolbarBottom : els.threadScreen;
-      target.scrollIntoView({ block: scrollButton.dataset.scrollThread === 'bottom' ? 'end' : 'start' });
-      return;
-    }
-    const quoteButton = event.target.closest('[data-quote]');
-    if (quoteButton) {
-      const quote = quoteButton.dataset.quote;
-      const selectedQuote = selectedPostQuoteText(quoteButton.closest('.post'));
-      const quoteBlock = selectedQuote ? `${quote}\n${selectedQuote}\n` : `${quote}\n`;
-      openReplyComposer({ focus: false });
-      const spacer = els.commentBody.value && !els.commentBody.value.endsWith('\n') ? '\n' : '';
-      els.commentBody.value = `${els.commentBody.value}${spacer}${quoteBlock}`;
-      updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
-      els.commentBody.focus();
-      return;
-    }
-    const spoilerText = event.target.closest('.spoiler-text');
-    if (spoilerText && !spoilerText.classList.contains('revealed')) {
-      spoilerText.classList.add('revealed');
-      return;
-    }
-    const referencePreviewClick = await handleReferencePreviewClick(event);
-    if (referencePreviewClick) {
-      return;
-    }
-    const suggestion = event.target.closest('[data-suggestion]');
-    if (suggestion) {
-      els.commentBody.value = decodeURIComponent(suggestion.dataset.suggestion);
-      updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
-      els.commentBody.focus();
-      return;
-    }
-    const pollOption = event.target.closest('[data-poll-option]');
-    if (pollOption) {
-      try {
-        await api(`/api/threads/${state.threadId}/poll`, {
-          method: 'POST',
-          body: JSON.stringify({ optionId: pollOption.dataset.pollOption, posterToken: state.posterToken })
-        });
-        showToast('Đã vote thăm dò.');
-        await loadThread();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const reactionButton = event.target.closest('[data-reaction]');
-    if (reactionButton) {
-      const globalNumber = reactionButton.dataset.reactionTarget;
-      const reaction = reactionButton.dataset.reaction;
-      try {
-        const result = await api(`/api/posts/${globalNumber}/reactions`, {
-          auth: state.accountToken ? 'account' : 'none',
-          method: 'POST',
-          body: JSON.stringify({ reaction, posterToken: state.posterToken })
-        });
-        writeReaction(globalNumber, result.myReaction || '');
-        await refreshCurrentScreen();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const voteButton = event.target.closest('[data-vote]');
-    if (voteButton) {
-      const globalNumber = voteButton.dataset.voteTarget;
-      const direction = voteButton.dataset.vote;
-      if (!state.accountToken) {
-        showToast('Vui lòng đăng nhập tài khoản để vote.');
-        return;
-      }
-      try {
-        const result = await api(`/api/posts/${globalNumber}/vote`, {
-          auth: 'account',
-          method: 'POST',
-          body: JSON.stringify({ direction, posterToken: state.posterToken })
-        });
-        writeVote(globalNumber, result.myVote || '');
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const reportButton = event.target.closest('[data-report]');
-    if (reportButton) {
-      const report = await showReportModal(reportButton.dataset.report);
-      if (!report) {
-        return;
-      }
-      try {
-        await api(`/api/posts/${reportButton.dataset.report}`, {
-          method: 'POST',
-          body: JSON.stringify({ ...report, posterToken: state.posterToken })
-        });
-        showToast('Đã gửi báo cáo.');
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminTabButton = event.target.closest('[data-admin-tab]');
-    if (adminTabButton) {
-      state.adminTab = adminTabButton.dataset.adminTab;
-      await loadAdmin();
-      return;
-    }
-    if (event.target.closest('#adminRefresh, [data-admin-retry]')) {
-      await loadAdmin();
-      return;
-    }
-    if (event.target.closest('#adminExport')) {
-      exportAdminCsv();
-      return;
-    }
-    if (event.target.closest('#adminSaveModerationSettings')) {
-      await saveAdminModerationSettings();
-      return;
-    }
-    const adminBoardCreateButton = event.target.closest('[data-admin-board-create]');
-    if (adminBoardCreateButton) {
-      const form = adminBoardCreateButton.closest('[data-admin-board-create-form]');
-      const restore = setButtonLoading(adminBoardCreateButton, 'Đang tạo...');
-      try {
-        await api('/api/admin/boards', {
-          method: 'POST',
-          body: JSON.stringify(adminBoardPayload(form, { includeSlug: true }))
-        });
-        showToast('Đã tạo board.');
-        await refreshPublicBoards();
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        restore();
-      }
-      return;
-    }
-    const adminBoardSaveButton = event.target.closest('[data-admin-board-save]');
-    if (adminBoardSaveButton) {
-      const row = adminBoardSaveButton.closest('[data-admin-board-row]');
-      const slug = row?.dataset.adminBoardRow;
-      if (!slug) {
-        return;
-      }
-      const restore = setButtonLoading(adminBoardSaveButton, 'Đang lưu...');
-      try {
-        await api(`/api/admin/boards/${encodeURIComponent(slug)}`, {
-          method: 'PUT',
-          body: JSON.stringify(adminBoardPayload(row))
-        });
-        showToast('Đã lưu board.');
-        await refreshPublicBoards();
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        restore();
-      }
-      return;
-    }
-    const adminBoardDeleteButton = event.target.closest('[data-admin-board-delete]');
-    if (adminBoardDeleteButton) {
-      const row = adminBoardDeleteButton.closest('[data-admin-board-row]');
-      const slug = row?.dataset.adminBoardRow;
-      if (!slug || !window.confirm(`Xóa board /${slug}/? Chỉ board rỗng mới xóa được.`)) {
-        return;
-      }
-      const restore = setButtonLoading(adminBoardDeleteButton, 'Đang xóa...');
-      try {
-        await api(`/api/admin/boards/${encodeURIComponent(slug)}`, { method: 'DELETE' });
-        showToast('Đã xóa board.');
-        await refreshPublicBoards();
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      } finally {
-        restore();
-      }
-      return;
-    }
-    const adminUserCreateButton = event.target.closest('[data-admin-user-create]');
-    if (adminUserCreateButton) {
-      const form = adminUserCreateButton.closest('[data-admin-user-create-form]');
-      try {
-        await api('/api/admin/users', {
-          method: 'POST',
-          body: JSON.stringify(adminUserPayload(form, { includeUsername: true }))
-        });
-        showToast('Đã tạo tài khoản quản trị.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminUserSaveButton = event.target.closest('[data-admin-user-save]');
-    if (adminUserSaveButton) {
-      const row = adminUserSaveButton.closest('[data-admin-user-row]');
-      const id = row?.dataset.adminUserRow;
-      if (!id) {
-        return;
-      }
-      try {
-        await api(`/api/admin/users/${encodeURIComponent(id)}`, {
-          method: 'PUT',
-          body: JSON.stringify(adminUserPayload(row))
-        });
-        showToast('Đã lưu tài khoản quản trị.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminUserDisableButton = event.target.closest('[data-admin-user-disable]');
-    if (adminUserDisableButton) {
-      const row = adminUserDisableButton.closest('[data-admin-user-row]');
-      const id = row?.dataset.adminUserRow;
-      const username = row?.querySelector('strong')?.textContent || 'tài khoản này';
-      if (!id || !window.confirm(`Vô hiệu hóa ${username}?`)) {
-        return;
-      }
-      try {
-        await api(`/api/admin/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        showToast('Đã vô hiệu hóa tài khoản quản trị.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    if (event.target.closest('#adminBulkApprove')) {
-      await bulkModerate('approve');
-      return;
-    }
-    if (event.target.closest('#adminBulkDelete')) {
-      await bulkModerate('delete');
-      return;
-    }
-    const appealResolveButton = event.target.closest('[data-admin-resolve-appeal]');
-    if (appealResolveButton) {
-      const status = appealResolveButton.dataset.status === 'accepted' ? 'accepted' : 'rejected';
-      const reason = await showReasonModal(
-        status === 'accepted' ? 'Lý do chấp nhận kháng nghị:' : 'Lý do từ chối kháng nghị:',
-        status === 'accepted' ? 'appeal-accept' : 'appeal-reject'
-      );
-      if (reason === null) {
-        return;
-      }
-      try {
-        await api(`/api/admin/appeals/${encodeURIComponent(appealResolveButton.dataset.adminResolveAppeal)}/resolve`, {
-          method: 'POST',
-          body: JSON.stringify({ status, reason })
-        });
-        showToast(status === 'accepted' ? 'Đã chấp nhận kháng nghị.' : 'Đã từ chối kháng nghị.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminDetailButton = event.target.closest('[data-admin-detail]');
-    if (adminDetailButton) {
-      const isTableDetail = Boolean(adminDetailButton.closest('tr')?.closest('.moderation-log-table'));
-      const tableHost = isTableDetail ? adminTableDetailHost(adminDetailButton) : null;
-      if (isTableDetail && !tableHost) {
-        return;
-      }
-      const host = tableHost || adminDetailButton.closest('.pending-item') || els.pendingList;
-      if (!host) {
-        return;
-      }
-      try {
-        await loadAdminDetail(adminDetailButton.dataset.adminDetail, host, {
-          compactReports: Boolean(tableHost)
-        });
-      } catch (error) {
-        if (tableHost) {
-          tableHost.innerHTML = `<div class="admin-detail-host"><p class="error">${escapeHtml(error.message)}</p></div>`;
-        }
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminReportsSummaryButton = event.target.closest('[data-admin-reports-summary]');
-    if (adminReportsSummaryButton) {
-      const globalNumber = adminReportsSummaryButton.dataset.adminReportsSummary;
-      const box = document.getElementById(`adminReportsSummaryBox-${globalNumber}`);
-      if (box) {
-        box.classList.remove('hidden');
-        box.innerHTML = '<p class="muted">Đang tóm tắt báo cáo...</p>';
-        try {
-          const result = await api(`/api/admin/posts/${globalNumber}/reports/summary`, {
-            method: 'POST'
-          });
-          box.innerHTML = `
-            <div class="reports-summary-content">
-              <strong>${escapeHtml(result.label || 'Tóm tắt báo cáo AI')}:</strong>
-              <p>${escapeHtml(result.summary)}</p>
-            </div>
-          `;
-        } catch (error) {
-          box.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
-        }
-      }
-      return;
-    }
-    const boardDigestButton = event.target.closest('[data-board-digest]');
-    if (boardDigestButton) {
-      const box = document.querySelector('[data-board-digest-result]');
-      if (box) {
-        box.classList.remove('hidden');
-        box.innerHTML = '<p class="muted">Đang tạo bản tổng hợp...</p>';
-        try {
-          const result = await api('/api/admin/board-digest', { method: 'POST' });
-          const bullets = (result.bullets || []).map((line) => `<li>${escapeHtml(line)}</li>`).join('');
-          box.innerHTML = `
-            <div class="reports-summary-content">
-              <strong>${escapeHtml(result.label || 'Nội dung do AI tổng hợp')}</strong>
-              <p class="muted">${result.threadCount} chủ đề công khai trên ${result.boardCount} bảng</p>
-              <ul>${bullets}</ul>
-            </div>
-          `;
-        } catch (error) {
-          box.innerHTML = `<p class="error">${escapeHtml(error.message)}</p>`;
-        }
-      }
-      return;
-    }
-    const adminNoteButton = event.target.closest('[data-admin-note]');
-    if (adminNoteButton) {
-      const note = window.prompt(`Ghi chú nội bộ cho No.${adminNoteButton.dataset.adminNote}:`, '') || '';
-      if (!note) {
-        return;
-      }
-      try {
-        await api(`/api/admin/posts/${adminNoteButton.dataset.adminNote}/notes`, {
-          method: 'POST',
-          body: JSON.stringify({ note })
-        });
-        showToast('Đã lưu ghi chú.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminEditPostButton = event.target.closest('[data-admin-edit-post]');
-    if (adminEditPostButton) {
-      const globalNumber = adminEditPostButton.dataset.adminEditPost;
-      const currentBody = decodeURIComponent(adminEditPostButton.dataset.adminEditBody || '');
-      const edit = await showPostEditModal(globalNumber, currentBody);
-      if (!edit) {
-        return;
-      }
-      try {
-        await api(`/api/admin/posts/${globalNumber}`, {
-          method: 'PUT',
-          body: JSON.stringify(edit)
-        });
-        showToast('Đã sửa bài.');
-        const hash = window.location.hash || '';
-        if (hash.startsWith('#thread/')) {
-          await loadThread();
-        } else if (hash.startsWith('#board/')) {
-          await loadBoard();
-        } else {
-          await loadAdmin();
-        }
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminRestorePostButton = event.target.closest('[data-admin-restore-post]');
-    if (adminRestorePostButton) {
-      const globalNumber = adminRestorePostButton.dataset.adminRestorePost;
-      const reason = await showReasonModal(`Lý do khôi phục bài No.${globalNumber}:`, 'restore');
-      if (reason === null) {
-        return;
-      }
-      try {
-        await api(`/api/admin/posts/${globalNumber}/restore`, {
-          method: 'POST',
-          body: JSON.stringify({ reason })
-        });
-        showToast('Đã khôi phục bài.');
-        const hash = window.location.hash || '';
-        if (hash.startsWith('#thread/')) {
-          await loadThread();
-        } else if (hash.startsWith('#board/')) {
-          await loadBoard();
-        } else {
-          await loadAdmin();
-        }
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminDeletePostButton = event.target.closest('[data-admin-delete-post]');
-    if (adminDeletePostButton) {
-      const globalNumber = adminDeletePostButton.dataset.adminDeletePost;
-      const fileOnly = adminDeletePostButton.dataset.fileOnly === 'true';
-      const reason = await showReasonModal(
-        fileOnly ? `Lý do xóa tệp của No.${globalNumber}:` : `Lý do xóa bài No.${globalNumber}:`,
-        'delete'
-      );
-      if (reason === null) {
-        return;
-      }
-      try {
-        await api(`/api/admin/posts/${globalNumber}`, {
-          method: 'DELETE',
-          body: JSON.stringify({ reason, fileOnly })
-        });
-        showToast(fileOnly ? 'Đã xóa tệp.' : 'Đã xóa bài.');
-        const hash = window.location.hash || '';
-        if (hash.startsWith('#thread/')) {
-          await loadThread();
-        } else if (hash.startsWith('#board/')) {
-          await loadBoard();
-        } else {
-          await loadAdmin();
-        }
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminStickyButton = event.target.closest('[data-admin-sticky-thread]');
-    if (adminStickyButton) {
-      const threadId = adminStickyButton.dataset.adminStickyThread;
-      const nextSticky = adminStickyButton.dataset.stickyNext === 'true';
-      const ok = window.confirm(nextSticky ? 'Ghim chủ đề này lên đầu board?' : 'Gỡ ghim chủ đề này?');
-      if (!ok) {
-        return;
-      }
-      try {
-        await api(`/api/admin/threads/${encodeURIComponent(threadId)}/sticky`, {
-          method: nextSticky ? 'POST' : 'DELETE'
-        });
-        showToast(nextSticky ? 'Đã ghim chủ đề.' : 'Đã gỡ ghim chủ đề.');
-        const hash = window.location.hash || '';
-        if (hash.startsWith('#board/')) {
-          await loadBoard();
-        } else if (hash.startsWith('#thread/')) {
-          await loadThread();
-        } else {
-          await loadAdmin();
-        }
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminLockButton = event.target.closest('[data-admin-lock-thread]');
-    if (adminLockButton) {
-      const threadId = adminLockButton.dataset.adminLockThread;
-      const nextLocked = adminLockButton.dataset.lockNext === 'true';
-      const ok = window.confirm(nextLocked ? 'Khóa chủ đề này? Người dùng sẽ không thể trả lời.' : 'Mở khóa chủ đề này?');
-      if (!ok) {
-        return;
-      }
-      try {
-        await api(`/api/admin/threads/${encodeURIComponent(threadId)}/lock`, {
-          method: nextLocked ? 'POST' : 'DELETE'
-        });
-        showToast(nextLocked ? 'Đã khóa chủ đề.' : 'Đã mở khóa chủ đề.');
-        const hash = window.location.hash || '';
-        if (hash.startsWith('#board/')) {
-          await loadBoard();
-        } else if (hash.startsWith('#thread/')) {
-          await loadThread();
-        } else {
-          await loadAdmin();
-        }
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const adminSanctionButton = event.target.closest('[data-admin-sanction]');
-    if (adminSanctionButton) {
-      const kind = adminSanctionButton.dataset.adminSanction;
-      const globalNumber = adminSanctionButton.dataset.globalNumber;
-      const defaultMinutes = kind === 'ban' ? '1440' : '60';
-      const durationMinutes = window.prompt(
-        kind === 'ban' ? 'Tạm khóa trong bao nhiêu phút?' : 'Làm chậm trong bao nhiêu phút?',
-        defaultMinutes
-      );
-      if (!durationMinutes) {
-        return;
-      }
-      const reason = await showReasonModal(kind === 'ban' ? 'Lý do tạm khóa:' : 'Lý do làm chậm:', kind) || '';
-      try {
-        await api(`/api/admin/posts/${globalNumber}/sanctions`, {
-          method: 'POST',
-          body: JSON.stringify({ kind, durationMinutes: Number(durationMinutes), reason })
-        });
-        showToast(kind === 'ban' ? 'Đã tạm khóa.' : 'Đã đặt làm chậm.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const revokeSanctionButton = event.target.closest('[data-admin-revoke-sanction]');
-    if (revokeSanctionButton) {
-      const reason = await showReasonModal('Lý do gỡ lệnh làm chậm/tạm khóa:', 'revoke');
-      if (reason === null) {
-        return;
-      }
-      try {
-        await api(`/api/admin/sanctions/${revokeSanctionButton.dataset.adminRevokeSanction}`, {
-          method: 'DELETE',
-          body: JSON.stringify({ reason })
-        });
-        showToast('Đã gỡ lệnh làm chậm/tạm khóa.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
-      return;
-    }
-    const pendingButton = event.target.closest('[data-action]');
-    if (pendingButton) {
-      const item = pendingButton.closest('.pending-item');
-      const action = pendingButton.dataset.action;
-      const reason = await showReasonModal(
-        action === 'approve' ? 'Lý do duyệt bài:' : 'Lý do xóa bài:',
-        action === 'approve' ? 'approve' : 'delete'
-      );
-      if (reason === null) {
-        return;
-      }
-      try {
-        await api(
-          action === 'approve'
-            ? `/api/admin/pending/${item.dataset.id}/approve`
-            : `/api/admin/pending/${item.dataset.id}`,
-          {
-            method: action === 'approve' ? 'POST' : 'DELETE',
-            body: JSON.stringify({ reason })
-          }
-        );
-        showToast(action === 'approve' ? 'Đã duyệt.' : 'Đã xóa.');
-        await loadAdmin();
-      } catch (error) {
-        showToast(error.message);
-      }
     }
   });
   document.body.addEventListener('change', (event) => {
+    if (handleAdminChange(event, adminEventDependencies)) {
+      return;
+    }
+
     const autoUpdate = event.target.closest('[data-auto-update]');
     if (autoUpdate) {
       setAutoUpdate(autoUpdate.checked);
     }
-    if (event.target.closest('#adminBoardFilter, #adminLabelFilter, #adminReportCategoryFilter, #adminTimeFilter, #adminPriorityFilter, #adminConfidenceFilter, #adminPrioritySort')) {
-      loadAdmin().catch((error) => showToast(error.message));
-    }
-    if (event.target.closest('#adminSelectAll')) {
-      document.querySelectorAll('[data-admin-select]').forEach((input) => {
-        input.checked = els.adminSelectAll.checked;
-      });
-    }
+
     const themeSelect = event.target.closest('[data-theme-select]');
     if (themeSelect) {
       applyTheme(themeSelect.value);
@@ -3261,7 +2174,7 @@ function bindEvents() {
     writeLocalDisplayPreferences,
     writeLocalNotificationPreferences,
     writeSubscribedBoardSlugs,
-    syncBoardSubscriptionButtons,
+    syncBoardSubscriptionButtons: homeController.syncBoardSubscriptionButtons,
     homeBoardKey,
     render2FAState
   });
@@ -3288,7 +2201,7 @@ async function init() {
   state.moderationConfidenceThreshold = Number(config.ai?.moderationConfidenceThreshold || 0);
   syncAdminModerationSettings({ moderationConfidenceThreshold: state.moderationConfidenceThreshold });
   state.hcaptchaSiteKey = config.hcaptchaSiteKey || '';
-  await refreshPublicBoards({ fallbackBoards: config.boards });
+  await homeController.refreshPublicBoards({ fallbackBoards: config.boards });
   setupHcaptcha(showToast).catch((error) => showToast(error.message));
   syncAccountHomeBoardOptions();
   await loadAccountSession();
@@ -3296,4 +2209,11 @@ async function init() {
   route();
 }
 init().catch((error) => showToast(error.message));
+
+
+
+
+
+
+
 

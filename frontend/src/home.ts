@@ -10,10 +10,16 @@ import {
 import { state } from './state';
 import { latestPostHref, mediaItemsFromPost } from './thread';
 import type { AnyRecord } from './types';
-import { myPosts, subscribedBoardSlugs } from './storage';
+import { myPosts, subscribedBoardSlugs, writeSubscribedBoardSlugs } from './storage';
 
 export function createHomeController(dependencies: AnyRecord = {}) {
-  const { isPostFiltered, writeBoardThreadsCache } = dependencies;
+  const {
+    isPostFiltered,
+    writeBoardThreadsCache,
+    persistAccountSettings = () => null,
+    syncAdminBoardFilter,
+    showToast
+  } = dependencies;
 
   return {
     loadHomeThreadsByBoard() {
@@ -24,9 +30,66 @@ export function createHomeController(dependencies: AnyRecord = {}) {
     },
     renderLatestPosts(posts) {
       return renderLatestPosts(posts, { isPostFiltered });
-    }
+    },
+    renderBoards,
+    refreshPublicBoards,
+    isBoardSubscribed,
+    toggleBoardSubscription,
+    syncBoardSubscriptionButtons
   };
+
+  function renderBoards() {
+    els.boardNav.innerHTML = state.boards
+      .map(
+        (board) =>
+          `<a class="${board.slug === state.boardSlug ? 'active' : ''}" href="#board/${board.slug}" title="${board.path}">${board.name}</a>`
+      )
+      .join('');
+  }
+
+  async function refreshPublicBoards({ fallbackBoards = state.boards }: AnyRecord = {}) {
+    try {
+      state.boards = await api('/api/boards');
+    } catch {
+      state.boards = fallbackBoards;
+    }
+    renderBoards();
+    if (syncAdminBoardFilter) {
+      syncAdminBoardFilter();
+    }
+    return state.boards;
+  }
+
+  function isBoardSubscribed(slug = state.boardSlug) {
+    return subscribedBoardSlugs().has(String(slug));
+  }
+
+  async function toggleBoardSubscription(slug = state.boardSlug) {
+    const items = subscribedBoardSlugs();
+    const safeSlug = String(slug);
+    if (items.has(safeSlug)) {
+      items.delete(safeSlug);
+      if (showToast) {
+        showToast('Đã bỏ theo dõi bảng.');
+      }
+    } else {
+      items.add(safeSlug);
+      if (showToast) {
+        showToast('Đã theo dõi bảng.');
+      }
+    }
+    writeSubscribedBoardSlugs([...items]);
+    await persistAccountSettings({ silent: true });
+  }
+
+  function syncBoardSubscriptionButtons() {
+    const label = isBoardSubscribed(state.boardSlug) ? 'Bỏ theo dõi bảng' : 'Theo dõi bảng';
+    document.querySelectorAll('[data-toggle-board-subscription]').forEach((button) => {
+      button.textContent = label;
+    });
+  }
 }
+
 
 
 export function homeBoardList() {
