@@ -53,7 +53,6 @@ import { setButtonLoading, setFormError, showToast } from './feedback';
 import {
   bindComposerMediaInputEvents,
   composerTextarea,
-
   createReplyTemplateComposerController,
   fileToDataUrl,
   imagePreviewHtml,
@@ -77,6 +76,7 @@ import {
   renderStats,
   renderSubscribedBoards
 } from './home';
+import { createHomeLoadController } from './home-loader';
 import { eventInTextInput, moveKeyboardNavigation } from './keyboard';
 import { createRouterController } from './router';
 import { createPostEditModal, showReasonModal, showReportModal } from './modals';
@@ -322,8 +322,6 @@ const {
   loadAccountSettings
 } = accountUiController;
 renderAccountPrivateData = renderAccountPrivateDataFromController;
-
-
 function decodeJwtPayload(token) {
   try {
     const part = String(token || '').split('.')[1];
@@ -468,43 +466,33 @@ const {
 function setScreen(name) {
   return screenHelpers.setScreen(name);
 }
-
 function currentBoard() {
   return screenHelpers.currentBoard();
 }
-
 function renderMissingBoard(screen = 'board') {
   return screenHelpers.renderMissingBoard(screen);
 }
-
 function boardThreadsCacheKey(options = {}) {
   return screenHelpers.boardThreadsCacheKey(options);
 }
-
 function firstBoardPageFromThreads(threads = [], options = {}) {
   return screenHelpers.firstBoardPageFromThreads(threads, options);
 }
-
 function writeBoardThreadsCache(boardSlug, payload, options = {}) {
   return screenHelpers.writeBoardThreadsCache(boardSlug, payload, options);
 }
-
 function readBoardThreadsCache(options = {}) {
   return screenHelpers.readBoardThreadsCache(options);
 }
-
 function updateBoardPresentation(board = null) {
   return screenHelpers.updateBoardPresentation(board);
 }
-
 function toggleCurrentThreadWatch() {
   return screenHelpers.toggleCurrentThreadWatch();
 }
-
 function pageControlsHtml(meta, actionName) {
   return screenHelpers.pageControlsHtml(meta, actionName);
 }
-
 const {
   deletedPostsHtml,
   pendingPostsHtml,
@@ -537,32 +525,19 @@ const {
   adminLoadTimeoutMessage: 'Chi tiết bài viết phản hồi quá lâu, vui lòng thử lại.'
 });
 syncAdminBoardFilter = syncAdminBoardFilterFromHelpers;
-
-async function loadHome() {
-  setScreen('home');
-  homeController.renderBoards();
-  renderHomeBoards();
-  renderMyPosts();
-  renderSubscribedBoards();
-  const [threadsByBoard, latestPosts, watchedThreads, hotBoards, campusPulse, stats] = await Promise.all([
-    homeController.loadHomeThreadsByBoard(),
-    api('/api/posts/latest?limit=10'),
-    watchlistController.loadWatchedThreadSummaries(),
-    api('/api/boards/hot?limit=8'),
-    api('/api/pulse?limit=12'),
-    api('/api/stats')
-  ]);
-  renderHomeBoards(threadsByBoard, stats);
-  homeController.renderPopularThreads(popularThreadsFrom(threadsByBoard));
-  homeController.renderLatestPosts(latestPosts);
-  state.watchedThreadSummaries = watchedThreads;
-  watchlistController.renderWatchedThreads();
-  renderMyPosts();
-  renderSubscribedBoards();
-  renderHotBoards(hotBoards);
-  renderCampusPulse(campusPulse);
-  renderStats(stats);
-}
+const { loadHome } = createHomeLoadController({
+  setScreen,
+  state,
+  homeController,
+  renderHomeBoards,
+  renderMyPosts,
+  renderSubscribedBoards,
+  renderHotBoards,
+  renderCampusPulse,
+  renderStats,
+  api,
+  watchlistController
+});
 function renderPostLines(lines, options: AnyRecord = {}) {
   const opNumber = Number(options.opNumber || 0);
   const knownBoards = new Set((state.boards || []).map((board) => board.slug));
@@ -1253,7 +1228,6 @@ async function loadAdmin() {
     }
   }
 }
-
 let openReplyComposerTarget = (_options: AnyRecord = {}) => {};
 function setupRealtime() {
   setupRealtimeConnection({
@@ -1422,7 +1396,6 @@ function bindEvents() {
     showPostEditModal,
     bulkModerate
   };
-
   bindThreadEvents({
     body: document.body,
     els,
@@ -1502,12 +1475,10 @@ function bindEvents() {
     if (handleAdminChange(event, adminEventDependencies)) {
       return;
     }
-
     const autoUpdate = event.target.closest('[data-auto-update]');
     if (autoUpdate) {
       setAutoUpdate(autoUpdate.checked);
     }
-
     const themeSelect = event.target.closest('[data-theme-select]');
     if (themeSelect) {
       applyTheme(themeSelect.value);
@@ -1585,16 +1556,6 @@ async function init() {
   route();
 }
 init().catch((error) => showToast(error.message));
-
-
-
-
-
-
-
-
-
-
 
 
 
