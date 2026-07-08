@@ -4,6 +4,7 @@ import { bindAiActionEvents } from './ai-events';
 import { createAdminModerationSettingsController } from './admin-moderation-settings';
 import { createAdminHelpers } from './admin-helpers';
 import { api } from './api';
+import { createAccountPreferencesController } from './account-preferences';
 import { bindAdminAuthEvents } from './admin-auth-events';
 import {
   adminAnalyticsHtml,
@@ -129,13 +130,11 @@ import {
 } from './watchlist';
 import {
   ADMIN_LOAD_TIMEOUT_MS,
+  homeBoardKey,
   hiddenThreadsKey,
   hiddenPostsKey,
-  themeKey,
-  homeBoardKey,
   boardThreadsCachePrefix,
   MAX_MEDIA_PER_POST,
-  SUPPORTED_THEMES
 } from './constants';
 import {
   escapeHtml,
@@ -177,7 +176,6 @@ import {
   draftKey,
   hiddenThreadIds,
   hiddenPostNumbers,
-  subscribedBoardSlugs,
   writeSubscribedBoardSlugs,
   writeVote,
   writeReaction
@@ -192,6 +190,27 @@ const showPostEditModal = createPostEditModal({
 const { copyPostPermalink } = createPostClipboardActions({ showToast });
 let renderAccountPrivateData = () => {};
 let syncAdminBoardFilter = () => {};
+const accountPreferencesController = createAccountPreferencesController({
+  state,
+  els,
+  api,
+  applyNotificationPreferences,
+  updateAccountNav: () => updateAccountNav(),
+  renderAccountPrivateData: () => renderAccountPrivateData()
+});
+const {
+  applyTheme,
+  applyDisplayPreferences,
+  accountSettingsFromLocal,
+  syncAccountBoardSubscriptionOptions,
+  applyAccountSyncedSettings,
+  persistAccountSettings,
+  setAccountSession,
+  updateAccountDisplayOptions,
+  isCapcodeEligible,
+  updateCapcodeOptions
+} = accountPreferencesController;
+const syncAccountHomeBoardOptions = accountPreferencesController.syncAccountHomeBoardOptions;
 const {
   accountDraftSyncEnabled,
   readSavedSearches,
@@ -258,6 +277,10 @@ const homeController = createHomeController({
   syncAdminBoardFilter,
   showToast
 });
+accountPreferencesController.setHomeSyncCallbacks({
+  syncBoardSubscriptionButtons: homeController.syncBoardSubscriptionButtons,
+  renderSubscribedBoards
+});
 const replyTemplateController = createReplyTemplateComposerController({
   state,
   readReplyTemplates,
@@ -301,153 +324,6 @@ const {
 renderAccountPrivateData = renderAccountPrivateDataFromController;
 
 
-function applyTheme(theme = state.theme) {
-  const safeTheme = SUPPORTED_THEMES.includes(theme) ? theme : 'yotsuba-b';
-  state.theme = safeTheme;
-  document.body.classList.remove(...SUPPORTED_THEMES.map((item) => `theme-${item}`));
-  document.body.classList.add(`theme-${safeTheme}`);
-  localStorage.setItem(themeKey, safeTheme);
-  document.querySelectorAll('[data-theme-select]').forEach((select) => {
-    select.value = safeTheme;
-  });
-}
-
-function applyDisplayPreferences(preferences = localDisplayPreferences()) {
-  const safe = writeLocalDisplayPreferences(preferences);
-  document.body.classList.toggle('display-compact', safe.compactThreads);
-  document.body.classList.toggle('display-hide-thumbnails', safe.hideThumbnails);
-  if (els?.accountCompactThreads) {
-    els.accountCompactThreads.checked = safe.compactThreads;
-  }
-  if (els?.accountHideThumbnails) {
-    els.accountHideThumbnails.checked = safe.hideThumbnails;
-  }
-  if (els?.accountWatchedUnreadOnly) {
-    els.accountWatchedUnreadOnly.checked = safe.watchedUnreadOnly;
-  }
-  if (els?.accountWatchedSort) {
-    els.accountWatchedSort.value = safe.watchedSort;
-  }
-  syncWatchedControls({ unreadOnly: safe.watchedUnreadOnly });
-  return safe;
-}
-
-function accountSettingsFromLocal() {
-  const notifications = localNotificationPreferences();
-  return {
-    theme: state.theme,
-    homeBoard: localStorage.getItem(homeBoardKey) || state.account?.settings?.homeBoard || state.boardSlug || 'confession',
-    syncDrafts: state.account?.settings?.syncDrafts !== false,
-    emailNotifications: notifications.email,
-    displayPreferences: localDisplayPreferences(),
-    notificationPreferences: notifications,
-    boardSubscriptions: [...subscribedBoardSlugs()]
-  };
-}
-
-function syncAccountBoardSubscriptionOptions(settings = state.account?.settings || accountSettingsFromLocal()) {
-  if (!els.accountBoardSubscriptions) {
-    return;
-  }
-  const selected = new Set(
-    Array.isArray(settings.boardSubscriptions) ? settings.boardSubscriptions.map(String) : [...subscribedBoardSlugs()]
-  );
-  els.accountBoardSubscriptions.innerHTML = state.boards
-    .map(
-      (board) => `
-        <label>
-          <input type="checkbox" value="${escapeHtml(board.slug)}" data-account-board-subscription ${
-            selected.has(board.slug) ? 'checked' : ''
-          } />
-          ${escapeHtml(board.path)} ${escapeHtml(board.name)}
-        </label>
-      `
-    )
-    .join('');
-}
-
-function applyAccountSyncedSettings(account = state.account) {
-  const settings = account?.settings;
-  if (!settings) {
-    applyDisplayPreferences();
-    applyNotificationPreferences();
-    syncAccountBoardSubscriptionOptions();
-    return;
-  }
-  applyTheme(settings.theme);
-  localStorage.setItem(homeBoardKey, settings.homeBoard || 'confession');
-  applyDisplayPreferences(settings.displayPreferences);
-  applyNotificationPreferences(settings.notificationPreferences || { email: settings.emailNotifications });
-  writeSubscribedBoardSlugs(Array.isArray(settings.boardSubscriptions) ? settings.boardSubscriptions : []);
-  homeController.syncBoardSubscriptionButtons();
-  syncAccountBoardSubscriptionOptions(settings);
-  if ((window.location.hash || '#home').startsWith('#home')) {
-    renderSubscribedBoards();
-  }
-}
-
-async function persistAccountSettings({ silent = false }: AnyRecord = {}) {
-  if (!state.accountToken || !state.account) {
-    return null;
-  }
-  try {
-    const account = await api('/api/account/settings', {
-      auth: 'account',
-      method: 'PUT',
-      body: JSON.stringify({ settings: accountSettingsFromLocal() })
-    });
-    state.account = account;
-    updateAccountNav();
-    return account;
-  } catch (error) {
-    if (!silent) {
-      throw error;
-    }
-    if (/\u0111\u0103ng nh\u1eadp|Phi\u00ean/.test(error.message)) {
-      setAccountSession();
-    }
-    return null;
-  }
-}
-
-function setAccountSession({ token = '', account = null }: AnyRecord = {}) {
-  state.accountToken = token;
-  state.account = account;
-  state.accountPostNumbers = new Set();
-  state.accountPrivateData = token ? state.accountPrivateData : null;
-  window.clearTimeout(state.accountPrivateSaveTimer);
-  if (token) {
-    localStorage.setItem('accountToken', token);
-  } else {
-    localStorage.removeItem('accountToken');
-  }
-  if (account) {
-    applyAccountSyncedSettings(account);
-  }
-  updateAccountNav();
-  renderAccountPrivateData();
-}
-function updateAccountDisplayOptions() {
-  const loggedIn = Boolean(state.accountToken && state.account?.username);
-  els.accountDisplayOptions.forEach((element) => element.classList.toggle('hidden', !loggedIn));
-  if (!loggedIn) {
-    els.useAccountNameInputs.forEach((input) => {
-      input.checked = false;
-    });
-  }
-}
-function isCapcodeEligible() {
-  return Boolean(state.accountToken) && ['admin', 'moderator'].includes(state.account?.role);
-}
-function updateCapcodeOptions() {
-  const eligible = isCapcodeEligible();
-  els.capcodeOptions.forEach((element) => element.classList.toggle('hidden', !eligible));
-  if (!eligible) {
-    els.capcodeInputs.forEach((input) => {
-      input.checked = false;
-    });
-  }
-}
 function decodeJwtPayload(token) {
   try {
     const part = String(token || '').split('.')[1];
@@ -488,14 +364,6 @@ function updateAccountNav() {
   updateAccountDisplayOptions();
   updateCapcodeOptions();
 }
-function syncAccountHomeBoardOptions() {
-  if (!els.accountHomeBoard) {
-    return;
-  }
-  els.accountHomeBoard.innerHTML = state.boards
-    .map((board) => `<option value="${escapeHtml(board.slug)}">${escapeHtml(board.path)} ${escapeHtml(board.name)}</option>`)
-    .join('');
-}
 function fillAccountSettings(account = state.account) {
   const settings = account?.settings || accountSettingsFromLocal();
   const displayPreferences = settings.displayPreferences || localDisplayPreferences();
@@ -510,7 +378,7 @@ function fillAccountSettings(account = state.account) {
   els.accountLoggedOut.classList.toggle('hidden', Boolean(account));
   els.accountSettingsLogout.classList.toggle('hidden', !account);
   els.accountTheme.value = settings.theme || state.theme || 'yotsuba-b';
-  els.accountHomeBoard.value = settings.homeBoard || localStorage.getItem(homeBoardKey) || state.boardSlug || 'confession';
+  els.accountHomeBoard.value = settings.homeBoard || state.boardSlug || 'confession';
   els.accountSyncDrafts.checked = settings.syncDrafts !== false;
   els.accountCompactThreads.checked = Boolean(displayPreferences.compactThreads);
   els.accountHideThumbnails.checked = Boolean(displayPreferences.hideThumbnails);
