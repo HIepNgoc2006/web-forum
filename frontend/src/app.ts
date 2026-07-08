@@ -763,6 +763,7 @@ bootstrapApp({
   applyTheme,
   applyDisplayPreferences,
   applyNotificationPreferences,
+  setButtonLoading,
   route,
   handleKeyboardShortcut,
   submitThread,

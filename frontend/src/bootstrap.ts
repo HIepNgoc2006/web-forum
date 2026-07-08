@@ -16,14 +16,10 @@ export async function bootstrapApp(dependencies: AnyRecord): Promise<void> {
     loadAccountSession,
     syncAdminBoardFilter,
     route,
-    showToast,
-    ...rest
+    showToast
   } = dependencies;
 
-  bindEvents({
-    ...rest,
-    state
-  });
+  bindEvents(dependencies);
   syncDeletePasswordInputs();
   applyTheme(localStorage.getItem('theme') || state.theme);
   applyDisplayPreferences();
