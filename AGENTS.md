@@ -2,7 +2,7 @@
 
 ## Project Structure & Module Organization
 
-This repository is an npm workspace for the 36chan web app. `backend/` contains the Node.js API, realtime server, moderation, persistence, and static serving. Core backend logic lives in `backend/src/core/`, HTTP and realtime glue in `backend/src/server/`, and the entry point is `backend/server.ts`. Backend tests live in `backend/test/`. `frontend/` is a Vite browser UI with `frontend/src/app.ts`, `frontend/src/styles.css`, and `frontend/index.html`. `phase-tracking/` contains roadmap, ADRs, API inventory, backup/restore notes, and progress tracking. `.code-review-graph/` contains the local code review graph database and generated graph artifacts. Generated runtime data such as `backend/data/forum.json`, logs, and `.env` files are ignored.
+This repository is an npm workspace for the 36chan web app. `backend/` contains the Node.js API, realtime server, moderation, persistence, and static serving. Core backend logic lives in `backend/src/core/`, HTTP and realtime glue in `backend/src/server/`, and the entry point is `backend/server.ts`. Backend tests live in `backend/test/`. `frontend/` is a Vite browser UI with `frontend/src/app.ts`, decomposed frontend modules under `frontend/src/`, `frontend/src/styles.css`, and `frontend/index.html` as the app shell. If HTML partials are used, keep them as static/build-time authoring files, not runtime templates. `phase-tracking/` contains roadmap, ADRs, API inventory, backup/restore notes, and progress tracking. `.code-review-graph/` contains the local code review graph database and generated graph artifacts. Generated runtime data such as `backend/data/forum.json`, logs, and `.env` files are ignored.
 
 ## Architecture Overview
 
@@ -15,7 +15,7 @@ Swappable interfaces (pick by env, same shape across implementations):
 
 Gotchas:
 - `express` and `socket.io` are in `backend/package.json` but **not used for routing**. HTTP is a hand-rolled `node:http` router in `server/http-app.ts` (custom `ok`/`fail` helpers, byte-capped `readJson`, Vietnamese error strings). Realtime is **Server-Sent Events** in `server/realtime.ts` (`text/event-stream`, `publish()` broadcasts) — not WebSockets.
-- The frontend is **vanilla DOM**, not React: `frontend/index.html` holds the full markup and `frontend/src/app.ts` is one imperative module with a central `state` object and hash-based routing (`#board/...`, `#thread/...`). React-listed deps are incidental; `@simplewebauthn/browser` drives passkey login. UI text is Vietnamese.
+- The current frontend baseline is a **Vite static shell plus TypeScript modules**: `frontend/index.html` provides stable DOM anchors and `frontend/src/app.ts` composes modular feature helpers with hash-based routing (`#board/...`, `#thread/...`). React, JSX, routers, or frameworks are allowed only through the frontend architecture guidelines below.
 - Auth is layered: JWT admin tokens, separate account tokens, TOTP 2FA (`totp-service.ts`), and WebAuthn passkeys (`webauthn-service.ts`). Moderation uses hashed IP/poster fingerprints (`security.ts`) — raw IPs and tokens are never returned to public clients or sent to AI.
 
 ## Build, Test, and Development Commands
@@ -33,7 +33,39 @@ Use Node.js 22.18.0 or newer. Backend source-mode TypeScript relies on Node buil
 
 ## Coding Style & Naming Conventions
 
-Use modern ESM TypeScript. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.ts`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and route/socket wiring in `backend/src/server/`. Frontend changes should preserve the current plain Vite structure unless a larger refactor is explicitly requested.
+Use modern ESM TypeScript. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.ts`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and route/socket wiring in `backend/src/server/`. Frontend changes should preserve the current Vite/static-shell behavior unless a scoped frontend architecture change explicitly asks to introduce React, JSX, a router, or a framework.
+
+## Frontend Architecture Evolution Guidelines
+
+The current frontend default is Vite + static `index.html` shell + TypeScript modules + vanilla DOM orchestration. React, JSX, routers, or frameworks may be introduced, but only as explicit, scoped architecture work.
+
+Preferred path:
+1. **React/JSX islands first**: add isolated `.tsx` widgets mounted into existing DOM anchors, with typed props and no route/API behavior changes.
+2. **Feature-by-feature migration**: convert one low-risk widget, panel, or screen section per PR. Avoid whole-app rewrites.
+3. **Router later**: keep current hash routes unless a dedicated router migration issue defines compatibility, redirects, tests, and rollback.
+4. **Framework last**: Next.js or any full framework migration must start as a planning issue or POC branch, not as a direct replacement of the current Vite app.
+
+Rules for React/JSX work:
+- Add React/JSX support in its own PR before converting existing UI.
+- Prefer isolated mount nodes and `mountReactIslands()`-style composition over replacing the whole app shell.
+- Keep `frontend/index.html` or its build-time partials as the stable shell unless a dedicated PR proves a safe alternative.
+- Preserve existing DOM IDs/classes, Vietnamese UI text, accessibility attributes, hash routes, and API payloads unless the issue explicitly says otherwise.
+- Do not introduce React Router, Next.js, Remix, Astro, Svelte, or another framework in the same PR as a simple widget conversion.
+- Do not move HTML into runtime template injection just to reduce file size. HTML partials should be static/build-time only.
+- Do not add production dependencies without explaining why they are necessary and why a smaller Vite/local alternative is insufficient.
+- New React components should avoid `AnyRecord` except at legacy boundaries; define explicit prop types.
+- If a React island duplicates existing vanilla behavior, keep the old behavior until validation proves the island is equivalent, then remove the old path in the same PR or a follow-up cleanup.
+
+Rules for router/framework work:
+- Create a planning issue before implementation. Include deployment impact, build output, routing compatibility, browser smoke coverage, rollback plan, and whether the backend static serving path changes.
+- Keep current hash-route compatibility until a migration PR explicitly updates tests and user-facing links.
+- A Next.js/framework POC should live in a clearly separated branch or directory and must not break the existing Vite build until the migration is approved.
+- Framework adoption must update `AGENTS.md`, README/deployment docs, CI scripts, and release verification commands in the same planning sequence.
+
+Validation for frontend architecture PRs:
+- Run `npm run typecheck`, `npm run check`, `npm run build`, `npm test`, and `npm run test:e2e` when frontend behavior, routing, build setup, or UI rendering changes.
+- Include screenshots or browser-smoke notes for visible UI changes.
+- Request review for route/hash regressions, DOM ID/class changes, API payload changes, accessibility changes, accidental UI text changes, and bundle/build regressions.
 
 ## TypeScript Migration Guidelines
 
@@ -47,7 +79,7 @@ Recommended order:
 3. Convert leaf modules before entry points: pure helpers, validators, formatters, security utilities, and service types before `backend/server.ts` or frontend app bootstrap files.
 4. Define shared domain types for boards, threads, posts, users/accounts, moderation results, store state, realtime events, image metadata, and API payloads before typing large service functions.
 5. Convert tests alongside the code they cover. Keep existing `node:test` behavior unless the test runner is intentionally changed.
-6. Convert frontend files with Vite-compatible TypeScript. Keep the current vanilla DOM architecture; do not introduce React or JSX as part of the TypeScript migration.
+6. Frontend TypeScript migration is complete. React/JSX, router, or framework adoption is no longer a TypeScript migration task; treat it as frontend architecture work under the guidelines above.
 7. Convert backend entry points only after the build/dev/start story is decided. If backend emits compiled files, keep source in `src/` and run production from `dist/`; if using a TS runtime for development, keep production startup explicit and documented.
 8. Turn on stricter compiler options gradually: first `noEmit` typechecks, then `strict`/`noUncheckedIndexedAccess`/similar checks once the initial migration is stable.
 
