@@ -33,6 +33,21 @@ npm --prefix frontend-next run dev
 `npm run start` / `preview` serve that folder locally so you can smoke-check the export.  
 If `out/` is missing, the preview script exits and tells you to build first.
 
+Preview path resolution (dependency-free `scripts/serve-static.mjs`) for a request like `/foo`:
+
+1. `out/foo` (exact file)
+2. `out/foo/index.html` (directory index)
+3. `out/foo.html` (Next static-export route HTML — checked **before** root fallback)
+4. `out/index.html` (SPA fallback when present)
+
+Path traversal outside `out/` is rejected. This server is POC-only and does not affect production static serving.
+
+Optional resolve-order smoke (no network, temp fixture only):
+
+```bash
+npm --prefix frontend-next run smoke:serve-static
+```
+
 Optional root helpers (do not affect production `build` / `check` / `release:verify`):
 
 ```bash

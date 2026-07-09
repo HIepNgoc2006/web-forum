@@ -47,6 +47,72 @@ function isInsideRoot(rootDir, targetPath) {
   return relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative));
 }
 
+/**
+ * Resolve a request pathname to a file under rootDir.
+ *
+ * Order for /foo:
+ * 1. out/foo
+ * 2. out/foo/index.html
+ * 3. out/foo.html
+ * 4. out/index.html (SPA fallback when present)
+ *
+ * @returns {{ status: number, filePath?: string } | { status: 403 | 400 }}
+ */
+export function resolveStaticFile(rootDir, pathname, options = {}) {
+  const { spaFallback = true } = options;
+
+  if (typeof pathname !== 'string' || pathname.includes('\0')) {
+    return { status: 400 };
+  }
+
+  // Strip leading slashes so path.join never treats the segment as absolute
+  // (on Windows, join('C:\\out', '/index.html') would drop the root).
+  let relativePath = pathname.replace(/^[/\\]+/, '');
+  if (relativePath === '' || relativePath === '.') {
+    relativePath = 'index.html';
+  }
+
+  const requested = path.normalize(path.join(rootDir, relativePath));
+  if (!isInsideRoot(rootDir, requested)) {
+    return { status: 403 };
+  }
+
+  // 1. Exact file
+  if (fs.existsSync(requested) && fs.statSync(requested).isFile()) {
+    return { status: 200, filePath: requested };
+  }
+
+  // 2. Directory index
+  if (fs.existsSync(requested) && fs.statSync(requested).isDirectory()) {
+    const dirIndex = path.join(requested, 'index.html');
+    if (isInsideRoot(rootDir, dirIndex) && fs.existsSync(dirIndex) && fs.statSync(dirIndex).isFile()) {
+      return { status: 200, filePath: dirIndex };
+    }
+  }
+
+  // 3. Next static-export route HTML (out/foo.html for /foo)
+  if (!path.extname(relativePath)) {
+    const htmlSibling = path.normalize(path.join(rootDir, `${relativePath}.html`));
+    if (
+      isInsideRoot(rootDir, htmlSibling) &&
+      fs.existsSync(htmlSibling) &&
+      fs.statSync(htmlSibling).isFile()
+    ) {
+      return { status: 200, filePath: htmlSibling };
+    }
+  }
+
+  // 4. SPA fallback
+  if (spaFallback) {
+    const indexPath = path.join(rootDir, 'index.html');
+    if (isInsideRoot(rootDir, indexPath) && fs.existsSync(indexPath) && fs.statSync(indexPath).isFile()) {
+      return { status: 200, filePath: indexPath };
+    }
+  }
+
+  return { status: 404 };
+}
+
 function send(res, status, body, headers = {}) {
   res.writeHead(status, headers);
   res.end(body);
@@ -83,52 +149,30 @@ function main() {
     process.exit(1);
   }
 
-  const indexPath = path.join(rootDir, 'index.html');
-  const hasIndex = fs.existsSync(indexPath) && fs.statSync(indexPath).isFile();
-
   const server = http.createServer((req, res) => {
     try {
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
-      let pathname = decodeURIComponent(url.pathname);
-      if (pathname.includes('\0')) {
+      let pathname;
+      try {
+        pathname = decodeURIComponent(url.pathname);
+      } catch {
         send(res, 400, 'Bad Request', { 'Content-Type': 'text/plain; charset=utf-8' });
         return;
       }
 
-      // Normalize request path and map / to index.html.
-      // Strip leading slashes so path.join never treats the segment as absolute
-      // (on Windows, join('C:\\out', '/index.html') would drop the root).
-      let relativePath = pathname.replace(/^[/\\]+/, '');
-      if (relativePath === '' || relativePath === '.') {
-        relativePath = 'index.html';
+      const resolved = resolveStaticFile(rootDir, pathname);
+      if (resolved.status === 200 && resolved.filePath) {
+        sendFile(res, resolved.filePath);
+        return;
       }
-
-      const requested = path.normalize(path.join(rootDir, relativePath));
-      if (!isInsideRoot(rootDir, requested)) {
+      if (resolved.status === 403) {
         send(res, 403, 'Forbidden', { 'Content-Type': 'text/plain; charset=utf-8' });
         return;
       }
-
-      if (fs.existsSync(requested) && fs.statSync(requested).isFile()) {
-        sendFile(res, requested);
+      if (resolved.status === 400) {
+        send(res, 400, 'Bad Request', { 'Content-Type': 'text/plain; charset=utf-8' });
         return;
       }
-
-      // Directory: try index.html inside it
-      if (fs.existsSync(requested) && fs.statSync(requested).isDirectory()) {
-        const dirIndex = path.join(requested, 'index.html');
-        if (isInsideRoot(rootDir, dirIndex) && fs.existsSync(dirIndex) && fs.statSync(dirIndex).isFile()) {
-          sendFile(res, dirIndex);
-          return;
-        }
-      }
-
-      // SPA fallback for missing paths (static export catch-all shell)
-      if (hasIndex && isInsideRoot(rootDir, indexPath)) {
-        sendFile(res, indexPath);
-        return;
-      }
-
       send(res, 404, 'Not Found', { 'Content-Type': 'text/plain; charset=utf-8' });
     } catch {
       send(res, 500, 'Internal Server Error', { 'Content-Type': 'text/plain; charset=utf-8' });
