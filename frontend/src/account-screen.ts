@@ -99,7 +99,7 @@ export function createAccountScreenController({
     if (!document.getElementById('reactAccountPreferencesSummary')) {
       return;
     }
-    void import('./react/mount')
+    void import('./react/mount-account-preferences')
       .then(({ mountAccountPreferencesSummaryIsland }) => {
         mountAccountPreferencesSummaryIsland({
           themeLabel: selectedOptionLabel(els.accountTheme, settings.theme || state.theme || 'Yotsuba B'),

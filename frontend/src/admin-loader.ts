@@ -6,7 +6,7 @@ import type { AnyRecord } from './types';
  */
 async function mountAdminReactIsland(): Promise<void> {
   try {
-    const { mountReactIslands } = await import('./react/mount');
+    const { mountReactIslands } = await import('./react/mount-admin-status');
     mountReactIslands();
   } catch {
     // Optional island: admin vanilla UI continues without React.

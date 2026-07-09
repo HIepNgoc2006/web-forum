@@ -74,6 +74,19 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
   } = dependencies;
 
   const safeLoadAdmin = loadAdmin || (() => Promise.resolve());
+  /** Invalidates stale analytics/health island mounts and vanilla fallbacks after tab or re-render. */
+  let adminIslandRenderToken = 0;
+
+  function isLiveAdminIslandHost(
+    expectedTab: string,
+    renderToken: number,
+    host: Element | null
+  ): boolean {
+    if (renderToken !== adminIslandRenderToken || state.adminTab !== expectedTab || !host) {
+      return false;
+    }
+    return host.isConnected && Boolean(els.pendingList?.contains(host));
+  }
 
   function deletedPostsHtml(posts: AnyRecord[]) {
     if (!posts.length) {
@@ -232,6 +245,8 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
 
   function renderAdminAnalytics(analytics: AnyRecord) {
     renderAdminTabs();
+    const expectedTab = 'analytics';
+    const renderToken = ++adminIslandRenderToken;
     // Metric cards mount in React; tables + digest stay vanilla for event handlers.
     const restHtml = adminAnalyticsRestHtml(analytics, state.boards);
     els.pendingList.innerHTML = `
@@ -244,8 +259,13 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
       els.adminSelectAll.checked = false;
     }
     const queue = analytics?.moderationQueue || {};
-    void import('./react/mount')
+    const host = document.getElementById('reactAdminAnalyticsCards');
+    void import('./react/mount-admin-analytics')
       .then(({ mountAdminAnalyticsCardsIsland }) => {
+        // Stale lazy resolve: do not mount into a different admin tab or superseded host.
+        if (!isLiveAdminIslandHost(expectedTab, renderToken, host)) {
+          return;
+        }
         mountAdminAnalyticsCardsIsland({
           moderationQueue: {
             pendingCount: queue.pendingCount,
@@ -259,23 +279,38 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
         });
       })
       .catch(() => {
+        // Stale failure: do not overwrite another tab with analytics vanilla HTML.
+        if (!isLiveAdminIslandHost(expectedTab, renderToken, host)) {
+          return;
+        }
         els.pendingList.innerHTML = adminAnalyticsHtml(analytics, state.boards);
       });
   }
 
   function renderAdminHealth(data: AnyRecord) {
     renderAdminTabs();
+    const expectedTab = 'health';
+    const renderToken = ++adminIslandRenderToken;
     // Optional React island host; falls back to vanilla HTML if the chunk fails.
     els.pendingList.innerHTML =
       '<div id="reactAdminHealthIsland" class="react-island" data-react-island="admin-health"></div>';
     if (els.adminSelectAll) {
       els.adminSelectAll.checked = false;
     }
-    void import('./react/mount')
+    const host = document.getElementById('reactAdminHealthIsland');
+    void import('./react/mount-admin-health')
       .then(({ mountAdminHealthIsland }) => {
+        // Stale lazy resolve: do not mount into a different admin tab or superseded host.
+        if (!isLiveAdminIslandHost(expectedTab, renderToken, host)) {
+          return;
+        }
         mountAdminHealthIsland(data);
       })
       .catch(() => {
+        // Stale failure: do not overwrite another tab with health vanilla HTML.
+        if (!isLiveAdminIslandHost(expectedTab, renderToken, host)) {
+          return;
+        }
         els.pendingList.innerHTML = adminHealthHtml(data);
       });
   }
