@@ -1,6 +1,10 @@
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import {
+  AccountPreferencesSummaryIsland,
+  type AccountPreferencesSummaryIslandProps
+} from './AccountPreferencesSummaryIsland';
+import {
   AdminAnalyticsCardsIsland,
   type AdminAnalyticsCardsIslandProps
 } from './AdminAnalyticsCardsIsland';
@@ -50,4 +54,15 @@ export function mountAdminAnalyticsCardsIsland(props: AdminAnalyticsCardsIslandP
     return;
   }
   renderIntoHost(host, <AdminAnalyticsCardsIsland {...props} />);
+}
+
+/** Mount account preferences summary into `#reactAccountPreferencesSummary` when present. */
+export function mountAccountPreferencesSummaryIsland(
+  props: AccountPreferencesSummaryIslandProps
+): void {
+  const host = document.getElementById('reactAccountPreferencesSummary');
+  if (!host) {
+    return;
+  }
+  renderIntoHost(host, <AccountPreferencesSummaryIsland {...props} />);
 }

@@ -76,6 +76,7 @@ export function createAccountScreenController({
     syncBrowserNotificationControls(notificationPreferences);
     syncAccountBoardSubscriptionOptions(settings);
     renderAccountPrivateData();
+    mountAccountPreferencesSummaryIslandFromControls(settings);
 
     const current2FAState = render2FAState;
     if (current2FAState) {
@@ -83,6 +84,43 @@ export function createAccountScreenController({
     }
     renderPasskeys();
     renderAccountRecoveryPanel();
+  }
+
+  function selectedOptionLabel(selectEl: HTMLSelectElement | null | undefined, fallback: string): string {
+    if (!selectEl) {
+      return fallback;
+    }
+    const option = selectEl.selectedOptions?.[0] || selectEl.options?.[selectEl.selectedIndex];
+    return option?.textContent?.trim() || selectEl.value || fallback;
+  }
+
+  /** Lazy-load account React summary only when the account settings screen is filled. */
+  function mountAccountPreferencesSummaryIslandFromControls(settings: AnyRecord = {}) {
+    if (!document.getElementById('reactAccountPreferencesSummary')) {
+      return;
+    }
+    void import('./react/mount')
+      .then(({ mountAccountPreferencesSummaryIsland }) => {
+        mountAccountPreferencesSummaryIsland({
+          themeLabel: selectedOptionLabel(els.accountTheme, settings.theme || state.theme || 'Yotsuba B'),
+          homeBoardLabel: selectedOptionLabel(
+            els.accountHomeBoard,
+            settings.homeBoard || state.boardSlug || 'confession'
+          ),
+          syncDrafts: Boolean(els.accountSyncDrafts?.checked),
+          compactThreads: Boolean(els.accountCompactThreads?.checked),
+          hideThumbnails: Boolean(els.accountHideThumbnails?.checked),
+          watchedUnreadOnly: Boolean(els.accountWatchedUnreadOnly?.checked),
+          watchedSortLabel: selectedOptionLabel(els.accountWatchedSort, 'Chưa đọc trước'),
+          emailNotifications: Boolean(els.accountEmailNotifications?.checked),
+          notifyWatchedThreads: Boolean(els.accountNotifyWatchedThreads?.checked),
+          notifyBoardSubscriptions: Boolean(els.accountNotifyBoardSubscriptions?.checked),
+          browserNotifyWatchedThreads: Boolean(els.accountBrowserNotifyWatchedThreads?.checked)
+        });
+      })
+      .catch(() => {
+        // Optional island: account form remains fully usable without React.
+      });
   }
 
   function render2FASection() {
