@@ -239,10 +239,19 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
 
   function renderAdminHealth(data: AnyRecord) {
     renderAdminTabs();
-    els.pendingList.innerHTML = adminHealthHtml(data);
+    // Optional React island host; falls back to vanilla HTML if the chunk fails.
+    els.pendingList.innerHTML =
+      '<div id="reactAdminHealthIsland" class="react-island" data-react-island="admin-health"></div>';
     if (els.adminSelectAll) {
       els.adminSelectAll.checked = false;
     }
+    void import('./react/mount')
+      .then(({ mountAdminHealthIsland }) => {
+        mountAdminHealthIsland(data);
+      })
+      .catch(() => {
+        els.pendingList.innerHTML = adminHealthHtml(data);
+      });
   }
 
   function adminQueryString() {

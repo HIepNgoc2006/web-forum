@@ -1,7 +1,18 @@
+import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import { AdminHealthIsland, type AdminHealthIslandProps } from './AdminHealthIsland';
 import { AdminStatusIsland } from './AdminStatusIsland';
 
 const mountedRoots = new WeakMap<Element, Root>();
+
+function renderIntoHost(host: Element, node: ReactNode): void {
+  let root = mountedRoots.get(host);
+  if (!root) {
+    root = createRoot(host);
+    mountedRoots.set(host, root);
+  }
+  root.render(node);
+}
 
 /**
  * Mount isolated React islands into optional DOM anchors.
@@ -16,12 +27,14 @@ function mountAdminStatusIsland(): void {
   if (!host) {
     return;
   }
+  renderIntoHost(host, <AdminStatusIsland />);
+}
 
-  let root = mountedRoots.get(host);
-  if (!root) {
-    root = createRoot(host);
-    mountedRoots.set(host, root);
+/** Mount the admin health dashboard into `#reactAdminHealthIsland` when present. */
+export function mountAdminHealthIsland(health: AdminHealthIslandProps['health']): void {
+  const host = document.getElementById('reactAdminHealthIsland');
+  if (!host) {
+    return;
   }
-
-  root.render(<AdminStatusIsland />);
+  renderIntoHost(host, <AdminHealthIsland health={health || {}} />);
 }
