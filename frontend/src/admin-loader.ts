@@ -1,5 +1,18 @@
 import type { AnyRecord } from './types';
 
+/**
+ * Lazy-load the admin-only React island so public routes never pay for react-dom.
+ * Safe no-op when the mount module fails or the host node is missing.
+ */
+async function mountAdminReactIsland(): Promise<void> {
+  try {
+    const { mountReactIslands } = await import('./react/mount');
+    mountReactIslands();
+  } catch {
+    // Optional island: admin vanilla UI continues without React.
+  }
+}
+
 export function createAdminLoadController(dependencies: AnyRecord) {
   const {
     state,
@@ -35,6 +48,8 @@ export function createAdminLoadController(dependencies: AnyRecord) {
     adminLoadController = window.AbortController ? new AbortController() : null;
     const adminLoadSignal = adminLoadController?.signal;
     setScreen('admin');
+    // Mount after the admin screen is active; Vite splits this into a separate chunk.
+    void mountAdminReactIsland();
     const loggedIn = Boolean(state.token);
     updateAccountNav();
     els.loginForm.classList.toggle('hidden', loggedIn);

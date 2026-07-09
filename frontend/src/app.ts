@@ -88,7 +88,6 @@ import { bindThreadEvents } from './thread-events';
 import { bindQuickReplyEvents } from './quick-reply-events';
 import { bindEvents } from './app-events';
 import { bootstrapApp } from './bootstrap';
-import { mountReactIslands } from './react/mount';
 import { createBoardLoadController } from './board-loader';
 import { createAdminLoadController } from './admin-loader';
 import { createThreadLoadController } from './thread-loader';
@@ -755,10 +754,6 @@ screenHelpers = createScreenHelpers({
   threadToolbarHtml,
   boardThreadsCachePrefix
 });
-
-// Mount isolated React islands after the static shell is in the DOM.
-// No-op if a mount node is missing; vanilla behavior stays intact.
-mountReactIslands();
 
 bootstrapApp({
   els,
