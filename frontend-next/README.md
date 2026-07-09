@@ -19,9 +19,19 @@ npm --prefix frontend-next run typecheck
 # static export build (writes .next/ and out/)
 npm --prefix frontend-next run build
 
-# optional local dev server on port 3001
+# preview the static export (serves frontend-next/out on port 3001)
+# uses a tiny dependency-free Node server — not `next start`
+npm --prefix frontend-next run start
+# alias:
+npm --prefix frontend-next run preview
+
+# optional Next dev server (HMR; not the same as the static export)
 npm --prefix frontend-next run dev
 ```
+
+`npm run build` with `output: "export"` produces `out/`.  
+`npm run start` / `preview` serve that folder locally so you can smoke-check the export.  
+If `out/` is missing, the preview script exits and tells you to build first.
 
 Optional root helpers (do not affect production `build` / `check` / `release:verify`):
 
@@ -30,6 +40,12 @@ npm run typecheck:frontend-next
 npm run build:frontend-next
 npm run dev:frontend-next
 ```
+
+**POC warnings**
+
+- This is **not** production. The Vite app under `frontend/` remains the production UI.
+- Backend static serving (`STATIC_ROOT` / `frontend/dist`) is **unchanged**.
+- Do not treat a successful local static preview as readiness for a Next.js cutover.
 
 ## What is not migrated
 
