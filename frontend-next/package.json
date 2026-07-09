@@ -1,0 +1,28 @@
+{
+  "name": "frontend-next",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Isolated Next.js POC for 36chan-web. Not the production frontend.",
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "start": "next start --port 3001"
+  },
+  "dependencies": {
+    "36chan-web": "file:..",
+    "next": "^15.5.2",
+    "react": "^19.2.6",
+    "react-dom": "^19.2.6"
+  },
+  "devDependencies": {
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^6.0.3"
+  },
+  "engines": {
+    "node": ">=22.18.0"
+  }
+}
