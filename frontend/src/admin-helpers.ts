@@ -1,6 +1,7 @@
 import type { AnyRecord } from './types';
 import {
   adminAnalyticsHtml,
+  adminAnalyticsRestHtml,
   adminBoardsHtml,
   adminHealthHtml,
   adminPostEditButtonHtml,
@@ -231,10 +232,35 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
 
   function renderAdminAnalytics(analytics: AnyRecord) {
     renderAdminTabs();
-    els.pendingList.innerHTML = adminAnalyticsHtml(analytics, state.boards);
+    // Metric cards mount in React; tables + digest stay vanilla for event handlers.
+    const restHtml = adminAnalyticsRestHtml(analytics, state.boards);
+    els.pendingList.innerHTML = `
+      <div class="analytics-dashboard">
+        <div id="reactAdminAnalyticsCards" class="react-island" data-react-island="admin-analytics-cards"></div>
+        ${restHtml}
+      </div>
+    `;
     if (els.adminSelectAll) {
       els.adminSelectAll.checked = false;
     }
+    const queue = analytics?.moderationQueue || {};
+    void import('./react/mount')
+      .then(({ mountAdminAnalyticsCardsIsland }) => {
+        mountAdminAnalyticsCardsIsland({
+          moderationQueue: {
+            pendingCount: queue.pendingCount,
+            pendingThreads: queue.pendingThreads,
+            pendingComments: queue.pendingComments,
+            oldestPendingAgeMinutes: queue.oldestPendingAgeMinutes,
+            averageResolutionTimeMinutes: queue.averageResolutionTimeMinutes,
+            resolvedCount: queue.resolvedCount
+          },
+          aiUsageTotal: analytics?.aiUsage?.total || 0
+        });
+      })
+      .catch(() => {
+        els.pendingList.innerHTML = adminAnalyticsHtml(analytics, state.boards);
+      });
   }
 
   function renderAdminHealth(data: AnyRecord) {

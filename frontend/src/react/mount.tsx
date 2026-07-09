@@ -1,5 +1,9 @@
 import type { ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
+import {
+  AdminAnalyticsCardsIsland,
+  type AdminAnalyticsCardsIslandProps
+} from './AdminAnalyticsCardsIsland';
 import { AdminHealthIsland, type AdminHealthIslandProps } from './AdminHealthIsland';
 import { AdminStatusIsland } from './AdminStatusIsland';
 
@@ -37,4 +41,13 @@ export function mountAdminHealthIsland(health: AdminHealthIslandProps['health'])
     return;
   }
   renderIntoHost(host, <AdminHealthIsland health={health || {}} />);
+}
+
+/** Mount analytics metric cards into `#reactAdminAnalyticsCards` when present. */
+export function mountAdminAnalyticsCardsIsland(props: AdminAnalyticsCardsIslandProps): void {
+  const host = document.getElementById('reactAdminAnalyticsCards');
+  if (!host) {
+    return;
+  }
+  renderIntoHost(host, <AdminAnalyticsCardsIsland {...props} />);
 }

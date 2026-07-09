@@ -277,8 +277,7 @@ export function adminAnalyticsHtml(analytics: AnyRecord = {}, boards = []) {
     .join('');
 
   const queue = analytics.moderationQueue || {};
-  return `
-    <div class="analytics-dashboard">
+  const metricCardsHtml = `
       <div class="analytics-row">
         <div class="analytics-card">
           <h4>Hàng đợi kiểm duyệt</h4>
@@ -300,8 +299,52 @@ export function adminAnalyticsHtml(analytics: AnyRecord = {}, boards = []) {
           <div class="analytics-metric">${analytics.aiUsage?.total || 0}</div>
           <p class="muted">Tóm tắt, gợi ý bình luận và viết lại nháp</p>
         </div>
-      </div>
+      </div>`;
 
+  const restHtml = adminAnalyticsRestHtml(analytics, boards, boardRows, kindList, dailyRows);
+
+  return `
+    <div class="analytics-dashboard">
+      ${metricCardsHtml}
+      ${restHtml}
+    </div>
+  `;
+}
+
+/** Tables + digest controls kept in vanilla HTML (event handlers use data-board-digest). */
+export function adminAnalyticsRestHtml(
+  analytics: AnyRecord = {},
+  boards = [],
+  boardRows = '',
+  kindList = '',
+  dailyRows = ''
+) {
+  if (!boardRows) {
+    boardRows = analyticsBoardActivityRows(analytics.boardActivity, boards)
+      .map((board) => {
+        return `
+        <tr>
+          <td><strong>/${escapeHtml(board.slug)}/</strong> - ${escapeHtml(board.name)}</td>
+          <td>${board.threads.active} / ${board.threads.pending} / ${board.threads.deleted}</td>
+          <td>${board.comments.active} / ${board.comments.pending} / ${board.comments.deleted}</td>
+          <td><span class="analytics-badge">${board.reportsCount}</span></td>
+        </tr>
+      `;
+      })
+      .join('');
+  }
+  if (!kindList) {
+    kindList = Object.entries(analytics.aiUsage?.byKind || {})
+      .map(([kind, count]) => `<li><strong>${escapeHtml(kind)}:</strong> ${count} yêu cầu</li>`)
+      .join('');
+  }
+  if (!dailyRows) {
+    dailyRows = (analytics.aiUsage?.daily || [])
+      .map((day) => `<tr><td>${escapeHtml(day.date)}</td><td>${day.count} yêu cầu</td></tr>`)
+      .join('');
+  }
+
+  return `
       <div class="analytics-grid">
         <div class="analytics-section">
           <h3>Hoạt động của Bảng tin</h3>
@@ -346,7 +389,6 @@ export function adminAnalyticsHtml(analytics: AnyRecord = {}, boards = []) {
         <button type="button" class="btn" data-board-digest>Tạo bản tổng hợp hôm nay</button>
         <div data-board-digest-result class="reports-summary-box hidden"></div>
       </div>
-    </div>
   `;
 }
 
