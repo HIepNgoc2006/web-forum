@@ -12,7 +12,8 @@
     "src/**/*.ts",
     "src/**/*.d.ts",
     "eslint.config.*",
-    "vite.config.*"
+    "vite.config.*",
+    "vite-html-partials.ts"
   ],
   "exclude": [
     "node_modules",

@@ -1,0 +1,143 @@
+      <section id="threadScreen" class="screen" aria-labelledby="threadTitle">
+        <div class="board-hero">
+          <a class="board-logo" href="#home" aria-label="Trang chủ 36chan">
+            <span>36chan</span>
+          </a>
+          <p>xem ít nhất mỗi ngày một lần</p>
+        </div>
+        <div class="thread-page-title">
+          <div class="thread-title-row">
+            <h1 id="threadTitle">Chủ đề</h1>
+            <div id="threadAdminActions" class="thread-admin-actions"></div>
+          </div>
+          <p id="threadBoardPath" class="path-chip">/confession/</p>
+          <p id="threadBoardDescription" class="muted">Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt</p>
+        </div>
+        <div class="post-reply-toggle-row">
+          <button id="postReplyToggle" class="post-reply-toggle" type="button">[Đăng trả lời]</button>
+        </div>
+        <div class="screen-head thread-head">
+          <button id="backToBoard" class="ghost-button" type="button">[Quay lại]</button>
+          <button id="threadStartThreadButton" class="ghost-button start-thread-inline" type="button">[Tạo chủ đề mới]</button>
+          <button id="threadSummaryButton" class="ghost-button" type="button">[Tóm tắt AI]</button>
+        </div>
+        <div id="threadSummary" class="ai-box hidden"></div>
+        <section id="threadBoardRules" class="board-rules hidden" data-board-rules aria-label="Nội quy bảng">
+          <h2>Nội quy bảng</h2>
+          <ul data-board-rules-list></ul>
+        </section>
+        <section id="replyComposer" class="composer reply-composer hidden" aria-labelledby="replyTitle">
+          <div class="reply-panel-title">
+            <h2 id="replyTitle">Đăng trả lời</h2>
+            <div class="reply-ai-actions">
+              <button id="suggestButton" class="ghost-button" type="button">[AI gợi ý]</button>
+              <select id="rewriteTone" class="rewrite-tone-select" aria-label="Tông giọng">
+                <option value="neutral">Trung lập</option>
+                <option value="less-aggressive">Bớt gay gắt</option>
+                <option value="privacy-safer">An toàn riêng tư</option>
+              </select>
+              <button id="rewriteButton" class="ghost-button" type="button">[AI sửa an toàn]</button>
+              <button id="commentCaptionButton" class="ghost-button" type="button">[AI mô tả ảnh]</button>
+              <button id="commentOcrButton" class="ghost-button" type="button">[AI trích chữ]</button>
+              <span id="commentAiRewriteLabel" class="ai-label hidden">Đã sửa bằng AI</span>
+            </div>
+          </div>
+          <div id="suggestions" class="suggestions hidden"></div>
+          <form id="commentForm" class="stack">
+            <label class="field-row">
+              <span>Tên hiển thị</span>
+              <input name="displayName" placeholder="Anonymous (dùng tên#mã để tạo tripcode)" maxlength="60" autocomplete="off" />
+            </label>
+            <label class="field-row checkbox-row account-display-option hidden" data-account-display-option>
+              <span>Tài khoản</span>
+              <label><input name="useAccountName" type="checkbox" data-use-account-name /> Dùng username tài khoản</label>
+            </label>
+            <div class="field-row">
+              <span>Tùy chọn</span>
+              <div class="reply-options-cell">
+                <input name="options" autocomplete="off" placeholder="sage, noko" title="sage = không bump thread; noko = quay lại thread sau khi đăng" />
+              </div>
+            </div>
+            <label class="field-row">
+              <span>Mật khẩu xóa</span>
+              <input name="deletePassword" type="password" autocomplete="new-password" maxlength="120" placeholder="để xóa bài/tệp sau khi đăng" data-delete-password-input />
+            </label>
+            <label class="field-row">
+              <span>Bình luận</span>
+              <textarea id="commentBody" rows="4" maxlength="5000" placeholder="Viết bình luận..."></textarea>
+            </label>
+            <div class="composer-picker" data-composer-picker="comment" aria-label="Emoji và sticker cho trả lời">
+              <span>Emoji</span>
+              <button class="link-button" data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
+              <button class="link-button" data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
+              <button class="link-button" data-composer-insert="😢" type="button" aria-label="Chèn emoji buồn">😢</button>
+              <button class="link-button" data-composer-insert="🔥" type="button" aria-label="Chèn emoji nóng">🔥</button>
+              <button class="link-button" data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
+              <span>Sticker</span>
+              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
+              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
+              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:study]" type="button">Học</button>
+              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
+            </div>
+            <div class="reply-template-picker" data-reply-template-picker="comment" aria-label="Mẫu trả lời đã lưu"></div>
+            <div id="commentPrivacyWarning" class="privacy-warning hidden" role="status"></div>
+            <div class="field-row">
+              <span>Xác minh</span>
+              <div class="reply-verification-cell">
+                <input id="commentCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+                <div class="captcha-widget hidden" data-hcaptcha-target="commentCaptcha"></div>
+              </div>
+            </div>
+            <label class="field-row">
+              <span>Tệp</span>
+              <input id="commentImage" name="file" type="file" accept="image/*,video/mp4,video/webm" multiple />
+            </label>
+            <label class="field-row checkbox-row">
+              <span>Ẩn ảnh</span>
+              <label><input name="imageSpoiler" type="checkbox" /> Đánh dấu ảnh là spoiler</label>
+            </label>
+            <label class="field-row checkbox-row capcode-option hidden" data-capcode-option>
+              <span>Capcode</span>
+              <label><input name="capcode" type="checkbox" data-capcode-input /> Đăng với chức danh quản trị</label>
+            </label>
+            <label class="field-row">
+              <span>Âm thanh → chữ</span>
+              <div class="audio-transcribe-controls">
+                <input id="commentAudio" type="file" accept="audio/*" />
+                <button id="commentRecordButton" class="ghost-button audio-record-button" type="button" aria-pressed="false">
+                  [Ghi âm]
+                </button>
+              </div>
+            </label>
+            <div id="commentImagePreview" class="image-preview hidden"></div>
+            <p class="reply-notes">
+              Vui lòng đọc <a href="#policy">Nội quy & riêng tư</a> trước khi đăng.<br />
+              Có thể giữ định dạng code bằng thẻ [code].
+            </p>
+            <div class="form-actions reply-submit-row">
+              <button class="primary-button reply-post-button" type="submit">Gửi</button>
+            </div>
+          </form>
+        </section>
+        <div class="board-ad board-banner" data-board-banner>
+          <img class="board-banner-image hidden" data-board-banner-image alt="" />
+          <span data-board-banner-text>Bảng thú nhận sinh viên chính thức</span>
+        </div>
+        <div id="threadToolbarTop" class="thread-toolbar"></div>
+        <article id="threadDetail" class="thread-detail"></article>
+        <div id="threadPagination" class="page-controls"></div>
+        <div id="threadToolbarBottom" class="thread-toolbar"></div>
+        <form id="deletePostForm" class="thread-footer-controls">
+          <span>Giao diện</span>
+          <select name="style" data-theme-select aria-label="Giao diện">
+            <option value="yotsuba-b">Yotsuba B</option>
+            <option value="yotsuba">Yotsuba</option>
+            <option value="tomorrow">Tomorrow</option>
+            <option value="burichan">Burichan</option>
+          </select>
+        </form>
+        <div class="board-ad board-banner bottom-ad" data-board-banner>
+          <img class="board-banner-image hidden" data-board-banner-image alt="" />
+          <span data-board-banner-text>Bảng thú nhận sinh viên chính thức</span>
+        </div>
+      </section>
