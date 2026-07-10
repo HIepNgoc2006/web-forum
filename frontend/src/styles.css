@@ -2831,8 +2831,9 @@ body.display-compact .post-body {
   }
 }
 
-/* Board pages use a Yotsuba B style, separate from the orange homepage portal. */
-body.board-page {
+/* Board pages default to Yotsuba B; theme-* classes override these tokens. */
+body.board-page,
+body.theme-yotsuba-b.board-page {
   --page: #eef2ff;
   --page-top: #d1d5ee;
   --reply: #d6daf0;
@@ -3079,24 +3080,63 @@ body.theme-yotsuba.board-page .topbar {
   font-weight: bold;
 }
 
-.board-page .composer,
-.board-page #commentForm {
-  width: 468px;
+/*
+ * Single shell for reply / new-thread composers.
+ * Theme tokens only — never nest a second bordered box on the inner form.
+ */
+.board-page .composer {
+  --form-label-width: 96px;
+  --form-gutter: 4px;
+  --form-indent: calc(var(--form-label-width) + var(--form-gutter));
+  box-sizing: border-box;
+  width: min(480px, calc(100vw - 12px));
   max-width: calc(100vw - 12px);
-  margin: 4px auto 7px;
+  margin: 6px auto 10px;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  color: var(--text);
   text-align: left;
-  /* Post + reply forms adopt the salmon account-form palette for a consistent look. */
-  --label: #ea8;
-  --text: #800000;
-  border: 1px solid #d9bfb7;
-  background: #f0e0d6;
-  padding: 8px 10px;
+}
+
+/* Inner forms fill the shell; no second border / width / margin. */
+.board-page .composer #commentForm,
+.board-page .composer #threadForm,
+.board-page #commentForm,
+.board-page #threadForm {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+}
+
+body.theme-yotsuba-b.board-page .composer,
+body.theme-yotsuba.board-page .composer,
+body.theme-tomorrow.board-page .composer,
+body.theme-burichan.board-page .composer {
+  border-color: var(--reply-border);
+  background: var(--reply);
+  color: var(--text);
+}
+
+body.theme-yotsuba-b.board-page .field-row > span,
+body.theme-yotsuba.board-page .field-row > span,
+body.theme-tomorrow.board-page .field-row > span,
+body.theme-burichan.board-page .field-row > span {
+  background: var(--label);
+  color: var(--text);
+  border-color: var(--text);
 }
 
 .board-page .composer h2,
 .board-page .panel-title h2 {
-  color: #af0a0f;
+  color: var(--header);
   font-size: 16px;
+  line-height: 1.25;
   text-align: center;
 }
 
@@ -3105,22 +3145,42 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 .board-page .field-row {
-  grid-template-columns: 86px minmax(0, 1fr);
-  margin-bottom: 0;
+  grid-template-columns: var(--form-label-width, 96px) minmax(0, 1fr);
+  column-gap: var(--form-gutter, 4px);
+  row-gap: 0;
+  margin-bottom: 2px;
+  align-items: stretch;
 }
 
 .board-page .field-row > span {
-  min-height: 20px;
-  padding: 2px 7px;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  min-height: 24px;
+  padding: 3px 6px;
   font-size: 12px;
+  line-height: 1.25;
+}
+
+.board-page .field-row > input,
+.board-page .field-row > textarea,
+.board-page .field-row > select,
+.board-page .field-row > .reply-options-cell,
+.board-page .field-row > .reply-verification-cell,
+.board-page .field-row > .audio-transcribe-controls,
+.board-page .field-row > label {
+  min-width: 0;
 }
 
 .board-page textarea,
-.board-page input {
-  min-height: 20px;
+.board-page input:not([type='checkbox']):not([type='radio']),
+.board-page select {
+  box-sizing: border-box;
+  min-height: 24px;
   border-color: #000;
-  padding: 1px 3px;
-  font-size: 12px;
+  padding: 3px 5px;
+  font-size: 13px;
+  line-height: 1.3;
 }
 
 .audio-transcribe-controls {
@@ -3128,10 +3188,11 @@ body.theme-yotsuba.board-page .topbar {
   flex-wrap: wrap;
   gap: 4px;
   align-items: center;
+  min-width: 0;
 }
 
 .audio-transcribe-controls input {
-  flex: 1 1 180px;
+  flex: 1 1 160px;
   min-width: 0;
 }
 
@@ -3150,21 +3211,22 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 .board-page textarea {
-  min-height: 70px;
+  min-height: 84px;
+  resize: vertical;
 }
 
 .board-page .composer-picker,
 .board-page .reply-template-picker {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px 4px;
+  gap: 3px 5px;
   align-items: center;
-  margin-left: 84px;
+  margin: 4px 0 2px var(--form-indent, 100px);
 }
 
 .board-page .composer-picker > span,
 .board-page .reply-template-picker > span {
-  color: #800000;
+  color: var(--text);
   font-weight: bold;
 }
 
@@ -3172,9 +3234,10 @@ body.theme-yotsuba.board-page .topbar {
 .board-page .reply-template-picker button,
 .board-page .reply-template-picker select {
   min-height: 22px;
-  border: 1px solid #b7a5a0;
-  background: #fff4ee;
-  padding: 1px 5px;
+  border: 1px solid var(--reply-border);
+  background: var(--page);
+  color: var(--text);
+  padding: 1px 6px;
   line-height: 1.2;
 }
 
@@ -3190,8 +3253,9 @@ body.theme-yotsuba.board-page .topbar {
 
 .quick-composer-picker button {
   min-height: 22px;
-  border: 1px solid #b7a5a0;
-  background: #fff4ee;
+  border: 1px solid var(--reply-border);
+  background: var(--page);
+  color: var(--text);
 }
 
 .quick-template-picker {
@@ -3215,7 +3279,7 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 .board-page .form-actions {
-  margin-left: 86px;
+  margin: 6px 0 0 var(--form-indent, 100px);
 }
 
 .board-page .composer-templates {
@@ -3223,20 +3287,22 @@ body.theme-yotsuba.board-page .topbar {
   flex-wrap: wrap;
   gap: 2px 4px;
   align-items: center;
-  margin: 2px 0 4px 86px;
-  color: #34345c;
+  margin: 4px 0 4px var(--form-indent, 100px);
+  color: var(--text);
   font-size: 12px;
   line-height: 1.35;
 }
 
 .board-page .composer-templates > span {
-  color: #800000;
+  color: var(--text);
   font-weight: bold;
 }
 
 .board-page .privacy-warning {
-  margin-left: 86px;
-  border-color: #000;
+  margin: 4px 0 4px var(--form-indent, 100px);
+  border-color: var(--reply-border);
+  background: var(--page);
+  color: var(--text);
 }
 
 .board-page .board-rules {
@@ -3438,58 +3504,67 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 .board-page #threadScreen .reply-composer {
-  width: 430px;
+  /* Same shell metrics as .board-page .composer — no second width. */
+  width: min(480px, calc(100vw - 12px));
   max-width: calc(100vw - 12px);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 
+/* Title on its own row; AI tools wrap under it — no broken 3-col grid. */
 .reply-panel-title {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  gap: 6px;
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  margin: 0 0 2px;
+  gap: 6px;
+  margin: 0 0 8px;
 }
 
 .reply-panel-title h2 {
-  grid-column: 2;
   margin: 0;
-  color: #af0a0f;
+  color: var(--header);
   font-size: 16px;
+  line-height: 1.25;
   text-align: center;
 }
 
 .reply-panel-title .ghost-button {
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .reply-ai-actions {
-  grid-column: 3;
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  justify-self: start;
-  align-self: center;
+  gap: 4px 6px;
+  justify-content: center;
+  align-items: center;
+  width: 100%;
+}
+
+.reply-ai-actions .ghost-button,
+.reply-ai-actions .rewrite-tone-select {
+  margin: 0;
 }
 
 .reply-options-cell {
   display: block;
+  min-width: 0;
 }
 
 .reply-post-button {
   min-width: 54px;
-  min-height: 20px;
-  padding: 0 10px;
+  min-height: 22px;
+  padding: 0 12px;
   line-height: 18px;
 }
 
 .reply-submit-row {
-  margin-top: 4px;
+  margin-top: 6px;
   text-align: right;
 }
 
 .reply-verification-cell {
   position: relative;
+  min-width: 0;
 }
 
 .board-page #commentCaptcha.reply-captcha-token {
@@ -3503,41 +3578,52 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 .reply-notes {
-  margin: 4px 0 0 86px;
-  color: #34345c;
+  margin: 6px 0 0 var(--form-indent, 100px);
+  color: var(--text);
   font-size: 11px;
-  line-height: 1.3;
+  line-height: 1.35;
+  opacity: 0.9;
 }
 
-.board-page #threadScreen .reply-composer .suggestions {
+.board-page #threadScreen .reply-composer .suggestions,
+.board-page .composer .suggestions {
+  box-sizing: border-box;
   width: 100%;
-  margin: 2px 0 4px;
+  max-width: none;
+  margin: 0 0 8px;
+  border: 1px solid var(--reply-border);
+  background: var(--page);
+  color: var(--text);
+  padding: 5px 6px;
+  font-size: 12px;
 }
 
 .board-page .ai-box,
 .board-page .suggestions {
-  width: min(468px, calc(100vw - 12px));
+  width: min(480px, calc(100vw - 12px));
   font-size: 12px;
 }
 
 .board-page .ai-box {
   margin: 4px auto 8px;
-  border-color: #b7c5d9;
-  background: #d6daf0;
+  border-color: var(--reply-border);
+  background: var(--reply);
+  color: var(--text);
   padding: 5px 8px;
 }
 
 .board-page .suggestions {
   margin: 2px auto 8px;
-  border: 1px solid #b7c5d9;
-  background: #d6daf0;
+  border: 1px solid var(--reply-border);
+  background: var(--reply);
+  color: var(--text);
   padding: 4px;
 }
 
 .board-page .suggestions button {
-  border: 1px solid #999;
-  background: #eee;
-  color: #000;
+  border: 1px solid var(--reply-border);
+  background: var(--page);
+  color: var(--text);
   padding: 1px 7px;
   font-size: 12px;
 }
@@ -4139,20 +4225,24 @@ body.theme-yotsuba.board-page .topbar {
 }
 
 @media (max-width: 640px) {
+  .board-page .composer {
+    --form-label-width: 78px;
+    --form-gutter: 3px;
+    width: min(100%, calc(100vw - 12px));
+    padding: 8px 8px 10px;
+  }
+
   .board-page .field-row {
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: var(--form-label-width) minmax(0, 1fr);
   }
 
-  .board-page .form-actions {
-    margin-left: 72px;
-  }
-
-  .board-page .privacy-warning {
-    margin-left: 72px;
-  }
-
+  .board-page .form-actions,
+  .board-page .privacy-warning,
+  .board-page .composer-picker,
+  .board-page .reply-template-picker,
+  .board-page .composer-templates,
   .reply-notes {
-    margin-left: 72px;
+    margin-left: var(--form-indent);
   }
 
   .thread-toolbar {
@@ -4166,14 +4256,12 @@ body.theme-yotsuba.board-page .topbar {
   }
 
   .reply-panel-title {
-    grid-template-columns: 1fr;
-    justify-items: center;
+    gap: 4px;
+    margin-bottom: 6px;
   }
 
-  .reply-panel-title h2,
-  .reply-panel-title .ghost-button {
-    grid-column: 1;
-    justify-self: center;
+  .reply-ai-actions {
+    gap: 3px 4px;
   }
 
   .board-page .post.comment {
@@ -4800,13 +4888,7 @@ body.theme-burichan .account-screen .login-panel {
   color: var(--text);
 }
 
-body.theme-burichan.board-page .composer,
-body.theme-burichan.board-page #commentForm {
-  --label: #cfd4f6;
-  --text: #2b2638;
-  border-color: var(--reply-border);
-  background: var(--reply);
-}
+/* Composer/reply form inherit theme tokens from body; no palette override needed. */
 
 body.theme-burichan.board-page .board-rules,
 body.theme-burichan.board-page .ai-box,
