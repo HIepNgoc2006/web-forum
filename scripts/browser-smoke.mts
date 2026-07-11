@@ -778,11 +778,6 @@ async function main() {
               const body = document.querySelector('#threadBody');
               body.value += '\\nSố điện thoại 0912345678';
               body.dispatchEvent(new Event('input', { bubbles: true }));
-              const deletePasswordInput = document.querySelector('#threadForm [name="deletePassword"]');
-              if (deletePasswordInput) {
-                deletePasswordInput.value = 'ui-delete-pass';
-                deletePasswordInput.dispatchEvent(new Event('input', { bubbles: true }));
-              }
               const draft = localStorage.getItem('draft:thread:confession') || '';
               const warning = document.querySelector('#threadPrivacyWarning');
               const listText = document.querySelector('#threadList')?.innerText || '';
@@ -796,9 +791,7 @@ async function main() {
                 draft,
                 warningText: warning?.textContent || '',
                 warningHidden: warning?.classList.contains('hidden') ?? true,
-                deletePasswordVisible: Boolean(deletePasswordInput),
-                deletePasswordStored: localStorage.getItem('deletePassword') || '',
-                deletePasswordSynced: [...document.querySelectorAll('[data-delete-password-input]')].every((input) => input.value === 'ui-delete-pass'),
+                deletePasswordFieldRemoved: !document.querySelector('#threadForm [name="deletePassword"]'),
                 postedAutomatically: listText.includes('Mình muốn chia sẻ chuyện học tập'),
                 boardVideoFilterActive,
                 boardVideoFilterPressed,
@@ -828,10 +821,8 @@ async function main() {
           if (payload.warningHidden || !payload.warningText.includes('số điện thoại')) {
             throw new Error('board desktop did not rescan privacy risk after template insertion.');
           }
-          if (!payload.deletePasswordVisible || payload.deletePasswordStored !== 'ui-delete-pass' || !payload.deletePasswordSynced) {
-            throw new Error(
-              `board desktop delete password sync failed: visible=${Boolean(payload.deletePasswordVisible)} stored=${payload.deletePasswordStored || 'missing'} synced=${Boolean(payload.deletePasswordSynced)}`
-            );
+          if (!payload.deletePasswordFieldRemoved) {
+            throw new Error('board desktop still shows the delete password field for anonymous posting');
           }
           if (payload.postedAutomatically) {
             throw new Error('board desktop template insertion posted automatically.');
@@ -1127,12 +1118,7 @@ async function main() {
                 }
                 await new Promise((resolve) => setTimeout(resolve, 100));
               }
-              const commentDeletePasswordInput = document.querySelector('#commentForm [name="deletePassword"]');
-              if (!commentDeletePasswordInput) {
-                throw new Error('comment delete password field missing');
-              }
-              commentDeletePasswordInput.value = 'smoke-delete-pass';
-              commentDeletePasswordInput.dispatchEvent(new Event('input', { bubbles: true }));
+              localStorage.setItem('deletePassword', 'smoke-delete-pass');
               const originalPrompt = window.prompt;
               let selfEditPromptDefault = '';
               window.prompt = (message, defaultValue) => {
@@ -1489,7 +1475,7 @@ async function main() {
         theme: 'yotsuba',
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'yotsuba-thread-file-delete-desktop.png'),
-        checks: ['Smoke subject title', '[Xóa tệp]'],
+        checks: ['Smoke subject title'],
         ignoreBrowserError(event) {
           const entry = event.method === 'Log.entryAdded' ? event.params?.entry : null;
           return (

@@ -12,7 +12,7 @@ type ThreadEventDependencies = {
   loadCatalog: () => Promise<any>;
   loadArchive: () => Promise<any>;
   refreshCurrentScreen: () => Promise<any>;
-  openQuickReply: (number: string, event: PointerEvent) => void;
+  openQuickReply: (number: string, event: PointerEvent, options?: AnyRecord) => void;
   openReplyComposer: (options?: AnyRecord) => void;
   updatePrivacyWarning: (value: string, warningElement: Element | null) => void;
   selfDeletePost: (globalNumber: string, options?: AnyRecord) => Promise<any>;
@@ -157,7 +157,17 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
 
     const quickReplyNumber = target.closest('[data-quick-reply]');
     if (quickReplyNumber) {
-      openQuickReply(quickReplyNumber.dataset.quickReply, event as PointerEvent);
+      // Post-number links keep their permalink when not inside an open thread
+      // or when the thread cannot accept replies (4chan-style quote vs navigate).
+      if (
+        quickReplyNumber instanceof HTMLAnchorElement &&
+        (!state.threadId || state.threadIsArchived || state.threadIsLocked)
+      ) {
+        return;
+      }
+      event.preventDefault();
+      const selectedQuote = selectedPostQuoteText(quickReplyNumber.closest('.post'));
+      openQuickReply(quickReplyNumber.dataset.quickReply, event as PointerEvent, { selectedQuote });
       return;
     }
 
@@ -438,14 +448,14 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
 
     const quoteButton = target.closest('[data-quote]');
     if (quoteButton) {
-      const quote = quoteButton.dataset.quote;
+      // 4chan-style floating quick-reply window instead of the bottom form.
+      const quoteMatch = String(quoteButton.dataset.quote || '').match(/(\d+)/);
+      const quoteNumber = quoteMatch?.[1] || '';
+      if (!quoteNumber) {
+        return;
+      }
       const selectedQuote = selectedPostQuoteText(quoteButton.closest('.post'));
-      const quoteBlock = selectedQuote ? `${quote}\n${selectedQuote}\n` : `${quote}\n`;
-      openReplyComposer({ focus: false });
-      const spacer = els.commentBody.value && !els.commentBody.value.endsWith('\n') ? '\n' : '';
-      els.commentBody.value = `${els.commentBody.value}${spacer}${quoteBlock}`;
-      updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
-      els.commentBody.focus();
+      openQuickReply(quoteNumber, event as PointerEvent, { selectedQuote });
       return;
     }
 

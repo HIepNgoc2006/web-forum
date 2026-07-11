@@ -265,22 +265,35 @@ export function mediaThumbnailSrc(image: AnyRecord = {}, options: AnyRecord = {}
   return src || (options.fallbackOriginal ? mediaOriginalSrc(value) : '');
 }
 
+export function truncateFileName(name, maxLength = 42) {
+  const value = String(name || 'tai-len').trim() || 'tai-len';
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const extensionMatch = value.match(/(\.[a-z0-9]{1,10})$/i);
+  const extension = extensionMatch ? extensionMatch[1] : '';
+  const keep = Math.max(10, maxLength - extension.length - 1);
+  return `${value.slice(0, keep)}…${extension}`;
+}
+
 export function fileTextHtml(image) {
-  const name = escapeHtml(image?.name || 'tai-len');
+  const rawName = String(image?.name || 'tai-len').trim() || 'tai-len';
+  const displayName = escapeHtml(truncateFileName(rawName));
+  const fullName = escapeHtml(rawName);
   const src = escapeHtml(mediaOriginalSrc(image));
   const info = escapeHtml(imageInfoText(image));
-  return `Tệp: <a href="${src}" target="_blank" rel="noopener noreferrer">${name}</a> (${info})`;
+  return `Tệp: <a class="file-name" href="${src}" target="_blank" rel="noopener noreferrer" title="${fullName}">${displayName}</a> <span class="file-size">(${info})</span>`;
 }
 
 export function mediaToggleHtml(image, className = 'post-image') {
   const name = escapeHtml(image?.name || 'tai-len');
-  const thumbnailSrc = mediaThumbnailSrc(image);
+  const isVideo = mediaKind(image) === 'video';
+  const thumbnailSrc = mediaThumbnailSrc(image, { fallbackOriginal: !isVideo });
   const originalSrc = escapeHtml(mediaOriginalSrc(image));
   const spoiler = Boolean(image?.spoiler);
-  const isVideo = mediaKind(image) === 'video';
   const mediaLabel = isVideo ? 'video' : 'ảnh';
   const preview = thumbnailSrc
-    ? `<img class="${className}" src="${escapeHtml(thumbnailSrc)}" alt="${name}" data-full-src="${originalSrc}">`
+    ? `<img class="${className}" src="${escapeHtml(thumbnailSrc)}" alt="${name}" data-full-src="${originalSrc}" loading="lazy" decoding="async">`
     : `<span class="${className} placeholder image-lazy-placeholder" data-full-src="${originalSrc}">${isVideo ? 'Video' : 'Có tệp'}</span>`;
   const spoilerLabel = spoiler ? '<span class="spoiler-image-label">Spoiler — bấm để hiện</span>' : '';
   const toggleAttributes = `class="image-toggle" data-image-toggle${spoiler ? ' data-spoiler-image' : ''} data-media-type="${

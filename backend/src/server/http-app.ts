@@ -1620,12 +1620,13 @@ export function createHttpServer({
         return;
       }
       if (params && request.method === 'DELETE') {
+        const account = requireAccount(request, jwtSecret, service);
         const body = await readJson(request, 20_000);
         ok(
           response,
           await service.deletePost({
             globalNumber: params.globalNumber,
-            password: body.password,
+            accountId: account.sub,
             fileOnly: Boolean(body.fileOnly)
           })
         );

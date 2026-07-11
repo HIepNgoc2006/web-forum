@@ -111,9 +111,14 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
     const showReplyAction = options.replyAction !== false;
     const canReply = options.canReply !== false;
     const showPostActions = options.actions !== false;
+    const compactActions = Boolean(options.compactActions);
     const accountEditAction = showPostActions ? accountPostEditButtonHtml(post, { isAccountPost }) : '';
     const selfEditAction = showPostActions ? selfEditPostButtonHtml(post) : '';
-    const selfDeleteActions = showPostActions ? selfDeletePostActionsHtml(post) : '';
+    const canDeletePost = (candidate: AnyRecord = {}) =>
+      Boolean(isAccountPost?.(candidate) || canModerateFromAdminToken?.());
+    const selfDeleteActions = showPostActions
+      ? selfDeletePostActionsHtml(post, { canDeletePost })
+      : '';
     const permalink = postPermalink(post, options, state.threadId);
     const opNumber = Number(options.opNumber || 0);
     const isOpReply =
@@ -132,43 +137,53 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
         escapeHtml(posterNote.label || posterNote.note) +
         '</span>'
       : '';
-    const posterIdentity = canReply && showPostActions
+    const posterIdentityHtml = canReply && showPostActions
       ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
       : `<span class="hash">${escapeHtml(posterId(post))}</span>`;
-    return `
-    <div class="post-meta">
-      ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
-      <span class="name">${escapeHtml(postDisplayName(post))}</span>${post.tripcode ? `<span class="tripcode" title="Tripcode">${escapeHtml(post.tripcode)}</span>` : ''}${capcodeBadgeHtml(post)}
-      <span class="date">${formatPostDate(post.createdAt)}</span>
-      <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" title="Liên kết tới bài này">${post.globalNumber}</a></span>
-      ${posterIdentity}
-      ${opMarker}
-      ${youMarker}
-      ${sageMarker}
-      ${lastEdited}
-      ${posterNoteBadge}
-      ${stickyLabelHtml(post)}
-      <span class="status">${labels}</span>
-      ${showPostActions ? voteControlHtml(post) : ''}
-      ${showPostActions ? reactionControlHtml(post) : ''}
-      ${
-        showPostActions && showReplyAction && canReply
-          ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
-          : ''
-      }
-      ${showPostActions ? `<button class="quote-button" data-copy-post-link="${escapeHtml(permalink)}" type="button">[Link]</button>` : ''}
-      ${showPostActions ? `<button class="quote-button" data-collapse-post="${post.globalNumber}" type="button" aria-expanded="true">[Thu]</button>` : ''}
+    const primaryActions = showPostActions
+      ? `${
+          showReplyAction && canReply
+            ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
+            : ''
+        }
+      <button class="quote-button" data-copy-post-link="${escapeHtml(permalink)}" type="button">[Link]</button>
+      <button class="quote-button" data-collapse-post="${post.globalNumber}" type="button" aria-expanded="true">[Thu]</button>
       ${selfEditAction}
       ${selfDeleteActions}
       ${accountEditAction}
+      <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
+      <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>`
+      : '';
+    const secondaryActions = showPostActions && !compactActions
+      ? `<button class="quote-button post-action-secondary" data-filter-poster="${escapeHtml(posterId(post))}" data-filter-board="${escapeHtml(post.boardSlug || '')}" type="button">[Lọc ID]</button>
+      <button class="quote-button post-action-secondary" data-note-poster="${escapeHtml(posterId(post))}" data-note-board="${escapeHtml(post.boardSlug || '')}" type="button">[Ghi chú ID]</button>
+      <button class="quote-button post-action-secondary" data-translate-post="${post.globalNumber}" type="button">[Dịch]</button>
+      <button class="quote-button post-action-secondary" data-tts-post="${post.globalNumber}" type="button">[Nghe]</button>`
+      : '';
+    return `
+    <div class="post-meta${compactActions ? ' post-meta-compact' : ''}">
+      <span class="post-meta-identity">
+        ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
+        <span class="name">${escapeHtml(postDisplayName(post))}</span>${post.tripcode ? `<span class="tripcode" title="Tripcode">${escapeHtml(post.tripcode)}</span>` : ''}${capcodeBadgeHtml(post)}
+        <span class="date">${formatPostDate(post.createdAt)}</span>
+        <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" data-quick-reply="${post.globalNumber}" title="Trả lời bài này (No.${post.globalNumber})">${post.globalNumber}</a></span>
+        ${posterIdentityHtml}
+        ${opMarker}
+        ${youMarker}
+        ${sageMarker}
+        ${lastEdited}
+        ${posterNoteBadge}
+        ${stickyLabelHtml(post)}
+        <span class="status">${labels}</span>
+      </span>
       ${
         showPostActions
-          ? `<button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
-      <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>
-      <button class="quote-button" data-filter-poster="${escapeHtml(posterId(post))}" data-filter-board="${escapeHtml(post.boardSlug || '')}" type="button">[Lọc ID]</button>
-      <button class="quote-button" data-note-poster="${escapeHtml(posterId(post))}" data-note-board="${escapeHtml(post.boardSlug || '')}" type="button">[Ghi chú ID]</button>
-      <button class="quote-button" data-translate-post="${post.globalNumber}" type="button">[Dịch]</button>
-      <button class="quote-button" data-tts-post="${post.globalNumber}" type="button">[Nghe]</button>`
+          ? `<span class="post-meta-actions">
+        ${voteControlHtml(post)}
+        ${reactionControlHtml(post)}
+        ${primaryActions}
+        ${secondaryActions}
+      </span>`
           : ''
       }
     </div>
@@ -329,7 +344,7 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
           .map(
             (comment) => `
           <article class="reply-preview" id="p${comment.globalNumber}">
-            ${meta(comment, { replyAction: false })}
+            ${meta(comment, { replyAction: false, compactActions: true })}
             <div class="post-body">${renderPostLines(comment.bodyLines || [], { opNumber: thread.globalNumber })}</div>
           </article>
         `
@@ -374,7 +389,7 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
                       .join('')}</div>`
                   : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
               }
-              ${meta(thread, { replyAction: false })}
+              ${meta(thread, { replyAction: false, compactActions: true })}
               <a class="thread-open" href="#thread/${thread.id}">[Trả lời]</a>
               ${threadSubjectHtml(thread)}
               <div class="post-body">${renderPostLines(thread.bodyLines || [], { opNumber: thread.globalNumber })}</div>

@@ -23,6 +23,10 @@ export function createScreenHelpers(dependencies: AnyRecord) {
   const safeThreadToolbarHtml = threadToolbarHtml || (() => '');
 
   function setScreen(name: string) {
+    // Drop first-paint boot overrides once the app owns routing.
+    if (document.documentElement.dataset.initialScreen) {
+      delete document.documentElement.dataset.initialScreen;
+    }
     if (name !== 'thread') {
       stopAutoUpdateTimer();
     }

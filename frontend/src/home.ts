@@ -1,5 +1,6 @@
 import { api } from './api';
 import { boardPostCount } from './board';
+import { takePreloadedBoardThreads } from './board-preload';
 import { els } from './dom';
 import {
   escapeHtml,
@@ -113,8 +114,15 @@ export async function loadHomeThreadsByBoard({ writeBoardThreadsCache }: AnyReco
   const entries = await Promise.all(
     state.boards.map(async (board) => {
       try {
-        const threads = await api(`/api/boards/${board.slug}/threads`);
-        writeBoardThreadsCache(board.slug, threads, { page: 1, pageSize: state.boardPageSize });
+        const preloaded = takePreloadedBoardThreads(board.slug);
+        const threads = preloaded || (await api(`/api/boards/${board.slug}/threads`));
+        writeBoardThreadsCache(board.slug, threads, {
+          page: 1,
+          pageSize: state.boardPageSize,
+          sort: state.boardSort,
+          filter: state.boardFilter,
+          q: ''
+        });
         return [board.slug, threads];
       } catch {
         return [board.slug, []];

@@ -1770,8 +1770,17 @@ test('http metrics exposes scrapeable realtime counters and alert thresholds', a
   );
 });
 
-test('http api supports v1 alias, paged search, backlinks and self delete password', async () => {
+test('http api supports v1 alias, paged search, backlinks and account self delete', async () => {
   await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'delete_owner', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const registeredBody = await readJson(registered);
+    assert.equal(registered.status, 201);
+    const accountToken = registeredBody.data.token;
+
     const first = await fetch(`${baseUrl}/api/v1/boards/hoc-tap/threads`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -1809,12 +1818,14 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
 
     const comment = await fetch(`${baseUrl}/api/threads/${firstBody.data.thread.id}/comments`, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${accountToken}`
+      },
       body: JSON.stringify({
         body: `>>${firstBody.data.thread.globalNumber}\nBacklink test`,
         displayName: 'Ban reply',
         captchaToken: 'dev-pass',
-        deletePassword: 'comment-pass',
         options: 'sage'
       })
     });
@@ -1828,17 +1839,36 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
     assert.equal(detailBody.data.commentPage.total, 1);
     assert.deepEqual(detailBody.data.thread.backlinks, [commentBody.data.comment.globalNumber]);
 
-    const wrongDelete = await fetch(`${baseUrl}/api/posts/${commentBody.data.comment.globalNumber}`, {
+    const unauthenticatedDelete = await fetch(`${baseUrl}/api/posts/${commentBody.data.comment.globalNumber}`, {
       method: 'DELETE',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: 'wrong' })
+      body: JSON.stringify({})
     });
-    assert.equal(wrongDelete.status, 403);
+    assert.equal(unauthenticatedDelete.status, 401);
+
+    const otherUser = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'delete_other', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const otherUserBody = await readJson(otherUser);
+    const foreignDelete = await fetch(`${baseUrl}/api/posts/${commentBody.data.comment.globalNumber}`, {
+      method: 'DELETE',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${otherUserBody.data.token}`
+      },
+      body: JSON.stringify({})
+    });
+    assert.equal(foreignDelete.status, 403);
 
     const deleted = await fetch(`${baseUrl}/api/posts/${commentBody.data.comment.globalNumber}`, {
       method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: 'comment-pass' })
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${accountToken}`
+      },
+      body: JSON.stringify({})
     });
     assert.equal(deleted.status, 200);
 
@@ -1848,15 +1878,26 @@ test('http api supports v1 alias, paged search, backlinks and self delete passwo
   });
 });
 
-test('http self delete can remove only post files with the delete password', async () => {
+test('http account owner can remove only post files', async () => {
   await withServer(async (baseUrl) => {
-    const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'file_owner', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const registeredBody = await readJson(registered);
+    assert.equal(registered.status, 201);
+    const accountToken = registeredBody.data.token;
+
+    const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${accountToken}`
+      },
       body: JSON.stringify({
         body: 'Thread co file de xoa rieng',
         captchaToken: 'dev-pass',
-        deletePassword: 'file-pass',
         image: {
           name: 'self-delete-file.png',
           type: 'image/png',
@@ -1871,8 +1912,11 @@ test('http self delete can remove only post files with the delete password', asy
 
     const deletedFile = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}`, {
       method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: 'file-pass', fileOnly: true })
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${accountToken}`
+      },
+      body: JSON.stringify({ fileOnly: true })
     });
     const deletedFileBody = await readJson(deletedFile);
     assert.equal(deletedFile.status, 200);
@@ -1887,8 +1931,11 @@ test('http self delete can remove only post files with the delete password', asy
 
     const secondDelete = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}`, {
       method: 'DELETE',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: 'file-pass', fileOnly: true })
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${accountToken}`
+      },
+      body: JSON.stringify({ fileOnly: true })
     });
     const secondDeleteBody = await readJson(secondDelete);
     assert.equal(secondDelete.status, 400);

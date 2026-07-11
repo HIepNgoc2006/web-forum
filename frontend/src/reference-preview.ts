@@ -6,8 +6,10 @@ export function createReferencePreviewController({
   refPreview,
   fetchPost,
   renderPostPreviewHtml,
+  focusPermalinkPost,
   body = document.body,
-  win = window
+  win = window,
+  doc = document
 }: AnyRecord) {
   function referencePreviewPositionSource(source) {
     const target = source?.target?.closest?.('.ref-link') || source?.currentTarget || source;
@@ -32,9 +34,18 @@ export function createReferencePreviewController({
     refPreview.style.maxWidth = `${previewWidth}px`;
   }
 
+  function setPinned(pinned: boolean) {
+    state.refPreviewPinned = Boolean(pinned);
+    refPreview.classList.toggle('ref-preview-pinned', state.refPreviewPinned);
+    refPreview.setAttribute('data-pinned', state.refPreviewPinned ? 'true' : 'false');
+  }
+
   function renderReferencePreviewPost(post, source) {
     refPreview.classList.remove('ref-preview-loading', 'ref-preview-error');
-    refPreview.innerHTML = renderPostPreviewHtml(post);
+    const closeControl = state.refPreviewPinned
+      ? '<button class="ref-preview-close" type="button" aria-label="Đóng cửa sổ xem trước" title="Đóng">×</button>'
+      : '';
+    refPreview.innerHTML = `${closeControl}${renderPostPreviewHtml(post)}`;
     positionReferencePreview(source);
   }
 
@@ -43,16 +54,32 @@ export function createReferencePreviewController({
     if (className) {
       refPreview.classList.add(className);
     }
-    refPreview.textContent = message;
+    refPreview.replaceChildren();
+    if (state.refPreviewPinned) {
+      const closeButton = doc.createElement('button');
+      closeButton.className = 'ref-preview-close';
+      closeButton.type = 'button';
+      closeButton.setAttribute('aria-label', 'Đóng cửa sổ xem trước');
+      closeButton.title = 'Đóng';
+      closeButton.textContent = '×';
+      refPreview.append(closeButton);
+    }
+    const messageEl = doc.createElement('div');
+    messageEl.className = 'ref-preview-message';
+    messageEl.textContent = message;
+    refPreview.append(messageEl);
     positionReferencePreview(source);
   }
 
-  async function showReference(number, source) {
+  async function showReference(number, source, { pin = false }: AnyRecord = {}) {
     const refNumber = String(number || '').trim();
     if (!refNumber) {
       return;
     }
     win.clearTimeout(state.refPreviewHideTimer);
+    if (pin) {
+      setPinned(true);
+    }
     const requestId = ++state.refPreviewRequestId;
     positionReferencePreview(source);
     refPreview.classList.remove('hidden', 'ref-preview-error');
@@ -89,17 +116,24 @@ export function createReferencePreviewController({
   function hideReferencePreview() {
     state.refPreviewRequestId += 1;
     win.clearTimeout(state.refPreviewHideTimer);
+    setPinned(false);
     refPreview.classList.add('hidden');
     refPreview.classList.remove('ref-preview-loading', 'ref-preview-error');
     refPreview.innerHTML = '';
   }
 
   function scheduleHideReferencePreview() {
+    if (state.refPreviewPinned) {
+      return;
+    }
     win.clearTimeout(state.refPreviewHideTimer);
     state.refPreviewHideTimer = win.setTimeout(hideReferencePreview, 140);
   }
 
   function handleReferencePointerEnter(event) {
+    if (state.refPreviewPinned) {
+      return;
+    }
     const ref = event.target.closest('.ref-link[data-ref]');
     if (!ref || ref.contains(event.relatedTarget)) {
       return;
@@ -108,6 +142,9 @@ export function createReferencePreviewController({
   }
 
   function handleReferencePointerLeave(event) {
+    if (state.refPreviewPinned) {
+      return;
+    }
     const ref = event.target.closest('.ref-link[data-ref]');
     if (!ref || ref.contains(event.relatedTarget) || refPreview.contains(event.relatedTarget)) {
       return;
@@ -116,6 +153,9 @@ export function createReferencePreviewController({
   }
 
   function handleReferenceFocusIn(event) {
+    if (state.refPreviewPinned) {
+      return;
+    }
     const ref = event.target.closest('.ref-link[data-ref]');
     if (!ref) {
       return;
@@ -124,11 +164,18 @@ export function createReferencePreviewController({
   }
 
   function handleReferenceFocusOut(event) {
+    if (state.refPreviewPinned) {
+      return;
+    }
     const ref = event.target.closest('.ref-link[data-ref]');
     if (!ref || refPreview.contains(event.relatedTarget)) {
       return;
     }
     scheduleHideReferencePreview();
+  }
+
+  function postOnPage(refNumber: string) {
+    return doc.getElementById(`p${refNumber}`);
   }
 
   async function handleReferencePreviewClick(event: AnyRecord) {
@@ -137,12 +184,27 @@ export function createReferencePreviewController({
       return false;
     }
 
+    if (target.closest('.ref-preview-close')) {
+      event.preventDefault?.();
+      hideReferencePreview();
+      return true;
+    }
+
     const ref = target.closest('.ref-link') as AnyRecord | null;
     if (ref) {
       // Cross-board refs without a post number are plain anchors; let the
       // browser navigate to the board instead of fetching a post preview.
       if (ref.dataset.ref) {
-        await showReference(ref.dataset.ref, event);
+        event.preventDefault?.();
+        const refNumber = String(ref.dataset.ref);
+        // 4chan: click >>N jumps to the post when it is already on the page.
+        if (postOnPage(refNumber) && typeof focusPermalinkPost === 'function') {
+          hideReferencePreview();
+          focusPermalinkPost(refNumber, { scroll: true });
+          return true;
+        }
+        // Otherwise pin a floating reply window near the click (4chan-X style).
+        await showReference(refNumber, event, { pin: true });
       }
       return true;
     }

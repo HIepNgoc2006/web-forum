@@ -58,7 +58,7 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 | GET | `/api/posts/:globalNumber` | Lookup post by global number. | Dung cho `>>ID` preview/permalink. Chi tra public post. |
 | PUT | `/api/posts/:globalNumber` | Account owner sua bai da dang. | Bearer JWT account bat buoc; chi sua bai co `accountId` trung voi token; body `{ "body": "", "images": [] }`; bo qua `images` de giu tep cu, gui `images: []` de xoa tep; luu `editHistory` admin-only va public `editedAt`. |
 | POST | `/api/posts/:globalNumber` | Bao cao bai viet. | Body `{ "category": "Spam\|Toxic\|PII\|Fake News\|Illegal\|Other", "reason": "", "posterToken": "" }`; `category` khong hop le fallback `Other`; luu reporter hash, khong luu IP raw. |
-| DELETE | `/api/posts/:globalNumber` | User tu xoa bai/tap tin bang mat khau xoa. | Body `{ "password": "", "fileOnly": false }`; yeu cau `deletePassword` da duoc dat khi dang. |
+| DELETE | `/api/posts/:globalNumber` | Account owner tu xoa bai/tap tin. | Bearer JWT account bat buoc; chi xoa bai co `accountId` trung voi token; body `{ "fileOnly": false }`; khong dung mat khau xoa. Admin xoa qua `/api/admin/posts/:globalNumber`. |
 | POST | `/api/appeals` | Gui khang nghi an danh cho bai da bi admin xoa. | Body `{ "token": "", "reason": "", "posterToken": "" }`; token duoc cap khi dang bai va khong tra lai public/admin; chi chap nhan sau khi bai da bi xoa; luu reporter hash, khong luu IP raw. |
 
 ## Public uploaded files

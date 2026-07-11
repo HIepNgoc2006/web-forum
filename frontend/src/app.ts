@@ -123,6 +123,7 @@ import {
 } from './thread';
 import {
   bindThreadMediaKeyboardEvents,
+  focusPermalinkPost,
   handleThreadMediaClick,
   handleThreadPostCollapseClick,
   syncThreadMediaToolbarState,
@@ -504,6 +505,7 @@ const {
 } = createReferencePreviewController({
   state,
   refPreview: els.refPreview,
+  focusPermalinkPost,
   fetchPost: async (number) => (await api('/api/posts/' + number)).post,
   renderPostPreviewHtml: (post) =>
     postHtml(post, 'post preview-post', {
@@ -654,10 +656,7 @@ function setupRealtime() {
     notifyWatchedThreadPost
   });
 }
-const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController({
-  deletePasswordInputs: els.deletePasswordInputs,
-  formValue
-});
+const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController();
 function notifyWatchedThreadPost(payload: AnyRecord = {}) {
   notifyWatchedThreadPostWithDependencies(payload, {
     readWatchedThreads,
@@ -738,7 +737,9 @@ const {
   deletePasswordValue,
   clamp,
   showPostEditModal,
-  postSubmitToast
+  postSubmitToast,
+  canModerateFromAdminToken,
+  showReasonModal
 });
 openReplyComposerTarget = openReplyComposer;
 screenHelpers = createScreenHelpers({
@@ -763,6 +764,7 @@ bootstrapApp({
   applyDisplayPreferences,
   applyNotificationPreferences,
   setButtonLoading,
+  setScreen,
   route,
   handleKeyboardShortcut,
   submitThread,
@@ -853,6 +855,7 @@ bootstrapApp({
   loadAccountSession,
   syncAdminBoardFilter,
   syncAdminModerationSettings,
+  writeBoardThreadsCache,
   state,
   showToast
 }).catch((error: any) => showToast(error.message));

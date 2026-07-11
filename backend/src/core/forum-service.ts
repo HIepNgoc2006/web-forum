@@ -4293,7 +4293,12 @@ export function createForumService({
       });
     },
 
-    async deletePost({ globalNumber, password, fileOnly = false }: AnyRecord = {}) {
+    async deletePost({ globalNumber, accountId, fileOnly = false }: AnyRecord = {}) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản để xóa bài');
+        error.statusCode = 401;
+        throw error;
+      }
       return mutate(async (state) => {
         const found = findPublicPostByGlobalNumber(state, globalNumber);
         if (!found) {
@@ -4301,7 +4306,11 @@ export function createForumService({
           error.statusCode = 404;
           throw error;
         }
-        verifyDeletePassword(found.post, password);
+        if (!found.post.accountId || found.post.accountId !== accountId) {
+          const error = new Error('Chỉ tài khoản đã đăng bài mới được xóa bài này');
+          error.statusCode = 403;
+          throw error;
+        }
 
         const deletedAt = now().toISOString();
         if (fileOnly) {
@@ -4316,14 +4325,14 @@ export function createForumService({
         } else {
           found.post.isDeleted = true;
           found.post.deletedAt = deletedAt;
-          found.post.deleteReason = 'self-delete';
+          found.post.deleteReason = 'account-delete';
         }
         recordModerationAction(state, {
           action: fileOnly ? 'user:delete-file' : 'user:delete',
-          actor: 'anonymous',
+          actor: `account:${accountId}`,
           postType: found.postType,
           post: found.post,
-          reason: fileOnly ? 'file-only' : 'self-delete',
+          reason: fileOnly ? 'file-only' : 'account-delete',
           createdAt: deletedAt
         });
 

@@ -50,106 +50,137 @@
           <button id="startThreadButton" class="start-thread-button" type="button">[Tạo chủ đề mới]</button>
         </div>
         <section id="threadComposer" class="composer hidden" aria-labelledby="newThreadTitle">
-          <h2 id="newThreadTitle">Tạo chủ đề mới</h2>
+          <header class="composer-header">
+            <h2 id="newThreadTitle">Tạo chủ đề mới</h2>
+            <p class="composer-hint">Đăng ẩn danh · đính kèm ảnh/video tùy chọn</p>
+          </header>
           <form id="threadForm" class="stack">
-            <label class="field-row">
-              <span>Tên hiển thị</span>
-              <input name="displayName" placeholder="Anonymous (dùng tên#mã để tạo tripcode)" maxlength="60" autocomplete="off" />
-            </label>
-            <div class="field-row checkbox-row account-display-option hidden" data-account-display-option>
-              <span>Tài khoản</span>
-              <label><input name="useAccountName" type="checkbox" data-use-account-name /> Dùng username tài khoản</label>
-            </div>
-            <label class="field-row">
-              <span>Tùy chọn</span>
-              <input name="options" autocomplete="off" placeholder="sage, noko" />
-            </label>
-            <label class="field-row">
-              <span>Mật khẩu xóa</span>
-              <input name="deletePassword" type="password" autocomplete="new-password" maxlength="120" placeholder="để xóa bài/tệp sau khi đăng" data-delete-password-input />
-            </label>
-            <label class="field-row">
-              <span>Chủ đề</span>
-              <input name="subject" maxlength="120" autocomplete="off" />
-            </label>
-            <label class="field-row">
-              <span>Thăm dò</span>
-              <textarea id="threadPollOptions" rows="3" maxlength="600" placeholder="Mỗi dòng một lựa chọn, bỏ trống nếu không cần"></textarea>
-            </label>
-            <label class="field-row">
-              <span>Bình luận</span>
-              <textarea id="threadBody" rows="4" maxlength="5000" placeholder="Nội dung bài viết..."></textarea>
-            </label>
-            <div class="composer-picker" data-composer-picker="thread" aria-label="Emoji và sticker cho chủ đề">
-              <span>Emoji</span>
-              <button class="link-button" data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
-              <button class="link-button" data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
-              <button class="link-button" data-composer-insert="😢" type="button" aria-label="Chèn emoji buồn">😢</button>
-              <button class="link-button" data-composer-insert="🔥" type="button" aria-label="Chèn emoji nóng">🔥</button>
-              <button class="link-button" data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
-              <span>Sticker</span>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:study]" type="button">Học</button>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
-            </div>
-            <div class="reply-template-picker" data-reply-template-picker="thread" aria-label="Mẫu trả lời đã lưu"></div>
-            <div class="composer-templates" aria-label="Mẫu bài ẩn danh">
-              <span>Mẫu nhanh</span>
-              [<button class="link-button" data-thread-template="study" type="button">Học tập</button>]
-              [<button class="link-button" data-thread-template="relationship" type="button">Tình cảm</button>]
-              [<button class="link-button" data-thread-template="feedback" type="button">Góp ý</button>]
-              [<button class="link-button" data-thread-template-dismiss type="button">Bỏ mẫu</button>]
-            </div>
-            <div id="threadPrivacyWarning" class="privacy-warning hidden" role="status"></div>
-            <label class="field-row">
-              <span>Tệp</span>
-              <input id="threadImage" type="file" accept="image/*,video/mp4,video/webm" multiple />
-            </label>
-            <div class="field-row checkbox-row">
-              <span>Ẩn ảnh</span>
-              <label><input name="imageSpoiler" type="checkbox" /> Đánh dấu ảnh là spoiler</label>
-            </div>
-            <div class="field-row checkbox-row capcode-option hidden" data-capcode-option>
-              <span>Capcode</span>
-              <label><input name="capcode" type="checkbox" data-capcode-input /> Đăng với chức danh quản trị</label>
-            </div>
-            <label class="field-row">
-              <span>Âm thanh → chữ</span>
-              <div class="audio-transcribe-controls">
-                <input id="threadAudio" type="file" accept="audio/*" />
-                <button id="threadRecordButton" class="ghost-button audio-record-button" type="button" aria-pressed="false">
-                  [Ghi âm]
-                </button>
+            <div class="composer-section composer-section-meta">
+              <label class="field-row">
+                <span>Tên</span>
+                <input name="displayName" placeholder="Anonymous (tên#mã = tripcode)" maxlength="60" autocomplete="off" />
+              </label>
+              <div class="field-row checkbox-row account-display-option hidden" data-account-display-option>
+                <span>TK</span>
+                <label><input name="useAccountName" type="checkbox" data-use-account-name /> Dùng username tài khoản</label>
               </div>
-            </label>
-            <label class="field-row">
-              <span>Mã xác minh</span>
-              <input id="threadCaptcha" value="dev-pass" autocomplete="off" />
-            </label>
-            <div class="captcha-widget hidden" data-hcaptcha-target="threadCaptcha"></div>
-            <div class="form-actions">
-              <select id="threadRewriteTone" class="rewrite-tone-select" aria-label="Tông giọng">
-                <option value="neutral">Trung lập</option>
-                <option value="less-aggressive">Bớt gay gắt</option>
-                <option value="privacy-safer">An toàn riêng tư</option>
-              </select>
-              <button id="threadRewriteButton" class="ghost-button" type="button">[AI sửa an toàn]</button>
-              <button id="threadCaptionButton" class="ghost-button" type="button">[AI mô tả ảnh]</button>
-              <button id="threadOcrButton" class="ghost-button" type="button">[AI trích chữ]</button>
-              <select id="translateTarget" class="rewrite-tone-select" aria-label="Ngôn ngữ dịch">
-                <option value="en">EN</option>
-                <option value="vi">VI</option>
-                <option value="ja">JA</option>
-                <option value="ko">KO</option>
-                <option value="zh">ZH</option>
-                <option value="fr">FR</option>
-                <option value="es">ES</option>
-                <option value="de">DE</option>
-                <option value="th">TH</option>
-              </select>
-              <span id="threadAiRewriteLabel" class="ai-label hidden">Đã sửa bằng AI</span>
-              <button class="primary-button" type="submit">Gửi</button>
+              <label class="field-row">
+                <span>Tùy chọn</span>
+                <input name="options" autocomplete="off" placeholder="sage, noko" title="sage = không bump; noko = ở lại thread sau khi gửi" />
+              </label>
+              <label class="field-row">
+                <span>Chủ đề</span>
+                <input name="subject" maxlength="120" autocomplete="off" placeholder="Tiêu đề ngắn gọn..." />
+              </label>
+            </div>
+
+            <div class="composer-section composer-section-body">
+              <label class="field-row field-row-comment">
+                <span>Bình luận</span>
+                <textarea id="threadBody" rows="6" maxlength="5000" placeholder="Nội dung bài viết..."></textarea>
+              </label>
+              <div class="composer-extras">
+                <div class="composer-toolbar" data-composer-picker="thread" aria-label="Emoji và sticker cho chủ đề">
+                  <div class="composer-toolbar-group">
+                    <span class="composer-toolbar-label">Emoji</span>
+                    <button class="composer-chip composer-chip-emoji" data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
+                    <button class="composer-chip composer-chip-emoji" data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
+                    <button class="composer-chip composer-chip-emoji" data-composer-insert="😢" type="button" aria-label="Chèn emoji buồn">😢</button>
+                    <button class="composer-chip composer-chip-emoji" data-composer-insert="🔥" type="button" aria-label="Chèn emoji nóng">🔥</button>
+                    <button class="composer-chip composer-chip-emoji" data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
+                  </div>
+                  <div class="composer-toolbar-group">
+                    <span class="composer-toolbar-label">Sticker</span>
+                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
+                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
+                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:study]" type="button">Học</button>
+                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
+                  </div>
+                </div>
+                <div class="reply-template-picker" data-reply-template-picker="thread" aria-label="Mẫu trả lời đã lưu"></div>
+                <div class="composer-templates" aria-label="Mẫu bài ẩn danh">
+                  <span class="composer-toolbar-label">Mẫu</span>
+                  <button class="composer-chip" data-thread-template="study" type="button">Học tập</button>
+                  <button class="composer-chip" data-thread-template="relationship" type="button">Tình cảm</button>
+                  <button class="composer-chip" data-thread-template="feedback" type="button">Góp ý</button>
+                  <button class="composer-chip composer-chip-muted" data-thread-template-dismiss type="button">Bỏ</button>
+                </div>
+              </div>
+            </div>
+
+            <div id="threadPrivacyWarning" class="privacy-warning hidden" role="status"></div>
+
+            <div class="composer-section composer-section-attach">
+              <div class="field-row">
+                <span>Tệp</span>
+                <div class="composer-file-cell">
+                  <input id="threadImage" type="file" accept="image/*,video/mp4,video/webm" multiple />
+                  <label class="composer-inline-check">
+                    <input name="imageSpoiler" type="checkbox" />
+                    <span>Spoiler</span>
+                  </label>
+                </div>
+              </div>
+              <div class="field-row checkbox-row capcode-option hidden" data-capcode-option>
+                <span>Capcode</span>
+                <label><input name="capcode" type="checkbox" data-capcode-input /> Đăng với chức danh quản trị</label>
+              </div>
+              <details class="composer-advanced">
+                <summary>Tuỳ chọn nâng cao · thăm dò, ghi âm</summary>
+                <div class="composer-advanced-body">
+                  <label class="field-row">
+                    <span>Thăm dò</span>
+                    <textarea id="threadPollOptions" rows="3" maxlength="600" placeholder="Mỗi dòng một lựa chọn, bỏ trống nếu không cần"></textarea>
+                  </label>
+                  <label class="field-row">
+                    <span>Âm thanh</span>
+                    <div class="audio-transcribe-controls">
+                      <input id="threadAudio" type="file" accept="audio/*" />
+                      <button id="threadRecordButton" class="ghost-button audio-record-button" type="button" aria-pressed="false">
+                        [Ghi âm]
+                      </button>
+                    </div>
+                  </label>
+                </div>
+              </details>
+            </div>
+
+            <div class="composer-section composer-section-verify">
+              <div class="field-row">
+                <span>Xác minh</span>
+                <div class="reply-verification-cell composer-verify-cell">
+                  <input id="threadCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+                  <div class="captcha-widget hidden" data-hcaptcha-target="threadCaptcha"></div>
+                  <p class="composer-verify-fallback muted">Mã dev: dev-pass (khi không dùng hCaptcha)</p>
+                </div>
+              </div>
+            </div>
+
+            <div class="form-actions composer-actions">
+              <div class="composer-ai-tools" aria-label="Công cụ AI">
+                <span class="composer-toolbar-label">AI</span>
+                <select id="threadRewriteTone" class="rewrite-tone-select" aria-label="Tông giọng">
+                  <option value="neutral">Trung lập</option>
+                  <option value="less-aggressive">Bớt gay gắt</option>
+                  <option value="privacy-safer">An toàn riêng tư</option>
+                </select>
+                <button id="threadRewriteButton" class="composer-ai-btn" type="button">Sửa an toàn</button>
+                <button id="threadCaptionButton" class="composer-ai-btn" type="button">Mô tả ảnh</button>
+                <button id="threadOcrButton" class="composer-ai-btn" type="button">Trích chữ</button>
+                <select id="translateTarget" class="rewrite-tone-select" aria-label="Ngôn ngữ dịch">
+                  <option value="en">EN</option>
+                  <option value="vi">VI</option>
+                  <option value="ja">JA</option>
+                  <option value="ko">KO</option>
+                  <option value="zh">ZH</option>
+                  <option value="fr">FR</option>
+                  <option value="es">ES</option>
+                  <option value="de">DE</option>
+                  <option value="th">TH</option>
+                </select>
+                <span id="threadAiRewriteLabel" class="ai-label hidden">Đã sửa bằng AI</span>
+              </div>
+              <button class="primary-button composer-submit" type="submit">Gửi chủ đề</button>
             </div>
             <div id="imagePreview" class="image-preview hidden"></div>
           </form>

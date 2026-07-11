@@ -3,26 +3,31 @@
     <section id="quickReply" class="quick-reply hidden" aria-labelledby="quickReplyTitle">
       <div id="quickReplyHandle" class="quick-reply-title">
         <strong id="quickReplyTitle">Trả lời chủ đề No.</strong>
-        <button id="quickReplyClose" type="button" aria-label="Đóng trả lời nhanh">X</button>
+        <button id="quickReplyClose" type="button" aria-label="Đóng trả lời nhanh">×</button>
       </div>
       <form id="quickReplyForm" class="quick-reply-form">
-        <input id="quickReplyName" name="displayName" placeholder="Anonymous (tên#mã = tripcode)" maxlength="60" aria-label="Tên hiển thị" autocomplete="off" />
-        <label class="quick-account-display-option hidden" data-account-display-option>
-          <input name="useAccountName" type="checkbox" data-use-account-name /> @username
-        </label>
-        <input id="quickReplyOptions" name="options" aria-label="Tùy chọn" placeholder="sage, noko" title="sage = không bump thread; noko = quay lại thread sau khi đăng" autocomplete="off" />
-        <input id="quickReplyDeletePassword" name="deletePassword" type="password" aria-label="Mật khẩu xóa" placeholder="Mật khẩu xóa" autocomplete="new-password" maxlength="120" data-delete-password-input />
-        <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>
+        <div class="quick-reply-fields">
+          <input id="quickReplyName" name="displayName" placeholder="Anonymous (tên#mã = tripcode)" maxlength="60" aria-label="Tên hiển thị" autocomplete="off" />
+          <label class="quick-account-display-option hidden" data-account-display-option>
+            <input name="useAccountName" type="checkbox" data-use-account-name /> @username
+          </label>
+          <input id="quickReplyOptions" name="options" aria-label="Tùy chọn" placeholder="sage, noko" title="sage = không bump thread; noko = quay lại thread sau khi đăng" autocomplete="off" />
+          <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>
+        </div>
         <div class="quick-composer-picker" data-composer-picker="quickReply" aria-label="Emoji và sticker cho trả lời nhanh">
-          <button data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
-          <button data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
-          <button data-composer-insert="😢" type="button" aria-label="Chèn emoji buồn">😢</button>
-          <button data-composer-insert="🔥" type="button" aria-label="Chèn emoji nóng">🔥</button>
-          <button data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
-          <button data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
-          <button data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
-          <button data-composer-insert="[sticker:study]" type="button">Học</button>
-          <button data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
+          <div class="quick-picker-row quick-picker-emoji">
+            <button data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
+            <button data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
+            <button data-composer-insert="😢" type="button" aria-label="Chèn emoji buồn">😢</button>
+            <button data-composer-insert="🔥" type="button" aria-label="Chèn emoji nóng">🔥</button>
+            <button data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
+          </div>
+          <div class="quick-picker-row quick-picker-stickers">
+            <button data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
+            <button data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
+            <button data-composer-insert="[sticker:study]" type="button">Học</button>
+            <button data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
+          </div>
         </div>
         <div class="quick-template-picker" data-reply-template-picker="quickReply" aria-label="Mẫu trả lời đã lưu"></div>
         <div id="quickReplyPrivacyWarning" class="privacy-warning quick-privacy-warning hidden" role="status"></div>
@@ -31,14 +36,18 @@
           <div class="captcha-widget hidden" data-hcaptcha-target="quickReplyCaptcha"></div>
         </div>
         <div class="quick-reply-bottom">
-          <label class="quick-file-button">
-            Chọn tệp
-            <input id="quickReplyFile" type="file" accept="image/*,video/mp4,video/webm" multiple />
-          </label>
-          <span id="quickReplyFileName">Chưa chọn tệp</span>
-          <label class="quick-spoiler-toggle"><input name="imageSpoiler" type="checkbox" /> spoiler</label>
-          <label class="quick-spoiler-toggle capcode-option hidden" data-capcode-option><input name="capcode" type="checkbox" data-capcode-input /> capcode</label>
-          <button class="quick-post-button" type="submit">Gửi</button>
+          <div class="quick-reply-file-group">
+            <label class="quick-file-button">
+              Chọn tệp
+              <input id="quickReplyFile" type="file" accept="image/*,video/mp4,video/webm" multiple />
+            </label>
+            <span id="quickReplyFileName" class="quick-file-name">Chưa chọn tệp</span>
+          </div>
+          <div class="quick-reply-actions">
+            <label class="quick-spoiler-toggle"><input name="imageSpoiler" type="checkbox" /> spoiler</label>
+            <label class="quick-spoiler-toggle capcode-option hidden" data-capcode-option><input name="capcode" type="checkbox" data-capcode-input /> capcode</label>
+            <button class="quick-post-button" type="submit">Gửi</button>
+          </div>
         </div>
       </form>
     </section>

@@ -236,7 +236,6 @@ export const els: AnyRecord = {
   useAccountNameInputs: document.querySelectorAll('[data-use-account-name]'),
   capcodeOptions: document.querySelectorAll('[data-capcode-option]'),
   capcodeInputs: document.querySelectorAll('[data-capcode-input]'),
-  deletePasswordInputs: document.querySelectorAll('[data-delete-password-input]'),
   toast: document.querySelector('#toast'),
   refPreview: document.querySelector('#refPreview'),
   quickReply: document.querySelector('#quickReply'),

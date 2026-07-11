@@ -10,8 +10,14 @@ export function accountPostEditButtonHtml(post: AnyRecord = {}, { className = 'q
   return `<button class="${className}" data-account-edit-post="${post.globalNumber}" data-account-edit-body="${escapeHtml(encodedBody)}" type="button">[Sửa bài]</button>`;
 }
 
-export function selfDeletePostActionsHtml(post: AnyRecord = {}, { className = 'quote-button' }: AnyRecord = {}): string {
+export function selfDeletePostActionsHtml(
+  post: AnyRecord = {},
+  { className = 'quote-button', canDeletePost }: AnyRecord = {}
+): string {
   if (!post?.globalNumber || post.isDeleted) {
+    return '';
+  }
+  if (typeof canDeletePost === 'function' && !canDeletePost(post)) {
     return '';
   }
   const deleteFileButton = postMediaCount(post)

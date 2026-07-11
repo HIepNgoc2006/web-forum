@@ -1,40 +1,18 @@
-import { deletePasswordKey } from './constants';
-import { defaultDeletePassword, normalizeDeletePassword } from './storage';
-import type { AnyRecord } from './types';
+import { defaultDeletePassword } from './storage';
 
-export function createDeletePasswordController({ deletePasswordInputs, formValue }: AnyRecord) {
-  function syncDeletePasswordInputs(value = defaultDeletePassword()) {
-    const password = String(value ?? '');
-    deletePasswordInputs.forEach((input) => {
-      if (input.value !== password) {
-        input.value = password;
-      }
-    });
+/** Auto-managed delete password for anonymous posts (localStorage). No form field. */
+export function createDeletePasswordController() {
+  function deletePasswordValue() {
+    return defaultDeletePassword();
   }
 
-  function updateDeletePassword(value) {
-    const password = normalizeDeletePassword(value);
-    if (password) {
-      localStorage.setItem(deletePasswordKey, password);
-    } else {
-      localStorage.removeItem(deletePasswordKey);
-    }
-    syncDeletePasswordInputs(password);
-    return password;
-  }
-
-  function deletePasswordValue(form) {
-    const typedPassword = normalizeDeletePassword(formValue(form, 'deletePassword'));
-    const password = typedPassword || defaultDeletePassword();
-    localStorage.setItem(deletePasswordKey, password);
-    syncDeletePasswordInputs(password);
-    return password;
+  function syncDeletePasswordInputs() {
+    // Password is no longer shown in the composer; keep localStorage value warm.
+    defaultDeletePassword();
   }
 
   function bindDeletePasswordInputs() {
-    deletePasswordInputs.forEach((input) => {
-      input.addEventListener('input', () => updateDeletePassword(input.value));
-    });
+    // No composer inputs remain.
   }
 
   return {

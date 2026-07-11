@@ -20,10 +20,12 @@ type ComposerControllerDependencies = {
   loadThread: (options?: AnyRecord) => Promise<any>;
   loadBoard: () => Promise<any>;
   isCapcodeEligible: () => boolean;
-  deletePasswordValue: (form: AnyRecord) => string;
+  deletePasswordValue: () => string;
   clamp: (value: number, min: number, max: number) => number;
   showPostEditModal: (globalNumber: string | number, currentBody: string, options?: AnyRecord) => Promise<any>;
   postSubmitToast: (result: AnyRecord, successMessage: string, pendingMessage: string) => string;
+  canModerateFromAdminToken?: () => boolean;
+  showReasonModal?: (message: string, context: string) => Promise<string | null>;
 };
 
 export function createComposerController({
@@ -47,7 +49,9 @@ export function createComposerController({
   deletePasswordValue,
   clamp,
   showPostEditModal,
-  postSubmitToast
+  postSubmitToast,
+  canModerateFromAdminToken = () => false,
+  showReasonModal
 }: ComposerControllerDependencies) {
   function confirmDuplicateThreadIfNeeded(body: string) {
     return api(`/api/boards/${state.boardSlug}/threads/check-duplicate`, {
@@ -85,7 +89,7 @@ export function createComposerController({
         posterToken: state.posterToken,
         displayName: displayNameValue(form, state.account),
         options: formValue(form, 'options'),
-        deletePassword: deletePasswordValue(form),
+        deletePassword: deletePasswordValue(),
         capcode: capcodeValue(form, { isCapcodeEligible })
       })
     });
@@ -120,7 +124,7 @@ export function createComposerController({
           .filter(Boolean),
         options,
         displayName: displayNameValue(els.threadForm, state.account),
-        deletePassword: deletePasswordValue(els.threadForm),
+        deletePassword: deletePasswordValue(),
         captchaToken,
         posterToken: state.posterToken,
         capcode: capcodeValue(els.threadForm, { isCapcodeEligible }),
@@ -314,23 +318,52 @@ export function createComposerController({
   }
 
   async function selfDeletePost(globalNumber: string | number, { fileOnly = false, sourceElement = null }: AnyRecord = {}) {
-    const label = fileOnly ? 'xóa tệp khỏi bài' : 'xóa bài';
-    const password = window.prompt(`Mật khẩu để ${label} No.${globalNumber}:`, myPostDeletePassword(globalNumber));
-    if (password === null) {
+    const number = Number(globalNumber);
+    const ownsPost =
+      Boolean(state.accountToken && state.account) &&
+      Number.isFinite(number) &&
+      state.accountPostNumbers?.has?.(number);
+    const canModerate = Boolean(canModerateFromAdminToken?.());
+
+    if (!ownsPost && !canModerate) {
+      showToast('Chỉ tài khoản đã đăng bài hoặc quản trị viên mới được xóa.');
       return;
     }
-    const ok = window.confirm(fileOnly ? `Chỉ xóa tệp đính kèm khỏi No.${globalNumber}?` : `Xóa toàn bộ bài No.${globalNumber}?`);
-    if (!ok) {
-      return;
+
+    if (canModerate && !ownsPost) {
+      const reason = showReasonModal
+        ? await showReasonModal(
+            fileOnly ? `Lý do xóa tệp của No.${globalNumber}:` : `Lý do xóa bài No.${globalNumber}:`,
+            'delete'
+          )
+        : window.prompt(fileOnly ? `Lý do xóa tệp của No.${globalNumber}:` : `Lý do xóa bài No.${globalNumber}:`, '');
+      if (reason === null) {
+        return;
+      }
+      await api(`/api/admin/posts/${encodeURIComponent(String(globalNumber))}`, {
+        auth: 'admin',
+        method: 'DELETE',
+        body: JSON.stringify({
+          reason: String(reason || ''),
+          fileOnly
+        })
+      });
+    } else {
+      const ok = window.confirm(
+        fileOnly ? `Chỉ xóa tệp đính kèm khỏi No.${globalNumber}?` : `Xóa toàn bộ bài No.${globalNumber}?`
+      );
+      if (!ok) {
+        return;
+      }
+      await api(`/api/posts/${encodeURIComponent(String(globalNumber))}`, {
+        auth: 'account',
+        method: 'DELETE',
+        body: JSON.stringify({
+          fileOnly
+        })
+      });
     }
-    await api(`/api/posts/${encodeURIComponent(String(globalNumber))}`, {
-      auth: 'none',
-      method: 'DELETE',
-      body: JSON.stringify({
-        password,
-        fileOnly
-      })
-    });
+
     showToast(fileOnly ? 'Đã xóa tệp đính kèm.' : 'Đã xóa bài.');
     const deletingCurrentThread =
       !fileOnly &&
@@ -402,15 +435,15 @@ export function createComposerController({
   }
 
   function positionQuickReply(event: PointerEvent) {
-    const width = Math.min(332, window.innerWidth - 8);
-    const height = Math.min(334, window.innerHeight - 8);
-    const left = clamp(event.clientX - 20, 6, window.innerWidth - width - 6);
-    const top = clamp(event.clientY + 10, 6, window.innerHeight - height - 6);
+    const width = Math.min(360, window.innerWidth - 12);
+    const height = Math.min(420, window.innerHeight - 12);
+    const left = clamp(event.clientX - 24, 6, window.innerWidth - width - 6);
+    const top = clamp(event.clientY + 12, 6, window.innerHeight - height - 6);
     els.quickReply.style.left = `${left}px`;
     els.quickReply.style.top = `${top}px`;
   }
 
-  function addQuoteToQuickReply(number: string | number) {
+  function addQuoteToQuickReply(number: string | number, selectedQuote = '') {
     const quote = `>>${number}`;
     const lines = els.quickReplyBody.value
       .split('\n')
@@ -419,11 +452,22 @@ export function createComposerController({
     if (!lines.includes(quote)) {
       lines.push(quote);
     }
+    if (selectedQuote) {
+      selectedQuote
+        .split('\n')
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .forEach((line) => {
+          if (!lines.includes(line)) {
+            lines.push(line);
+          }
+        });
+    }
     els.quickReplyBody.value = `${lines.join('\n')}\n`;
     updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
   }
 
-  function openQuickReply(number, event: PointerEvent) {
+  function openQuickReply(number, event: PointerEvent, { selectedQuote = '' }: AnyRecord = {}) {
     if (state.threadIsArchived || state.threadIsLocked) {
       showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
       return;
@@ -434,7 +478,7 @@ export function createComposerController({
     if (wasHidden) {
       els.quickReplyBody.value = readDraft(draftKey('quickReply', state.threadId));
     }
-    addQuoteToQuickReply(number);
+    addQuoteToQuickReply(number, selectedQuote);
     els.quickReplyCaptcha.value = state.hcaptchaSiteKey ? '' : els.commentCaptcha.value || 'dev-pass';
     els.quickReplyFile.value = '';
     state.quickReplyImage = [];
@@ -444,6 +488,7 @@ export function createComposerController({
     }
     els.quickReply.classList.remove('hidden');
     els.refPreview.classList.add('hidden');
+    state.refPreviewPinned = false;
     window.setTimeout(() => els.quickReplyBody.focus(), 0);
   }
 

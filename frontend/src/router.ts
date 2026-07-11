@@ -1,5 +1,49 @@
 import { type AnyRecord } from './types';
 
+/**
+ * Map a location hash to the screen name used by setScreen().
+ * Mirrors route() so reloads can show the correct shell before data loads.
+ */
+export function screenNameFromHash(hash = ''): string {
+  const raw = hash || '#home';
+  const [hashPath] = raw.split('?');
+  const match = hashPath.match(/^#([^/]+)\/?(.+)?$/);
+  const name = match?.[1];
+  const id = match?.[2];
+  if (!name || name === 'home') {
+    return 'home';
+  }
+  if (name === 'policy') {
+    return 'policy';
+  }
+  if (name === 'register') {
+    return 'register';
+  }
+  if (name === 'login') {
+    return 'login';
+  }
+  if (name === 'forgot') {
+    return 'forgot';
+  }
+  if (name === 'account') {
+    return 'account';
+  }
+  if (name === 'thread' && id) {
+    return 'thread';
+  }
+  if (name === 'catalog') {
+    return 'catalog';
+  }
+  if (name === 'archive') {
+    return 'archive';
+  }
+  if (name === 'admin') {
+    return 'admin';
+  }
+  // #board/... and unknown hashes use the board screen (see route()).
+  return 'board';
+}
+
 export function createRouterController(dependencies: AnyRecord) {
   const {
     els,
@@ -45,15 +89,16 @@ export function createRouterController(dependencies: AnyRecord) {
     }
   }
 
-  function route() {
+  function route(): Promise<void> {
     hideReferencePreview();
     const hash = window.location.hash || '#home';
     const [hashPath, hashQuery = ''] = hash.split('?');
     const [, name, id] = hashPath.match(/^#([^/]+)\/?(.+)?$/) || [];
+    let navigation: Promise<unknown> = Promise.resolve();
     if (name === 'home' || !name) {
-      loadHome().catch((error) => showToast(error.message));
+      navigation = loadHome();
     } else if (name === 'policy') {
-      loadPolicy(id || '');
+      navigation = Promise.resolve(loadPolicy(id || ''));
     } else if (name === 'register') {
       els.registerForm.classList.remove('hidden');
       els.registerRecoveryNotice.classList.add('hidden');
@@ -70,7 +115,7 @@ export function createRouterController(dependencies: AnyRecord) {
       setFormError(els.forgotError);
       window.scrollTo({ top: 0 });
     } else if (name === 'account') {
-      loadAccountSettings().catch((error) => showToast(error.message));
+      navigation = loadAccountSettings();
     } else if (name === 'thread' && id) {
       const params = new URLSearchParams(hashQuery);
       const nextThreadId = decodeURIComponent(id);
@@ -79,19 +124,19 @@ export function createRouterController(dependencies: AnyRecord) {
       }
       state.threadId = nextThreadId;
       state.threadCommentPage = Math.max(1, Number(params.get('cp')) || 1);
-      loadThread({ resetReply: true, focusPost: params.get('p') || '' }).catch((error) => showToast(error.message));
+      navigation = loadThread({ resetReply: true, focusPost: params.get('p') || '' });
     } else if (name === 'catalog') {
       state.boardSlug = id || 'confession';
       state.boardSearchTerm = '';
       state.boardPage = 1;
-      loadCatalog().catch((error) => showToast(error.message));
+      navigation = loadCatalog();
     } else if (name === 'archive') {
       state.boardSlug = id || 'confession';
       state.boardSearchTerm = '';
       state.boardPage = 1;
-      loadArchive().catch((error) => showToast(error.message));
+      navigation = loadArchive();
     } else if (name === 'admin') {
-      loadAdmin().catch((error) => showToast(error.message));
+      navigation = loadAdmin();
     } else {
       const params = new URLSearchParams(hashQuery);
       state.boardSlug = id || 'confession';
@@ -99,9 +144,15 @@ export function createRouterController(dependencies: AnyRecord) {
       state.boardSort = normalizeBoardSort(params.get('sort') || state.boardSort);
       state.boardFilter = normalizeBoardFilter(params.get('filter') || 'all');
       state.boardPage = 1;
-      loadBoard().catch((error) => showToast(error.message));
+      navigation = loadBoard();
     }
     setupRealtime();
+    return Promise.resolve(navigation).then(
+      () => undefined,
+      (error: { message?: string }) => {
+        showToast(error?.message || String(error));
+      }
+    );
   }
 
   function refreshCurrentScreen() {

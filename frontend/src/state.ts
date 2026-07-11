@@ -33,6 +33,7 @@ export const state: AnyRecord = {
   refPreviewCache: new Map(),
   refPreviewRequestId: 0,
   refPreviewHideTimer: null,
+  refPreviewPinned: false,
   quickReplyDrag: null,
   replyComposerOpen: false,
   threadIsArchived: false,

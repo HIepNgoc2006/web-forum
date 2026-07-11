@@ -2275,6 +2275,46 @@ test('admin can delete a live post without the delete password', async () => {
   assert.equal(deleteAction.reason, 'vi pham noi quy');
 });
 
+test('account owner can delete their own post and others cannot', async () => {
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const { account } = await service.registerAccount({
+    username: 'post_owner',
+    password: 'long-enough-pass',
+    captchaToken: 'dev-pass'
+  });
+  const created = await service.createThread({
+    boardSlug: 'tam-su',
+    body: 'Bai cua account owner',
+    captchaToken: 'dev-pass',
+    accountId: account.id,
+    ip: '203.0.113.9'
+  });
+
+  await assert.rejects(
+    () => service.deletePost({ globalNumber: created.thread.globalNumber }),
+    (error) => asServiceError(error).statusCode === 401
+  );
+  await assert.rejects(
+    () => service.deletePost({ globalNumber: created.thread.globalNumber, accountId: 'someone-else' }),
+    (error) => asServiceError(error).statusCode === 403
+  );
+
+  const result = await service.deletePost({
+    globalNumber: created.thread.globalNumber,
+    accountId: account.id
+  });
+  assert.equal(result.ok, true);
+
+  const board = await service.listThreads('tam-su');
+  assert.equal(board.find((thread) => thread.globalNumber === created.thread.globalNumber), undefined);
+});
+
 test('admin delete rejects an unknown post number', async () => {
   const service = createTestForumService({
     store: createTestMemoryStore(),
@@ -3847,7 +3887,7 @@ test('sticky threads sort above normal threads and only active public threads ca
 
   const sticky = await service.setThreadSticky(oldest.thread.id, true, { actor: 'admin' });
   const listed = await service.listThreads('hoc-tap');
-  await service.deletePost({ globalNumber: oldest.thread.globalNumber, password: 'owner-pass' });
+  await service.adminDeletePost(oldest.thread.globalNumber, { reason: 'cleanup sticky sort test', actor: 'admin' });
   const afterDelete = await service.listThreads('hoc-tap');
 
   assert.equal(sticky.isSticky, true);
