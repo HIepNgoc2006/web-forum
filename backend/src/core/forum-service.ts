@@ -4,9 +4,11 @@ import {
   BOARDS,
   DEFAULT_MAX_IMAGE_BYTES,
   DEFAULT_MAX_THUMBNAIL_BYTES,
+  DEFAULT_SITE_CONTENT,
   THREAD_LIFECYCLE,
   aiConfigStatus,
   normalizeRetentionPolicy,
+  normalizeSiteContent,
   publicBoardConfig,
   readModerationConfidenceThreshold,
   readPositiveInteger
@@ -17,7 +19,7 @@ import { createModerationFingerprint, createPosterHash, createPosterProofHash, c
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.ts';
 import * as defaultTotp from './totp-service.ts';
 import * as defaultWebAuthn from './webauthn-service.ts';
-import type { BoardConfig, ThreadLifecycle } from './config.ts';
+import type { BoardConfig, SiteContent, ThreadLifecycle } from './config.ts';
 
 type AnyRecord = Record<string, any>;
 
@@ -94,6 +96,8 @@ const MAX_ACCOUNT_SAVED_SEARCHES = 50;
 const MAX_ACCOUNT_CONTENT_FILTERS = 80;
 const MAX_ACCOUNT_REPLY_TEMPLATES = 40;
 const MAX_ACCOUNT_POSTER_NOTES = 120;
+const MAX_ACCOUNT_HIDDEN_POSTS = 500;
+const MAX_ACCOUNT_HIDDEN_THREADS = 200;
 const MAX_ACCOUNT_DRAFT_LENGTH = 12_000;
 const MAX_ACCOUNT_REPLY_TEMPLATE_LENGTH = 5_000;
 const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails', 'watchedUnreadOnly'];
@@ -915,6 +919,22 @@ function normalizeAccountPosterNotes(value = []) {
     .slice(0, MAX_ACCOUNT_POSTER_NOTES);
 }
 
+function normalizeAccountIdList(value: unknown = [], maxItems = 200) {
+  const seen = new Set();
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item && item.length <= 120)
+    .filter((item) => {
+      if (seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    })
+    .slice(0, maxItems);
+}
+
 function defaultAccountPrivateData() {
   return {
     watchlist: [],
@@ -922,7 +942,9 @@ function defaultAccountPrivateData() {
     savedSearches: [],
     contentFilters: [],
     replyTemplates: [],
-    posterNotes: []
+    posterNotes: [],
+    hiddenPosts: [],
+    hiddenThreads: []
   };
 }
 
@@ -935,7 +957,9 @@ function normalizeAccountPrivateData(value: AnyRecord = {}, current: AnyRecord =
     savedSearches: normalizeAccountSavedSearches(previous.savedSearches),
     contentFilters: normalizeAccountContentFilters(previous.contentFilters),
     replyTemplates: normalizeAccountReplyTemplates(previous.replyTemplates),
-    posterNotes: normalizeAccountPosterNotes(previous.posterNotes)
+    posterNotes: normalizeAccountPosterNotes(previous.posterNotes),
+    hiddenPosts: normalizeAccountIdList(previous.hiddenPosts, MAX_ACCOUNT_HIDDEN_POSTS),
+    hiddenThreads: normalizeAccountIdList(previous.hiddenThreads, MAX_ACCOUNT_HIDDEN_THREADS)
   };
   if (Object.hasOwn(input, 'watchlist')) {
     safe.watchlist = normalizeAccountWatchlist(input.watchlist);
@@ -954,6 +978,12 @@ function normalizeAccountPrivateData(value: AnyRecord = {}, current: AnyRecord =
   }
   if (Object.hasOwn(input, 'posterNotes')) {
     safe.posterNotes = normalizeAccountPosterNotes(input.posterNotes);
+  }
+  if (Object.hasOwn(input, 'hiddenPosts')) {
+    safe.hiddenPosts = normalizeAccountIdList(input.hiddenPosts, MAX_ACCOUNT_HIDDEN_POSTS);
+  }
+  if (Object.hasOwn(input, 'hiddenThreads')) {
+    safe.hiddenThreads = normalizeAccountIdList(input.hiddenThreads, MAX_ACCOUNT_HIDDEN_THREADS);
   }
   return safe;
 }
@@ -1069,7 +1099,42 @@ function publicVotes(post) {
   return { up, down, score: up - down };
 }
 
+function isAccountReactionKey(key) {
+  return String(key || '').startsWith('account:');
+}
+
+/** Recount reactions from account keys only; drop legacy anon fingerprints. */
+function syncPostReactions(post) {
+  const rawVoters = post?.reactionVoters && typeof post.reactionVoters === 'object' ? post.reactionVoters : {};
+  const cleaned = {};
+  for (const [key, value] of Object.entries(rawVoters)) {
+    const type = String(value || '');
+    if (isAccountReactionKey(key) && POST_REACTION_TYPES.has(type)) {
+      cleaned[key] = type;
+    }
+  }
+  post.reactionVoters = cleaned;
+  const reactions = Object.fromEntries([...POST_REACTION_TYPES].map((type) => [type, 0]));
+  for (const type of Object.values(cleaned)) {
+    reactions[type] += 1;
+  }
+  post.reactions = reactions;
+  return reactions;
+}
+
 function publicReactions(post) {
+  // Prefer live account-only recount when voter map is present so legacy anon
+  // keys never inflate public counts after the account-only reaction change.
+  if (post?.reactionVoters && typeof post.reactionVoters === 'object') {
+    const reactions = Object.fromEntries([...POST_REACTION_TYPES].map((type) => [type, 0]));
+    for (const [key, value] of Object.entries(post.reactionVoters)) {
+      const type = String(value || '');
+      if (isAccountReactionKey(key) && POST_REACTION_TYPES.has(type)) {
+        reactions[type] += 1;
+      }
+    }
+    return reactions;
+  }
   const existing = post?.reactions && typeof post.reactions === 'object' ? post.reactions : {};
   return Object.fromEntries([...POST_REACTION_TYPES].map((type) => [type, Math.max(0, Number(existing[type]) || 0)]));
 }
@@ -1375,7 +1440,8 @@ function validateMedia(media) {
   }
 
   const maxBytes = readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES);
-  if (Buffer.byteLength(dataUrl) > maxBytes) {
+  // Limit by decoded payload size (file size), not base64 data-URL string length.
+  if (dataUrlBytes(dataUrl) > maxBytes) {
     const error = new Error(type.startsWith('image/') ? 'Ảnh quá lớn' : 'Video quá lớn');
     error.statusCode = 413;
     throw error;
@@ -2632,6 +2698,29 @@ export function createForumService({
       });
     },
 
+    async getSiteContent(): Promise<SiteContent> {
+      const state = await store.read();
+      return normalizeSiteContent(state.adminSettings?.siteContent ?? DEFAULT_SITE_CONTENT);
+    },
+
+    async updateSiteContent(content: AnyRecord = {}, { actor = 'admin' }: AnyRecord = {}) {
+      return mutate(async (state) => {
+        const nextContent = normalizeSiteContent({
+          ...(state.adminSettings?.siteContent || {}),
+          ...content
+        });
+        state.adminSettings = {
+          ...state.adminSettings,
+          siteContent: nextContent
+        };
+        logEvent('admin.site-content.update', {
+          actor,
+          sections: Object.keys(nextContent)
+        });
+        return nextContent;
+      });
+    },
+
     async getHealth() {
       const [storeHealth, imageStorageHealth] = await Promise.all([
         readStoreHealth(store),
@@ -2881,7 +2970,16 @@ export function createForumService({
     },
 
     async clearAccountPrivateData(userId, section = '') {
-      const allowedSections = new Set(['watchlist', 'drafts', 'savedSearches', 'contentFilters', 'replyTemplates', 'posterNotes']);
+      const allowedSections = new Set([
+        'watchlist',
+        'drafts',
+        'savedSearches',
+        'contentFilters',
+        'replyTemplates',
+        'posterNotes',
+        'hiddenPosts',
+        'hiddenThreads'
+      ]);
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
@@ -4249,8 +4347,13 @@ export function createForumService({
       });
     },
 
-    async reactPost({ globalNumber, reaction, accountId, ip, posterToken }: AnyRecord = {}) {
+    async reactPost({ globalNumber, reaction, accountId }: AnyRecord = {}) {
       const reactionType = normalizeReactionType(reaction);
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản để react');
+        error.statusCode = 401;
+        throw error;
+      }
 
       return mutate(async (state) => {
         const found = findPublicPostByGlobalNumber(state, globalNumber);
@@ -4261,9 +4364,9 @@ export function createForumService({
         }
 
         const post = found.post;
-        const voterKey = accountId
-          ? `account:${accountId}`
-          : `anon:${createModerationFingerprint({ ip, posterToken })}`;
+        // One reaction per account. Also prune legacy anon:* keys so old
+        // fingerprint votes cannot double-count alongside account votes.
+        const voterKey = `account:${String(accountId)}`;
         post.reactionVoters ??= {};
         if (post.reactionVoters[voterKey] === reactionType) {
           delete post.reactionVoters[voterKey];
@@ -4271,13 +4374,7 @@ export function createForumService({
           post.reactionVoters[voterKey] = reactionType;
         }
 
-        const reactions = Object.fromEntries([...POST_REACTION_TYPES].map((type) => [type, 0]));
-        for (const value of Object.values(post.reactionVoters) as string[]) {
-          if (POST_REACTION_TYPES.has(value)) {
-            reactions[value] += 1;
-          }
-        }
-        post.reactions = reactions;
+        syncPostReactions(post);
         const myReaction = post.reactionVoters[voterKey] ?? null;
 
         if (found.postType === 'thread') {

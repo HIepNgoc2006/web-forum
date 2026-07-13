@@ -1,10 +1,11 @@
-import { REASON_MACROS, REPORT_CATEGORIES } from './constants';
+import { MAX_MEDIA_BYTES, REASON_MACROS, REPORT_CATEGORIES } from './constants';
 import { escapeHtml } from './format';
 import type { AnyRecord } from './types';
 
 export function createPostEditModal({
   showToast,
   maxMediaPerPost,
+  maxMediaBytes = MAX_MEDIA_BYTES,
   isSupportedMediaFile,
   fileToDataUrl,
   imagePreviewHtml
@@ -91,6 +92,16 @@ export function createPostEditModal({
         }
         if (files.some((file) => !isSupportedMediaFile(file))) {
           showToast('Chỉ hỗ trợ ảnh, MP4 hoặc WebM.');
+          resetSelectedMedia();
+          return;
+        }
+        const mediaLimit =
+          typeof maxMediaBytes === 'function' ? Number(maxMediaBytes()) : Number(maxMediaBytes);
+        const effectiveMediaLimit =
+          Number.isFinite(mediaLimit) && mediaLimit > 0 ? mediaLimit : MAX_MEDIA_BYTES;
+        if (files.some((file) => file.size > effectiveMediaLimit)) {
+          const maxMb = Math.round(effectiveMediaLimit / (1024 * 1024));
+          showToast(`Tệp quá lớn (tối đa ${Number.isFinite(maxMb) && maxMb > 0 ? maxMb : 50}MB).`);
           resetSelectedMedia();
           return;
         }

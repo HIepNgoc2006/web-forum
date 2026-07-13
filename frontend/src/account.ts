@@ -7,8 +7,26 @@ export function defaultAccountPrivateData() {
     savedSearches: [],
     contentFilters: [],
     replyTemplates: [],
-    posterNotes: []
+    posterNotes: [],
+    hiddenPosts: [],
+    hiddenThreads: []
   };
+}
+
+export function normalizeHiddenIdList(value = [], maxItems = 500) {
+  const seen = new Set();
+  const items = Array.isArray(value) ? value : [];
+  return items
+    .map((item) => String(item ?? '').trim())
+    .filter((item) => item && item.length <= 120)
+    .filter((item) => {
+      if (seen.has(item)) {
+        return false;
+      }
+      seen.add(item);
+      return true;
+    })
+    .slice(0, maxItems);
 }
 
 export function privateItemId() {
@@ -133,7 +151,9 @@ export function normalizeAccountPrivateData(value: AnyRecord = {}) {
       : [],
     contentFilters: normalizeContentFilters(value.contentFilters),
     replyTemplates: normalizeReplyTemplates(value.replyTemplates),
-    posterNotes: normalizePosterNotes(value.posterNotes)
+    posterNotes: normalizePosterNotes(value.posterNotes),
+    hiddenPosts: normalizeHiddenIdList(value.hiddenPosts, 500),
+    hiddenThreads: normalizeHiddenIdList(value.hiddenThreads, 200)
   };
 }
 

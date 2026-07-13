@@ -1,6 +1,6 @@
 # 36chan API Inventory
 
-Date: 2026-06-28
+Date: 2026-07-12
 
 Base path: same origin backend. Development frontend proxies `/api`, `/events`, and `/uploads`.
 
@@ -27,6 +27,7 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 | Method | Path | Purpose | Notes |
 | --- | --- | --- | --- |
 | GET | `/api/config` | Lay boards, board groups, lifecycle, hCaptcha site key, max image bytes. | Public, khong can auth. Board items include sanitized `rules`, `banner`, and effective `retentionPolicy` fields for public display; missing rules fall back to board `description`. |
+| GET | `/api/site-content` | Lay copy public cua trang `/policy/` (title, subtitle, rules/privacy/ai/report/feedback/contact lists, appeal intro, PII text). | Public, khong can auth. Doc tu `adminSettings.siteContent` (owner editable); fallback default sanitized. |
 | GET | `/api/boards` | Lay danh sach board public. | Source tu state store; excludes hidden/archived boards. Board items include effective `retentionPolicy`. |
 | GET | `/api/stats` | Lay thong ke server. | Includes post/file counts va current SSE clients. |
 | GET | `/api/health` | Health check van hanh. | Tra `status`, `store.type`, `store.configured`, `store.ready`, safe counts/model readiness, AI configured/model, image storage readiness, realtime client count/board counts, security readiness warnings; khong tra secret. |
@@ -78,9 +79,9 @@ Account is optional and private. These endpoints require `JWT_SECRET` for issuin
 | POST | `/api/account/logout` | Thu hoi Bearer JWT hien tai bang in-memory revoked-token list. | Bearer JWT role `user`; returns `{ ok: true }`; token da logout bi tu choi tren account-private endpoints. |
 | GET | `/api/account/me` | Lay account private hien tai. | Bearer JWT role `user`. |
 | PUT | `/api/account/settings` | Luu account-private settings: `theme`, `homeBoard`, `syncDrafts`, legacy `emailNotifications`, `displayPreferences`, `notificationPreferences` (`email`, `watchedThreads`, `boardSubscriptions`, `browserWatchedThreads`), va `boardSubscriptions`. | Bearer JWT role `user`. |
-| GET | `/api/account/private-data` | Lay account-private watchlist, drafts, saved searches. | Bearer JWT role `user`; khong expose qua public post serializers. |
-| PUT | `/api/account/private-data` | Luu account-private `{ watchlist, drafts, savedSearches }` de dong bo giua thiet bi. | Bearer JWT role `user`; server normalize/gioi han so luong, draft body, preview/search text. |
-| DELETE | `/api/account/private-data?section=` | Xoa account-private data; `section` co the la `watchlist`, `drafts`, `savedSearches`, hoac bo trong de xoa tat ca. | Bearer JWT role `user`; dung cho clear controls. |
+| GET | `/api/account/private-data` | Lay account-private sync bag: `watchlist`, `drafts`, `savedSearches`, `contentFilters`, `replyTemplates`, `posterNotes`, `hiddenPosts`, `hiddenThreads`. | Bearer JWT role `user`; khong expose qua public post serializers. |
+| PUT | `/api/account/private-data` | Luu account-private `{ watchlist, drafts, savedSearches, contentFilters, replyTemplates, posterNotes, hiddenPosts, hiddenThreads }` de dong bo giua thiet bi. | Bearer JWT role `user`; server normalize/gioi han so luong, draft/template body, preview/search text, va id lists (`hiddenPosts` max 500, `hiddenThreads` max 200). |
+| DELETE | `/api/account/private-data?section=` | Xoa account-private data; `section` co the la `watchlist`, `drafts`, `savedSearches`, `contentFilters`, `replyTemplates`, `posterNotes`, `hiddenPosts`, `hiddenThreads`, hoac bo trong de xoa tat ca. | Bearer JWT role `user`; dung cho clear controls. |
 | POST | `/api/auth/2fa/totp-login` | Xac thuc TOTP sau password login. | Public endpoint; body `{ tempToken, code }`; returns fully verified account/admin JWT. `/api/auth/2fa/verify` remains a compatibility alias. |
 | POST | `/api/auth/2fa/backup-login` | Xac thuc bang ma du phong sau password login. | Public endpoint; body `{ tempToken, code }`; burns backup code on success and returns fully verified account/admin JWT. |
 
@@ -102,6 +103,8 @@ Admin auth uses privileged account roles. `owner` can view/moderate/manage board
 | GET | `/api/admin/pending?boardSlug=&label=&since=&priority=&confidence=&sort=` | Lay pending queue. | Permission `admin:view`; ho tro filter. `priority=high|medium|low`; `confidence` la nguong toi thieu 0..1 hoac 0..100; `sort=priority|newest|oldest|confidence-desc|confidence-asc`, default `priority`. Items include `moderationPriority` va `moderationConfidence` khi AI tra ve. |
 | GET | `/api/admin/moderation-settings` | Lay cau hinh moderation admin. | Permission `admin:view`; tra ve `moderationConfidenceThreshold` hien hanh. |
 | PUT | `/api/admin/moderation-settings` | Cap nhat cau hinh moderation admin. | Permission `admin:manage_settings` (`owner`); body `{ "moderationConfidenceThreshold": 0.8 }` hoac percent `80`; thieu confidence tren ket qua `Flagged` van vao queue. |
+| GET | `/api/admin/site-content` | Lay noi dung `/policy/` de chinh trong admin. | Permission `admin:view`; cung shape public `SiteContent`. |
+| PUT | `/api/admin/site-content` | Cap nhat copy trang `/policy/`. | Permission `admin:manage_settings` (`owner`); body partial `SiteContent` (`policyTitle`, `policySubtitle`, list fields as string[] or newline text, `appealIntro`, `pii`); strip HTML, gioi han do dai; luu trong `adminSettings.siteContent`. |
 | GET | `/api/admin/moderation-actions?limit=50&boardSlug=&label=&since=&action=&confidence=` | Lay audit log moderation gan nhat. | Permission `admin:view`; co the loc theo `confidence` toi thieu; khong chua IP/captcha/poster token raw. |
 | GET | `/api/admin/reports?limit=50&boardSlug=&since=&status=&category=&priority=&sort=` | Lay user reports gan nhat. | Permission `admin:view`; ho tro filter `category=Spam\|Toxic\|PII\|Fake News\|Illegal\|Other`, `priority=high|medium|low`; `sort=priority|newest|oldest`, default `priority`. Items include `moderationPriority`; reporter la hash, khong co IP raw. |
 | GET | `/api/admin/deleted?limit=50&boardSlug=&label=&since=` | Lay bai da xoa. | Permission `admin:view`. |
@@ -176,7 +179,7 @@ Status: public board banner/rules display is implemented for fixed and dynamic/a
 
 ## Account/display-name contract
 
-Status: per-post `displayName` is implemented for public thread/comment create endpoints. Account register/login/logout/me/settings are implemented as private optional endpoints, including synced theme, display preferences, notification preferences, and board subscriptions. Account-private watchlist, drafts, and saved searches are implemented via `/api/account/private-data`. Appeal history and richer security/session management remain planned by `phase-tracking/ACCOUNT_UX_AND_ANONYMOUS_RULES.md`.
+Status: per-post `displayName` is implemented for public thread/comment create endpoints. Account register/login/logout/me/settings are implemented as private optional endpoints, including synced theme, display preferences, notification preferences, and board subscriptions. Account-private data via `/api/account/private-data` includes `watchlist`, `drafts`, `savedSearches`, `contentFilters`, `replyTemplates`, `posterNotes`, `hiddenPosts`, and `hiddenThreads`. Appeal history and richer security/session management remain planned by `phase-tracking/ACCOUNT_UX_AND_ANONYMOUS_RULES.md`.
 
 - Thread/comment create endpoints accept optional `displayName`.
 - Missing or empty `displayName` must render as `Anonymous`.
@@ -184,10 +187,10 @@ Status: per-post `displayName` is implemented for public thread/comment create e
 - `displayName` is a public per-post label, not account username or verified identity.
 - Public post serializers may include sanitized `displayName`.
 - Public post serializers must never include `accountId`, `username`, `email`, session identifiers, linked local identity records, or admin/moderator role as author data.
-- Account-private watchlist, drafts, and saved searches use `/api/account/private-data`; future appeal history and security/session state must be added to this inventory when implemented.
-- AI payload tests must confirm account identity fields are absent.
+- Account-private convenience data uses `/api/account/private-data` with sections: `watchlist`, `drafts`, `savedSearches`, `contentFilters`, `replyTemplates`, `posterNotes`, `hiddenPosts`, `hiddenThreads`. Logged-out clients keep the same data in browser localStorage; login merges local ∪ server then persists. Hidden posts/threads are viewer-local UI filters only (not moderation delete). Future appeal history and security/session state must be added to this inventory when implemented.
+- AI payload tests must confirm account identity fields and private-data sections are absent.
 
 ## Known gaps
 
 - S3-compatible production image storage is implemented behind `IMAGE_STORAGE_DRIVER=s3`; production rollout still needs bucket/CDN credentials and backup policy from `phase-tracking/RELEASE_CHECKLIST.md`.
-- Account-private watchlist, synced drafts, and saved searches are implemented. Appeal history and security/session management remain future work; product rules are defined in `phase-tracking/ACCOUNT_UX_AND_ANONYMOUS_RULES.md`.
+- Account-private private-data sections above are implemented. Appeal history and security/session management remain future work; product rules are defined in `phase-tracking/ACCOUNT_UX_AND_ANONYMOUS_RULES.md`.

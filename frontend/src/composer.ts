@@ -1,5 +1,5 @@
 import { safePrivateText, safeReplyTemplateBody } from './account';
-import { MAX_MEDIA_PER_POST, SUPPORTED_VIDEO_TYPES, THREAD_TEMPLATES } from './constants';
+import { MAX_MEDIA_BYTES, MAX_MEDIA_PER_POST, SUPPORTED_VIDEO_TYPES, THREAD_TEMPLATES } from './constants';
 import { els } from './dom';
 import {
   dataUrlBytes,
@@ -233,9 +233,23 @@ export function imagePreviewHtml(image) {
   `;
 }
 
+function maxMediaBytesLabel(maxMediaBytes = MAX_MEDIA_BYTES) {
+  const mb = Math.round(Number(maxMediaBytes) / (1024 * 1024));
+  return Number.isFinite(mb) && mb > 0 ? `${mb}MB` : '50MB';
+}
+
 // Shared change handler for a file input that stages media on state[stateKey].
 // Optionally renders a preview panel and/or updates a filename label.
-function handleImageInputChange(input, { state, stateKey, preview = null, fileNameEl = null, showToast, maxMediaPerPost }) {
+function resolveMaxMediaBytes(maxMediaBytes) {
+  const value = typeof maxMediaBytes === 'function' ? maxMediaBytes() : maxMediaBytes;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : MAX_MEDIA_BYTES;
+}
+
+function handleImageInputChange(
+  input,
+  { state, stateKey, preview = null, fileNameEl = null, showToast, maxMediaPerPost, maxMediaBytes = MAX_MEDIA_BYTES }
+) {
   return async () => {
     const reset = () => {
       state[stateKey] = [];
@@ -264,6 +278,13 @@ function handleImageInputChange(input, { state, stateKey, preview = null, fileNa
       reset();
       return;
     }
+    const effectiveMaxMediaBytes = resolveMaxMediaBytes(maxMediaBytes);
+    if (files.some((file) => file.size > effectiveMaxMediaBytes)) {
+      showToast(`Tệp quá lớn (tối đa ${maxMediaBytesLabel(effectiveMaxMediaBytes)}).`);
+      input.value = '';
+      reset();
+      return;
+    }
     try {
       state[stateKey] = await Promise.all(files.map((file) => fileToDataUrl(file)));
       if (preview) {
@@ -281,35 +302,37 @@ function handleImageInputChange(input, { state, stateKey, preview = null, fileNa
   };
 }
 
-export function bindComposerMediaInputEvents({ els, state, showToast, maxMediaPerPost = MAX_MEDIA_PER_POST }: AnyRecord) {
+export function bindComposerMediaInputEvents({
+  els,
+  state,
+  showToast,
+  maxMediaPerPost = MAX_MEDIA_PER_POST,
+  maxMediaBytes = MAX_MEDIA_BYTES
+}: AnyRecord) {
+  const options = { state, showToast, maxMediaPerPost, maxMediaBytes };
   els.threadImage.addEventListener(
     'change',
     handleImageInputChange(els.threadImage, {
-      state,
+      ...options,
       stateKey: 'selectedImage',
-      preview: els.imagePreview,
-      showToast,
-      maxMediaPerPost
+      preview: els.imagePreview
     })
   );
   els.commentImage.addEventListener(
     'change',
     handleImageInputChange(els.commentImage, {
-      state,
+      ...options,
       stateKey: 'commentImage',
-      preview: els.commentImagePreview,
-      showToast,
-      maxMediaPerPost
+      preview: els.commentImagePreview
     })
   );
   els.quickReplyFile.addEventListener(
     'change',
     handleImageInputChange(els.quickReplyFile, {
-      state,
+      ...options,
       stateKey: 'quickReplyImage',
-      fileNameEl: els.quickReplyFileName,
-      showToast,
-      maxMediaPerPost
+      preview: els.quickReplyImagePreview,
+      fileNameEl: els.quickReplyFileName
     })
   );
 }

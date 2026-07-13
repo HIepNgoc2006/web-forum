@@ -1,11 +1,15 @@
 import type { AnyRecord } from './types';
+import { applyReactionControls, setReactionControlsBusy } from './post-controls';
 import { focusPermalinkPost } from './thread-dom';
+
+/** Posts with an in-flight reaction request (prevents double-count / toggle races). */
+const pendingReactionPosts = new Set<string>();
 
 type ThreadEventDependencies = {
   body?: EventTarget | null;
   els: AnyRecord;
   state: AnyRecord;
-  showToast: (message: string) => void;
+  showToast: (message: string, options?: { actionLabel?: string; onAction?: () => void; durationMs?: number }) => void;
   api: (input: string, options?: AnyRecord) => Promise<AnyRecord>;
   loadThread: (options?: AnyRecord) => Promise<any>;
   loadBoard: () => Promise<any>;
@@ -32,10 +36,14 @@ type ThreadEventDependencies = {
   copyPostPermalink: (globalNumber: string) => void;
   selectedPostQuoteText: (post: Element | null) => string;
   handleReferencePreviewClick: (event: Event) => Promise<boolean>;
-  addLocalSetItem: (key: string, value: string | null) => void;
-  hiddenThreadsKey: string;
-  hiddenPostsKey: string;
+  addHiddenPost: (globalNumber: string | null) => string[];
+  removeHiddenPost: (globalNumber: string | null) => string[];
+  clearHiddenPosts: () => string[];
+  addHiddenThread: (threadId: string | null) => string[];
+  removeHiddenThread: (threadId: string | null) => string[];
+  clearHiddenThreads: () => string[];
   renderBoardThreads: (threads: AnyRecord[]) => void;
+  renderBrowserHiddenData?: () => void;
   addContentFilter: (options: AnyRecord) => void;
   addPosterNote: (options: AnyRecord) => void;
   watchlistController: AnyRecord;
@@ -49,7 +57,6 @@ type ThreadEventDependencies = {
   localDisplayPreferences: () => AnyRecord;
   applyDisplayPreferences: (preferences?: AnyRecord) => AnyRecord;
   normalizeWatchedSort: (value: string) => string;
-  setAutoUpdate: (enabled: boolean) => void;
   showReportModal: (globalNumber: string) => Promise<AnyRecord | null>;
   translatePost: (button: Element) => Promise<void>;
   speakPost: (button: Element) => Promise<void>;
@@ -58,7 +65,15 @@ type ThreadEventDependencies = {
 };
 
 function getTarget(event: Event) {
-  return event.target instanceof Element ? event.target : null;
+  const target = event.target;
+  if (target instanceof Element) {
+    return target;
+  }
+  // Clicks on text nodes inside buttons/links must still resolve to an element.
+  if (target instanceof Text && target.parentElement) {
+    return target.parentElement;
+  }
+  return null;
 }
 
 export function bindThreadEvents(dependencies: ThreadEventDependencies) {
@@ -92,10 +107,14 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
     copyPostPermalink,
     selectedPostQuoteText,
     handleReferencePreviewClick,
-    addLocalSetItem,
-    hiddenThreadsKey,
-    hiddenPostsKey,
+    addHiddenPost,
+    removeHiddenPost,
+    clearHiddenPosts,
+    addHiddenThread,
+    removeHiddenThread,
+    clearHiddenThreads,
     renderBoardThreads,
+    renderBrowserHiddenData = () => {},
     addContentFilter,
     addPosterNote,
     watchlistController,
@@ -109,11 +128,9 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
     localDisplayPreferences,
     applyDisplayPreferences,
     normalizeWatchedSort,
-    setAutoUpdate,
     showReportModal,
     translatePost,
     speakPost,
-    writeReaction,
     writeVote
   } = dependencies;
 
@@ -155,19 +172,40 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
       return;
     }
 
+    const boardReplyButton = target.closest('[data-board-reply]');
+    if (boardReplyButton) {
+      event.preventDefault();
+      openQuickReply(boardReplyButton.dataset.boardReplyNumber, event as PointerEvent, {
+        threadId: boardReplyButton.dataset.boardReply,
+        isLocked: boardReplyButton.dataset.boardReplyLocked === '1',
+        isArchived: boardReplyButton.dataset.boardReplyArchived === '1',
+        fromBoard: true
+      });
+      return;
+    }
+
     const quickReplyNumber = target.closest('[data-quick-reply]');
     if (quickReplyNumber) {
+      const boundThreadId = quickReplyNumber.dataset.quickReplyThread || '';
+      const onBoard = (window.location.hash || '').startsWith('#board/');
       // Post-number links keep their permalink when not inside an open thread
       // or when the thread cannot accept replies (4chan-style quote vs navigate).
       if (
         quickReplyNumber instanceof HTMLAnchorElement &&
+        !boundThreadId &&
         (!state.threadId || state.threadIsArchived || state.threadIsLocked)
       ) {
         return;
       }
       event.preventDefault();
-      const selectedQuote = selectedPostQuoteText(quickReplyNumber.closest('.post'));
-      openQuickReply(quickReplyNumber.dataset.quickReply, event as PointerEvent, { selectedQuote });
+      const selectedQuote = selectedPostQuoteText(
+        quickReplyNumber.closest('.post, .thread-op, article.reply-preview')
+      );
+      openQuickReply(quickReplyNumber.dataset.quickReply, event as PointerEvent, {
+        selectedQuote,
+        threadId: boundThreadId || undefined,
+        fromBoard: onBoard || Boolean(boundThreadId && !String(window.location.hash || '').startsWith('#thread/'))
+      });
       return;
     }
 
@@ -357,24 +395,189 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
       return;
     }
 
+    const unhideThreadButton = target.closest('[data-unhide-thread]');
+    if (unhideThreadButton) {
+      event.preventDefault();
+      const threadId = unhideThreadButton.dataset.unhideThread || '';
+      if (threadId) {
+        removeHiddenThread(threadId);
+        renderBrowserHiddenData();
+        if ((window.location.hash || '').startsWith('#board/')) {
+          renderBoardThreads(state.boardThreads);
+        } else if ((window.location.hash || '').startsWith('#catalog/')) {
+          await loadCatalog().catch((error) => showToast(error.message));
+        } else {
+          await refreshCurrentScreen().catch((error) => showToast(error.message));
+        }
+        showToast(state.accountToken ? 'Đã hiện lại chủ đề (đồng bộ tài khoản).' : 'Đã hiện lại chủ đề trên trình duyệt này.');
+      }
+      return;
+    }
+
+    const unhidePostButton = target.closest('[data-unhide-post]');
+    if (unhidePostButton) {
+      event.preventDefault();
+      const postNumber = String(unhidePostButton.dataset.unhidePost || '').trim();
+      if (postNumber) {
+        // Always clear local + in-memory first so any concurrent reload sees the new set.
+        removeHiddenPost(postNumber);
+        renderBrowserHiddenData();
+        const onThread = (window.location.hash || '').startsWith('#thread/') && state.threadId;
+        if (onThread) {
+          // Focus the restored post so it is obvious after reload.
+          await loadThread({ focusPost: postNumber, preserveScroll: true }).catch((error) => showToast(error.message));
+        } else if ((window.location.hash || '').startsWith('#board/')) {
+          renderBoardThreads(state.boardThreads);
+        } else {
+          await refreshCurrentScreen().catch((error) => showToast(error.message));
+        }
+        showToast(state.accountToken ? 'Đã hiện lại bài (đồng bộ tài khoản).' : 'Đã hiện lại bài trên trình duyệt này.');
+      }
+      return;
+    }
+
+    const clearHiddenThreadsButton = target.closest('[data-clear-hidden-threads]');
+    if (clearHiddenThreadsButton) {
+      event.preventDefault();
+      clearHiddenThreads();
+      renderBrowserHiddenData();
+      if ((window.location.hash || '').startsWith('#board/')) {
+        renderBoardThreads(state.boardThreads);
+      } else {
+        await refreshCurrentScreen().catch((error) => showToast(error.message));
+      }
+      showToast(state.accountToken ? 'Đã hiện lại tất cả chủ đề đã ẩn (đồng bộ tài khoản).' : 'Đã hiện lại tất cả chủ đề đã ẩn.');
+      return;
+    }
+
+    const clearHiddenPostsButton = target.closest('[data-clear-hidden-posts]');
+    if (clearHiddenPostsButton) {
+      event.preventDefault();
+      clearHiddenPosts();
+      renderBrowserHiddenData();
+      if ((window.location.hash || '').startsWith('#thread/') && state.threadId) {
+        await loadThread({ preserveScroll: true }).catch((error) => showToast(error.message));
+      } else if ((window.location.hash || '').startsWith('#board/')) {
+        renderBoardThreads(state.boardThreads);
+      } else {
+        await refreshCurrentScreen().catch((error) => showToast(error.message));
+      }
+      showToast(state.accountToken ? 'Đã hiện lại tất cả bài đã ẩn (đồng bộ tài khoản).' : 'Đã hiện lại tất cả bài đã ẩn.');
+      return;
+    }
+
     const hideThreadButton = target.closest('[data-hide-thread]');
     if (hideThreadButton) {
-      addLocalSetItem(hiddenThreadsKey, hideThreadButton.dataset.hideThread);
-      renderBoardThreads(state.boardThreads);
-      showToast('Đã ẩn chủ đề trên trình duyệt này.');
+      event.preventDefault();
+      const threadId = hideThreadButton.dataset.hideThread || '';
+      if (threadId) {
+        addHiddenThread(threadId);
+        // Always re-render current list so the stub appears immediately.
+        if ((window.location.hash || '').startsWith('#board/')) {
+          renderBoardThreads(state.boardThreads);
+        } else if ((window.location.hash || '').startsWith('#catalog/')) {
+          await loadCatalog().catch((error) => showToast(error.message));
+        } else {
+          await refreshCurrentScreen().catch((error) => showToast(error.message));
+        }
+        renderBrowserHiddenData();
+        showToast(
+          state.accountToken
+            ? 'Đã ẩn chủ đề (đồng bộ tài khoản). Bấm [Hiện lại] trên dòng stub hoặc Cài đặt.'
+            : 'Đã ẩn chủ đề. Dòng stub [Hiện lại] vẫn hiện trên bảng/danh mục.',
+          {
+            actionLabel: 'Hoàn tác',
+            durationMs: 8000,
+            onAction: async () => {
+              removeHiddenThread(threadId);
+              if ((window.location.hash || '').startsWith('#board/')) {
+                renderBoardThreads(state.boardThreads);
+              } else {
+                await refreshCurrentScreen().catch((error) => showToast(error.message));
+              }
+              renderBrowserHiddenData();
+              showToast(state.accountToken ? 'Đã hiện lại chủ đề (đồng bộ tài khoản).' : 'Đã hiện lại chủ đề trên trình duyệt này.');
+            }
+          }
+        );
+      }
       return;
     }
 
     const hidePostButton = target.closest('[data-hide-post]');
     if (hidePostButton) {
-      addLocalSetItem(hiddenPostsKey, hidePostButton.dataset.hidePost);
+      event.preventDefault();
+      const postNumber = hidePostButton.dataset.hidePost || '';
+      // Board OP lives in .thread (not article.post). Hiding OP there means hide the whole thread.
+      const boardThreadRoot = hidePostButton.closest('.thread');
+      const boardHideThreadId =
+        boardThreadRoot && !(window.location.hash || '').startsWith('#thread/')
+          ? boardThreadRoot.querySelector('[data-hide-thread]')?.getAttribute('data-hide-thread') ||
+            boardThreadRoot.querySelector('a[href^="#thread/"]')?.getAttribute('href')?.replace(/^#thread\//, '') ||
+            ''
+          : '';
+      if (boardHideThreadId) {
+        addHiddenThread(boardHideThreadId);
+        if ((window.location.hash || '').startsWith('#board/')) {
+          renderBoardThreads(state.boardThreads);
+        } else {
+          await refreshCurrentScreen().catch((error) => showToast(error.message));
+        }
+        renderBrowserHiddenData();
+        showToast('Đã ẩn chủ đề. Bấm [Hiện lại] trên dòng stub hoặc Cài đặt → Nội dung đã ẩn.', {
+          actionLabel: 'Hoàn tác',
+          durationMs: 8000,
+          onAction: () => {
+            removeHiddenThread(boardHideThreadId);
+            renderBoardThreads(state.boardThreads);
+            renderBrowserHiddenData();
+            showToast('Đã hiện lại chủ đề trên trình duyệt này.');
+          }
+        });
+        return;
+      }
+
+      addHiddenPost(postNumber);
       const onThreadScreen = (window.location.hash || '').startsWith('#thread/') && state.threadId;
       if (onThreadScreen) {
-        await loadThread().catch((error) => showToast(error.message));
+        await loadThread({ preserveScroll: true }).catch((error) => showToast(error.message));
       } else {
-        hidePostButton.closest('article.post')?.remove();
+        const postEl = hidePostButton.closest('article.post, article.reply-preview');
+        const safeNumber = String(postNumber).replace(/[^\d]/g, '');
+        if (postEl && safeNumber) {
+          postEl.outerHTML = `
+            <article class="post post-hidden-stub" id="p${safeNumber}" data-hidden-post="${safeNumber}">
+              <div class="hidden-stub-row">
+                <div class="hidden-stub-text">
+                  <strong>No.${safeNumber}</strong>
+                  <span class="muted">— bài đã ẩn trên trình duyệt này</span>
+                </div>
+                <button class="primary-button unhide-action" data-unhide-post="${safeNumber}" type="button">[Hiện lại]</button>
+              </div>
+            </article>
+          `;
+        }
       }
-      showToast('Đã ẩn bài trên trình duyệt này.');
+      renderBrowserHiddenData();
+      showToast(
+        state.accountToken
+          ? 'Đã ẩn bài (đồng bộ tài khoản). Bấm [Hiện lại] trên dòng stub hoặc Cài đặt.'
+          : 'Đã ẩn bài. Bấm [Hiện lại] trên dòng stub hoặc Cài đặt → Nội dung đã ẩn.',
+        {
+          actionLabel: 'Hoàn tác',
+          durationMs: 8000,
+          onAction: async () => {
+            removeHiddenPost(postNumber);
+            renderBrowserHiddenData();
+            if ((window.location.hash || '').startsWith('#thread/') && state.threadId) {
+              await loadThread({ preserveScroll: true, focusPost: postNumber }).catch((error) => showToast(error.message));
+            } else {
+              await refreshCurrentScreen().catch((error) => showToast(error.message));
+            }
+            showToast(state.accountToken ? 'Đã hiện lại bài (đồng bộ tài khoản).' : 'Đã hiện lại bài trên trình duyệt này.');
+          }
+        }
+      );
       return;
     }
 
@@ -454,8 +657,12 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
       if (!quoteNumber) {
         return;
       }
-      const selectedQuote = selectedPostQuoteText(quoteButton.closest('.post'));
-      openQuickReply(quoteNumber, event as PointerEvent, { selectedQuote });
+      const selectedQuote = selectedPostQuoteText(quoteButton.closest('.post, .thread-op, article.reply-preview'));
+      openQuickReply(quoteNumber, event as PointerEvent, {
+        selectedQuote,
+        threadId: quoteButton.dataset.quickReplyThread || undefined,
+        fromBoard: (window.location.hash || '').startsWith('#board/')
+      });
       return;
     }
 
@@ -472,9 +679,17 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
 
     const suggestion = target.closest('[data-suggestion]');
     if (suggestion) {
-      els.commentBody.value = decodeURIComponent(suggestion.dataset.suggestion);
-      updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
-      els.commentBody.focus();
+      const useQuickReply =
+        Boolean(suggestion.closest('#quickReply')) || !els.quickReply?.classList?.contains('hidden');
+      const textarea = useQuickReply ? els.quickReplyBody : els.commentBody;
+      const warningBox = useQuickReply ? els.quickReplyPrivacyWarning : els.commentPrivacyWarning;
+      if (!textarea) {
+        return;
+      }
+      textarea.value = decodeURIComponent(suggestion.dataset.suggestion);
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      updatePrivacyWarning(textarea.value, warningBox);
+      textarea.focus();
       return;
     }
 
@@ -495,18 +710,35 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
 
     const reactionButton = target.closest('[data-reaction]');
     if (reactionButton) {
+      if (!state.accountToken) {
+        showToast('Vui lòng đăng nhập tài khoản để react.');
+        return;
+      }
+      const globalNumber = String(reactionButton.dataset.reactionTarget || '');
+      const reaction = String(reactionButton.dataset.reaction || '');
+      if (!globalNumber || !reaction) {
+        return;
+      }
+      // Prevent double-submit (rapid click / double-tap) which toggled twice
+      // and made counts jump by 2 or immediately cancel the reaction.
+      if (pendingReactionPosts.has(globalNumber)) {
+        return;
+      }
+      pendingReactionPosts.add(globalNumber);
+      setReactionControlsBusy(globalNumber, true);
       try {
-        const globalNumber = reactionButton.dataset.reactionTarget;
-        const reaction = reactionButton.dataset.reaction;
         const result = await api(`/api/posts/${globalNumber}/reactions`, {
-          auth: state.accountToken ? 'account' : 'none',
+          auth: 'account',
           method: 'POST',
-          body: JSON.stringify({ reaction, posterToken: state.posterToken })
+          body: JSON.stringify({ reaction })
         });
-        writeReaction(globalNumber, result.myReaction || '');
-        await refreshCurrentScreen();
+        applyReactionControls(globalNumber, result.reactions || {}, result.myReaction || '');
+        // Do not full-refresh: SSE + refresh raced and re-applied stale counts.
       } catch (error) {
+        setReactionControlsBusy(globalNumber, false);
         showToast(error.message);
+      } finally {
+        pendingReactionPosts.delete(globalNumber);
       }
       return;
     }
@@ -555,11 +787,6 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
     const target = getTarget(event);
     if (!target) {
       return;
-    }
-
-    const autoUpdate = target.closest('[data-auto-update]');
-    if (autoUpdate) {
-      setAutoUpdate(autoUpdate.checked);
     }
 
     const themeSelect = target.closest('[data-theme-select]');

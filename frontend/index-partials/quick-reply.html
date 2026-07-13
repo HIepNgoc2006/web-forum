@@ -30,10 +30,39 @@
           </div>
         </div>
         <div class="quick-template-picker" data-reply-template-picker="quickReply" aria-label="Mẫu trả lời đã lưu"></div>
+        <div class="quick-ai-actions" aria-label="Công cụ AI cho trả lời nhanh">
+          <button id="quickReplySuggestButton" class="quick-ai-button" type="button">[AI gợi ý]</button>
+          <select id="quickReplyRewriteTone" class="quick-rewrite-tone" aria-label="Tông giọng">
+            <option value="neutral">Trung lập</option>
+            <option value="less-aggressive">Bớt gay gắt</option>
+            <option value="privacy-safer">An toàn riêng tư</option>
+          </select>
+          <button id="quickReplyRewriteButton" class="quick-ai-button" type="button">[AI sửa]</button>
+          <button id="quickReplyCaptionButton" class="quick-ai-button" type="button">[Mô tả ảnh]</button>
+          <button id="quickReplyOcrButton" class="quick-ai-button" type="button">[OCR]</button>
+          <span id="quickReplyAiRewriteLabel" class="ai-label quick-ai-label hidden">Đã sửa bằng AI</span>
+        </div>
+        <div id="quickReplySuggestions" class="suggestions quick-suggestions hidden"></div>
         <div id="quickReplyPrivacyWarning" class="privacy-warning quick-privacy-warning hidden" role="status"></div>
         <div class="quick-reply-captcha">
           <input id="quickReplyCaptcha" value="dev-pass" aria-label="Xác minh" autocomplete="off" />
           <div class="captcha-widget hidden" data-hcaptcha-target="quickReplyCaptcha"></div>
+        </div>
+        <div id="quickReplyImagePreview" class="image-preview quick-image-preview hidden"></div>
+        <div class="quick-audio-row" aria-label="Âm thanh sang chữ">
+          <label class="quick-file-button quick-audio-file-button">
+            Âm thanh
+            <input id="quickReplyAudio" type="file" accept="audio/*" aria-label="Chọn file âm thanh để chép" />
+          </label>
+          <select
+            id="quickReplySpeechLang"
+            class="speech-lang-select rewrite-tone-select quick-speech-lang"
+            data-speech-lang
+            aria-label="Ngôn ngữ nhận dạng giọng nói"
+          ></select>
+          <button id="quickReplyRecordButton" class="quick-ai-button audio-record-button" type="button" aria-pressed="false">
+            [Nói]
+          </button>
         </div>
         <div class="quick-reply-bottom">
           <div class="quick-reply-file-group">

@@ -1248,7 +1248,9 @@ test('http account api syncs and clears private watchlist drafts saved searches 
             note: 'Theo doi trao doi nay',
             boardSlug: 'hoc-tap'
           }
-        ]
+        ],
+        hiddenPosts: ['101', '202', '101'],
+        hiddenThreads: ['thread-hide-1']
       })
     });
     const savedBody = await readJson(saved);
@@ -1262,6 +1264,8 @@ test('http account api syncs and clears private watchlist drafts saved searches 
     assert.equal(savedBody.data.replyTemplates[0].title, 'Hoi them');
     assert.equal(savedBody.data.posterNotes.length, 1);
     assert.equal(savedBody.data.posterNotes[0].posterId, 'ID:ABCD1234');
+    assert.deepEqual(savedBody.data.hiddenPosts, ['101', '202']);
+    assert.deepEqual(savedBody.data.hiddenThreads, ['thread-hide-1']);
 
     const fetched = await fetch(`${baseUrl}/api/account/private-data`, {
       headers: { authorization: `Bearer ${token}` }
@@ -1281,6 +1285,7 @@ test('http account api syncs and clears private watchlist drafts saved searches 
     assert.equal(clearedDraftsBody.data.contentFilters.length, 2);
     assert.equal(clearedDraftsBody.data.replyTemplates.length, 1);
     assert.equal(clearedDraftsBody.data.posterNotes.length, 1);
+    assert.equal(clearedDraftsBody.data.hiddenPosts.length, 2);
 
     const clearedFilters = await fetch(`${baseUrl}/api/account/private-data?section=contentFilters`, {
       method: 'DELETE',
@@ -1309,6 +1314,23 @@ test('http account api syncs and clears private watchlist drafts saved searches 
     assert.equal(clearedPosterNotesBody.data.watchlist.length, 1);
     assert.equal(clearedPosterNotesBody.data.posterNotes.length, 0);
 
+    const clearedHiddenPosts = await fetch(`${baseUrl}/api/account/private-data?section=hiddenPosts`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const clearedHiddenPostsBody = await readJson(clearedHiddenPosts);
+    assert.equal(clearedHiddenPosts.status, 200);
+    assert.equal(clearedHiddenPostsBody.data.hiddenPosts.length, 0);
+    assert.equal(clearedHiddenPostsBody.data.hiddenThreads.length, 1);
+
+    const clearedHiddenThreads = await fetch(`${baseUrl}/api/account/private-data?section=hiddenThreads`, {
+      method: 'DELETE',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    const clearedHiddenThreadsBody = await readJson(clearedHiddenThreads);
+    assert.equal(clearedHiddenThreads.status, 200);
+    assert.equal(clearedHiddenThreadsBody.data.hiddenThreads.length, 0);
+
     const clearedAll = await fetch(`${baseUrl}/api/account/private-data`, {
       method: 'DELETE',
       headers: { authorization: `Bearer ${token}` }
@@ -1320,7 +1342,9 @@ test('http account api syncs and clears private watchlist drafts saved searches 
       savedSearches: [],
       contentFilters: [],
       replyTemplates: [],
-      posterNotes: []
+      posterNotes: [],
+      hiddenPosts: [],
+      hiddenThreads: []
     });
   });
 });
@@ -1744,30 +1768,45 @@ test('http metrics exposes scrapeable realtime counters and alert thresholds', a
     }
   };
 
-  await withServer(
-    async (baseUrl) => {
-      const metrics = await fetch(`${baseUrl}/metrics`);
-      const body = await metrics.text();
+  const previousMetricsToken = process.env.METRICS_TOKEN;
+  process.env.METRICS_TOKEN = 'metrics-test-token';
+  try {
+    await withServer(
+      async (baseUrl) => {
+        const denied = await fetch(`${baseUrl}/metrics`);
+        assert.equal(denied.status, 401);
 
-      assert.equal(metrics.status, 200);
-      assert.match(metrics.headers.get('content-type'), /text\/plain/);
-      assert.match(body, /chan36_health_ready 1/);
-      assert.match(body, /chan36_sse_clients 90/);
-      assert.match(body, /chan36_sse_capacity_alert_level 2/);
-      assert.match(body, /chan36_sse_capacity_warn_percent 75/);
-      assert.match(body, /chan36_sse_capacity_critical_percent 90/);
-      assert.match(body, /chan36_sse_max_backpressure_events 3/);
-      assert.match(body, /chan36_sse_rejected_connections_total 3/);
-      assert.match(body, /chan36_sse_backpressure_events_total 4/);
-      assert.match(body, /chan36_sse_backpressure_drops_total 1/);
-      assert.equal(body.includes('secret'), false);
+        const metrics = await fetch(`${baseUrl}/metrics`, {
+          headers: { authorization: 'Bearer metrics-test-token' }
+        });
+        const body = await metrics.text();
 
-      const alias = await fetch(`${baseUrl}/api/metrics`);
-      assert.equal(alias.status, 200);
-      assert.match(await alias.text(), /chan36_sse_connections_total 120/);
-    },
-    { realtime }
-  );
+        assert.equal(metrics.status, 200);
+        assert.match(metrics.headers.get('content-type'), /text\/plain/);
+        assert.match(body, /chan36_health_ready 1/);
+        assert.match(body, /chan36_sse_clients 90/);
+        assert.match(body, /chan36_sse_capacity_alert_level 2/);
+        assert.match(body, /chan36_sse_capacity_warn_percent 75/);
+        assert.match(body, /chan36_sse_capacity_critical_percent 90/);
+        assert.match(body, /chan36_sse_max_backpressure_events 3/);
+        assert.match(body, /chan36_sse_rejected_connections_total 3/);
+        assert.match(body, /chan36_sse_backpressure_events_total 4/);
+        assert.match(body, /chan36_sse_backpressure_drops_total 1/);
+        assert.equal(body.includes('secret'), false);
+
+        const alias = await fetch(`${baseUrl}/api/metrics?token=metrics-test-token`);
+        assert.equal(alias.status, 200);
+        assert.match(await alias.text(), /chan36_sse_connections_total 120/);
+      },
+      { realtime }
+    );
+  } finally {
+    if (previousMetricsToken === undefined) {
+      delete process.env.METRICS_TOKEN;
+    } else {
+      process.env.METRICS_TOKEN = previousMetricsToken;
+    }
+  }
 });
 
 test('http api supports v1 alias, paged search, backlinks and account self delete', async () => {
@@ -2139,7 +2178,7 @@ test('http api supports anonymous thread poll voting once per fingerprint', asyn
   });
 });
 
-test('http api toggles post reactions by poster fingerprint', async () => {
+test('http api requires account for post reactions', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
       method: 'POST',
@@ -2151,30 +2190,12 @@ test('http api toggles post reactions by poster fingerprint', async () => {
     });
     const createdBody = await readJson(created);
 
-    const reacted = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
+    const anon = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ reaction: 'laugh', posterToken: 'reader-a' })
     });
-    const reactedBody = await readJson(reacted);
-    assert.equal(reacted.status, 200);
-    assert.equal(reactedBody.data.reactions.laugh, 1);
-    assert.equal(reactedBody.data.myReaction, 'laugh');
-
-    const detail = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
-    const detailBody = await readJson(detail);
-    assert.equal(detailBody.data.thread.reactions.laugh, 1);
-    assert.equal(JSON.stringify(detailBody.data.thread).includes('reactionVoters'), false);
-
-    const removed = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ reaction: 'laugh', posterToken: 'reader-a' })
-    });
-    const removedBody = await readJson(removed);
-    assert.equal(removed.status, 200);
-    assert.equal(removedBody.data.reactions.laugh, 0);
-    assert.equal(removedBody.data.myReaction, null);
+    assert.equal(anon.status, 401);
 
     const registered = await fetch(`${baseUrl}/api/account/register`, {
       method: 'POST',
@@ -2189,18 +2210,24 @@ test('http api toggles post reactions by poster fingerprint', async () => {
     const accountReacted = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
       method: 'POST',
       headers: accountHeaders,
-      body: JSON.stringify({ reaction: 'like', posterToken: 'account-token-a' })
+      body: JSON.stringify({ reaction: 'like' })
     });
     const accountReactedBody = await readJson(accountReacted);
-    const accountRemoved = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
-      method: 'POST',
-      headers: accountHeaders,
-      body: JSON.stringify({ reaction: 'like', posterToken: 'account-token-b' })
-    });
-    const accountRemovedBody = await readJson(accountRemoved);
     assert.equal(accountReacted.status, 200);
     assert.equal(accountReactedBody.data.reactions.like, 1);
     assert.equal(accountReactedBody.data.myReaction, 'like');
+
+    const detail = await fetch(`${baseUrl}/api/threads/${createdBody.data.thread.id}`);
+    const detailBody = await readJson(detail);
+    assert.equal(detailBody.data.thread.reactions.like, 1);
+    assert.equal(JSON.stringify(detailBody.data.thread).includes('reactionVoters'), false);
+
+    const accountRemoved = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}/reactions`, {
+      method: 'POST',
+      headers: accountHeaders,
+      body: JSON.stringify({ reaction: 'like' })
+    });
+    const accountRemovedBody = await readJson(accountRemoved);
     assert.equal(accountRemoved.status, 200);
     assert.equal(accountRemovedBody.data.reactions.like, 0);
     assert.equal(accountRemovedBody.data.myReaction, null);
@@ -2586,11 +2613,12 @@ test('http api stores image metadata from thread creation payloads', async () =>
   });
 });
 
-test('http api thread upload limit uses defaults when env values are invalid', async () => {
+test('http api thread upload limit rejects oversized JSON payloads', async () => {
   const originalMaxImageBytes = process.env.MAX_IMAGE_BYTES;
   const originalMaxThumbnailBytes = process.env.MAX_THUMBNAIL_BYTES;
-  process.env.MAX_IMAGE_BYTES = 'not-a-number';
-  process.env.MAX_THUMBNAIL_BYTES = 'not-a-number';
+  // Small limit keeps the JSON body cap low enough for a unit test payload.
+  process.env.MAX_IMAGE_BYTES = '1000';
+  process.env.MAX_THUMBNAIL_BYTES = '1000';
 
   try {
     await withServer(async (baseUrl) => {
@@ -2598,7 +2626,7 @@ test('http api thread upload limit uses defaults when env values are invalid', a
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({
-          body: 'A'.repeat(1_700_001),
+          body: 'A'.repeat(120_000),
           captchaToken: 'dev-pass'
         })
       });
@@ -3559,6 +3587,62 @@ test('http admin moderation settings update confidence queue threshold', async (
       }
     }
   );
+});
+
+test('http owner can customize public site content for /policy/', async () => {
+  await withServer(async (baseUrl) => {
+    const publicBefore = await fetch(`${baseUrl}/api/site-content`);
+    const publicBeforeBody = await readJson(publicBefore);
+    assert.equal(publicBefore.status, 200);
+    assert.equal(typeof publicBeforeBody.data.policyTitle, 'string');
+    assert.ok(Array.isArray(publicBeforeBody.data.rules));
+
+    const login = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const loginBody = await readJson(login);
+    const headers = {
+      authorization: `Bearer ${loginBody.data.token}`,
+      'content-type': 'application/json'
+    };
+
+    const update = await fetch(`${baseUrl}/api/admin/site-content`, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        policyTitle: 'Nội quy tùy chỉnh',
+        policySubtitle: 'Owner đã chỉnh nội dung này.',
+        rules: ['Không spam custom', 'Không doxx custom'],
+        privacy: ['Riêng tư custom'],
+        ai: ['AI custom'],
+        report: ['Báo cáo custom'],
+        appealIntro: 'Kháng nghị custom',
+        feedback: ['Góp ý custom'],
+        contact: ['Liên hệ custom'],
+        pii: 'PII custom text'
+      })
+    });
+    const updateBody = await readJson(update);
+    assert.equal(update.status, 200);
+    assert.equal(updateBody.data.policyTitle, 'Nội quy tùy chỉnh');
+    assert.deepEqual(updateBody.data.rules, ['Không spam custom', 'Không doxx custom']);
+    assert.equal(updateBody.data.pii, 'PII custom text');
+
+    const adminGet = await fetch(`${baseUrl}/api/admin/site-content`, {
+      headers: { authorization: headers.authorization }
+    });
+    const adminGetBody = await readJson(adminGet);
+    assert.equal(adminGet.status, 200);
+    assert.equal(adminGetBody.data.policyTitle, 'Nội quy tùy chỉnh');
+
+    const publicAfter = await fetch(`${baseUrl}/api/site-content`);
+    const publicAfterBody = await readJson(publicAfter);
+    assert.equal(publicAfter.status, 200);
+    assert.equal(publicAfterBody.data.policyTitle, 'Nội quy tùy chỉnh');
+    assert.equal(publicAfterBody.data.appealIntro, 'Kháng nghị custom');
+  });
 });
 
 test('http admin sanctions temporarily block matching hashed posting fingerprint', async () => {

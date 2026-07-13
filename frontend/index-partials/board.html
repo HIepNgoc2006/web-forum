@@ -1,10 +1,4 @@
       <section id="boardScreen" class="screen" aria-labelledby="boardTitle">
-        <div class="board-hero">
-          <a class="board-logo" href="#home" aria-label="Trang chủ 36chan">
-            <span>GÓC 36CHAN</span>
-          </a>
-          <p>diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt</p>
-        </div>
         <div class="screen-head">
           <div>
             <h1 id="boardTitle">Thú nhận</h1>
@@ -23,27 +17,33 @@
 
         <div class="board-search-row">
           <input id="boardSearchInput" type="search" placeholder="Tìm OP..." autocomplete="off" aria-label="Tìm OP" />
-          [<a id="boardCatalogLink" href="#catalog/confession">Danh mục</a>]
-          [<a id="boardArchiveLink" href="#archive/confession">Kho lưu trữ</a>]
-          [<a id="boardJsonFeedLink" href="/feeds/boards/confession/threads.json" target="_blank" rel="noopener noreferrer">JSON</a>]
-          [<a id="boardRssFeedLink" href="/feeds/boards/confession/threads.rss" target="_blank" rel="noopener noreferrer">RSS</a>]
-          [<button id="saveBoardSearchButton" class="link-button" type="button">Lưu tìm kiếm</button>]
-          [<button class="link-button" data-toggle-board-subscription type="button">Theo dõi bảng</button>]
-          [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
-          [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
+          <div class="board-search-links">
+            [<a id="boardCatalogLink" href="#catalog/confession">Danh mục</a>]
+            [<a id="boardArchiveLink" href="#archive/confession">Kho lưu trữ</a>]
+            <span class="board-feed-link">[<a id="boardJsonFeedLink" href="/feeds/boards/confession/threads.json" target="_blank" rel="noopener noreferrer">JSON</a>]</span>
+            <span class="board-feed-link">[<a id="boardRssFeedLink" href="/feeds/boards/confession/threads.rss" target="_blank" rel="noopener noreferrer">RSS</a>]</span>
+            [<button id="saveBoardSearchButton" class="link-button" type="button">Lưu tìm kiếm</button>]
+            [<button class="link-button" data-toggle-board-subscription type="button">Theo dõi bảng</button>]
+            [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
+            [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
+          </div>
         </div>
 
         <div class="board-sort-row" aria-label="Sắp xếp chủ đề">
-          <span>Sắp xếp theo:</span>
-          <button class="link-button" data-board-sort="bump" type="button">Thứ tự đẩy lên</button>
-          <button class="link-button" data-board-sort="created" type="button">Ngày tạo</button>
-          <button class="link-button" data-board-sort="replies" type="button">Số trả lời</button>
-          <span>Lọc:</span>
-          <button class="link-button" data-board-filter="all" type="button">Tất cả</button>
-          <button class="link-button" data-board-filter="media" type="button">Có tệp</button>
-          <button class="link-button" data-board-filter="video" type="button">Có video</button>
-          <button class="link-button" data-board-filter="poll" type="button">Có thăm dò</button>
-          <button class="link-button" data-board-filter="unanswered" type="button">Chưa trả lời</button>
+          <div class="board-sort-group" role="group" aria-label="Sắp xếp">
+            <span class="board-control-label">Sắp xếp theo:</span>
+            <button class="link-button" data-board-sort="bump" type="button">Thứ tự đẩy lên</button>
+            <button class="link-button" data-board-sort="created" type="button">Ngày tạo</button>
+            <button class="link-button" data-board-sort="replies" type="button">Số trả lời</button>
+          </div>
+          <div class="board-filter-group" role="group" aria-label="Lọc">
+            <span class="board-control-label">Lọc:</span>
+            <button class="link-button" data-board-filter="all" type="button">Tất cả</button>
+            <button class="link-button" data-board-filter="media" type="button">Có tệp</button>
+            <button class="link-button" data-board-filter="video" type="button">Có video</button>
+            <button class="link-button" data-board-filter="poll" type="button">Có thăm dò</button>
+            <button class="link-button" data-board-filter="unanswered" type="button">Chưa trả lời</button>
+          </div>
         </div>
 
         <div class="start-thread-row">
@@ -136,8 +136,14 @@
                     <span>Âm thanh</span>
                     <div class="audio-transcribe-controls">
                       <input id="threadAudio" type="file" accept="audio/*" />
+                      <select
+                        id="threadSpeechLang"
+                        class="speech-lang-select rewrite-tone-select"
+                        data-speech-lang
+                        aria-label="Ngôn ngữ nhận dạng giọng nói"
+                      ></select>
                       <button id="threadRecordButton" class="ghost-button audio-record-button" type="button" aria-pressed="false">
-                        [Ghi âm]
+                        [Nói]
                       </button>
                     </div>
                   </label>
@@ -199,13 +205,15 @@
           <div id="threadList" class="thread-list"></div>
           <div id="boardPagination" class="page-controls"></div>
           <div class="board-toolbar-bottom">
-            [<a id="boardCatalogLinkBottom" href="#catalog/confession">Danh mục</a>]
-            [<a id="boardArchiveLinkBottom" href="#archive/confession">Kho lưu trữ</a>]
-            [<a id="boardJsonFeedLinkBottom" href="/feeds/boards/confession/threads.json" target="_blank" rel="noopener noreferrer">JSON</a>]
-            [<a id="boardRssFeedLinkBottom" href="/feeds/boards/confession/threads.rss" target="_blank" rel="noopener noreferrer">RSS</a>]
-            [<button class="link-button" data-toggle-board-subscription type="button">Theo dõi bảng</button>]
-            [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
-            [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
+            <div class="board-search-links">
+              [<a id="boardCatalogLinkBottom" href="#catalog/confession">Danh mục</a>]
+              [<a id="boardArchiveLinkBottom" href="#archive/confession">Kho lưu trữ</a>]
+              <span class="board-feed-link">[<a id="boardJsonFeedLinkBottom" href="/feeds/boards/confession/threads.json" target="_blank" rel="noopener noreferrer">JSON</a>]</span>
+              <span class="board-feed-link">[<a id="boardRssFeedLinkBottom" href="/feeds/boards/confession/threads.rss" target="_blank" rel="noopener noreferrer">RSS</a>]</span>
+              [<button class="link-button" data-toggle-board-subscription type="button">Theo dõi bảng</button>]
+              [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
+              [<button class="link-button" data-board-refresh type="button">Cập nhật</button>]
+            </div>
           </div>
         </section>
       </section>

@@ -30,6 +30,16 @@ export function createScreenHelpers(dependencies: AnyRecord) {
     if (name !== 'thread') {
       stopAutoUpdateTimer();
     }
+    // Keep floating quick-reply on thread + board (board-side reply). Hide elsewhere.
+    if (name !== 'thread' && name !== 'board') {
+      if (els.quickReply && !els.quickReply.classList.contains('hidden')) {
+        els.quickReply.classList.add('hidden');
+        document.body.classList.remove('quick-reply-open');
+        if (state) {
+          state.quickReplyFromBoard = false;
+        }
+      }
+    }
     for (const screen of [
       els.homeScreen,
       els.policyScreen,

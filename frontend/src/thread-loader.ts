@@ -36,9 +36,14 @@ export function createThreadLoadController(dependencies: AnyRecord) {
     resetAutoUpdateTimer = () => {}
   } = dependencies;
 
-  async function loadThread({ resetReply = false, focusPost = '' }: AnyRecord = {}) {
+  async function loadThread({
+    resetReply = false,
+    focusPost = '',
+    preserveScroll = false
+  }: AnyRecord = {}) {
     setScreen('thread');
     els.threadSummary.classList.add('hidden');
+    const scrollY = preserveScroll ? window.scrollY : null;
     const query = new URLSearchParams({
       commentsPage: String(state.threadCommentPage),
       commentsPageSize: String(state.threadCommentPageSize),
@@ -104,32 +109,50 @@ export function createThreadLoadController(dependencies: AnyRecord) {
       : '';
     const canReply = !detail.thread.isArchived && !detail.thread.isLocked;
     const hiddenPosts = hiddenPostNumbers();
-    const visibleComments = detail.comments.filter(
-      (comment) => !hiddenPosts.has(String(comment.globalNumber)) && !isPostFiltered(comment)
-    );
+    // Keep hidden posts as stubs with [Hiện lại]; only content-filters remove posts entirely.
+    const commentsForRender = detail.comments.filter((comment) => !isPostFiltered(comment));
+    const opIsHidden = hiddenPosts.has(String(detail.thread.globalNumber));
+    const opBlock = opIsHidden
+      ? (typeof dependencies.hiddenPostStubHtml === 'function'
+          ? dependencies.hiddenPostStubHtml(detail.thread)
+          : '')
+      : postHtml(detail.thread, 'post op', {
+          opNumber: detail.thread.globalNumber,
+          opPosterHash: detail.thread.posterHash,
+          canReply
+        });
+    // Fallback if stub helper was not injected (older composition).
+    const opHtml =
+      opBlock ||
+      postHtml(detail.thread, 'post op', {
+        opNumber: detail.thread.globalNumber,
+        opPosterHash: detail.thread.posterHash,
+        canReply
+      });
     els.threadDetail.innerHTML = `
     ${archivedNotice}
     ${lockedNotice}
-    ${postHtml(detail.thread, 'post op', {
-      opNumber: detail.thread.globalNumber,
-      opPosterHash: detail.thread.posterHash,
-      canReply
-    })}
+    ${opHtml}
     ${threadMediaGalleryHtml(detail)}
     ${threadSearchHtml(detail, state.threadSearchTerm)}
     ${commentSortHtml(state.commentsSort)}
     <div class="comment-list">
-      ${threadCommentsHtml(visibleComments, {
+      ${threadCommentsHtml(commentsForRender, {
         opNumber: detail.thread.globalNumber,
         opPosterHash: detail.thread.posterHash,
-        canReply
+        canReply,
+        hiddenPosts
       })}
     </div>
   `;
     els.threadPagination.innerHTML = pageControlsHtml(state.threadCommentPageMeta, 'thread-comments');
     syncThreadMediaToolbarState();
     const focusedPost = requestedPost;
-    focusPermalinkPost(focusedPost, { scroll: Boolean(focusPost) });
+    if (preserveScroll && scrollY != null) {
+      window.scrollTo(0, scrollY);
+    } else {
+      focusPermalinkPost(focusedPost, { scroll: Boolean(focusPost) });
+    }
     syncThreadPostCollapseToolbarState();
     resetAutoUpdateTimer();
   }

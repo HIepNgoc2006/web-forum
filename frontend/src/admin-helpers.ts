@@ -17,6 +17,7 @@ import {
 } from './admin';
 import { escapeHtml, formatPostDate, moderationConfidenceHtml, moderationLabelText, moderationStatusText, mediaList, mediaToggleHtml } from './format';
 import { moderationPriorityHtml } from './format';
+import { adminSiteContentHtml } from './site-content';
 import { adminLockButtonHtml, adminStickyButtonHtml, imageHtml, postMediaCount } from './thread';
 
 const ADMIN_LOAD_ERROR_MESSAGE = 'Chi tiết bài viết phản hồi quá lâu, vui lòng thử lại.';
@@ -90,7 +91,7 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
 
   function deletedPostsHtml(posts: AnyRecord[]) {
     if (!posts.length) {
-      return '<p class="muted">Chưa có bài đã xóa.</p>';
+      return '<div class="admin-empty-state" role="status"><p class="admin-empty-title">Chưa có bài đã xóa</p><p class="muted">Không có mục nào khớp bộ lọc hiện tại.</p></div>';
     }
     return posts
       .map(
@@ -116,7 +117,7 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
 
   function pendingPostsHtml(posts: AnyRecord[]) {
     if (!posts.length) {
-      return '<p class="muted">Hàng đợi trống.</p>';
+      return '<div class="admin-empty-state" role="status"><p class="admin-empty-title">Hàng đợi trống</p><p class="muted">Không có mục nào khớp bộ lọc hiện tại.</p></div>';
     }
     return posts
       .map(
@@ -370,6 +371,9 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
     if (state.adminTab === 'boards') {
       return '/api/admin/boards';
     }
+    if (state.adminTab === 'site-content') {
+      return '/api/admin/site-content';
+    }
     if (state.adminTab === 'users') {
       return '/api/admin/users';
     }
@@ -397,13 +401,24 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
     document.querySelectorAll('[data-admin-tab]').forEach((button) => {
       button.classList.toggle('active', button.dataset.adminTab === state.adminTab);
     });
+    const settingsLikeTab =
+      state.adminTab === 'boards' ||
+      state.adminTab === 'site-content' ||
+      state.adminTab === 'users' ||
+      state.adminTab === 'analytics' ||
+      state.adminTab === 'health';
     els.adminBulkBar.classList.toggle('hidden', state.adminTab !== 'pending');
-    els.adminLabelFilter.closest('label')?.classList.toggle('hidden', state.adminTab === 'reports' || state.adminTab === 'appeals');
+    els.adminLabelFilter.closest('label')?.classList.toggle(
+      'hidden',
+      state.adminTab === 'reports' || state.adminTab === 'appeals' || settingsLikeTab
+    );
     els.adminReportCategoryFilterWrap.classList.toggle('hidden', state.adminTab !== 'reports');
     const supportsPriority = state.adminTab === 'pending' || state.adminTab === 'reports';
     els.adminPriorityFilterWrap.classList.toggle('hidden', !supportsPriority);
     els.adminPrioritySortWrap.classList.toggle('hidden', !supportsPriority);
     els.adminConfidenceFilterWrap?.classList.toggle('hidden', state.adminTab !== 'pending');
+    els.adminBoardFilter?.closest('label')?.classList.toggle('hidden', settingsLikeTab && state.adminTab !== 'boards');
+    els.adminTimeFilter?.closest('label')?.classList.toggle('hidden', settingsLikeTab);
     els.reportSection.classList.toggle('hidden', true);
     els.moderationSection.classList.toggle('hidden', true);
   }
@@ -423,6 +438,9 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
       els.pendingList.innerHTML = `<div class="moderation-log">${sanctionsHtml(items)}</div>`;
     } else if (state.adminTab === 'boards') {
       els.pendingList.innerHTML = adminBoardsHtml(items, state.lifecycle || {});
+    } else if (state.adminTab === 'site-content') {
+      const content = Array.isArray(items) ? {} : items || {};
+      els.pendingList.innerHTML = adminSiteContentHtml(content);
     } else if (state.adminTab === 'users') {
       els.pendingList.innerHTML = adminUsersHtml(items);
     } else {

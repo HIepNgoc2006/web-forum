@@ -40,7 +40,6 @@ export function bindEvents(dependencies: AnyRecord): void {
     refreshCurrentScreen,
     openQuickReply,
     loadBoard,
-    setAutoUpdate,
     updatePrivacyWarning,
     selfDeletePost,
     selfEditPost,
@@ -58,10 +57,14 @@ export function bindEvents(dependencies: AnyRecord): void {
     copyPostPermalink,
     selectedPostQuoteText,
     handleReferencePreviewClick,
-    addLocalSetItem,
-    hiddenThreadsKey,
-    hiddenPostsKey,
+    addHiddenPost,
+    removeHiddenPost,
+    clearHiddenPosts,
+    addHiddenThread,
+    removeHiddenThread,
+    clearHiddenThreads,
     renderBoardThreads,
+    renderBrowserHiddenData,
     addContentFilter,
     addPosterNote,
     watchlistController,
@@ -99,6 +102,8 @@ export function bindEvents(dependencies: AnyRecord): void {
     exportAdminCsv,
     adminBoardPayload,
     adminUserPayload,
+    adminSiteContentPayload,
+    applySiteContent,
     loadAdminDetail,
     adminTableDetailHost,
     bulkModerate,
@@ -158,7 +163,8 @@ export function bindEvents(dependencies: AnyRecord): void {
   bindComposerMediaInputEvents({
     els,
     state,
-    showToast
+    showToast,
+    maxMediaBytes: () => Number(state.maxImageBytes) || undefined
   });
   bindThreadSearchEvents({
     body: document.body,
@@ -185,6 +191,8 @@ export function bindEvents(dependencies: AnyRecord): void {
     exportAdminCsv,
     adminBoardPayload,
     adminUserPayload,
+    adminSiteContentPayload,
+    applySiteContent,
     loadAdminDetail,
     adminTableDetailHost,
     showReasonModal,
@@ -222,10 +230,14 @@ export function bindEvents(dependencies: AnyRecord): void {
     copyPostPermalink,
     selectedPostQuoteText,
     handleReferencePreviewClick,
-    addLocalSetItem,
-    hiddenThreadsKey,
-    hiddenPostsKey,
+    addHiddenPost,
+    removeHiddenPost,
+    clearHiddenPosts,
+    addHiddenThread,
+    removeHiddenThread,
+    clearHiddenThreads,
     renderBoardThreads,
+    renderBrowserHiddenData,
     addContentFilter,
     addPosterNote,
     watchlistController,
@@ -239,7 +251,6 @@ export function bindEvents(dependencies: AnyRecord): void {
     localDisplayPreferences,
     applyDisplayPreferences,
     normalizeWatchedSort,
-    setAutoUpdate,
     showReportModal,
     translatePost: ai.translatePost,
     speakPost: ai.speakPost,
@@ -271,12 +282,6 @@ export function bindEvents(dependencies: AnyRecord): void {
 
   document.body.addEventListener('change', (event) => {
     if (handleAdminChange(event, adminEventDependencies)) {
-      return;
-    }
-
-    const autoUpdate = event.target.closest('[data-auto-update]');
-    if (autoUpdate) {
-      setAutoUpdate(autoUpdate.checked);
       return;
     }
 

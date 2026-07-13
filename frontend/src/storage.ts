@@ -24,6 +24,75 @@ export function getPosterToken() {
   return next;
 }
 
+const ADMIN_TOKEN_KEY = 'adminToken';
+const ACCOUNT_TOKEN_KEY = 'accountToken';
+
+function safeStorageGet(store: Storage | undefined, key: string): string {
+  try {
+    return store?.getItem(key) || '';
+  } catch {
+    return '';
+  }
+}
+
+function safeStorageSet(store: Storage | undefined, key: string, value: string): void {
+  try {
+    if (!store) {
+      return;
+    }
+    if (value) {
+      store.setItem(key, value);
+    } else {
+      store.removeItem(key);
+    }
+  } catch {
+    // Private mode / quota: ignore — memory state still holds the token for this page.
+  }
+}
+
+/**
+ * Admin/moderator tokens are high privilege. Prefer sessionStorage so they do not
+ * survive browser restart, and migrate any legacy localStorage value once.
+ * Note: still XSS-readable while the page is open; full mitigation needs httpOnly cookies.
+ */
+export function readAdminToken(): string {
+  const session = safeStorageGet(typeof sessionStorage !== 'undefined' ? sessionStorage : undefined, ADMIN_TOKEN_KEY);
+  if (session) {
+    return session;
+  }
+  const legacy = safeStorageGet(typeof localStorage !== 'undefined' ? localStorage : undefined, ADMIN_TOKEN_KEY);
+  if (legacy) {
+    safeStorageSet(typeof sessionStorage !== 'undefined' ? sessionStorage : undefined, ADMIN_TOKEN_KEY, legacy);
+    safeStorageSet(typeof localStorage !== 'undefined' ? localStorage : undefined, ADMIN_TOKEN_KEY, '');
+    return legacy;
+  }
+  return '';
+}
+
+export function writeAdminToken(token = ''): void {
+  const value = String(token || '');
+  // Never keep admin tokens in localStorage.
+  safeStorageSet(typeof localStorage !== 'undefined' ? localStorage : undefined, ADMIN_TOKEN_KEY, '');
+  safeStorageSet(typeof sessionStorage !== 'undefined' ? sessionStorage : undefined, ADMIN_TOKEN_KEY, value);
+}
+
+export function clearAdminToken(): void {
+  writeAdminToken('');
+}
+
+/** Account tokens stay in localStorage for "remember me" across restarts. */
+export function readAccountToken(): string {
+  return safeStorageGet(typeof localStorage !== 'undefined' ? localStorage : undefined, ACCOUNT_TOKEN_KEY);
+}
+
+export function writeAccountToken(token = ''): void {
+  safeStorageSet(typeof localStorage !== 'undefined' ? localStorage : undefined, ACCOUNT_TOKEN_KEY, String(token || ''));
+}
+
+export function clearAccountToken(): void {
+  writeAccountToken('');
+}
+
 export function threadLastSeenKey(threadId) {
   return `threadLastSeen:${threadId}`;
 }
@@ -108,6 +177,16 @@ export function addLocalSetItem(key, value) {
   const items = new Set(readLocalList(key).map(String));
   items.add(String(value));
   writeJsonLocal(key, [...items]);
+}
+
+export function removeLocalSetItem(key, value) {
+  const items = new Set(readLocalList(key).map(String));
+  items.delete(String(value));
+  writeJsonLocal(key, [...items]);
+}
+
+export function clearLocalSet(key) {
+  writeJsonLocal(key, []);
 }
 
 export function defaultDeletePassword() {

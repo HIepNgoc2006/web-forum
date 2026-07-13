@@ -60,7 +60,7 @@ Important runtime values:
 - `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable AI summary/suggestions, speech generation, and provider-backed moderation.
 - `GOOGLE_TTS_MODEL`: optional Gemini speech model override for post listening, default `gemini-3.1-flash-tts-preview`.
 - `AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD`: optional default queue threshold for provider confidence, default `0` to keep every `Flagged` AI result in the admin queue. Admins can override it from the moderation UI. Accepts `0..1` or `0..100`; flagged results without confidence are still queued.
-- `MAX_IMAGE_BYTES`: upload payload limit.
+- `MAX_IMAGE_BYTES`: max decoded size per uploaded image/video in bytes (default `52428800` / 50 MiB).
 - `RATE_LIMIT_STORE`: `memory` by default, or `redis` to share HTTP rate counters across backend instances.
 - `RATE_LIMIT_REDIS_URL` or `REDIS_URL`: required when `RATE_LIMIT_STORE=redis`.
 - `RATE_LIMIT_FAILURE_MODE`: `closed` by default to deny requests when the shared limiter backend is unavailable; set `open` only when availability is preferred over strict abuse control.
@@ -241,6 +241,11 @@ erDiagram
     object watchlist
     object drafts
     object savedSearches
+    object contentFilters
+    object replyTemplates
+    object posterNotes
+    object hiddenPosts
+    object hiddenThreads
   }
 
   REPORT {
@@ -295,7 +300,7 @@ erDiagram
   }
 ```
 
-The public post identity is intentionally anonymous-first: `displayName` is a per-post label, while account `username` stays in `User` and is not exposed as the public author by default. Account watchlist, drafts, and saved searches are embedded in `User.privateData`; local/dev JSON storage mirrors the same normalized state shape, while MongoDB is the production store.
+The public post identity is intentionally anonymous-first: `displayName` is a per-post label, while account `username` stays in `User` and is not exposed as the public author by default. Account watchlist, drafts, saved searches, content filters, reply templates, poster notes, and hidden posts/threads are embedded in `User.privateData`; local/dev JSON storage mirrors the same normalized state shape, while MongoDB is the production store. Hidden posts/threads also work anonymously via browser localStorage and merge into the account on login.
 
 ### Activity Diagram
 

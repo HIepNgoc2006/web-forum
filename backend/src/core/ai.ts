@@ -1,5 +1,8 @@
 // GOOGLE_AI_MODEL is read dynamically from process.env to avoid module initialization ordering issues.
 
+import { aiConfigStatus } from './config.ts';
+import { translateWithGoogleFree } from './google-translate-free.ts';
+
 type AiError = Error & {
   statusCode?: number;
   providerStatusCode?: number;
@@ -1036,6 +1039,10 @@ ${redactSensitiveText(text)}
   };
 }
 
+async function translateWithFreeGoogleFallback(text: string, targetLang = 'vi'): Promise<string> {
+  return translateWithGoogleFree(redactSensitiveText(text), targetLang);
+}
+
 export function createAiClient(): AiClient {
   const explicitProvider = process.env.AI_PROVIDER;
   let client: AiClient | null = null;
@@ -1090,8 +1097,8 @@ export function createAiClient(): AiClient {
     async checkDuplicateThread() {
       return { isDuplicate: false, matchedThreadId: null, reason: null };
     },
-    async translate() {
-      throw notConfiguredError();
+    async translate(text, targetLang = 'vi') {
+      return translateWithFreeGoogleFallback(text, targetLang);
     },
     async transcribe() {
       throw notConfiguredError();
@@ -1103,6 +1110,14 @@ export function createAiClient(): AiClient {
       throw notConfiguredError();
     }
   };
+
+  // When no paid/LLM AI provider is configured, always use free Google Translate.
+  if (!aiConfigStatus().configured) {
+    client = {
+      ...client,
+      translate: translateWithFreeGoogleFallback
+    };
+  }
 
   return withTranscribeOverride(client);
 }

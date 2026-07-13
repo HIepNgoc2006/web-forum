@@ -1,5 +1,5 @@
 import type { AnyRecord } from './types';
-import { getPosterToken } from './storage';
+import { getPosterToken, readAccountToken, readAdminToken } from './storage';
 
 export const state: AnyRecord = {
   boards: [],
@@ -15,8 +15,8 @@ export const state: AnyRecord = {
   threadPosterHash: '',
   threadLastSeenBefore: 0,
   threadCurrentMaxNumber: 0,
-  token: localStorage.getItem('adminToken') || '',
-  accountToken: localStorage.getItem('accountToken') || '',
+  token: readAdminToken(),
+  accountToken: readAccountToken(),
   account: null,
   accountPostNumbers: new Set(),
   temp2FAToken: null,
@@ -27,14 +27,19 @@ export const state: AnyRecord = {
   selectedImage: [],
   commentImage: [],
   quickReplyImage: [],
+  maxImageBytes: 0,
   audioRecorders: {},
   audioTranscribing: new Set(),
   audioTranscriptionControllers: new Map(),
   refPreviewCache: new Map(),
   refPreviewRequestId: 0,
   refPreviewHideTimer: null,
+  refPreviewShowTimer: null,
   refPreviewPinned: false,
+  refPreviewHoverNumber: '',
   quickReplyDrag: null,
+  /** True when quick-reply was opened from the board list (not thread screen). */
+  quickReplyFromBoard: false,
   replyComposerOpen: false,
   threadIsArchived: false,
   threadIsLocked: false,
@@ -49,8 +54,6 @@ export const state: AnyRecord = {
   threadCommentPageMeta: null,
   threadSearchTerm: '',
   commentsSort: 'old',
-  autoUpdate: true,
-  autoCountdown: 7,
   autoTimer: null,
   realtimeSource: null,
   realtimeContextKey: '',

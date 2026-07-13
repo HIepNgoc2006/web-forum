@@ -5,10 +5,12 @@ import {
   AI_SPEAK_TIMEOUT_MS,
   AI_TRANSCRIBE_TIMEOUT_MS,
   AI_TTS_PROVIDER_COOLDOWN_MS,
-  AUDIO_RECORDING_TYPES,
+  DEFAULT_SPEECH_STT_LANG,
+  SPEECH_STT_LANGUAGES,
+  SPEECH_STT_LANG_KEY,
   aiNotConfiguredMessage
 } from './constants';
-import { audioExtension, escapeHtml, mediaKind, mediaList } from './format';
+import { escapeHtml, mediaKind, mediaList } from './format';
 import { state } from './state';
 import type { AnyRecord } from './types';
 
@@ -58,33 +60,42 @@ export function createAiActions({
       <ul>${result.bullets.map((bullet) => `<li>${escapeHtml(bullet)}</li>`).join('')}</ul>
     `;
     } catch (error) {
-      box.innerHTML = `<strong>${heading}</strong><p>${error.message}</p>`;
+      box.innerHTML = `<strong>${heading}</strong><p>${escapeHtml(error.message)}</p>`;
     } finally {
       button.disabled = false;
     }
   }
 
-  async function loadSuggestions() {
-    if (!state.aiConfigured) {
-      els.suggestions.classList.remove('hidden');
-      els.suggestions.textContent = aiNotConfiguredMessage;
+  async function loadSuggestions({ button = els.suggestButton, box = els.suggestions }: AnyRecord = {}) {
+    const suggestButton = button || els.suggestButton;
+    const suggestionsBox = box || els.suggestions;
+    if (!suggestionsBox) {
       return;
     }
-    els.suggestButton.disabled = true;
-    els.suggestions.classList.remove('hidden');
-    els.suggestions.textContent = 'Đang gợi ý...';
+    if (!state.aiConfigured) {
+      suggestionsBox.classList.remove('hidden');
+      suggestionsBox.textContent = aiNotConfiguredMessage;
+      return;
+    }
+    if (suggestButton) {
+      suggestButton.disabled = true;
+    }
+    suggestionsBox.classList.remove('hidden');
+    suggestionsBox.textContent = 'Đang gợi ý...';
     try {
       const result = await api(`/api/threads/${state.threadId}/suggestions`, {
         method: 'POST',
         body: JSON.stringify({ posterToken: state.posterToken })
       });
-      els.suggestions.innerHTML = result.suggestions
+      suggestionsBox.innerHTML = result.suggestions
         .map((text) => `<button type="button" data-suggestion="${encodeURIComponent(text)}">${escapeHtml(text)}</button>`)
         .join('');
     } catch (error) {
-      els.suggestions.textContent = error.message;
+      suggestionsBox.textContent = error.message;
     } finally {
-      els.suggestButton.disabled = false;
+      if (suggestButton) {
+        suggestButton.disabled = false;
+      }
     }
   }
 
@@ -93,12 +104,34 @@ export function createAiActions({
       showToast(aiNotConfiguredMessage);
       return;
     }
-    const isThread = target === 'thread';
-    const textarea = isThread ? els.threadBody : els.commentBody;
-    const warningBox = isThread ? els.threadPrivacyWarning : els.commentPrivacyWarning;
-    const button = isThread ? els.threadRewriteButton : els.rewriteButton;
-    const toneSelect = isThread ? els.threadRewriteTone : els.rewriteTone;
-    const label = isThread ? els.threadAiRewriteLabel : els.commentAiRewriteLabel;
+    const rewriteTargets: AnyRecord = {
+      thread: {
+        textarea: els.threadBody,
+        warningBox: els.threadPrivacyWarning,
+        button: els.threadRewriteButton,
+        toneSelect: els.threadRewriteTone,
+        label: els.threadAiRewriteLabel
+      },
+      comment: {
+        textarea: els.commentBody,
+        warningBox: els.commentPrivacyWarning,
+        button: els.rewriteButton,
+        toneSelect: els.rewriteTone,
+        label: els.commentAiRewriteLabel
+      },
+      quickReply: {
+        textarea: els.quickReplyBody,
+        warningBox: els.quickReplyPrivacyWarning,
+        button: els.quickReplyRewriteButton,
+        toneSelect: els.quickReplyRewriteTone,
+        label: els.quickReplyAiRewriteLabel
+      }
+    };
+    const config = rewriteTargets[target] || rewriteTargets.comment;
+    const { textarea, warningBox, button, toneSelect, label } = config;
+    if (!textarea) {
+      return;
+    }
     const body = textarea.value.trim();
     if (!body) {
       showToast('Chưa có nội dung để AI sửa.');
@@ -113,6 +146,7 @@ export function createAiActions({
         body: JSON.stringify({ body, posterToken: state.posterToken, tone })
       });
       textarea.value = result.text || body;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
       updatePrivacyWarning(textarea.value, warningBox);
       if (label) {
         label.classList.remove('hidden');
@@ -134,10 +168,6 @@ export function createAiActions({
   }
 
   async function translatePost(button) {
-    if (!state.aiConfigured) {
-      showToast(aiNotConfiguredMessage);
-      return;
-    }
     const number = button.dataset.translatePost;
     const text = postBodyText(number);
     if (!text) {
@@ -158,6 +188,7 @@ export function createAiActions({
         box.className = 'post-translation';
         article.querySelector('.post-body').after(box);
       }
+      // Free Google fallback when AI is off; AI path when configured — same response shape.
       box.textContent = `[${result.targetLang}] ${result.text}`;
     } catch (error) {
       showToast(error.message);
@@ -308,9 +339,7 @@ export function createAiActions({
         showToast(mode === 'ocr' ? 'Không tìm thấy chữ trong ảnh.' : 'AI chưa mô tả được ảnh.');
         return;
       }
-      const prefix = textarea.value.trim() ? `${textarea.value.trim()}\n` : '';
-      textarea.value = `${prefix}${result.text}`;
-      textarea.focus();
+      appendDraftText(textarea, result.text);
       showToast('Đã chèn mô tả ảnh vào nháp. Kiểm tra trước khi gửi.');
     } catch (error) {
       showToast(error.message);
@@ -322,19 +351,6 @@ export function createAiActions({
     textarea.value = `${prefix}${text}`;
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     textarea.focus();
-  }
-
-  function preferredAudioRecordingType() {
-    if (!window.MediaRecorder?.isTypeSupported) {
-      return '';
-    }
-    return AUDIO_RECORDING_TYPES.find((type) => MediaRecorder.isTypeSupported(type)) || '';
-  }
-
-  function stopAudioStream(stream) {
-    for (const track of stream?.getTracks?.() || []) {
-      track.stop();
-    }
   }
 
   function setAudioTranscribing(key, active) {
@@ -359,7 +375,111 @@ export function createAiActions({
     return true;
   }
 
-  // Reads an audio File as base64 and transcribes it into the given draft textarea.
+  type SpeechRecognitionCtor = new () => SpeechRecognitionLike;
+  type SpeechRecognitionLike = {
+    lang: string;
+    continuous: boolean;
+    interimResults: boolean;
+    maxAlternatives: number;
+    start: () => void;
+    stop: () => void;
+    abort: () => void;
+    onstart: ((event: Event) => void) | null;
+    onresult: ((event: SpeechRecognitionResultEventLike) => void) | null;
+    onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null;
+    onend: ((event: Event) => void) | null;
+  };
+  type SpeechRecognitionResultEventLike = {
+    resultIndex: number;
+    results: ArrayLike<{
+      isFinal: boolean;
+      0: { transcript: string };
+    }>;
+  };
+  type SpeechRecognitionErrorEventLike = {
+    error: string;
+  };
+
+  function speechRecognitionConstructor(): SpeechRecognitionCtor | null {
+    const win = window as Window & {
+      SpeechRecognition?: SpeechRecognitionCtor;
+      webkitSpeechRecognition?: SpeechRecognitionCtor;
+    };
+    return win.SpeechRecognition || win.webkitSpeechRecognition || null;
+  }
+
+  function browserSpeechRecognitionSupported() {
+    return Boolean(speechRecognitionConstructor());
+  }
+
+  function allowedSpeechSttLang(value: unknown) {
+    const code = String(value || '').trim();
+    return SPEECH_STT_LANGUAGES.some((lang) => lang.value === code) ? code : DEFAULT_SPEECH_STT_LANG;
+  }
+
+  function readStoredSpeechSttLang() {
+    try {
+      return allowedSpeechSttLang(localStorage.getItem(SPEECH_STT_LANG_KEY));
+    } catch {
+      return DEFAULT_SPEECH_STT_LANG;
+    }
+  }
+
+  function writeStoredSpeechSttLang(lang: string) {
+    const safe = allowedSpeechSttLang(lang);
+    try {
+      localStorage.setItem(SPEECH_STT_LANG_KEY, safe);
+    } catch {
+      // Ignore quota / private mode failures.
+    }
+    return safe;
+  }
+
+  function speechLangSelects() {
+    return [...document.querySelectorAll<HTMLSelectElement>('[data-speech-lang]')];
+  }
+
+  function syncSpeechLangSelects(lang = readStoredSpeechSttLang()) {
+    const safe = allowedSpeechSttLang(lang);
+    for (const select of speechLangSelects()) {
+      if (select.value !== safe) {
+        select.value = safe;
+      }
+    }
+    return safe;
+  }
+
+  function speechLangOptionsHtml(selected = readStoredSpeechSttLang()) {
+    const safe = allowedSpeechSttLang(selected);
+    return SPEECH_STT_LANGUAGES.map(
+      (lang) =>
+        `<option value="${escapeHtml(lang.value)}" title="${escapeHtml(lang.title)}"${
+          lang.value === safe ? ' selected' : ''
+        }>${escapeHtml(lang.label)}</option>`
+    ).join('');
+  }
+
+  function initSpeechLangSelects() {
+    const selected = readStoredSpeechSttLang();
+    for (const select of speechLangSelects()) {
+      if (!select.options.length) {
+        select.innerHTML = speechLangOptionsHtml(selected);
+      } else {
+        select.value = selected;
+      }
+      select.disabled = !browserSpeechRecognitionSupported();
+      if (!select.dataset.speechLangBound) {
+        select.dataset.speechLangBound = '1';
+        select.addEventListener('change', () => {
+          const next = writeStoredSpeechSttLang(select.value);
+          syncSpeechLangSelects(next);
+        });
+      }
+    }
+    syncSpeechLangSelects(selected);
+  }
+
+  // Reads an audio File as base64 and transcribes it into the given draft textarea (server AI).
   async function transcribeAudioFile(file, textarea, { activityKey = '' }: AnyRecord = {}) {
     if (!state.aiConfigured) {
       showToast(aiNotConfiguredMessage);
@@ -417,33 +537,61 @@ export function createAiActions({
     button.setAttribute('aria-pressed', recording || transcribing ? 'true' : 'false');
     button.disabled = false;
     button.textContent =
-      stateName === 'recording' ? '[Dừng ghi âm]' : stateName === 'transcribing' ? '[Dừng chép]' : '[Ghi âm]';
+      stateName === 'recording' ? '[Dừng nói]' : stateName === 'transcribing' ? '[Dừng chép]' : '[Nói]';
   }
 
-  function stopActiveAudioRecording(key) {
+  function stopActiveSpeechRecognition(key, { abort = false } = {}) {
     const active = state.audioRecorders[key];
-    if (active?.recorder?.state === 'recording') {
-      active.recorder.stop();
+    if (!active?.recognition) {
+      return false;
     }
+    active.intentionallyStopped = true;
+    try {
+      if (abort) {
+        active.recognition.abort();
+      } else {
+        active.recognition.stop();
+      }
+    } catch {
+      // Recognition may already be ending.
+    }
+    return true;
   }
 
-  async function toggleAudioRecording({ key, button, textarea }) {
+  function speechErrorMessage(code: string) {
+    if (code === 'not-allowed' || code === 'service-not-allowed') {
+      return 'Bạn chưa cấp quyền microphone hoặc trình duyệt chặn nhận dạng giọng nói.';
+    }
+    if (code === 'audio-capture') {
+      return 'Không tìm thấy microphone.';
+    }
+    if (code === 'network') {
+      return 'Nhận dạng giọng nói cần mạng (dịch vụ trình duyệt).';
+    }
+    if (code === 'language-not-supported') {
+      return 'Trình duyệt không hỗ trợ ngôn ngữ nhận dạng này.';
+    }
+    if (code === 'no-speech') {
+      return 'Không nghe thấy giọng nói. Thử nói lại.';
+    }
+    return 'Nhận dạng giọng nói thất bại.';
+  }
+
+  function toggleAudioRecording({ key, button, textarea, langSelect }: AnyRecord = {}) {
     if (state.audioTranscribing.has(key)) {
       if (!cancelAudioTranscription(key)) {
         showToast('Đang dừng chép audio...');
       }
       return;
     }
-    if (state.audioRecorders[key]?.recorder?.state === 'recording') {
-      stopActiveAudioRecording(key);
+    if (state.audioRecorders[key]?.recognition) {
+      stopActiveSpeechRecognition(key);
       return;
     }
-    if (!state.aiConfigured) {
-      showToast(aiNotConfiguredMessage);
-      return;
-    }
-    if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-      showToast('Trình duyệt này chưa hỗ trợ ghi âm trực tiếp.');
+
+    const SpeechRecognition = speechRecognitionConstructor();
+    if (!SpeechRecognition) {
+      showToast('Trình duyệt này chưa hỗ trợ Web Speech API (Chrome/Edge khuyến nghị).');
       return;
     }
     if (audioWorkInProgress()) {
@@ -451,61 +599,126 @@ export function createAiActions({
       return;
     }
 
-    let stream = null;
-    try {
-      stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mimeType = preferredAudioRecordingType();
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      const chunks = [];
-      recorder.addEventListener('dataavailable', (event) => {
-        if (event.data?.size > 0) {
-          chunks.push(event.data);
-        }
-      });
-      recorder.addEventListener('stop', async () => {
-        stopAudioStream(stream);
-        setRecordButtonState(button, 'transcribing');
-        try {
-          if (!chunks.length) {
-            showToast('Không nhận được audio từ microphone.');
-            return;
-          }
-          const type = recorder.mimeType || chunks[0]?.type || mimeType || 'audio/webm';
-          const blob = new Blob(chunks, { type });
-          const file = new File([blob], `recording-${Date.now()}.${audioExtension(type)}`, { type });
-          await transcribeAudioFile(file, textarea, { activityKey: key });
-        } finally {
-          state.audioRecorders[key] = null;
-          setRecordButtonState(button, 'idle');
-        }
-      });
-      recorder.addEventListener('error', () => {
-        stopAudioStream(stream);
-        state.audioRecorders[key] = null;
-        setAudioTranscribing(key, false);
-        setRecordButtonState(button, 'idle');
-        showToast('Ghi âm thất bại.');
-      });
-      state.audioRecorders[key] = { recorder, stream };
-      recorder.start();
+    const lang = allowedSpeechSttLang(
+      (langSelect as HTMLSelectElement | null | undefined)?.value || readStoredSpeechSttLang()
+    );
+    writeStoredSpeechSttLang(lang);
+    syncSpeechLangSelects(lang);
+
+    const recognition = new SpeechRecognition();
+    recognition.lang = lang;
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.maxAlternatives = 1;
+
+    const session: AnyRecord = {
+      recognition,
+      intentionallyStopped: false,
+      committed: String(textarea?.value || ''),
+      finals: '',
+      interim: ''
+    };
+
+    const paintDraft = () => {
+      if (!textarea) {
+        return;
+      }
+      const base = session.committed;
+      const spoken = `${session.finals}${session.interim}`;
+      if (!spoken) {
+        textarea.value = base;
+      } else if (!base.trim()) {
+        textarea.value = spoken.trimStart();
+      } else {
+        const sep = /\s$/.test(base) || /^\s/.test(spoken) ? '' : ' ';
+        textarea.value = `${base}${sep}${spoken}`;
+      }
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    };
+
+    recognition.onstart = () => {
       postponeAutoUpdateForAudio();
       setRecordButtonState(button, 'recording');
-    } catch (error) {
-      stopAudioStream(stream);
-      state.audioRecorders[key] = null;
-      setAudioTranscribing(key, false);
+    };
+
+    recognition.onresult = (event) => {
+      let interim = '';
+      for (let i = event.resultIndex; i < event.results.length; i += 1) {
+        const result = event.results[i];
+        const piece = result?.[0]?.transcript || '';
+        if (!piece) {
+          continue;
+        }
+        if (result.isFinal) {
+          session.finals = `${session.finals}${piece}`;
+        } else {
+          interim += piece;
+        }
+      }
+      session.interim = interim;
+      paintDraft();
+      postponeAutoUpdateForAudio();
+    };
+
+    recognition.onerror = (event) => {
+      const code = String(event?.error || '');
+      if (code === 'aborted') {
+        return;
+      }
+      if (code === 'no-speech') {
+        // Continuous sessions often emit no-speech; keep listening until user stops.
+        return;
+      }
+      session.intentionallyStopped = true;
+      showToast(speechErrorMessage(code));
+    };
+
+    recognition.onend = () => {
+      // Chrome may end continuous recognition after a pause; restart while still active.
+      if (!session.intentionallyStopped && state.audioRecorders[key] === session) {
+        try {
+          recognition.start();
+          return;
+        } catch {
+          // Fall through to cleanup if restart is not allowed.
+        }
+      }
+      if (state.audioRecorders[key] === session) {
+        state.audioRecorders[key] = null;
+      }
+      if (textarea && session.interim) {
+        // Drop trailing interim if the session ends without a final chunk.
+        session.interim = '';
+        paintDraft();
+      }
       setRecordButtonState(button, 'idle');
-      showToast(error?.name === 'NotAllowedError' ? 'Bạn chưa cấp quyền microphone.' : 'Không thể bắt đầu ghi âm.');
+      syncAutoUpdateControls();
+    };
+
+    state.audioRecorders[key] = session;
+    try {
+      recognition.start();
+      setRecordButtonState(button, 'recording');
+      postponeAutoUpdateForAudio();
+      showToast(`Đang nghe (${lang})… Nói vào microphone.`);
+    } catch {
+      state.audioRecorders[key] = null;
+      setRecordButtonState(button, 'idle');
+      showToast('Không thể bắt đầu nhận dạng giọng nói.');
     }
   }
 
+  initSpeechLangSelects();
+
   return {
     captionAttachedImage,
+    initSpeechLangSelects,
     loadSuggestions,
     rewriteDraft,
     setRecordButtonState,
     showSummary,
     speakPost,
+    syncSpeechLangSelects,
     toggleAudioRecording,
     transcribeAudioFile,
     translatePost

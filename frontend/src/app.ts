@@ -3,6 +3,7 @@ import { createAiActions } from './ai-actions';
 import { bindAiActionEvents } from './ai-events';
 import { createAdminModerationSettingsController } from './admin-moderation-settings';
 import { createAdminHelpers } from './admin-helpers';
+import { adminSiteContentPayload, createSiteContentController } from './site-content';
 import { api } from './api';
 import { createAccountPreferencesController } from './account-preferences';
 import { bindAdminAuthEvents } from './admin-auth-events';
@@ -140,9 +141,8 @@ import {
 import {
   ADMIN_LOAD_TIMEOUT_MS,
   homeBoardKey,
-  hiddenThreadsKey,
-  hiddenPostsKey,
   boardThreadsCachePrefix,
+  MAX_MEDIA_BYTES,
   MAX_MEDIA_PER_POST,
 } from './constants';
 import {
@@ -179,12 +179,9 @@ import {
   writeLocalDisplayPreferences,
   localNotificationPreferences,
   writeLocalNotificationPreferences,
-  addLocalSetItem,
   defaultDeletePassword,
   normalizeDeletePassword,
   draftKey,
-  hiddenThreadIds,
-  hiddenPostNumbers,
   writeSubscribedBoardSlugs,
   writeVote,
   writeReaction
@@ -192,6 +189,7 @@ import {
 const showPostEditModal = createPostEditModal({
   showToast,
   maxMediaPerPost: MAX_MEDIA_PER_POST,
+  maxMediaBytes: () => Number(state.maxImageBytes) || MAX_MEDIA_BYTES,
   isSupportedMediaFile,
   fileToDataUrl,
   imagePreviewHtml
@@ -235,6 +233,16 @@ const {
   writeContentFilters,
   addContentFilter,
   removeContentFilter,
+  addHiddenPost,
+  removeHiddenPost,
+  clearHiddenPosts,
+  addHiddenThread,
+  removeHiddenThread,
+  clearHiddenThreads,
+  readHiddenPosts,
+  readHiddenThreads,
+  hiddenPostNumbers,
+  hiddenThreadIds,
   readReplyTemplates,
   writeReplyTemplates,
   addReplyTemplate,
@@ -347,6 +355,8 @@ const accountUiController = createAccountUiController({
   readContentFilters,
   readReplyTemplates,
   readPosterNotes,
+  readHiddenPosts,
+  readHiddenThreads,
   renderReplyTemplatePickers,
   setAccountSession,
   refreshAccountPostNumbers,
@@ -357,6 +367,7 @@ const accountUiController = createAccountUiController({
 const {
   renderAccountPrivateData: renderAccountPrivateDataFromController,
   renderAccountRecoveryPanel: renderAccountRecoveryPanelFromController,
+  renderBrowserHiddenData,
   saveCurrentBoardSearch,
   removeSavedSearch,
   loadAccountSession,
@@ -425,6 +436,10 @@ const {
   showToast,
   setButtonLoading
 });
+const { loadPolicy, applySiteContent } = createSiteContentController({
+  api,
+  state
+});
 function setScreen(name) {
   return screenHelpers.setScreen(name);
 }
@@ -464,6 +479,7 @@ const {
   renderPostLines,
   meta,
   postHtml,
+  hiddenPostStubHtml,
   threadCommentsHtml,
   threadToolbarHtml,
   threadHeaderActionsHtml,
@@ -478,6 +494,7 @@ const {
   isAccountPost,
   isPostFiltered,
   readHiddenThreadIds: hiddenThreadIds,
+  readHiddenPostNumbers: hiddenPostNumbers,
   isThreadWatched,
   pageControlsHtml,
   canModerateFromAdminToken,
@@ -494,8 +511,7 @@ const {
   stopAutoUpdateTimer,
   audioWorkInProgress,
   postponeAutoUpdateForAudio,
-  resetAutoUpdateTimer,
-  setAutoUpdate
+  resetAutoUpdateTimer
 } = autoUpdateController;
 
 const {
@@ -626,6 +642,7 @@ loadThread = createThreadLoadController({
   threadSearchHtml,
   commentSortHtml,
   postHtml,
+  hiddenPostStubHtml,
   threadCommentsHtml,
   pageControlsHtml,
   escapeHtml,
@@ -689,6 +706,7 @@ const routerController = createRouterController({
   loadAccountSettings,
   loadAdmin: () => loadAdmin(),
   resetForgotPasswordForm,
+  loadPolicy,
   normalizeBoardSort,
   normalizeBoardFilter,
   setupRealtime,
@@ -787,7 +805,6 @@ bootstrapApp({
   refreshCurrentScreen,
   openQuickReply,
   loadBoard,
-  setAutoUpdate,
   updatePrivacyWarning,
   selfDeletePost,
   selfEditPost,
@@ -805,10 +822,14 @@ bootstrapApp({
   copyPostPermalink,
   selectedPostQuoteText,
   handleReferencePreviewClick,
-  addLocalSetItem,
-  hiddenThreadsKey,
-  hiddenPostsKey,
+  addHiddenPost,
+  removeHiddenPost,
+  clearHiddenPosts,
+  addHiddenThread,
+  removeHiddenThread,
+  clearHiddenThreads,
   renderBoardThreads,
+  renderBrowserHiddenData,
   addContentFilter,
   addPosterNote,
   watchlistController,
@@ -843,6 +864,8 @@ bootstrapApp({
   exportAdminCsv,
   adminBoardPayload,
   adminUserPayload,
+  adminSiteContentPayload,
+  applySiteContent,
   loadAdminDetail,
   adminTableDetailHost,
   bulkModerate,

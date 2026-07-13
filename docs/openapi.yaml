@@ -349,6 +349,10 @@ paths:
     get:
       tags: [Account]
       summary: Get private account sync data
+      description: >
+        Returns account-private convenience data: watchlist, drafts, savedSearches,
+        contentFilters, replyTemplates, posterNotes, hiddenPosts, and hiddenThreads.
+        Never exposed on public post serializers or sent to AI payloads.
       security:
         - bearerAuth: []
       responses:
@@ -357,6 +361,10 @@ paths:
     put:
       tags: [Account]
       summary: Replace private account sync data
+      description: >
+        Upserts one or more private-data sections. Server normalizes and caps list
+        sizes (e.g. hiddenPosts max 500, hiddenThreads max 200). Logged-out clients
+        keep the same shapes in localStorage and merge on login.
       security:
         - bearerAuth: []
       requestBody:
@@ -365,13 +373,56 @@ paths:
           application/json:
             schema:
               type: object
-              additionalProperties: true
+              properties:
+                watchlist:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                drafts:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                savedSearches:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                contentFilters:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                replyTemplates:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                posterNotes:
+                  type: array
+                  items:
+                    type: object
+                    additionalProperties: true
+                hiddenPosts:
+                  type: array
+                  description: Post global numbers the viewer has hidden (UI filter only).
+                  items:
+                    type: string
+                hiddenThreads:
+                  type: array
+                  description: Thread ids the viewer has hidden (UI filter only).
+                  items:
+                    type: string
+              additionalProperties: false
       responses:
         "200":
           $ref: "#/components/responses/AnyData"
     delete:
       tags: [Account]
       summary: Clear private account sync data
+      description: >
+        Clears one section when `section` is set, or the entire private-data bag when omitted.
       security:
         - bearerAuth: []
       parameters:
@@ -379,7 +430,15 @@ paths:
           in: query
           schema:
             type: string
-            enum: [watchlist, drafts, savedSearches]
+            enum:
+              - watchlist
+              - drafts
+              - savedSearches
+              - contentFilters
+              - replyTemplates
+              - posterNotes
+              - hiddenPosts
+              - hiddenThreads
       responses:
         "200":
           $ref: "#/components/responses/AnyData"

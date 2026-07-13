@@ -2,9 +2,11 @@ import type { AnyRecord } from './types';
 import { api as defaultApi } from './api';
 import { homeBoardKey, SUPPORTED_THEMES, themeKey } from './constants';
 import {
+  clearAccountToken,
   localDisplayPreferences,
   localNotificationPreferences,
   subscribedBoardSlugs,
+  writeAccountToken,
   writeLocalDisplayPreferences,
   writeLocalNotificationPreferences,
   writeSubscribedBoardSlugs
@@ -170,9 +172,9 @@ export function createAccountPreferencesController({
     state.accountPrivateData = token ? state.accountPrivateData : null;
     window.clearTimeout(state.accountPrivateSaveTimer);
     if (token) {
-      localStorage.setItem('accountToken', token);
+      writeAccountToken(token);
     } else {
-      localStorage.removeItem('accountToken');
+      clearAccountToken();
     }
     if (account) {
       applyAccountSyncedSettings(account);

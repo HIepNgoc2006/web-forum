@@ -4,6 +4,7 @@ import {
   mergeByKey,
   normalizeAccountPrivateData,
   normalizeContentFilters,
+  normalizeHiddenIdList,
   normalizePosterNotes,
   normalizeReplyTemplates,
   privateItemId,
@@ -11,6 +12,8 @@ import {
 } from './account';
 import {
   contentFiltersKey,
+  hiddenPostsKey,
+  hiddenThreadsKey,
   myPostsKey,
   posterNotesKey,
   replyTemplatesKey,
@@ -87,6 +90,107 @@ export function createAccountStateController({
     const next = writeContentFilters(readContentFilters().filter((filter) => filter.id !== id));
     renderAccountPrivateData?.();
     return next;
+  }
+
+  function readHiddenPosts() {
+    // localStorage is the live source of truth for hide/unhide (anonymous + logged-in).
+    // Account private-data is kept in sync on write and hydrated into local on login/load.
+    return normalizeHiddenIdList(readLocalList(hiddenPostsKey), 500);
+  }
+
+  function writeHiddenPosts(ids = []) {
+    const items = normalizeHiddenIdList(ids, 500);
+    writeJsonLocal(hiddenPostsKey, items);
+    if (state.accountToken && state.accountPrivateData) {
+      state.accountPrivateData.hiddenPosts = items;
+      scheduleAccountPrivateDataSave();
+    }
+    return items;
+  }
+
+  function addHiddenPost(globalNumber) {
+    const value = String(globalNumber || '').trim();
+    if (!value) {
+      return readHiddenPosts();
+    }
+    return writeHiddenPosts([value, ...readHiddenPosts()]);
+  }
+
+  function removeHiddenPost(globalNumber) {
+    const value = String(globalNumber || '').trim();
+    if (!value) {
+      return readHiddenPosts();
+    }
+    // Union local + in-memory account list, drop the id, then write both.
+    const combined = new Set([
+      ...normalizeHiddenIdList(readLocalList(hiddenPostsKey), 500),
+      ...(state.accountToken && state.accountPrivateData
+        ? normalizeHiddenIdList(state.accountPrivateData.hiddenPosts, 500)
+        : [])
+    ]);
+    combined.delete(value);
+    return writeHiddenPosts([...combined]);
+  }
+
+  function clearHiddenPosts() {
+    return writeHiddenPosts([]);
+  }
+
+  function readHiddenThreads() {
+    return normalizeHiddenIdList(readLocalList(hiddenThreadsKey), 200);
+  }
+
+  function writeHiddenThreads(ids = []) {
+    const items = normalizeHiddenIdList(ids, 200);
+    writeJsonLocal(hiddenThreadsKey, items);
+    if (state.accountToken && state.accountPrivateData) {
+      state.accountPrivateData.hiddenThreads = items;
+      scheduleAccountPrivateDataSave();
+    }
+    return items;
+  }
+
+  function addHiddenThread(threadId) {
+    const value = String(threadId || '').trim();
+    if (!value) {
+      return readHiddenThreads();
+    }
+    return writeHiddenThreads([value, ...readHiddenThreads()]);
+  }
+
+  function removeHiddenThread(threadId) {
+    const value = String(threadId || '').trim();
+    if (!value) {
+      return readHiddenThreads();
+    }
+    const combined = new Set([
+      ...normalizeHiddenIdList(readLocalList(hiddenThreadsKey), 200),
+      ...(state.accountToken && state.accountPrivateData
+        ? normalizeHiddenIdList(state.accountPrivateData.hiddenThreads, 200)
+        : [])
+    ]);
+    combined.delete(value);
+    return writeHiddenThreads([...combined]);
+  }
+
+  function clearHiddenThreads() {
+    return writeHiddenThreads([]);
+  }
+
+  function hiddenPostNumbers() {
+    return new Set(readHiddenPosts().map(String));
+  }
+
+  function hiddenThreadIds() {
+    return new Set(readHiddenThreads().map(String));
+  }
+
+  function syncHiddenLocalFromPrivateData(data = state.accountPrivateData) {
+    if (!data) {
+      return;
+    }
+    writeJsonLocal(hiddenPostsKey, normalizeHiddenIdList(data.hiddenPosts, 500));
+    writeJsonLocal(hiddenThreadsKey, normalizeHiddenIdList(data.hiddenThreads, 200));
   }
 
   function readReplyTemplates() {
@@ -363,6 +467,8 @@ export function createAccountStateController({
     const localFilters = normalizeContentFilters(readLocalList(contentFiltersKey));
     const localTemplates = normalizeReplyTemplates(readLocalList(replyTemplatesKey));
     const localPosterNotes = normalizePosterNotes(readLocalList(posterNotesKey));
+    const localHiddenPosts = normalizeHiddenIdList(readLocalList(hiddenPostsKey), 500);
+    const localHiddenThreads = normalizeHiddenIdList(readLocalList(hiddenThreadsKey), 200);
     const drafts = accountDraftSyncEnabled()
       ? mergeByKey([...(serverData.drafts || []), ...localDraftEntries()], (item) => item.key)
       : serverData.drafts || [];
@@ -384,7 +490,9 @@ export function createAccountStateController({
       posterNotes: mergeByKey(
         [...(serverData.posterNotes || []), ...localPosterNotes],
         (item) => `${item.boardSlug || ''}:${item.posterId}`
-      )
+      ),
+      hiddenPosts: normalizeHiddenIdList([...(serverData.hiddenPosts || []), ...localHiddenPosts], 500),
+      hiddenThreads: normalizeHiddenIdList([...(serverData.hiddenThreads || []), ...localHiddenThreads], 200)
     });
   }
 
@@ -398,6 +506,7 @@ export function createAccountStateController({
       body: JSON.stringify(state.accountPrivateData)
     });
     state.accountPrivateData = normalizeAccountPrivateData(data);
+    syncHiddenLocalFromPrivateData(state.accountPrivateData);
     return state.accountPrivateData;
   }
 
@@ -422,6 +531,7 @@ export function createAccountStateController({
     }
     const data = await apiCall('/api/account/private-data', { auth: 'account' });
     state.accountPrivateData = mergeLocal ? mergeAccountPrivateData(data) : normalizeAccountPrivateData(data);
+    syncHiddenLocalFromPrivateData(state.accountPrivateData);
     if (mergeLocal) {
       await saveAccountPrivateData();
     }
@@ -432,6 +542,7 @@ export function createAccountStateController({
   async function finishAccountLogin(result, { mergeLocal = true }: AnyRecord = {}) {
     setAccountSession?.({ token: result.token, account: result.account });
     state.accountPrivateData = mergeLocal ? mergeAccountPrivateData() : normalizeAccountPrivateData();
+    syncHiddenLocalFromPrivateData(state.accountPrivateData);
     renderAccountPrivateData?.();
     try {
       await loadAccountPrivateData({ mergeLocal });
@@ -469,6 +580,12 @@ export function createAccountStateController({
     if (!section || section === 'posterNotes') {
       writeJsonLocal(posterNotesKey, []);
     }
+    if (!section || section === 'hiddenPosts') {
+      writeJsonLocal(hiddenPostsKey, []);
+    }
+    if (!section || section === 'hiddenThreads') {
+      writeJsonLocal(hiddenThreadsKey, []);
+    }
     renderAccountPrivateData?.();
   }
 
@@ -480,6 +597,18 @@ export function createAccountStateController({
     writeContentFilters,
     addContentFilter,
     removeContentFilter,
+    readHiddenPosts,
+    writeHiddenPosts,
+    addHiddenPost,
+    removeHiddenPost,
+    clearHiddenPosts,
+    readHiddenThreads,
+    writeHiddenThreads,
+    addHiddenThread,
+    removeHiddenThread,
+    clearHiddenThreads,
+    hiddenPostNumbers,
+    hiddenThreadIds,
     readReplyTemplates,
     writeReplyTemplates,
     addReplyTemplate,

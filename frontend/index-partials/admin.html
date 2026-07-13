@@ -1,171 +1,196 @@
-      <section id="adminScreen" class="screen" aria-labelledby="adminTitle">
-        <div class="screen-head">
-          <div>
-            <p class="path-chip">/admin/</p>
-            <h1 id="adminTitle">Bảng quản trị</h1>
-            <p class="muted">Quản lý kiểm duyệt, báo cáo và hệ thống.</p>
-          </div>
-          <button id="logoutButton" class="ghost-button hidden" type="button">[Đăng xuất]</button>
-        </div>
-        <form id="loginForm" class="login-panel stack">
-          <label class="field-row">
-            <span>Tài khoản</span>
-            <input id="adminUsername" autocomplete="username" />
-          </label>
-          <label class="field-row">
-            <span>Mật khẩu</span>
-            <input id="adminPassword" type="password" autocomplete="current-password" />
-          </label>
-          <div class="form-actions account-actions">
-            <button class="primary-button" type="submit">Đăng nhập</button>
-            <button id="adminLoginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>
-          </div>
-        </form>
-        <form id="admin2FAVerifyForm" class="login-panel stack hidden">
-          <div id="admin2FAVerifyError" class="form-error hidden" role="alert"></div>
-          <p class="muted">Tài khoản quản trị đã kích hoạt bảo mật 2 lớp. Vui lòng nhập mã xác thực từ ứng dụng của bạn.</p>
-          <label class="field-row otp-field-row">
-            <span>Mã 2FA (6 chữ số)</span>
-            <input id="admin2FACode" class="otp-code-input" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
-          </label>
-          <div class="form-actions account-actions">
-            <button class="primary-button" type="submit">Xác thực</button>
-            <button id="admin2FACancelButton" class="ghost-button" type="button">[Hủy]</button>
-          </div>
-        </form>
-        <div id="admin2FASetupPanel" class="login-panel stack hidden">
-          <h2>Thiết lập bảo mật 2 lớp (2FA)</h2>
-          <p class="muted">Tài khoản quản trị yêu cầu bảo mật 2 lớp để sử dụng. Vui lòng thiết lập 2FA để tiếp tục.</p>
-          <div id="admin2FASetupStart">
-            <button id="adminStart2FAButton" class="primary-button" type="button">Bắt đầu thiết lập 2FA</button>
-          </div>
-          <div id="admin2FASetupQR" class="stack hidden">
-            <p class="muted">Quét mã QR bằng ứng dụng xác thực (Google Authenticator, Microsoft Authenticator, v.v.):</p>
-            <div style="text-align: center; margin: 10px 0;">
-              <img id="admin2FAQRImage" src="" alt="Mã QR thiết lập 2FA" style="max-width:200px; display:inline-block;" />
+      <section id="adminScreen" class="screen admin-screen" aria-labelledby="adminTitle">
+        <div class="admin-layout">
+          <header class="admin-header">
+            <div class="admin-header-main">
+              <p class="path-chip">/admin/</p>
+              <h1 id="adminTitle">Bảng quản trị</h1>
+              <p class="muted admin-header-sub">Quản lý kiểm duyệt, báo cáo và hệ thống.</p>
             </div>
-            <div class="stack" style="background: #fff9db; border: 1px solid #f59f00; padding: 10px; border-radius: 4px; margin: 10px 0;">
-              <p style="font-weight:bold; color:#f08c00; margin:0 0 5px 0;">LƯU Ý: LƯU TRỮ MÃ DỰ PHÒNG</p>
-              <p class="muted" style="margin:0 0 5px 0;">Lưu lại các mã dự phòng sau. Mỗi mã chỉ sử dụng được một lần để khôi phục tài khoản nếu bạn mất thiết bị 2FA.</p>
-              <textarea id="admin2FABackupCodes" readonly rows="5" style="width:100%; font-family:monospace; resize:none;"></textarea>
+            <div class="admin-header-actions">
+              <button id="logoutButton" class="ghost-button hidden" type="button">[Đăng xuất]</button>
             </div>
-            <label class="field-row otp-field-row">
-              <span>Nhập mã 2FA xác nhận</span>
-              <input id="admin2FASetupCode" class="otp-code-input otp-code-input-compact" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
+          </header>
+
+          <form id="loginForm" class="login-panel admin-login-panel stack">
+            <label class="field-row">
+              <span>Tài khoản</span>
+              <input id="adminUsername" autocomplete="username" />
+            </label>
+            <label class="field-row">
+              <span>Mật khẩu</span>
+              <input id="adminPassword" type="password" autocomplete="current-password" />
             </label>
             <div class="form-actions account-actions">
-              <button id="adminVerify2FASetupButton" class="primary-button" type="button">Xác nhận và kích hoạt</button>
+              <button class="primary-button" type="submit">Đăng nhập</button>
+              <button id="adminLoginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>
+            </div>
+          </form>
+
+          <form id="admin2FAVerifyForm" class="login-panel admin-login-panel stack hidden">
+            <div id="admin2FAVerifyError" class="form-error hidden" role="alert"></div>
+            <p class="muted">Tài khoản quản trị đã kích hoạt bảo mật 2 lớp. Vui lòng nhập mã xác thực từ ứng dụng của bạn.</p>
+            <label class="field-row otp-field-row">
+              <span>Mã 2FA (6 chữ số)</span>
+              <input id="admin2FACode" class="otp-code-input" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Xác thực</button>
+              <button id="admin2FACancelButton" class="ghost-button" type="button">[Hủy]</button>
+            </div>
+          </form>
+
+          <div id="admin2FASetupPanel" class="login-panel admin-login-panel stack hidden">
+            <h2>Thiết lập bảo mật 2 lớp (2FA)</h2>
+            <p class="muted">Tài khoản quản trị yêu cầu bảo mật 2 lớp để sử dụng. Vui lòng thiết lập 2FA để tiếp tục.</p>
+            <div id="admin2FASetupStart">
+              <button id="adminStart2FAButton" class="primary-button" type="button">Bắt đầu thiết lập 2FA</button>
+            </div>
+            <div id="admin2FASetupQR" class="stack hidden">
+              <p class="muted">Quét mã QR bằng ứng dụng xác thực (Google Authenticator, Microsoft Authenticator, v.v.):</p>
+              <div class="admin-2fa-qr-wrap">
+                <img id="admin2FAQRImage" src="" alt="Mã QR thiết lập 2FA" />
+              </div>
+              <div class="admin-2fa-backup-box stack">
+                <p class="admin-2fa-backup-title">LƯU Ý: LƯU TRỮ MÃ DỰ PHÒNG</p>
+                <p class="muted">Lưu lại các mã dự phòng sau. Mỗi mã chỉ sử dụng được một lần để khôi phục tài khoản nếu bạn mất thiết bị 2FA.</p>
+                <textarea id="admin2FABackupCodes" readonly rows="5"></textarea>
+              </div>
+              <label class="field-row otp-field-row">
+                <span>Nhập mã 2FA xác nhận</span>
+                <input id="admin2FASetupCode" class="otp-code-input otp-code-input-compact" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
+              </label>
+              <div class="form-actions account-actions">
+                <button id="adminVerify2FASetupButton" class="primary-button" type="button">Xác nhận và kích hoạt</button>
+              </div>
             </div>
           </div>
+
+          <div id="adminTools" class="admin-tools hidden">
+            <div id="reactAdminStatusIsland" class="react-island admin-dev-chip" data-react-island="admin-status"></div>
+
+            <div class="admin-tabs-scroll">
+              <div class="admin-tabs" role="tablist" aria-label="Chọn hàng đợi quản trị">
+                <button class="admin-tab active" data-admin-tab="pending" type="button">AI chờ duyệt</button>
+                <button class="admin-tab" data-admin-tab="reports" type="button">Báo cáo</button>
+                <button class="admin-tab" data-admin-tab="appeals" type="button">Kháng nghị</button>
+                <button class="admin-tab" data-admin-tab="approved" type="button">Đã duyệt</button>
+                <button class="admin-tab" data-admin-tab="deleted" type="button">Đã xóa</button>
+                <button class="admin-tab" data-admin-tab="sanctions" type="button">Làm chậm/Tạm khóa</button>
+                <button class="admin-tab" data-admin-tab="boards" type="button">Bảng</button>
+                <button class="admin-tab" data-admin-tab="site-content" type="button">Nội dung</button>
+                <button class="admin-tab" data-admin-tab="users" type="button">Quyền</button>
+                <button class="admin-tab" data-admin-tab="audit" type="button">Nhật ký</button>
+                <button class="admin-tab" data-admin-tab="analytics" type="button">Analytics</button>
+                <button class="admin-tab" data-admin-tab="health" type="button">Sức khỏe</button>
+              </div>
+            </div>
+
+            <div class="admin-toolbar">
+              <div class="admin-filters">
+                <label>
+                  <span>Bảng</span>
+                  <select id="adminBoardFilter">
+                    <option value="">Tất cả</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Nhãn</span>
+                  <select id="adminLabelFilter">
+                    <option value="">Tất cả</option>
+                    <option value="Toxic">Độc hại</option>
+                    <option value="Spam">Nội dung rác</option>
+                    <option value="Hate Speech">Thù ghét</option>
+                    <option value="Fake News">Tin giả</option>
+                    <option value="PII Risk">Rủi ro thông tin cá nhân</option>
+                    <option value="ApprovedByAdmin">Admin duyệt</option>
+                  </select>
+                </label>
+                <label id="adminReportCategoryFilterWrap" class="hidden">
+                  <span>Loại báo cáo</span>
+                  <select id="adminReportCategoryFilter">
+                    <option value="">Tất cả</option>
+                    <option value="Spam">Spam</option>
+                    <option value="Toxic">Độc hại</option>
+                    <option value="PII">Thông tin cá nhân</option>
+                    <option value="Fake News">Tin giả</option>
+                    <option value="Illegal">Bất hợp pháp</option>
+                    <option value="Other">Khác</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Thời gian</span>
+                  <select id="adminTimeFilter">
+                    <option value="">Tất cả</option>
+                    <option value="24h">24 giờ</option>
+                    <option value="7d">7 ngày</option>
+                  </select>
+                </label>
+                <label id="adminPriorityFilterWrap">
+                  <span>Ưu tiên</span>
+                  <select id="adminPriorityFilter">
+                    <option value="">Tất cả</option>
+                    <option value="high">Cao</option>
+                    <option value="medium">Trung bình</option>
+                    <option value="low">Thấp</option>
+                  </select>
+                </label>
+                <label id="adminConfidenceFilterWrap">
+                  <span>Tin cậy ≥</span>
+                  <input id="adminConfidenceFilter" type="number" min="0" max="100" step="1" placeholder="%" />
+                </label>
+                <label id="adminPrioritySortWrap">
+                  <span>Sắp xếp</span>
+                  <select id="adminPrioritySort">
+                    <option value="priority">Ưu tiên trước</option>
+                    <option value="confidence-desc">Tin cậy cao trước</option>
+                    <option value="confidence-asc">Tin cậy thấp trước</option>
+                    <option value="newest">Mới nhất</option>
+                    <option value="oldest">Cũ nhất</option>
+                  </select>
+                </label>
+                <label class="admin-threshold-field">
+                  <span>Ngưỡng hàng đợi</span>
+                  <span class="admin-inline-control">
+                    <input id="adminQueueThresholdInput" type="number" min="0" max="100" step="1" />
+                    <button id="adminSaveModerationSettings" class="ghost-button" type="button">[Lưu]</button>
+                  </span>
+                </label>
+              </div>
+              <div class="admin-filter-actions">
+                <button id="adminRefresh" class="ghost-button" type="button">[Cập nhật]</button>
+                <button id="adminExport" class="ghost-button" type="button">[Xuất CSV]</button>
+              </div>
+            </div>
+
+            <div id="adminBulkBar" class="admin-bulk hidden">
+              <label><input id="adminSelectAll" type="checkbox" /> Chọn tất cả</label>
+              <button id="adminBulkApprove" class="primary-button" type="button">Duyệt đã chọn</button>
+              <button id="adminBulkDelete" class="danger-button" type="button">Xóa đã chọn</button>
+            </div>
+
+            <section id="adminPasskeysPanel" class="admin-passkeys-panel hidden" aria-labelledby="adminPasskeysTitle">
+              <details class="admin-passkeys-details">
+                <summary id="adminPasskeysTitle">Passkey · thiết bị xác thực</summary>
+                <div class="admin-passkeys-body">
+                  <p class="muted">Đăng ký Passkey để đăng nhập quản trị bằng vân tay/khuôn mặt, không cần mật khẩu hay mã 2FA.</p>
+                  <div id="adminPasskeysList" class="admin-passkeys-list"></div>
+                  <div class="form-actions admin-passkeys-actions">
+                    <button id="adminAddPasskeyButton" class="primary-button" type="button">Thêm Passkey mới</button>
+                  </div>
+                </div>
+              </details>
+            </section>
+          </div>
+
+          <div id="pendingList" class="pending-list admin-content hidden"></div>
+
+          <section id="reportSection" class="admin-log-section" aria-labelledby="reportLogTitle">
+            <h2 id="reportLogTitle">Báo cáo từ người dùng</h2>
+            <div id="reportList" class="moderation-log"></div>
+          </section>
+          <section id="moderationSection" class="admin-log-section" aria-labelledby="moderationLogTitle">
+            <h2 id="moderationLogTitle">Nhật ký kiểm duyệt</h2>
+            <div id="moderationActions" class="moderation-log"></div>
+          </section>
         </div>
-        <section id="adminPasskeysPanel" class="login-panel stack hidden" aria-labelledby="adminPasskeysTitle">
-          <h2 id="adminPasskeysTitle">Thiết bị xác thực (Passkey)</h2>
-          <p class="muted">Đăng ký Passkey để đăng nhập quản trị bằng vân tay/khuôn mặt mà không cần mật khẩu hay mã 2FA.</p>
-          <div id="adminPasskeysList" class="account-private-grid"></div>
-          <div class="form-actions">
-            <button id="adminAddPasskeyButton" class="primary-button" type="button">Thêm Passkey mới</button>
-          </div>
-        </section>
-        <div id="adminTools" class="admin-tools hidden">
-          <div id="reactAdminStatusIsland" class="react-island" data-react-island="admin-status"></div>
-          <div class="admin-tabs" aria-label="Chọn hàng đợi quản trị">
-            <button class="admin-tab active" data-admin-tab="pending" type="button">AI chờ duyệt</button>
-            <button class="admin-tab" data-admin-tab="reports" type="button">Báo cáo</button>
-            <button class="admin-tab" data-admin-tab="appeals" type="button">Kháng nghị</button>
-            <button class="admin-tab" data-admin-tab="approved" type="button">Đã duyệt</button>
-            <button class="admin-tab" data-admin-tab="deleted" type="button">Đã xóa</button>
-            <button class="admin-tab" data-admin-tab="sanctions" type="button">Làm chậm/Tạm khóa</button>
-            <button class="admin-tab" data-admin-tab="boards" type="button">Bảng</button>
-            <button class="admin-tab" data-admin-tab="users" type="button">Quyền</button>
-            <button class="admin-tab" data-admin-tab="audit" type="button">Nhật ký</button>
-            <button class="admin-tab" data-admin-tab="analytics" type="button">Analytics</button>
-            <button class="admin-tab" data-admin-tab="health" type="button">Sức khỏe</button>
-          </div>
-          <div class="admin-filters">
-            <label>
-              <span>Bảng</span>
-              <select id="adminBoardFilter">
-                <option value="">Tất cả</option>
-              </select>
-            </label>
-            <label>
-              <span>Nhãn</span>
-              <select id="adminLabelFilter">
-                <option value="">Tất cả</option>
-                <option value="Toxic">Độc hại</option>
-                <option value="Spam">Nội dung rác</option>
-                <option value="Hate Speech">Thù ghét</option>
-                <option value="Fake News">Tin giả</option>
-                <option value="PII Risk">Rủi ro thông tin cá nhân</option>
-                <option value="ApprovedByAdmin">Admin duyệt</option>
-              </select>
-            </label>
-            <label id="adminReportCategoryFilterWrap" class="hidden">
-              <span>Loại báo cáo</span>
-              <select id="adminReportCategoryFilter">
-                <option value="">Tất cả</option>
-                <option value="Spam">Spam</option>
-                <option value="Toxic">Độc hại</option>
-                <option value="PII">Thông tin cá nhân</option>
-                <option value="Fake News">Tin giả</option>
-                <option value="Illegal">Bất hợp pháp</option>
-                <option value="Other">Khác</option>
-              </select>
-            </label>
-            <label>
-              <span>Thời gian</span>
-              <select id="adminTimeFilter">
-                <option value="">Tất cả</option>
-                <option value="24h">24 giờ</option>
-                <option value="7d">7 ngày</option>
-              </select>
-            </label>
-            <label id="adminPriorityFilterWrap">
-              <span>Ưu tiên</span>
-              <select id="adminPriorityFilter">
-                <option value="">Tất cả</option>
-                <option value="high">Cao</option>
-                <option value="medium">Trung bình</option>
-                <option value="low">Thấp</option>
-              </select>
-            </label>
-            <label id="adminConfidenceFilterWrap">
-              <span>Tin cậy tối thiểu</span>
-              <input id="adminConfidenceFilter" type="number" min="0" max="100" step="1" placeholder="%" />
-            </label>
-            <label id="adminPrioritySortWrap">
-              <span>Sắp xếp</span>
-              <select id="adminPrioritySort">
-                <option value="priority">Ưu tiên trước</option>
-                <option value="confidence-desc">Tin cậy cao trước</option>
-                <option value="confidence-asc">Tin cậy thấp trước</option>
-                <option value="newest">Mới nhất</option>
-                <option value="oldest">Cũ nhất</option>
-              </select>
-            </label>
-            <button id="adminRefresh" class="ghost-button" type="button">[Cập nhật]</button>
-            <button id="adminExport" class="ghost-button" type="button">[Xuất CSV]</button>
-          </div>
-          <div class="admin-settings-row">
-            <label>
-              <span>Ngưỡng đưa vào hàng đợi</span>
-              <input id="adminQueueThresholdInput" type="number" min="0" max="100" step="1" />
-            </label>
-            <button id="adminSaveModerationSettings" class="ghost-button" type="button">[Lưu]</button>
-          </div>
-          <div id="adminBulkBar" class="admin-bulk hidden">
-            <label><input id="adminSelectAll" type="checkbox" /> Chọn tất cả</label>
-            <button id="adminBulkApprove" class="primary-button" type="button">Duyệt đã chọn</button>
-            <button id="adminBulkDelete" class="danger-button" type="button">Xóa đã chọn</button>
-          </div>
-        </div>
-        <div id="pendingList" class="pending-list"></div>
-        <section id="reportSection" class="admin-log-section" aria-labelledby="reportLogTitle">
-          <h2 id="reportLogTitle">Báo cáo từ người dùng</h2>
-          <div id="reportList" class="moderation-log"></div>
-        </section>
-        <section id="moderationSection" class="admin-log-section" aria-labelledby="moderationLogTitle">
-          <h2 id="moderationLogTitle">Nhật ký kiểm duyệt</h2>
-          <div id="moderationActions" class="moderation-log"></div>
-        </section>
       </section>

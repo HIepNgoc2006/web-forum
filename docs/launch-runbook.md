@@ -34,7 +34,18 @@ JWT_SECRET=...
 MODERATION_FINGERPRINT_SECRET=...
 POSTER_PROOF_SECRET=...
 PORT=3000
+# Set when Node sits behind nginx/Caddy/Cloudflare/etc. Without this, production
+# ignores X-Forwarded-For (prevents IP spoofing of rate limits/fingerprints).
+TRUST_PROXY=1
+# Protect Prometheus metrics scrapes (/metrics, /api/metrics).
+METRICS_TOKEN=...
 ```
+
+Scrape metrics with one of:
+- `Authorization: Bearer $METRICS_TOKEN`
+- `X-Metrics-Token: $METRICS_TOKEN`
+- `GET /metrics?token=$METRICS_TOKEN` (prefer headers over query strings in logs)
+
 
 If using Docker Compose, validate config before launch:
 

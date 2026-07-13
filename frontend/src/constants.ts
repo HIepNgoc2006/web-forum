@@ -96,6 +96,28 @@ export const AUDIO_RECORDING_TYPES = [
   'audio/ogg;codecs=opus'
 ];
 
+/** Browser Web Speech API STT languages (BCP-47). */
+export const SPEECH_STT_LANGUAGES = [
+  { value: 'vi-VN', label: 'VI', title: 'Tiếng Việt' },
+  { value: 'en-US', label: 'EN', title: 'English (US)' },
+  { value: 'en-GB', label: 'EN-GB', title: 'English (UK)' },
+  { value: 'ja-JP', label: 'JA', title: '日本語' },
+  { value: 'ko-KR', label: 'KO', title: '한국어' },
+  { value: 'zh-CN', label: 'ZH', title: '中文 (简体)' },
+  { value: 'zh-TW', label: 'ZH-TW', title: '中文 (繁體)' },
+  { value: 'fr-FR', label: 'FR', title: 'Français' },
+  { value: 'es-ES', label: 'ES', title: 'Español' },
+  { value: 'de-DE', label: 'DE', title: 'Deutsch' },
+  { value: 'th-TH', label: 'TH', title: 'ไทย' },
+  { value: 'id-ID', label: 'ID', title: 'Bahasa Indonesia' },
+  { value: 'pt-BR', label: 'PT', title: 'Português (Brasil)' },
+  { value: 'ru-RU', label: 'RU', title: 'Русский' }
+] as const;
+
+export const SPEECH_STT_LANG_KEY = 'speechSttLang';
+
+export const DEFAULT_SPEECH_STT_LANG = 'vi-VN';
+
 export const AI_TRANSCRIBE_TIMEOUT_MS = 60_000;
 
 export const AI_SPEAK_TIMEOUT_MS = 60_000;
@@ -140,6 +162,9 @@ export const aiNotConfiguredMessage =
   'Chưa cấu hình Google AI Studio. Thêm GOOGLE_AI_API_KEY vào backend/.env để dùng tính năng AI này.';
 
 export const MAX_MEDIA_PER_POST = 4;
+
+/** Max decoded media file size (images/videos). Keep in sync with backend DEFAULT_MAX_IMAGE_BYTES. */
+export const MAX_MEDIA_BYTES = 50 * 1024 * 1024;
 
 export const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
 

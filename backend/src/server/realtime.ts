@@ -15,6 +15,7 @@ interface RealtimeClient {
 
 interface RealtimeRequest {
   url: string;
+  headers?: Record<string, string | string[] | undefined>;
   on(event: 'close', handler: () => void): unknown;
 }
 
@@ -91,6 +92,41 @@ function positiveIntEnv(name: string, fallback: number): number {
 function percentEnv(name: string, fallback: number): number {
   const value = positiveIntEnv(name, fallback);
   return Math.max(1, Math.min(value, 100));
+}
+
+/**
+ * SSE used to send Access-Control-Allow-Origin: *. Restrict to:
+ * - explicit CORS_ORIGINS / ALLOWED_ORIGINS allowlist when set
+ * - same Host as the request (same-origin SPA)
+ * - any Origin only outside production (local Vite proxy / smoke)
+ */
+function resolveSseCorsOrigin(request: RealtimeRequest): string | null {
+  const allowlist = String(process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const originHeader = request.headers?.origin;
+  const origin = String(Array.isArray(originHeader) ? originHeader[0] : originHeader || '').trim();
+  if (!origin) {
+    return null;
+  }
+  if (allowlist.length > 0) {
+    return allowlist.includes(origin) ? origin : null;
+  }
+  try {
+    const originHost = new URL(origin).host;
+    const hostHeader = request.headers?.host;
+    const requestHost = String(Array.isArray(hostHeader) ? hostHeader[0] : hostHeader || '');
+    if (requestHost && originHost === requestHost) {
+      return origin;
+    }
+  } catch {
+    // invalid Origin
+  }
+  if (process.env.NODE_ENV !== 'production') {
+    return origin;
+  }
+  return null;
 }
 
 export function createRealtimeHub(options: RealtimeHubOptions = {}): RealtimeHub {
@@ -204,18 +240,29 @@ export function createRealtimeHub(options: RealtimeHubOptions = {}): RealtimeHub
         metricsState.rejected += 1;
         response.writeHead(503, {
           'content-type': 'application/json; charset=utf-8',
-          'retry-after': Math.ceil(heartbeatMs / 1000) || 5
+          'retry-after': Math.ceil(heartbeatMs / 1000) || 5,
+          'x-content-type-options': 'nosniff',
+          'x-frame-options': 'DENY',
+          'referrer-policy': 'strict-origin-when-cross-origin'
         });
         response.end(JSON.stringify({ ok: false, error: 'Realtime đã đạt giới hạn kết nối. Thử lại sau.' }));
         return;
       }
 
-      response.writeHead(200, {
-        'content-type': 'text/event-stream',
-        'cache-control': 'no-cache',
+      const headers: Record<string, string | number> = {
+        'content-type': 'text/event-stream; charset=utf-8',
+        'cache-control': 'no-cache, no-transform',
         connection: 'keep-alive',
-        'access-control-allow-origin': '*'
-      });
+        'x-content-type-options': 'nosniff',
+        'x-frame-options': 'DENY',
+        'referrer-policy': 'strict-origin-when-cross-origin'
+      };
+      const corsOrigin = resolveSseCorsOrigin(request);
+      if (corsOrigin) {
+        headers['access-control-allow-origin'] = corsOrigin;
+        headers.vary = 'Origin';
+      }
+      response.writeHead(200, headers);
       clients.set(response, clientMeta(request));
       metricsState.totalConnections += 1;
       ensureHeartbeat();

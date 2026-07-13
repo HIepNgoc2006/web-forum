@@ -17,6 +17,8 @@ type AdminEventDependencies = {
   exportAdminCsv: () => void;
   adminBoardPayload: (form: AnyRecord, options?: AnyRecord) => AnyRecord;
   adminUserPayload: (form: AnyRecord, options?: AnyRecord) => AnyRecord;
+  adminSiteContentPayload?: (root: Element | null) => AnyRecord;
+  applySiteContent?: (content: AnyRecord) => void;
   loadAdminDetail: (globalNumber: string, host: Element, options?: AnyRecord) => Promise<void>;
   adminTableDetailHost: (button: Element) => Element | null;
   showReasonModal: (message: string, context: string) => Promise<string | null>;
@@ -48,6 +50,8 @@ export async function handleAdminClick(event: Event, deps: AdminEventDependencie
     exportAdminCsv,
     adminBoardPayload,
     adminUserPayload,
+    adminSiteContentPayload,
+    applySiteContent,
     loadAdminDetail,
     adminTableDetailHost,
     showReasonModal,
@@ -71,6 +75,32 @@ export async function handleAdminClick(event: Event, deps: AdminEventDependencie
   }
   if (target.closest('#adminSaveModerationSettings')) {
     await saveAdminModerationSettings();
+    return true;
+  }
+
+  const adminSiteContentSaveButton = target.closest('[data-admin-site-content-save]');
+  if (adminSiteContentSaveButton) {
+    const root = adminSiteContentSaveButton.closest('[data-admin-site-content]');
+    const restore = setButtonLoading(adminSiteContentSaveButton, 'Đang lưu...');
+    try {
+      const payload = adminSiteContentPayload ? adminSiteContentPayload(root) : {};
+      const content = await api('/api/admin/site-content', {
+        method: 'PUT',
+        body: JSON.stringify(payload)
+      });
+      state.siteContent = content;
+      if (typeof applySiteContent === 'function') {
+        applySiteContent(content);
+      }
+      showToast('Đã lưu nội dung /policy/.');
+      await loadAdmin();
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      if (typeof restore === 'function') {
+        restore();
+      }
+    }
     return true;
   }
 

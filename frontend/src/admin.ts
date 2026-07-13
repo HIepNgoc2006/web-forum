@@ -33,7 +33,7 @@ export function adminPostRestoreButtonHtml(post, { className = 'ghost-button' }:
 
 export function moderationActionsHtml(actions) {
   if (!actions.length) {
-    return '<p class="muted">Chưa có nhật ký kiểm duyệt.</p>';
+    return '<div class="admin-empty-state" role="status"><p class="admin-empty-title">Chưa có nhật ký</p><p class="muted">Không có hành động kiểm duyệt nào khớp bộ lọc.</p></div>';
   }
 
   return `
@@ -72,7 +72,7 @@ export function moderationActionsHtml(actions) {
 
 export function reportsHtml(reports) {
   if (!reports.length) {
-    return '<p class="muted">Chưa có báo cáo nào.</p>';
+    return '<div class="admin-empty-state" role="status"><p class="admin-empty-title">Chưa có báo cáo</p><p class="muted">Không có báo cáo nào khớp bộ lọc hiện tại.</p></div>';
   }
 
   return `
@@ -134,7 +134,7 @@ export function compactReportsHtml(reports) {
 
 export function appealsHtml(appeals) {
   if (!appeals.length) {
-    return '<p class="muted">Chưa có kháng nghị nào.</p>';
+    return '<div class="admin-empty-state" role="status"><p class="admin-empty-title">Chưa có kháng nghị</p><p class="muted">Không có kháng nghị nào khớp bộ lọc hiện tại.</p></div>';
   }
 
   return `
@@ -177,7 +177,7 @@ export function appealsHtml(appeals) {
 
 export function sanctionsHtml(sanctions) {
   if (!sanctions.length) {
-    return '<p class="muted">Chưa có lệnh làm chậm/tạm khóa.</p>';
+    return '<div class="admin-empty-state" role="status"><p class="admin-empty-title">Chưa có lệnh chế tài</p><p class="muted">Không có lệnh làm chậm/tạm khóa nào khớp bộ lọc.</p></div>';
   }
 
   return `
@@ -645,11 +645,11 @@ export function adminBoardsHtml(boards, lifecycle: AnyRecord = {}) {
           <label><span>Active cap</span><input data-admin-board-retention-max type="number" min="1" step="1" value="${escapeHtml(lifecycle.maxActiveThreadsPerBoard ?? 150)}" /></label>
           <label><span>Bump limit</span><input data-admin-board-retention-bump type="number" min="1" step="1" value="${escapeHtml(lifecycle.bumpLimit ?? 300)}" /></label>
           <label><span>Reply limit</span><input data-admin-board-retention-reply type="number" min="1" step="1" value="${escapeHtml(lifecycle.replyLimit ?? 500)}" /></label>
-          <label><input data-admin-board-hidden type="checkbox" /> Ẩn khỏi public</label>
-          <label><input data-admin-board-archived type="checkbox" /> Lưu trữ</label>
-          <label><input data-admin-board-temporary type="checkbox" /> Board sự kiện tạm thời</label>
+          <label class="admin-board-checkbox-label"><input data-admin-board-hidden type="checkbox" /> Ẩn khỏi public</label>
+          <label class="admin-board-checkbox-label"><input data-admin-board-archived type="checkbox" /> Lưu trữ</label>
+          <label class="admin-board-checkbox-label"><input data-admin-board-temporary type="checkbox" /> Board sự kiện tạm thời</label>
           <label><span>Kết thúc</span><input data-admin-board-event-ends-at type="datetime-local" /></label>
-          <label><input data-admin-board-retention-public-archive type="checkbox" checked /> Public archive</label>
+          <label class="admin-board-checkbox-label"><input data-admin-board-retention-public-archive type="checkbox" checked /> Public archive</label>
           <button class="primary-button" data-admin-board-create type="button">Tạo bảng</button>
         </div>
       </section>
@@ -687,16 +687,16 @@ export function adminUsersHtml(users = []) {
     .map(
       (user) => `
         <tr data-admin-user-row="${escapeHtml(user.id)}">
-          <td><strong>@${escapeHtml(user.username)}</strong></td>
-          <td>
+          <td data-label="Tài khoản"><strong>@${escapeHtml(user.username)}</strong></td>
+          <td data-label="Vai trò">
             <select data-admin-user-role aria-label="Vai trò @${escapeHtml(user.username)}">
               ${adminRoleOptions(user.role)}
             </select>
           </td>
-          <td>${user.twoFactorEnabled ? 'Đã bật' : 'Chưa bật'}</td>
-          <td><label><input data-admin-user-disabled type="checkbox" ${user.disabled ? 'checked' : ''} /> Vô hiệu hóa</label></td>
-          <td><input data-admin-user-password aria-label="Đổi mật khẩu @${escapeHtml(user.username)}" type="password" minlength="10" placeholder="Đổi mật khẩu" autocomplete="new-password" /></td>
-          <td class="admin-board-actions">
+          <td data-label="2FA">${user.twoFactorEnabled ? 'Đã bật' : 'Chưa bật'}</td>
+          <td data-label="Trạng thái"><label><input data-admin-user-disabled type="checkbox" ${user.disabled ? 'checked' : ''} /> Vô hiệu hóa</label></td>
+          <td data-label="Mật khẩu"><input data-admin-user-password aria-label="Đổi mật khẩu @${escapeHtml(user.username)}" type="password" minlength="10" placeholder="Đổi mật khẩu" autocomplete="new-password" /></td>
+          <td class="admin-board-actions" data-label="Thao tác">
             <button class="ghost-button" data-admin-user-save type="button" aria-label="Lưu tài khoản @${escapeHtml(user.username)}">[Lưu]</button>
             <button class="danger-button" data-admin-user-disable type="button" aria-label="Tắt tài khoản @${escapeHtml(user.username)}" ${user.disabled ? 'disabled' : ''}>Tắt</button>
           </td>
@@ -713,11 +713,11 @@ export function adminUsersHtml(users = []) {
           <label><span>Tên đăng nhập</span><input data-admin-user-username maxlength="32" autocomplete="username" /></label>
           <label><span>Mật khẩu</span><input data-admin-user-password type="password" minlength="10" autocomplete="new-password" /></label>
           <label><span>Vai trò</span><select data-admin-user-role>${adminRoleOptions('viewer')}</select></label>
-          <label><input data-admin-user-disabled type="checkbox" /> Tạo ở trạng thái tắt</label>
+          <label class="admin-board-checkbox-label"><input data-admin-user-disabled type="checkbox" /> Tạo ở trạng thái tắt</label>
           <button class="primary-button" data-admin-user-create type="button">Tạo tài khoản</button>
         </div>
       </section>
-      <div class="admin-board-table-wrap">
+      <div class="admin-board-table-wrap admin-board-table-wrap-users">
         <table class="admin-board-table">
           <thead>
             <tr>

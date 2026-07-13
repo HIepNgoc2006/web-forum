@@ -1,10 +1,4 @@
       <section id="threadScreen" class="screen" aria-labelledby="threadTitle">
-        <div class="board-hero">
-          <a class="board-logo" href="#home" aria-label="Trang chủ 36chan">
-            <span>36chan</span>
-          </a>
-          <p>xem ít nhất mỗi ngày một lần</p>
-        </div>
         <div class="thread-page-title">
           <div class="thread-title-row">
             <h1 id="threadTitle">Chủ đề</h1>
@@ -100,8 +94,14 @@
               <span>Âm thanh → chữ</span>
               <div class="audio-transcribe-controls">
                 <input id="commentAudio" type="file" accept="audio/*" />
+                <select
+                  id="commentSpeechLang"
+                  class="speech-lang-select rewrite-tone-select"
+                  data-speech-lang
+                  aria-label="Ngôn ngữ nhận dạng giọng nói"
+                ></select>
                 <button id="commentRecordButton" class="ghost-button audio-record-button" type="button" aria-pressed="false">
-                  [Ghi âm]
+                  [Nói]
                 </button>
               </div>
             </label>

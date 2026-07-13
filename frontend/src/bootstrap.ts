@@ -59,6 +59,10 @@ export async function bootstrapApp(dependencies: AnyRecord): Promise<void> {
     state.moderationConfidenceThreshold = Number(config.ai?.moderationConfidenceThreshold || 0);
     syncAdminModerationSettings({ moderationConfidenceThreshold: state.moderationConfidenceThreshold });
     state.hcaptchaSiteKey = config.hcaptchaSiteKey || '';
+    const maxImageBytes = Number(config.maxImageBytes);
+    if (Number.isFinite(maxImageBytes) && maxImageBytes > 0) {
+      state.maxImageBytes = maxImageBytes;
+    }
     await refreshPublicBoards({ fallbackBoards: config.boards });
     setupHcaptcha(showToast).catch((error) => showToast(error.message));
     syncAccountHomeBoardOptions();

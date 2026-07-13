@@ -71,6 +71,7 @@ export function backlinksHtml(backlinks = []) {
   }
   return `
     <div class="backlinks">
+      <span class="backlinks-label">Phản hồi:</span>
       ${backlinks
         .map((number) => `<button class="ref-link" data-ref="${number}" type="button">&gt;&gt;${number}</button>`)
         .join(' ')}
@@ -91,6 +92,7 @@ export function diceRollsHtml(diceRolls = []) {
           const modifierText = modifier > 0 ? ` + ${modifier}` : modifier < 0 ? ` - ${Math.abs(modifier)}` : '';
           return `
             <span class="dice-roll">
+              <span class="dice-roll-label">Xúc xắc:</span>
               <span class="dice-expression">${escapeHtml(roll.expression || '')}</span>
               <span class="dice-values">[${escapeHtml(rolls.join(', '))}${escapeHtml(modifierText)}]</span>
               <strong>${escapeHtml(roll.total ?? '')}</strong>

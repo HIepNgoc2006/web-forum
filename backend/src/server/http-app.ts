@@ -1,6 +1,9 @@
+import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import http from 'node:http';
 import path from 'node:path';
+import { pipeline } from 'node:stream/promises';
 
 import {
   DEFAULT_MAX_IMAGE_BYTES,
@@ -8,7 +11,14 @@ import {
   publicConfig,
   readPositiveInteger
 } from '../core/config.ts';
-import { createRateLimiter, getClientIp, securityConfigStatus, signJwt, verifyJwt } from '../core/security.ts';
+import {
+  createRateLimiter,
+  getClientIp,
+  isTrustProxyEnabled,
+  securityConfigStatus,
+  signJwt,
+  verifyJwt
+} from '../core/security.ts';
 
 type AnyRecord = Record<string, any>;
 type RouteParams = Record<string, string>;
@@ -96,7 +106,10 @@ function adminPermissionForRequest(method, routePath, parts = []) {
   if (routePath === '/api/admin/users' || match(parts, ['api', 'admin', 'users', ':id'])) {
     return 'admin:manage_users';
   }
-  if (method === 'PUT' && routePath === '/api/admin/moderation-settings') {
+  if (
+    method === 'PUT' &&
+    (routePath === '/api/admin/moderation-settings' || routePath === '/api/admin/site-content')
+  ) {
     return 'admin:manage_settings';
   }
   if (routePath === '/api/admin/boards' && method !== 'GET') {
@@ -115,13 +128,230 @@ function hasAdminPermission(role, permission) {
   return adminPermissionsForRole(role).has(permission);
 }
 
+// Baseline browser defenses applied to every HTTP response from this server.
+// CSP is intentionally moderate: the Vite shell uses inline bootstrap scripts
+// and hCaptcha needs third-party script/frame/connect hosts.
+const BASE_SECURITY_HEADERS: Record<string, string> = {
+  'x-content-type-options': 'nosniff',
+  'x-frame-options': 'DENY',
+  'referrer-policy': 'strict-origin-when-cross-origin',
+  'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  'cross-origin-opener-policy': 'same-origin',
+  'content-security-policy': [
+    "default-src 'self'",
+    "base-uri 'self'",
+    "object-src 'none'",
+    "frame-ancestors 'none'",
+    "form-action 'self'",
+    "img-src 'self' data: blob: https:",
+    "media-src 'self' blob: https:",
+    "font-src 'self' data:",
+    "style-src 'self' 'unsafe-inline'",
+    "script-src 'self' 'unsafe-inline' https://js.hcaptcha.com https://*.hcaptcha.com",
+    "frame-src https://newassets.hcaptcha.com https://*.hcaptcha.com",
+    "connect-src 'self' https://*.hcaptcha.com",
+    "worker-src 'self' blob:"
+  ].join('; ')
+};
+
+function withSecurityHeaders(headers: Record<string, string | number> = {}): Record<string, string | number> {
+  return { ...BASE_SECURITY_HEADERS, ...headers };
+}
+
+function isPathInsideRoot(rootDir: string, candidatePath: string): boolean {
+  const relative = path.relative(path.resolve(rootDir), path.resolve(candidatePath));
+  return relative === '' || (!relative.startsWith(`..${path.sep}`) && relative !== '..' && !path.isAbsolute(relative));
+}
+
+function cacheControlForStatic(extension: string): string {
+  if (['.js', '.css', '.woff', '.woff2', '.ttf', '.map'].includes(extension)) {
+    return 'public, max-age=31536000, immutable';
+  }
+  if (['.png', '.jpg', '.jpeg', '.gif', '.webp', '.avif', '.ico', '.svg'].includes(extension)) {
+    return 'public, max-age=86400';
+  }
+  if (extension === '.html') {
+    return 'no-cache';
+  }
+  return 'public, max-age=300';
+}
+
+function weakEtagFromStat(stat: { size: number; mtimeMs: number }): string {
+  return `W/"${stat.size.toString(16)}-${Math.trunc(stat.mtimeMs).toString(16)}"`;
+}
+
+function ifNoneMatchMatches(headerValue: string | string[] | undefined, etag: string): boolean {
+  if (!headerValue) {
+    return false;
+  }
+  const raw = Array.isArray(headerValue) ? headerValue.join(',') : String(headerValue);
+  return raw
+    .split(',')
+    .map((part) => part.trim())
+    .some((part) => part === '*' || part === etag || part === `W/${etag}` || part === etag.replace(/^W\//, ''));
+}
+
+type TtlCacheEntry = { expiresAt: number; value: unknown };
+
+function createTtlCache(ttlMs: number) {
+  const entries = new Map<string, TtlCacheEntry>();
+  return {
+    get(key: string) {
+      const entry = entries.get(key);
+      if (!entry) {
+        return undefined;
+      }
+      if (entry.expiresAt <= Date.now()) {
+        entries.delete(key);
+        return undefined;
+      }
+      return entry.value;
+    },
+    set(key: string, value: unknown) {
+      if (ttlMs <= 0) {
+        return;
+      }
+      entries.set(key, { value, expiresAt: Date.now() + ttlMs });
+      // Bound memory: drop oldest entries if the map grows large.
+      if (entries.size > 64) {
+        const firstKey = entries.keys().next().value;
+        if (firstKey !== undefined) {
+          entries.delete(firstKey);
+        }
+      }
+    }
+  };
+}
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  const value = String(address || '').replace(/^::ffff:/i, '');
+  return value === '127.0.0.1' || value === '::1' || value === 'localhost';
+}
+
+function timingSafeEqualString(left: string, right: string): boolean {
+  const a = Buffer.from(String(left));
+  const b = Buffer.from(String(right));
+  if (a.length !== b.length) {
+    // Keep comparison time roughly stable for equal-length secrets only; unequal lengths are rejects.
+    crypto.timingSafeEqual(a.length ? a : Buffer.from([0]), a.length ? a : Buffer.from([0]));
+    return false;
+  }
+  return crypto.timingSafeEqual(a, b);
+}
+
+function extractMetricsToken(request: HttpRequest, searchParams: URLSearchParams): string {
+  const headerAuth = String(request.headers.authorization || '');
+  if (headerAuth.startsWith('Bearer ')) {
+    return headerAuth.slice(7).trim();
+  }
+  const dedicated = request.headers['x-metrics-token'];
+  if (dedicated) {
+    return String(Array.isArray(dedicated) ? dedicated[0] : dedicated).trim();
+  }
+  return String(searchParams.get('token') || '').trim();
+}
+
+/**
+ * Metrics expose capacity/process counters. Require METRICS_TOKEN when set.
+ * In production without a token, only loopback scrapes are allowed so the
+ * endpoint is not an open reconnaissance surface on the public internet.
+ */
+function authorizeMetrics(request: HttpRequest, searchParams: URLSearchParams): void {
+  const expected = String(process.env.METRICS_TOKEN || '').trim();
+  if (expected) {
+    const provided = extractMetricsToken(request, searchParams);
+    if (!provided || !timingSafeEqualString(provided, expected)) {
+      const error = new Error('Unauthorized');
+      error.statusCode = 401;
+      throw error;
+    }
+    return;
+  }
+
+  if (process.env.NODE_ENV === 'production') {
+    // Use the direct socket address (not X-Forwarded-For) so clients cannot spoof loopback.
+    if (!isLoopbackAddress(request.socket.remoteAddress)) {
+      const error = new Error('Metrics yêu cầu METRICS_TOKEN trong production');
+      error.statusCode = 401;
+      throw error;
+    }
+  }
+}
+
+function resolveCorsOrigin(request: HttpRequest): string | null {
+  const allowlist = String(process.env.CORS_ORIGINS || process.env.ALLOWED_ORIGINS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean);
+  const origin = String(request.headers.origin || '').trim();
+  if (!origin) {
+    return null;
+  }
+  if (allowlist.length > 0) {
+    return allowlist.includes(origin) ? origin : null;
+  }
+  try {
+    const originHost = new URL(origin).host;
+    const requestHost = String(request.headers.host || '');
+    if (requestHost && originHost === requestHost) {
+      return origin;
+    }
+  } catch {
+    // ignore invalid origin
+  }
+  // Keep cross-origin SSE workable in local/dev when no allowlist is configured.
+  if (process.env.NODE_ENV !== 'production') {
+    return origin;
+  }
+  return null;
+}
+
+async function sendFileResponse(
+  request: HttpRequest,
+  response: HttpResponse,
+  filePath: string,
+  headers: Record<string, string | number>,
+  stat?: { size: number; mtimeMs: number }
+): Promise<void> {
+  const responseHeaders = { ...headers };
+  if (stat) {
+    const etag = weakEtagFromStat(stat);
+    responseHeaders.etag = etag;
+    if (ifNoneMatchMatches(request.headers['if-none-match'], etag)) {
+      response.writeHead(304, withSecurityHeaders({
+        etag,
+        'cache-control': responseHeaders['cache-control'] ?? 'public, max-age=300'
+      }));
+      response.end();
+      return;
+    }
+  }
+
+  response.writeHead(200, withSecurityHeaders(responseHeaders));
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
+  try {
+    await pipeline(createReadStream(filePath), response);
+  } catch (error: any) {
+    // Client disconnect mid-stream is not a server error.
+    if (error?.code === 'ERR_STREAM_PREMATURE_CLOSE' || error?.code === 'ECONNRESET') {
+      return;
+    }
+    if (!response.writableEnded) {
+      response.destroy(error instanceof Error ? error : undefined);
+    }
+  }
+}
+
 function sendJson(response: HttpResponse, statusCode: number, payload: unknown) {
-  response.writeHead(statusCode, { 'content-type': 'application/json; charset=utf-8' });
+  response.writeHead(statusCode, withSecurityHeaders({ 'content-type': 'application/json; charset=utf-8' }));
   response.end(JSON.stringify(payload));
 }
 
 function sendText(response: HttpResponse, statusCode: number, text: string, contentType: string) {
-  response.writeHead(statusCode, { 'content-type': contentType });
+  response.writeHead(statusCode, withSecurityHeaders({ 'content-type': contentType }));
   response.end(text);
 }
 
@@ -209,22 +439,33 @@ function healthMetricsText(health: AnyRecord = {}) {
 }
 
 async function readJson(request: HttpRequest, maxBytes = 1_600_000): Promise<AnyRecord> {
-  let body = '';
+  // Prefer Content-Length short-circuit so oversized posts fail before buffering.
+  const declared = Number(request.headers['content-length']);
+  if (Number.isFinite(declared) && declared > maxBytes) {
+    const error = new Error('Dữ liệu gửi lên quá lớn');
+    error.statusCode = 413;
+    throw error;
+  }
+
+  const chunks: Buffer[] = [];
+  let total = 0;
   for await (const chunk of request) {
-    body += chunk;
-    if (Buffer.byteLength(body) > maxBytes) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    total += buffer.length;
+    if (total > maxBytes) {
       const error = new Error('Dữ liệu gửi lên quá lớn');
       error.statusCode = 413;
       throw error;
     }
+    chunks.push(buffer);
   }
 
-  if (!body) {
+  if (total === 0) {
     return {};
   }
 
   try {
-    return JSON.parse(body);
+    return JSON.parse(Buffer.concat(chunks, total).toString('utf8'));
   } catch {
     const error = new Error('Nội dung JSON không hợp lệ');
     error.statusCode = 400;
@@ -233,12 +474,11 @@ async function readJson(request: HttpRequest, maxBytes = 1_600_000): Promise<Any
 }
 
 function imageUploadJsonLimit() {
-  return (
-    (readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES) +
-      readPositiveInteger(process.env.MAX_THUMBNAIL_BYTES, DEFAULT_MAX_THUMBNAIL_BYTES)) *
-      MAX_MEDIA_PER_POST +
-    80_000
-  );
+  const maxImageBytes = readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES);
+  const maxThumbnailBytes = readPositiveInteger(process.env.MAX_THUMBNAIL_BYTES, DEFAULT_MAX_THUMBNAIL_BYTES);
+  // Media is posted as base64 data URLs (~4/3 of decoded size) plus prefix/JSON overhead.
+  const encodedImageBudget = Math.ceil(maxImageBytes * 4 / 3) + 128;
+  return (encodedImageBudget + maxThumbnailBytes) * MAX_MEDIA_PER_POST + 80_000;
 }
 
 function match(parts: string[], pattern: string[]): RouteParams | null {
@@ -389,19 +629,23 @@ function accountToken(account, jwtSecret, isTwoFactorVerified = null) {
     error.statusCode = 503;
     throw error;
   }
+  const privileged = PRIVILEGED_ACCOUNT_ROLES.has(String(account.role || '').toLowerCase());
   let verified = isTwoFactorVerified;
   if (verified === null) {
-    verified = PRIVILEGED_ACCOUNT_ROLES.has(String(account.role || '').toLowerCase())
-      ? Boolean(account.twoFactorEnabled)
-      : !account.twoFactorEnabled;
+    verified = privileged ? Boolean(account.twoFactorEnabled) : !account.twoFactorEnabled;
   }
+  // Privileged sessions are short-lived (8h). Regular accounts keep a week so
+  // users are not logged out constantly; full cookie-based sessions are a later ADR.
+  const expiresInSeconds = privileged
+    ? readPositiveInteger(process.env.PRIVILEGED_JWT_TTL_SECONDS, 60 * 60 * 8)
+    : readPositiveInteger(process.env.ACCOUNT_JWT_TTL_SECONDS, 60 * 60 * 24 * 7);
   return signJwt({
     role: account.role || 'user',
     sub: account.id,
     username: account.username,
     isTwoFactorVerified: verified
   }, jwtSecret, {
-    expiresInSeconds: 60 * 60 * 24 * 14
+    expiresInSeconds
   });
 }
 
@@ -520,13 +764,17 @@ function requestOrigin(request: HttpRequest) {
 }
 
 function requestProtocol(request: HttpRequest) {
-  const forwardedProto = String(request.headers['x-forwarded-proto'] || '')
-    .split(',')[0]
-    .trim()
-    .toLowerCase();
-  if (forwardedProto === 'http' || forwardedProto === 'https') {
-    return forwardedProto;
+  if (isTrustProxyEnabled()) {
+    const forwardedProto = String(request.headers['x-forwarded-proto'] || '')
+      .split(',')[0]
+      .trim()
+      .toLowerCase();
+    if (forwardedProto === 'http' || forwardedProto === 'https') {
+      return forwardedProto;
+    }
   }
+  // node:http has no TLS socket by default; reverse proxies set X-Forwarded-Proto
+  // when TRUST_PROXY is enabled.
   return 'http';
 }
 
@@ -777,8 +1025,7 @@ async function serveStatic(request, response, staticRoot) {
   const requestedPath = decodedPath === '/' ? '/index.html' : decodedPath;
   const safeRoot = path.resolve(staticRoot);
   const candidate = path.resolve(safeRoot, `.${requestedPath}`);
-  const relativePath = path.relative(safeRoot, candidate);
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+  if (!isPathInsideRoot(safeRoot, candidate)) {
     return false;
   }
 
@@ -788,21 +1035,38 @@ async function serveStatic(request, response, staticRoot) {
       return false;
     }
     const extension = path.extname(candidate).toLowerCase();
-    response.writeHead(200, {
-      'content-type': MIME_TYPES.get(extension) ?? 'application/octet-stream'
-    });
-    if (request.method === 'HEAD') {
-      response.end();
-    } else {
-      response.end(await fs.readFile(candidate));
-    }
+    await sendFileResponse(
+      request,
+      response,
+      candidate,
+      {
+        'content-type': MIME_TYPES.get(extension) ?? 'application/octet-stream',
+        'content-length': stat.size,
+        'cache-control': cacheControlForStatic(extension),
+        'last-modified': stat.mtime.toUTCString()
+      },
+      stat
+    );
     return true;
   } catch (error) {
     if (error.code === 'ENOENT' || error.code === 'ENOTDIR') {
       if (shouldServeSpaFallback(url.pathname)) {
         const indexPath = path.join(staticRoot, 'index.html');
-        response.writeHead(200, { 'content-type': 'text/html; charset=utf-8' });
-        response.end(await fs.readFile(indexPath));
+        if (!isPathInsideRoot(safeRoot, indexPath)) {
+          return false;
+        }
+        const indexStat = await fs.stat(indexPath);
+        await sendFileResponse(
+          request,
+          response,
+          indexPath,
+          {
+            'content-type': 'text/html; charset=utf-8',
+            'content-length': indexStat.size,
+            'cache-control': 'no-cache'
+          },
+          indexStat
+        );
         return true;
       }
       return false;
@@ -838,13 +1102,14 @@ async function serveUploadedFile(request, response, uploadRoot) {
     return false;
   }
   const fileName = path.basename(requestedName);
-  if (!fileName || fileName !== requestedName) {
+  // Reject nested paths, traversal, and empty names (basename alone is the ACL).
+  if (!fileName || fileName !== requestedName || fileName === '.' || fileName === '..') {
     return false;
   }
 
   const safeRoot = path.resolve(uploadRoot);
   const candidate = path.resolve(safeRoot, fileName);
-  if (!candidate.startsWith(safeRoot)) {
+  if (!isPathInsideRoot(safeRoot, candidate)) {
     return false;
   }
 
@@ -854,16 +1119,20 @@ async function serveUploadedFile(request, response, uploadRoot) {
       return false;
     }
     const extension = path.extname(candidate).toLowerCase();
-    response.writeHead(200, {
+    // SVG can carry script; even though uploads reject SVG, force a sandbox CSP
+    // if a file with this extension is present on disk.
+    const extraHeaders: Record<string, string | number> = {
       'content-type': MIME_TYPES.get(extension) ?? 'application/octet-stream',
       'content-length': stat.size,
-      'cache-control': 'public, max-age=31536000, immutable'
-    });
-    if (request.method === 'HEAD') {
-      response.end();
-    } else {
-      response.end(await fs.readFile(candidate));
+      'cache-control': 'public, max-age=31536000, immutable',
+      'last-modified': stat.mtime.toUTCString(),
+      'cross-origin-resource-policy': 'same-site'
+    };
+    if (extension === '.svg') {
+      extraHeaders['content-security-policy'] = "default-src 'none'; sandbox";
+      extraHeaders['content-disposition'] = 'attachment';
     }
+    await sendFileResponse(request, response, candidate, extraHeaders, stat);
     return true;
   } catch {
     return false;
@@ -897,6 +1166,19 @@ export function createHttpServer({
     search: createRateLimiter({ ...sharedLimiterOptions, limit: 10, windowMs: 60_000 }),
     generic: createRateLimiter({ ...sharedLimiterOptions, limit: 60, windowMs: 60_000 })
   };
+  // Short in-process TTL for hot public GETs to cut whole-state re-reads under bursty traffic.
+  const publicReadCacheMs = readPositiveInteger(process.env.PUBLIC_READ_CACHE_MS, 2_000);
+  const publicReadCache = createTtlCache(publicReadCacheMs);
+
+  async function cachedPublicRead(key: string, loader: () => Promise<unknown>) {
+    const hit = publicReadCache.get(key);
+    if (hit !== undefined) {
+      return hit;
+    }
+    const value = await loader();
+    publicReadCache.set(key, value);
+    return value;
+  }
 
   return http.createServer(async (request, response) => {
     const url = new URL(request.url, 'http://localhost');
@@ -924,17 +1206,26 @@ export function createHttpServer({
       );
 
       if (request.method === 'GET' && routePath === '/api/config') {
-        ok(response, publicConfig());
+        // Static/env-derived payload — safe to cache briefly under burst traffic.
+        ok(response, await cachedPublicRead('config', async () => publicConfig()));
         return;
       }
 
       if (request.method === 'GET' && routePath === '/api/boards') {
+        // Not cached: board visibility/admin edits must be visible immediately.
         ok(response, await service.listBoards());
         return;
       }
 
+      if (request.method === 'GET' && routePath === '/api/site-content') {
+        // Not cached: owner edits to /policy/ copy should be visible immediately.
+        ok(response, await service.getSiteContent());
+        return;
+      }
+
       if (request.method === 'GET' && routePath === '/api/stats') {
-        ok(response, await service.getStats());
+        // Aggregate counts may lag by PUBLIC_READ_CACHE_MS under load (default 2s).
+        ok(response, await cachedPublicRead('stats', () => service.getStats()));
         return;
       }
 
@@ -958,6 +1249,7 @@ export function createHttpServer({
       }
 
       if (request.method === 'GET' && (routePath === '/metrics' || routePath === '/api/metrics')) {
+        authorizeMetrics(request, url.searchParams);
         sendText(
           response,
           200,
@@ -1558,16 +1850,14 @@ export function createHttpServer({
 
       params = match(parts, ['api', 'posts', ':globalNumber', 'reactions']);
       if (params && request.method === 'POST') {
+        const account = requireAccount(request, jwtSecret, service);
         const body = await readJson(request, 20_000);
-        const account = getOptionalAccount(request, jwtSecret, service);
         ok(
           response,
           await service.reactPost({
             globalNumber: params.globalNumber,
             reaction: body.reaction,
-            accountId: account?.sub,
-            ip,
-            posterToken: body.posterToken
+            accountId: account.sub
           })
         );
         return;
@@ -1789,6 +2079,17 @@ export function createHttpServer({
         if (request.method === 'PUT' && routePath === '/api/admin/moderation-settings') {
           const body = await readJson(request, 20_000);
           ok(response, await service.updateModerationSettings(body, { actor: admin.username ?? 'admin' }));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/admin/site-content') {
+          ok(response, await service.getSiteContent());
+          return;
+        }
+
+        if (request.method === 'PUT' && routePath === '/api/admin/site-content') {
+          const body = await readJson(request, 50_000);
+          ok(response, await service.updateSiteContent(body, { actor: admin.username ?? 'admin' }));
           return;
         }
 

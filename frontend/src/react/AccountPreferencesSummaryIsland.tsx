@@ -37,7 +37,7 @@ export function AccountPreferencesSummaryIsland(props: AccountPreferencesSummary
 
   return (
     <div
-      className="account-preferences-summary login-panel stack"
+      className="account-preferences-summary login-panel account-settings-panel stack"
       data-react-island-ready="true"
       role="region"
       aria-label="Tóm tắt cài đặt"
@@ -54,13 +54,14 @@ export function AccountPreferencesSummaryIsland(props: AccountPreferencesSummary
         </div>
         <div className="account-summary-row">
           <dt>Đồng bộ</dt>
-          <dd>Bản nháp riêng tư: {yesNo(syncDrafts)}</dd>
+          <dd>{yesNo(syncDrafts)} bản nháp riêng tư</dd>
         </div>
         <div className="account-summary-row">
           <dt>Hiển thị</dt>
-          <dd>
-            Chế độ gọn: {yesNo(compactThreads)}; Ẩn thumbnail: {yesNo(hideThumbnails)};
-            Watchlist chỉ chưa đọc: {yesNo(watchedUnreadOnly)}
+          <dd className="account-summary-chips">
+            <span className="account-summary-chip">Gọn: {yesNo(compactThreads)}</span>
+            <span className="account-summary-chip">Thumbnail: {yesNo(!hideThumbnails)}</span>
+            <span className="account-summary-chip">Watch unread: {yesNo(watchedUnreadOnly)}</span>
           </dd>
         </div>
         <div className="account-summary-row">
@@ -69,10 +70,11 @@ export function AccountPreferencesSummaryIsland(props: AccountPreferencesSummary
         </div>
         <div className="account-summary-row">
           <dt>Thông báo</dt>
-          <dd>
-            Thông báo email: {yesNo(emailNotifications)}; Thread đang theo dõi:{' '}
-            {yesNo(notifyWatchedThreads)}; Bảng đang theo dõi: {yesNo(notifyBoardSubscriptions)};
-            Trình duyệt: thread đang theo dõi: {yesNo(browserNotifyWatchedThreads)}
+          <dd className="account-summary-chips">
+            <span className="account-summary-chip">Email: {yesNo(emailNotifications)}</span>
+            <span className="account-summary-chip">Thread: {yesNo(notifyWatchedThreads)}</span>
+            <span className="account-summary-chip">Bảng: {yesNo(notifyBoardSubscriptions)}</span>
+            <span className="account-summary-chip">Trình duyệt: {yesNo(browserNotifyWatchedThreads)}</span>
           </dd>
         </div>
       </dl>

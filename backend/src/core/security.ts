@@ -208,10 +208,15 @@ export function verifyJwt(token: string | undefined, secret: string | undefined)
   }
 
   const [encodedHeader, encodedPayload, signature] = parts;
+  // Reject non-base64url characters early so Buffer.from length tricks cannot
+  // bypass the constant-time compare below.
+  if (!/^[A-Za-z0-9_-]+$/.test(signature)) {
+    throw new Error('Invalid token');
+  }
   const unsigned = `${encodedHeader}.${encodedPayload}`;
   const expected = sign(unsigned, secret);
-  const actualBuffer = Buffer.from(signature);
-  const expectedBuffer = Buffer.from(expected);
+  const actualBuffer = Buffer.from(signature, 'utf8');
+  const expectedBuffer = Buffer.from(expected, 'utf8');
   if (
     actualBuffer.length !== expectedBuffer.length ||
     !crypto.timingSafeEqual(actualBuffer, expectedBuffer)
@@ -317,10 +322,30 @@ export function assertProductionSecrets(config: ProductionSecretConfig = {}): Se
   return status;
 }
 
-export function getClientIp(request: IncomingMessage): string {
-  const forwarded = request.headers['x-forwarded-for'];
-  if (forwarded) {
-    return String(forwarded).split(',')[0].trim();
+/**
+ * Whether to honor client-controlled proxy headers (`X-Forwarded-For`,
+ * `X-Forwarded-Proto`). Defaults to **off in production** so rate limits and
+ * moderation fingerprints cannot be spoofed by a raw client. Operators behind
+ * a trusted reverse proxy must set `TRUST_PROXY=1` (or true/yes/on).
+ * Outside production the default remains on so local/dev/tests keep working.
+ */
+export function isTrustProxyEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = env.TRUST_PROXY;
+  if (raw !== undefined && String(raw).trim() !== '') {
+    return /^(1|true|yes|on)$/i.test(String(raw).trim());
+  }
+  return env.NODE_ENV !== 'production';
+}
+
+export function getClientIp(request: IncomingMessage, env: NodeJS.ProcessEnv = process.env): string {
+  if (isTrustProxyEnabled(env)) {
+    const forwarded = request.headers['x-forwarded-for'];
+    if (forwarded) {
+      const first = String(forwarded).split(',')[0].trim();
+      if (first) {
+        return first;
+      }
+    }
   }
   return request.socket.remoteAddress ?? '127.0.0.1';
 }

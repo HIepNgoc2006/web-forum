@@ -1,6 +1,13 @@
 import { clamp } from './format';
 import type { AnyRecord } from './types';
 
+const SHOW_DELAY_MS = 80;
+const HIDE_DELAY_MS = 200;
+const PREVIEW_MAX_WIDTH = 520;
+const PREVIEW_MAX_HEIGHT = 720;
+const PREVIEW_GAP = 12;
+const VIEWPORT_PAD = 8;
+
 export function createReferencePreviewController({
   state,
   refPreview,
@@ -14,24 +21,77 @@ export function createReferencePreviewController({
   function referencePreviewPositionSource(source) {
     const target = source?.target?.closest?.('.ref-link') || source?.currentTarget || source;
     if (Number.isFinite(source?.clientX) && Number.isFinite(source?.clientY)) {
-      return { x: source.clientX + 10, y: source.clientY + 10 };
+      return {
+        x: source.clientX,
+        y: source.clientY,
+        anchorLeft: source.clientX,
+        anchorRight: source.clientX,
+        anchorTop: source.clientY,
+        anchorBottom: source.clientY
+      };
     }
     const rect = target?.getBoundingClientRect?.();
     if (rect) {
-      return { x: rect.right + 10, y: rect.bottom + 6 };
+      return {
+        x: rect.right,
+        y: rect.bottom,
+        anchorLeft: rect.left,
+        anchorRight: rect.right,
+        anchorTop: rect.top,
+        anchorBottom: rect.bottom
+      };
     }
-    return { x: 12, y: 12 };
+    return {
+      x: VIEWPORT_PAD,
+      y: VIEWPORT_PAD,
+      anchorLeft: VIEWPORT_PAD,
+      anchorRight: VIEWPORT_PAD,
+      anchorTop: VIEWPORT_PAD,
+      anchorBottom: VIEWPORT_PAD
+    };
   }
 
   function positionReferencePreview(source) {
-    const previewWidth = Math.max(220, Math.min(420, win.innerWidth - 12));
-    const previewHeight = Math.min(420, refPreview.offsetHeight || 226);
+    const maxWidth = Math.max(240, Math.min(PREVIEW_MAX_WIDTH, win.innerWidth - VIEWPORT_PAD * 2));
+    const maxHeight = Math.min(PREVIEW_MAX_HEIGHT, win.innerHeight - VIEWPORT_PAD * 2);
+    const measuredHeight = refPreview.offsetHeight || 0;
+    const previewHeight = Math.min(
+      maxHeight,
+      measuredHeight > 0 ? measuredHeight : Math.min(320, maxHeight)
+    );
+    const previewWidth = Math.min(maxWidth, refPreview.offsetWidth || maxWidth);
+    refPreview.style.maxHeight = `${maxHeight}px`;
     const position = referencePreviewPositionSource(source);
-    const left = clamp(position.x, 6, Math.max(6, win.innerWidth - previewWidth - 6));
-    const top = clamp(position.y, 6, Math.max(6, win.innerHeight - previewHeight - 6));
+    const spaceRight = win.innerWidth - position.anchorRight - VIEWPORT_PAD;
+    const spaceLeft = position.anchorLeft - VIEWPORT_PAD;
+    const spaceBelow = win.innerHeight - position.anchorBottom - VIEWPORT_PAD;
+    const spaceAbove = position.anchorTop - VIEWPORT_PAD;
+
+    let left: number;
+    if (spaceRight >= previewWidth + PREVIEW_GAP || spaceRight >= spaceLeft) {
+      left = position.anchorRight + PREVIEW_GAP;
+    } else {
+      left = position.anchorLeft - previewWidth - PREVIEW_GAP;
+    }
+
+    let top: number;
+    if (spaceBelow >= previewHeight + 6 || spaceBelow >= spaceAbove) {
+      top = Number.isFinite(source?.clientY)
+        ? source.clientY + 14
+        : position.anchorBottom + 6;
+    } else {
+      top = Number.isFinite(source?.clientY)
+        ? source.clientY - previewHeight - 10
+        : position.anchorTop - previewHeight - 6;
+    }
+
+    left = clamp(left, VIEWPORT_PAD, Math.max(VIEWPORT_PAD, win.innerWidth - previewWidth - VIEWPORT_PAD));
+    top = clamp(top, VIEWPORT_PAD, Math.max(VIEWPORT_PAD, win.innerHeight - previewHeight - VIEWPORT_PAD));
+
     refPreview.style.left = `${left}px`;
     refPreview.style.top = `${top}px`;
-    refPreview.style.maxWidth = `${previewWidth}px`;
+    refPreview.style.width = `${maxWidth}px`;
+    refPreview.style.maxWidth = `${maxWidth}px`;
   }
 
   function setPinned(pinned: boolean) {
@@ -40,13 +100,39 @@ export function createReferencePreviewController({
     refPreview.setAttribute('data-pinned', state.refPreviewPinned ? 'true' : 'false');
   }
 
+  function clearHoverTargetHighlight() {
+    doc.querySelectorAll('.ref-hover-target').forEach((node) => {
+      node.classList.remove('ref-hover-target');
+    });
+    state.refPreviewHoverNumber = '';
+  }
+
+  function highlightHoverTarget(refNumber: string) {
+    clearHoverTargetHighlight();
+    const target = doc.getElementById(`p${refNumber}`);
+    if (!target) {
+      return;
+    }
+    target.classList.add('ref-hover-target');
+    state.refPreviewHoverNumber = refNumber;
+  }
+
+  /** Avoid duplicate DOM ids when the referenced post is already on the page. */
+  function sanitizePreviewHtml(html: string): string {
+    return String(html || '')
+      .replace(/\sid="p\d+"/g, '')
+      .replace(/\sid='p\d+'/g, '');
+  }
+
   function renderReferencePreviewPost(post, source) {
     refPreview.classList.remove('ref-preview-loading', 'ref-preview-error');
     const closeControl = state.refPreviewPinned
       ? '<button class="ref-preview-close" type="button" aria-label="Đóng cửa sổ xem trước" title="Đóng">×</button>'
       : '';
-    refPreview.innerHTML = `${closeControl}${renderPostPreviewHtml(post)}`;
+    refPreview.innerHTML = `${closeControl}${sanitizePreviewHtml(renderPostPreviewHtml(post))}`;
+    // Re-measure after layout so tall image posts flip above the cursor when needed.
     positionReferencePreview(source);
+    win.requestAnimationFrame(() => positionReferencePreview(source));
   }
 
   function renderReferencePreviewMessage(message, className, source) {
@@ -77,13 +163,17 @@ export function createReferencePreviewController({
       return;
     }
     win.clearTimeout(state.refPreviewHideTimer);
+    win.clearTimeout(state.refPreviewShowTimer);
     if (pin) {
       setPinned(true);
     }
     const requestId = ++state.refPreviewRequestId;
+    highlightHoverTarget(refNumber);
     positionReferencePreview(source);
     refPreview.classList.remove('hidden', 'ref-preview-error');
-    refPreview.classList.add('ref-preview-loading');
+    refPreview.classList.add('ref-preview-loading', 'ref-preview-visible');
+    refPreview.setAttribute('role', 'tooltip');
+    refPreview.setAttribute('aria-live', 'polite');
     refPreview.textContent = `Đang tải >>${refNumber}...`;
 
     const cached = state.refPreviewCache.get(refNumber);
@@ -116,9 +206,13 @@ export function createReferencePreviewController({
   function hideReferencePreview() {
     state.refPreviewRequestId += 1;
     win.clearTimeout(state.refPreviewHideTimer);
+    win.clearTimeout(state.refPreviewShowTimer);
     setPinned(false);
+    clearHoverTargetHighlight();
     refPreview.classList.add('hidden');
-    refPreview.classList.remove('ref-preview-loading', 'ref-preview-error');
+    refPreview.classList.remove('ref-preview-loading', 'ref-preview-error', 'ref-preview-visible');
+    refPreview.removeAttribute('role');
+    refPreview.removeAttribute('aria-live');
     refPreview.innerHTML = '';
   }
 
@@ -127,7 +221,25 @@ export function createReferencePreviewController({
       return;
     }
     win.clearTimeout(state.refPreviewHideTimer);
-    state.refPreviewHideTimer = win.setTimeout(hideReferencePreview, 140);
+    win.clearTimeout(state.refPreviewShowTimer);
+    state.refPreviewHideTimer = win.setTimeout(hideReferencePreview, HIDE_DELAY_MS);
+  }
+
+  function scheduleShowReference(refNumber: string, source) {
+    win.clearTimeout(state.refPreviewHideTimer);
+    win.clearTimeout(state.refPreviewShowTimer);
+    // Already showing this post — keep it and re-position near the cursor.
+    if (
+      !refPreview.classList.contains('hidden') &&
+      state.refPreviewHoverNumber === refNumber &&
+      !state.refPreviewPinned
+    ) {
+      positionReferencePreview(source);
+      return;
+    }
+    state.refPreviewShowTimer = win.setTimeout(() => {
+      showReference(refNumber, source).catch(() => {});
+    }, SHOW_DELAY_MS);
   }
 
   function handleReferencePointerEnter(event) {
@@ -138,7 +250,7 @@ export function createReferencePreviewController({
     if (!ref || ref.contains(event.relatedTarget)) {
       return;
     }
-    showReference(ref.dataset.ref, event).catch(() => {});
+    scheduleShowReference(ref.dataset.ref, event);
   }
 
   function handleReferencePointerLeave(event) {
@@ -160,6 +272,7 @@ export function createReferencePreviewController({
     if (!ref) {
       return;
     }
+    // Keyboard focus should show immediately for accessibility.
     showReference(ref.dataset.ref, ref).catch(() => {});
   }
 
@@ -225,7 +338,10 @@ export function createReferencePreviewController({
     body.addEventListener('mouseout', handleReferencePointerLeave);
     body.addEventListener('focusin', handleReferenceFocusIn);
     body.addEventListener('focusout', handleReferenceFocusOut);
-    refPreview.addEventListener('mouseenter', () => win.clearTimeout(state.refPreviewHideTimer));
+    refPreview.addEventListener('mouseenter', () => {
+      win.clearTimeout(state.refPreviewHideTimer);
+      win.clearTimeout(state.refPreviewShowTimer);
+    });
     refPreview.addEventListener('mouseleave', scheduleHideReferencePreview);
   }
 

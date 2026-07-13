@@ -48,6 +48,7 @@ type ThreadBoardRenderDependencies = {
   isAccountPost: (post: AnyRecord) => boolean;
   isPostFiltered: (post: AnyRecord) => boolean;
   readHiddenThreadIds: () => Set<string>;
+  readHiddenPostNumbers: () => Set<string>;
   isThreadWatched: (threadId: string) => boolean;
   pageControlsHtml: (meta: AnyRecord, actionName: string) => string;
   canModerateFromAdminToken: () => boolean;
@@ -62,11 +63,73 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
     isAccountPost,
     isPostFiltered,
     readHiddenThreadIds,
+    readHiddenPostNumbers,
     isThreadWatched,
     pageControlsHtml,
     canModerateFromAdminToken,
     posterNoteForPost
   } = dependencies;
+
+  /** Visible placeholder so users can always unhide (anonymous local + account). */
+  function hiddenPostStubHtml(post: AnyRecord = {}) {
+    const number = String(post.globalNumber || '');
+    if (!number) {
+      return '';
+    }
+    return `
+      <article class="post post-hidden-stub" id="p${escapeHtml(number)}" data-hidden-post="${escapeHtml(number)}">
+        <div class="hidden-stub-row">
+          <div class="hidden-stub-text">
+            <strong>No.${escapeHtml(number)}</strong>
+            <span class="muted">— bài đã ẩn trên trình duyệt này</span>
+          </div>
+          <button class="primary-button unhide-action" data-unhide-post="${escapeHtml(number)}" type="button">[Hiện lại]</button>
+        </div>
+      </article>
+    `;
+  }
+
+  function hiddenThreadStubHtml(thread: AnyRecord = {}) {
+    const threadId = String(thread.id || '');
+    const number = String(thread.globalNumber || '');
+    if (!threadId) {
+      return '';
+    }
+    const numberLabel = number ? `No.${escapeHtml(number)}` : 'Chủ đề';
+    const preview = String(thread.subject || '')
+      .trim()
+      .slice(0, 48);
+    return `
+      <div class="thread thread-hidden-stub" id="${number ? `p${escapeHtml(number)}` : ''}" data-hidden-thread="${escapeHtml(threadId)}">
+        <div class="hidden-stub-row">
+          <div class="hidden-stub-text">
+            <strong>${numberLabel}</strong>
+            <span class="muted">— chủ đề đã ẩn${preview ? `: ${escapeHtml(preview)}` : ''}</span>
+          </div>
+          <button class="primary-button unhide-action" data-unhide-thread="${escapeHtml(threadId)}" type="button">[Hiện lại]</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function catalogHiddenThreadStubHtml(thread: AnyRecord = {}) {
+    const threadId = String(thread.id || '');
+    const number = String(thread.globalNumber || '');
+    if (!threadId) {
+      return '';
+    }
+    return `
+      <div class="catalog-thread catalog-thread-hidden-stub" data-hidden-thread="${escapeHtml(threadId)}">
+        <div class="hidden-stub-row">
+          <div class="hidden-stub-text">
+            <strong>No.${escapeHtml(number || '?')}</strong>
+            <span class="muted">đã ẩn</span>
+          </div>
+          <button class="primary-button unhide-action" data-unhide-thread="${escapeHtml(threadId)}" type="button">[Hiện lại]</button>
+        </div>
+      </div>
+    `;
+  }
 
   function renderPostLines(lines, options: AnyRecord = {}) {
     const opNumber = Number(options.opNumber || 0);
@@ -137,13 +200,16 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
         escapeHtml(posterNote.label || posterNote.note) +
         '</span>'
       : '';
+    const quickReplyThreadAttr = options.threadId
+      ? ` data-quick-reply-thread="${escapeHtml(options.threadId)}"`
+      : '';
     const posterIdentityHtml = canReply && showPostActions
-      ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}" title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
+      ? `<button class="post-id-button hash" data-quick-reply="${post.globalNumber}"${quickReplyThreadAttr} title="Trả lời bài này" type="button">${escapeHtml(posterId(post))}</button>`
       : `<span class="hash">${escapeHtml(posterId(post))}</span>`;
     const primaryActions = showPostActions
       ? `${
           showReplyAction && canReply
-            ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}" type="button">[Trả lời]</button>`
+            ? `<button class="quote-button" data-quote="&gt;&gt;${post.globalNumber}"${quickReplyThreadAttr} type="button">[Trả lời]</button>`
             : ''
         }
       <button class="quote-button" data-copy-post-link="${escapeHtml(permalink)}" type="button">[Link]</button>
@@ -152,7 +218,11 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
       ${selfDeleteActions}
       ${accountEditAction}
       <button class="quote-button" data-report="${post.globalNumber}" type="button">[Báo cáo]</button>
-      <button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>`
+      ${
+        options.hideAsThread && post.id
+          ? `<button class="quote-button" data-hide-thread="${escapeHtml(post.id)}" type="button">[Ẩn]</button>`
+          : `<button class="quote-button" data-hide-post="${post.globalNumber}" type="button">[Ẩn]</button>`
+      }`
       : '';
     const secondaryActions = showPostActions && !compactActions
       ? `<button class="quote-button post-action-secondary" data-filter-poster="${escapeHtml(posterId(post))}" data-filter-board="${escapeHtml(post.boardSlug || '')}" type="button">[Lọc ID]</button>
@@ -166,7 +236,7 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
         ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
         <span class="name">${escapeHtml(postDisplayName(post))}</span>${post.tripcode ? `<span class="tripcode" title="Tripcode">${escapeHtml(post.tripcode)}</span>` : ''}${capcodeBadgeHtml(post)}
         <span class="date">${formatPostDate(post.createdAt)}</span>
-        <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" data-quick-reply="${post.globalNumber}" title="Trả lời bài này (No.${post.globalNumber})">${post.globalNumber}</a></span>
+        <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" data-quick-reply="${post.globalNumber}"${quickReplyThreadAttr} title="Trả lời bài này (No.${post.globalNumber})">${post.globalNumber}</a></span>
         ${posterIdentityHtml}
         ${opMarker}
         ${youMarker}
@@ -210,12 +280,18 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
     `;
   }
 
-  function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply }: AnyRecord = {}) {
+  function threadCommentsHtml(comments, { opNumber, opPosterHash, canReply, hiddenPosts }: AnyRecord = {}) {
     if (!comments.length) {
       return state.threadSearchTerm
         ? '<p class="muted">Không có bình luận khớp tìm kiếm trong thread.</p>'
         : '<p class="muted">Chưa có bình luận công khai trên trang này.</p>';
     }
+    const hidden =
+      hiddenPosts instanceof Set
+        ? hiddenPosts
+        : typeof readHiddenPostNumbers === 'function'
+          ? readHiddenPostNumbers()
+          : new Set();
     const lastSeen = Number(state.threadLastSeenBefore || 0);
     let markerShown = false;
     return comments
@@ -227,6 +303,9 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
             : '';
         if (isUnread) {
           markerShown = true;
+        }
+        if (hidden.has(String(comment.globalNumber))) {
+          return `${marker}${hiddenPostStubHtml(comment)}`;
         }
         return `${marker}${postHtml(comment, 'post comment', {
           opNumber,
@@ -246,7 +325,6 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
       position === 'bottom' && canReply
         ? '<button class="link-button toolbar-reply-link" data-open-reply type="button">Đăng trả lời</button>'
         : '<span></span>';
-    const checked = state.autoUpdate ? 'checked' : '';
     const archivedLabel = detail.thread.isArchived ? '<span class="archived-label">Đã lưu trữ</span>' : '';
     const lockedLabel = detail.thread.isLocked ? '<span class="locked-label">🔒 Đã khóa</span>' : '';
     const watchLabel = isThreadWatched(detail.thread.id) ? 'Bỏ theo dõi' : 'Theo dõi';
@@ -267,8 +345,6 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
       [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
       [<button class="link-button" data-thread-refresh type="button">Cập nhật</button>]
       [<button class="link-button" data-thread-collapse-posts type="button" aria-pressed="false">Thu bài</button>]
-      [<label title="Tự lấy phản hồi mới"><input type="checkbox" data-auto-update ${checked}> Tự động</label>]
-      <span class="auto-countdown">${state.autoUpdate ? state.autoCountdown : ''}</span>
       ${archivedLabel}
       ${lockedLabel}
       ${slowModeLabel}
@@ -292,6 +368,7 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
 
   function renderCatalogThreads(threads) {
     const term = els.catalogSearchInput.value.trim();
+    const hidden = readHiddenThreadIds();
     const visibleThreads = sortedCatalogThreads(
       threads.filter((thread) =>
         !isPostFiltered(thread) && catalogThreadMatchesFilter(thread, state.catalogFilter) && threadMatchesSearch(thread, term, state.boards)
@@ -318,7 +395,11 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
       els.catalogGrid.innerHTML = '<p class="muted">Không có OP khớp tìm kiếm.</p>';
       return;
     }
-    els.catalogGrid.innerHTML = visibleThreads.map(catalogThreadHtml).join('');
+    els.catalogGrid.innerHTML = visibleThreads
+      .map((thread) =>
+        hidden.has(String(thread.id)) ? catalogHiddenThreadStubHtml(thread) : catalogThreadHtml(thread)
+      )
+      .join('');
   }
 
   function renderArchiveThreads(threads) {
@@ -331,8 +412,9 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
   }
 
   function boardReplyPreviewsHtml(thread) {
+    const hiddenPosts = typeof readHiddenPostNumbers === 'function' ? readHiddenPostNumbers() : new Set();
     const comments = (Array.isArray(thread.previewComments) ? thread.previewComments : []).filter(
-      (comment) => !isPostFiltered(comment)
+      (comment) => !isPostFiltered(comment) && !hiddenPosts.has(String(comment.globalNumber))
     );
     if (!comments.length && !thread.omittedReplyCount && !thread.omittedImageCount) {
       return '';
@@ -344,7 +426,12 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
           .map(
             (comment) => `
           <article class="reply-preview" id="p${comment.globalNumber}">
-            ${meta(comment, { replyAction: false, compactActions: true })}
+            ${meta(comment, {
+              replyAction: false,
+              compactActions: true,
+              threadId: thread.id,
+              canReply: !thread.isArchived && !thread.isLocked
+            })}
             <div class="post-body">${renderPostLines(comment.bodyLines || [], { opNumber: thread.globalNumber })}</div>
           </article>
         `
@@ -367,19 +454,22 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
       button.setAttribute('aria-pressed', String(active));
     });
     const hidden = readHiddenThreadIds();
-    const visibleThreads = threads.filter(
-      (thread) => !hidden.has(String(thread.id)) && !isPostFiltered(thread) && threadMatchesSearch(thread, term, state.boards)
+    const listedThreads = threads.filter(
+      (thread) => !isPostFiltered(thread) && threadMatchesSearch(thread, term, state.boards)
     );
-    if (!visibleThreads.length) {
+    if (!listedThreads.length) {
       els.threadList.innerHTML = term
         ? '<p class="muted">Không có OP khớp tìm kiếm.</p>'
         : '<p class="muted">Chưa có chủ đề công khai.</p>';
       els.boardPagination.innerHTML = pageControlsHtml(state.boardPageMeta, 'board');
       return;
     }
-    els.threadList.innerHTML = visibleThreads
-      .map(
-        (thread) => `
+    els.threadList.innerHTML = listedThreads
+      .map((thread) => {
+        if (hidden.has(String(thread.id))) {
+          return hiddenThreadStubHtml(thread);
+        }
+        return `
           <div class="thread ${thread.isSticky ? 'thread-sticky' : ''}" id="p${thread.globalNumber}">
             <div class="thread-op">
               ${
@@ -389,8 +479,18 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
                       .join('')}</div>`
                   : '<div class="thread-thumb-wrap"><div class="thumb placeholder">Không có tệp</div></div>'
               }
-              ${meta(thread, { replyAction: false, compactActions: true })}
-              <a class="thread-open" href="#thread/${thread.id}">[Trả lời]</a>
+              ${meta(thread, {
+                replyAction: false,
+                compactActions: true,
+                hideAsThread: true,
+                threadId: thread.id,
+                canReply: !thread.isArchived && !thread.isLocked
+              })}
+              ${
+                thread.isArchived || thread.isLocked
+                  ? `<a class="thread-open" href="#thread/${encodeURIComponent(thread.id)}" title="Mở chủ đề">[Xem chủ đề]</a>`
+                  : `<button class="link-button thread-open" data-board-reply="${escapeHtml(thread.id)}" data-board-reply-number="${escapeHtml(thread.globalNumber)}" data-board-reply-locked="${thread.isLocked ? '1' : ''}" data-board-reply-archived="${thread.isArchived ? '1' : ''}" type="button" title="Trả lời nhanh (không rời bảng)">[Trả lời]</button>`
+              }
               ${threadSubjectHtml(thread)}
               <div class="post-body">${renderPostLines(thread.bodyLines || [], { opNumber: thread.globalNumber })}</div>
               ${diceRollsHtml(thread.diceRolls)}
@@ -398,13 +498,13 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
               <div class="thread-meta">
                 <span>${thread.replyCount} trả lời</span>
                 <span>đẩy lúc ${new Date(thread.bumpedAt).toLocaleTimeString()}</span>
-                <a href="#thread/${thread.id}">Xem chủ đề</a>
-                <button class="link-button" data-hide-thread="${escapeHtml(thread.id)}" type="button">[Ẩn]</button>
+                <a href="#thread/${encodeURIComponent(thread.id)}">Xem chủ đề</a>
+                <button class="link-button" data-hide-thread="${escapeHtml(thread.id)}" type="button">[Ẩn chủ đề]</button>
               </div>
             </div>
           </div>
-        `
-      )
+        `;
+      })
       .join('');
     els.boardPagination.innerHTML = pageControlsHtml(state.boardPageMeta, 'board');
   }
@@ -413,6 +513,7 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
     renderPostLines,
     meta,
     postHtml,
+    hiddenPostStubHtml,
     threadCommentsHtml,
     threadToolbarHtml,
     threadHeaderActionsHtml,

@@ -147,8 +147,12 @@
             <p id="accountStatus" class="muted">Tài khoản tùy chọn cho dữ liệu riêng.</p>
           </div>
         </div>
+        <div id="accountLoggedOut" class="login-panel account-guest-notice stack">
+          <p class="account-note">Bạn chưa đăng nhập tài khoản. Vẫn có thể đọc và đăng bài ẩn danh bình thường.</p>
+          <p class="account-actions">[<a href="#login">Đăng nhập</a>] [<a href="#register">Đăng ký</a>]</p>
+        </div>
         <div id="reactAccountPreferencesSummary" class="react-island" data-react-island="account-preferences-summary"></div>
-        <form id="accountSettingsForm" class="login-panel stack hidden">
+        <form id="accountSettingsForm" class="login-panel account-settings-panel stack hidden">
           <div id="accountSettingsError" class="form-error hidden" role="alert"></div>
           <label class="field-row">
             <span>Giao diện</span>
@@ -165,13 +169,17 @@
           </label>
           <div class="field-row checkbox-row">
             <span>Đồng bộ</span>
-            <label><input id="accountSyncDrafts" type="checkbox" /> Bản nháp riêng tư</label>
+            <div class="field-row-options">
+              <label><input id="accountSyncDrafts" type="checkbox" /> Bản nháp riêng tư</label>
+            </div>
           </div>
           <div class="field-row checkbox-row">
             <span>Hiển thị</span>
-            <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
-            <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn thumbnail</label>
-            <label><input id="accountWatchedUnreadOnly" type="checkbox" /> Watchlist chỉ chưa đọc</label>
+            <div class="field-row-options">
+              <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
+              <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn thumbnail</label>
+              <label><input id="accountWatchedUnreadOnly" type="checkbox" /> Watchlist chỉ chưa đọc</label>
+            </div>
           </div>
           <label class="field-row">
             <span>Sắp xếp watchlist</span>
@@ -183,10 +191,12 @@
           </label>
           <div class="field-row checkbox-row">
             <span>Thông báo</span>
-            <label><input id="accountEmailNotifications" type="checkbox" /> Thông báo email</label>
-            <label><input id="accountNotifyWatchedThreads" type="checkbox" /> Thread đang theo dõi</label>
-            <label><input id="accountNotifyBoardSubscriptions" type="checkbox" /> Bảng đang theo dõi</label>
-            <label><input id="accountBrowserNotifyWatchedThreads" type="checkbox" /> Trình duyệt: thread đang theo dõi</label>
+            <div class="field-row-options">
+              <label><input id="accountEmailNotifications" type="checkbox" /> Thông báo email</label>
+              <label><input id="accountNotifyWatchedThreads" type="checkbox" /> Thread đang theo dõi</label>
+              <label><input id="accountNotifyBoardSubscriptions" type="checkbox" /> Bảng đang theo dõi</label>
+              <label><input id="accountBrowserNotifyWatchedThreads" type="checkbox" /> Trình duyệt: thread đang theo dõi</label>
+            </div>
           </div>
           <p id="accountBrowserNotificationsStatus" class="account-note">Tắt thông báo trình duyệt cho thread đang theo dõi.</p>
           <div class="field-row account-board-settings">
@@ -199,6 +209,15 @@
           </div>
           <p class="account-note">Cài đặt này không đổi tên hiển thị khi đăng bài và không được đưa vào post public.</p>
         </form>
+        <section id="browserHiddenPanel" class="login-panel account-settings-panel stack" aria-labelledby="browserHiddenTitle">
+          <h2 id="browserHiddenTitle">Nội dung đã ẩn</h2>
+          <p class="muted account-hidden-help">Ẩn bài/chủ đề chỉ lưu trên <strong>trình duyệt này</strong> (không cần tài khoản). Sau khi ẩn, vẫn còn dòng stub đỏ <strong>[Hiện lại]</strong> trên bảng/thread. Danh sách bên dưới cũng có nút khôi phục.</p>
+          <div id="browserHiddenSummary" class="account-private-grid"></div>
+          <div class="form-actions account-actions account-hidden-actions">
+            <button class="ghost-button" data-clear-hidden-posts type="button">[Hiện lại hết bài ẩn]</button>
+            <button class="ghost-button" data-clear-hidden-threads type="button">[Hiện lại hết chủ đề ẩn]</button>
+          </div>
+        </section>
         <section id="accountPasskeysPanel" class="login-panel stack hidden" aria-labelledby="accountPasskeysTitle">
           <h2 id="accountPasskeysTitle">Thiết bị xác thực (Passkey)</h2>
           <div id="accountPasskeysList" class="account-private-grid"></div>
@@ -237,6 +256,8 @@
             <button class="ghost-button" data-clear-account-private="contentFilters" type="button">[Xóa bộ lọc]</button>
             <button class="ghost-button" data-clear-account-private="replyTemplates" type="button">[Xóa mẫu]</button>
             <button class="ghost-button" data-clear-account-private="posterNotes" type="button">[Xóa ghi chú ID]</button>
+            <button class="ghost-button" data-clear-account-private="hiddenPosts" type="button">[Xóa bài ẩn]</button>
+            <button class="ghost-button" data-clear-account-private="hiddenThreads" type="button">[Xóa chủ đề ẩn]</button>
             <button class="ghost-button" data-clear-account-private="" type="button">[Xóa tất cả]</button>
           </div>
         </section>
@@ -276,8 +297,4 @@
             <button id="disable2FAButton" class="ghost-button" style="max-width:200px; color:#c92a2a;" type="button">[Hủy kích hoạt 2FA]</button>
           </div>
         </section>
-        <div id="accountLoggedOut" class="login-panel stack">
-          <p class="account-note">Bạn chưa đăng nhập tài khoản. Vẫn có thể đọc và đăng bài ẩn danh bình thường.</p>
-          <p class="account-actions">[<a href="#login">Đăng nhập</a>] [<a href="#register">Đăng ký</a>]</p>
-        </div>
       </section>

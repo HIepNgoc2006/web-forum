@@ -23,6 +23,8 @@ import {
   createPosterProofHash,
   createRateLimiter,
   createTripcode,
+  getClientIp,
+  isTrustProxyEnabled,
   securityConfigStatus,
   signJwt,
   verifyHcaptcha,
@@ -828,12 +830,52 @@ test('createAiClient fallback rejects new media features without a key', async (
   }
   try {
     const ai = createAiClient();
-    await assert.rejects(() => ai.translate('xin chao', 'en'), /AI/);
     await assert.rejects(() => ai.transcribe({ data: 'AAAA', mimeType: 'audio/mpeg' }), /AI/);
     await assert.rejects(() => ai.caption({ data: 'AAAA', mimeType: 'image/avif' }), /AI/);
     await assert.rejects(() => ai.moderateImage({ data: 'AAAA', mimeType: 'image/avif' }), /AI/);
     await assert.rejects(() => ai.speak('xin chao'), /AI/);
   } finally {
+    for (const key of keys) {
+      if (originalEnv[key] === undefined) {
+        delete process.env[key];
+      } else {
+        process.env[key] = originalEnv[key];
+      }
+    }
+  }
+});
+
+test('createAiClient uses free Google Translate when AI is not configured', async () => {
+  const keys = [
+    'AI_PROVIDER',
+    'GOOGLE_AI_API_KEY',
+    'OPENAI_COMPATIBLE_API_KEY',
+    'OPENAI_COMPATIBLE_BASE_URL',
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL'
+  ];
+  const originalEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const originalFetch = globalThis.fetch;
+  for (const key of keys) {
+    delete process.env[key];
+  }
+  try {
+    globalThis.fetch = async (_url, options = {}) => {
+      const body = JSON.parse(String(options.body || 'null'));
+      assert.equal(body[1], 'te');
+      assert.deepEqual(body[0][0], ['Xin chào']);
+      assert.equal(body[0][1], 'auto');
+      assert.equal(body[0][2], 'en');
+      return new Response(JSON.stringify([['Hello']]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' }
+      });
+    };
+    const ai = createAiClient();
+    const translated = await ai.translate('Xin chào', 'en');
+    assert.equal(translated, 'Hello');
+  } finally {
+    globalThis.fetch = originalFetch;
     for (const key of keys) {
       if (originalEnv[key] === undefined) {
         delete process.env[key];
@@ -1435,7 +1477,7 @@ test('votePost toggles upvote/downvote on a comment without leaking voters', asy
   );
 });
 
-test('reactPost toggles anonymous and account reactions without leaking voters', async () => {
+test('reactPost requires account and toggles without leaking voters', async () => {
   const realtime = createEvents();
   const service = createTestForumService({
     store: createTestMemoryStore(),
@@ -1452,20 +1494,25 @@ test('reactPost toggles anonymous and account reactions without leaking voters',
   });
   const target = created.thread.globalNumber;
 
-  const liked = await service.reactPost({ globalNumber: target, reaction: 'like', posterToken: 'reader-a', ip: '203.0.113.8' });
+  await assert.rejects(
+    () => service.reactPost({ globalNumber: target, reaction: 'like', posterToken: 'reader-a', ip: '203.0.113.8' }),
+    /đăng nhập tài khoản để react/
+  );
+
+  const liked = await service.reactPost({ globalNumber: target, reaction: 'like', accountId: 'reader-a' });
   assert.equal(liked.reactions.like, 1);
   assert.equal(liked.myReaction, 'like');
   assert.equal(realtime.events.at(-1).event, 'thread:updated');
 
-  const switched = await service.reactPost({ globalNumber: target, reaction: 'thanks', posterToken: 'reader-a', ip: '203.0.113.8' });
+  const switched = await service.reactPost({ globalNumber: target, reaction: 'thanks', accountId: 'reader-a' });
   assert.equal(switched.reactions.like, 0);
   assert.equal(switched.reactions.thanks, 1);
   assert.equal(switched.myReaction, 'thanks');
 
-  const account = await service.reactPost({ globalNumber: target, reaction: 'thanks', accountId: 'reader-account' });
-  assert.equal(account.reactions.thanks, 2);
+  const other = await service.reactPost({ globalNumber: target, reaction: 'thanks', accountId: 'reader-b' });
+  assert.equal(other.reactions.thanks, 2);
 
-  const off = await service.reactPost({ globalNumber: target, reaction: 'thanks', posterToken: 'reader-a', ip: '203.0.113.8' });
+  const off = await service.reactPost({ globalNumber: target, reaction: 'thanks', accountId: 'reader-a' });
   assert.equal(off.reactions.thanks, 1);
   assert.equal(off.myReaction, null);
 
@@ -1474,9 +1521,51 @@ test('reactPost toggles anonymous and account reactions without leaking voters',
   assert.equal(JSON.stringify(detail.thread).includes('reactionVoters'), false);
 
   await assert.rejects(
-    () => service.reactPost({ globalNumber: target, reaction: 'invalid', posterToken: 'reader-a' }),
+    () => service.reactPost({ globalNumber: target, reaction: 'invalid', accountId: 'reader-a' }),
     /Reaction không hợp lệ/
   );
+});
+
+test('reactPost prunes legacy anon keys so counts cannot double', async () => {
+  const store = createTestMemoryStore();
+  const service = createTestForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Legacy anon reaction cleanup',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    posterToken: 'author'
+  });
+  const target = created.thread.globalNumber;
+
+  // Simulate pre-account-only data: anon fingerprint + inflated public count.
+  const state = await store.read();
+  const thread = state.threads.find((item) => item.globalNumber === target);
+  thread.reactionVoters = {
+    'anon:legacy-fingerprint': 'like',
+    'account:reader-a': 'like'
+  };
+  thread.reactions = { like: 2, laugh: 0, surprise: 0, sad: 0, angry: 0, thanks: 0 };
+  await store.write(state);
+
+  // Public thread must ignore legacy anon keys even before a new react.
+  const before = await service.getThread(created.thread.id);
+  assert.equal(before.thread.reactions.like, 1);
+
+  // Reacting again prunes anon keys and keeps one account reaction.
+  const toggledOff = await service.reactPost({ globalNumber: target, reaction: 'like', accountId: 'reader-a' });
+  assert.equal(toggledOff.reactions.like, 0);
+  assert.equal(toggledOff.myReaction, null);
+
+  const afterState = await store.read();
+  const afterThread = afterState.threads.find((item) => item.globalNumber === target);
+  assert.equal(Object.keys(afterThread.reactionVoters || {}).some((key) => key.startsWith('anon:')), false);
+  assert.equal(afterThread.reactions.like, 0);
 });
 
 
@@ -1921,32 +2010,15 @@ test('image size limits use defaults when env values are invalid', async () => {
   process.env.MAX_THUMBNAIL_BYTES = 'not-a-number';
 
   try {
+    const { publicConfig, DEFAULT_MAX_IMAGE_BYTES } = await import('../src/core/config.ts');
+    assert.equal(publicConfig().maxImageBytes, DEFAULT_MAX_IMAGE_BYTES);
+
     const service = createTestForumService({
       store: createTestMemoryStore(),
       ai: safeAi,
       realtime: createEvents(),
       now: () => new Date('2026-05-22T08:00:00.000Z')
     });
-
-    await assert.rejects(
-      () =>
-        service.createThread({
-          boardSlug: 'hoc-tap',
-          body: 'Anh qua lon',
-          captchaToken: 'dev-pass',
-          ip: '203.0.113.7',
-          image: {
-            name: 'large.jpg',
-            type: 'image/jpeg',
-            dataUrl: `data:image/jpeg;base64,${'A'.repeat(1_500_001)}`
-          }
-        }),
-      (error) => {
-        assert.equal(asServiceError(error).statusCode, 413);
-        assert.equal(asServiceError(error).message, 'Ảnh quá lớn');
-        return true;
-      }
-    );
 
     await assert.rejects(
       () =>
@@ -1982,6 +2054,48 @@ test('image size limits use defaults when env values are invalid', async () => {
       delete process.env.MAX_THUMBNAIL_BYTES;
     } else {
       process.env.MAX_THUMBNAIL_BYTES = originalMaxThumbnailBytes;
+    }
+  }
+});
+
+test('image uploads reject files larger than MAX_IMAGE_BYTES', async () => {
+  const originalMaxImageBytes = process.env.MAX_IMAGE_BYTES;
+  // 12 decoded bytes; base64 "AAAA" is 3 bytes, so repeat enough to exceed 12.
+  process.env.MAX_IMAGE_BYTES = '12';
+
+  try {
+    const service = createTestForumService({
+      store: createTestMemoryStore(),
+      ai: safeAi,
+      realtime: createEvents(),
+      now: () => new Date('2026-05-22T08:00:00.000Z')
+    });
+
+    await assert.rejects(
+      () =>
+        service.createThread({
+          boardSlug: 'hoc-tap',
+          body: 'Anh qua lon',
+          captchaToken: 'dev-pass',
+          ip: '203.0.113.7',
+          image: {
+            name: 'large.jpg',
+            type: 'image/jpeg',
+            // 24 base64 chars => 18 decoded bytes > 12
+            dataUrl: `data:image/jpeg;base64,${'A'.repeat(24)}`
+          }
+        }),
+      (error) => {
+        assert.equal(asServiceError(error).statusCode, 413);
+        assert.equal(asServiceError(error).message, 'Ảnh quá lớn');
+        return true;
+      }
+    );
+  } finally {
+    if (originalMaxImageBytes === undefined) {
+      delete process.env.MAX_IMAGE_BYTES;
+    } else {
+      process.env.MAX_IMAGE_BYTES = originalMaxImageBytes;
     }
   }
 });
@@ -2847,6 +2961,40 @@ test('admin moderation settings update the queue confidence threshold', async ()
   assert.equal(settings.moderationConfidenceThreshold, 0.8);
   assert.equal(persistedSettings.moderationConfidenceThreshold, 0.8);
   assert.equal(created.status, 'published');
+});
+
+test('owner site content update persists and sanitizes policy copy', async () => {
+  const service = createForumService({
+    store: createTestMemoryStore(),
+    ai: {
+      async moderate() {
+        return { status: 'Safe', labels: [], confidence: 1 };
+      }
+    },
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+
+  const defaults = await service.getSiteContent();
+  assert.ok(defaults.policyTitle);
+  assert.ok(Array.isArray(defaults.rules));
+
+  const updated = await service.updateSiteContent(
+    {
+      policyTitle: '  <b>Custom Title</b>  ',
+      rules: ['Rule one', '', 'Rule two', 'x'.repeat(600)],
+      pii: '<script>alert(1)</script>Avoid PII here'
+    },
+    { actor: 'owner' }
+  );
+  const persisted = await service.getSiteContent();
+
+  assert.equal(updated.policyTitle, 'Custom Title');
+  assert.deepEqual(updated.rules.slice(0, 2), ['Rule one', 'Rule two']);
+  assert.ok(updated.rules[2].length <= 500);
+  assert.equal(updated.pii.includes('<script>'), false);
+  assert.equal(persisted.policyTitle, 'Custom Title');
+  assert.equal(persisted.pii.includes('Avoid PII here'), true);
 });
 
 test('admin reports include priority metadata and support priority filtering', async () => {
@@ -4641,6 +4789,22 @@ test('jwt verification rejects tampered tokens', () => {
 
 test('jwt verification normalizes malformed token errors', () => {
   assert.throws(() => verifyJwt('not-json.not-json.signature', 'secret'), /Invalid token/);
+});
+
+test('getClientIp only trusts X-Forwarded-For when TRUST_PROXY is enabled', () => {
+  const request = {
+    headers: { 'x-forwarded-for': '198.51.100.10, 203.0.113.1' },
+    socket: { remoteAddress: '10.0.0.5' }
+  } as any;
+
+  assert.equal(getClientIp(request, { TRUST_PROXY: '1' } as NodeJS.ProcessEnv), '198.51.100.10');
+  assert.equal(getClientIp(request, { TRUST_PROXY: 'true' } as NodeJS.ProcessEnv), '198.51.100.10');
+  assert.equal(getClientIp(request, { TRUST_PROXY: '0', NODE_ENV: 'production' } as NodeJS.ProcessEnv), '10.0.0.5');
+  assert.equal(getClientIp(request, { NODE_ENV: 'production' } as NodeJS.ProcessEnv), '10.0.0.5');
+  // Non-production defaults to trusting the proxy header for local/dev/tests.
+  assert.equal(getClientIp(request, { NODE_ENV: 'development' } as NodeJS.ProcessEnv), '198.51.100.10');
+  assert.equal(isTrustProxyEnabled({ NODE_ENV: 'production' } as NodeJS.ProcessEnv), false);
+  assert.equal(isTrustProxyEnabled({ NODE_ENV: 'production', TRUST_PROXY: 'yes' } as NodeJS.ProcessEnv), true);
 });
 
 test('security config status reports readiness without exposing values', () => {

@@ -146,7 +146,8 @@ export function createAccountScreenController({
     const adminOnly = Boolean(adminUsername);
     els.accountLoginLink.classList.toggle('hidden', loggedIn || adminOnly);
     els.accountRegisterLink.classList.toggle('hidden', loggedIn || adminOnly);
-    els.accountSettingsLink.classList.toggle('hidden', !loggedIn && !adminOnly);
+    // Always show settings: anonymous users need a path to unhide posts/threads (local storage).
+    els.accountSettingsLink.classList.remove('hidden');
     if (els.accountLogoutButton) {
       els.accountLogoutButton.classList.toggle('hidden', !loggedIn);
     }
@@ -157,7 +158,7 @@ export function createAccountScreenController({
       els.accountSettingsLink.textContent = `@${adminUsername}`;
       els.accountSettingsLink.setAttribute('href', '#admin');
     } else {
-      els.accountSettingsLink.textContent = 'Tài khoản';
+      els.accountSettingsLink.textContent = 'Cài đặt';
       els.accountSettingsLink.setAttribute('href', '#account');
     }
 

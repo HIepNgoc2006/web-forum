@@ -1,6 +1,7 @@
 import { startAuthentication, startRegistration } from '@simplewebauthn/browser';
 
 import { escapeHtml } from './format';
+import { writeAdminToken } from './storage';
 import type { AnyRecord } from './types';
 
 export function bindAccountPasskeyEvents({
@@ -180,7 +181,7 @@ export function bindAdminPasskeyEvents({
       });
 
       state.token = result.token;
-      localStorage.setItem('adminToken', state.token);
+      writeAdminToken(state.token);
       els.adminPassword.value = '';
       showToast('Đăng nhập quản trị bằng Passkey thành công.');
       await loadAdmin();
@@ -226,7 +227,8 @@ export function bindAdminPasskeyEvents({
     try {
       const passkeys = await api('/api/account/passkeys', { auth: 'admin' });
       if (!passkeys.length) {
-        els.adminPasskeysList.innerHTML = '<p class="latest-empty">Chưa đăng ký thiết bị xác thực nào.</p>';
+        els.adminPasskeysList.innerHTML =
+          '<p class="admin-passkeys-empty muted">Chưa đăng ký thiết bị nào. Bấm “Thêm Passkey mới” để đăng ký.</p>';
         return;
       }
       els.adminPasskeysList.innerHTML = passkeys
@@ -234,13 +236,13 @@ export function bindAdminPasskeyEvents({
           const deviceType = passkey.credentialDeviceType === 'singleDevice' ? 'Thiết bị đơn (Vân tay/Khuôn mặt)' : 'Đa thiết bị (iCloud/Google Keychain)';
           const date = new Date(passkey.createdAt).toLocaleString('vi-VN');
           return `
-          <div class="watch-item">
-            <div class="watch-thread-link">
-              <span class="watch-board">Passkey</span>
-              <span class="watch-preview" style="display:inline-block; max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(passkey.id)}">ID: ${escapeHtml(passkey.id)}</span>
-              <span class="watch-stats">${escapeHtml(deviceType)} · Tạo lúc: ${escapeHtml(date)}</span>
+          <div class="admin-passkey-item">
+            <div class="admin-passkey-meta">
+              <strong class="admin-passkey-type">${escapeHtml(deviceType)}</strong>
+              <span class="muted" title="${escapeHtml(passkey.id)}">ID: ${escapeHtml(passkey.id)}</span>
+              <span class="muted">Tạo lúc: ${escapeHtml(date)}</span>
             </div>
-            <button class="link-button watch-remove" data-delete-admin-passkey="${escapeHtml(passkey.id)}" type="button">[Xóa]</button>
+            <button class="link-button" data-delete-admin-passkey="${escapeHtml(passkey.id)}" type="button">[Xóa]</button>
           </div>
         `;
         })

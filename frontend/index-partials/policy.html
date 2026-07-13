@@ -1,8 +1,8 @@
       <section id="policyScreen" class="screen" aria-labelledby="policyTitle">
         <div class="policy-page-head">
           <p class="path-chip">/policy/</p>
-          <h1 id="policyTitle">Nội quy, riêng tư và báo cáo</h1>
-          <p class="muted">Bản ngắn cho người dùng public trước khi đăng hoặc báo cáo bài viết.</p>
+          <h1 id="policyTitle" data-policy-title>Nội quy, riêng tư và báo cáo</h1>
+          <p class="muted" data-policy-subtitle>Bản ngắn cho người dùng public trước khi đăng hoặc báo cáo bài viết.</p>
           <nav class="policy-jump-links" aria-label="Mục chính sách">
             [<a href="#policy/rules">Nội quy & riêng tư</a>]
             [<a href="#policy/feedback">Góp ý</a>]
@@ -15,7 +15,7 @@
         <div class="policy-grid">
           <section id="policy-rules" class="policy-box" aria-labelledby="policyRulesTitle">
             <h2 id="policyRulesTitle">Nội quy & riêng tư</h2>
-            <ul>
+            <ul data-policy-list="rules">
               <li>Không đăng đe dọa, quấy rối, kích động thù ghét, spam hoặc nội dung bất hợp pháp.</li>
               <li>Không doxxing, không tố cáo cá nhân chưa kiểm chứng, không đăng ảnh riêng tư của người khác.</li>
               <li>Giữ bài đúng bảng; bài sai bảng, lặp lại hoặc cố tình né kiểm duyệt có thể bị xóa.</li>
@@ -24,7 +24,7 @@
 
           <section class="policy-box" aria-labelledby="policyPrivacyTitle">
             <h2 id="policyPrivacyTitle">Ẩn danh & riêng tư</h2>
-            <ul>
+            <ul data-policy-list="privacy">
               <li>Không cần tài khoản. Public chỉ thấy tên mặc định, số bài và mã poster ẩn danh trong ngữ cảnh thread.</li>
               <li>Trình duyệt giữ poster token cục bộ để nhận diện OP/xóa bài; server chỉ dùng hash cho chống lạm dụng.</li>
               <li>Raw IP, captcha token, poster token và admin token không được trả về public và không gửi lên AI.</li>
@@ -33,7 +33,7 @@
 
           <section class="policy-box" aria-labelledby="policyAiTitle">
             <h2 id="policyAiTitle">AI kiểm duyệt</h2>
-            <ul>
+            <ul data-policy-list="ai">
               <li>AI quét bài trước khi public để phát hiện độc hại, spam, thù ghét, tin giả và rủi ro PII.</li>
               <li>Bài bị gắn cờ sẽ bị giữ khỏi public cho đến khi quản trị viên xem xét.</li>
               <li>AI hỗ trợ kiểm duyệt, không phải quyết định cuối cùng; admin có quyền duyệt hoặc xóa.</li>
@@ -42,7 +42,7 @@
 
           <section id="policy-report" class="policy-box" aria-labelledby="policyReportTitle">
             <h2 id="policyReportTitle">Cách báo cáo</h2>
-            <ul>
+            <ul data-policy-list="report">
               <li>Bấm <strong>[Báo cáo]</strong> dưới bài viết và nhập lý do ngắn, ví dụ: lộ số điện thoại, quấy rối, spam.</li>
               <li>Báo cáo đi vào hàng đợi admin; người báo cáo chỉ được lưu dưới dạng hash, không lộ poster token.</li>
               <li>Nếu có nguy cơ khẩn cấp ngoài đời thật, hãy liên hệ nhà trường hoặc cơ quan chức năng trước.</li>
@@ -52,7 +52,7 @@
 
           <section id="policy-appeal" class="policy-box" aria-labelledby="policyAppealTitle">
             <h2 id="policyAppealTitle">Kháng nghị bài bị xóa</h2>
-            <p>Dán mã kháng nghị đã nhận khi đăng bài và viết lý do ngắn để admin xem lại quyết định xóa.</p>
+            <p data-policy-text="appealIntro">Dán mã kháng nghị đã nhận khi đăng bài và viết lý do ngắn để admin xem lại quyết định xóa.</p>
             <form id="appealForm" class="policy-form stack">
               <div id="appealError" class="form-error hidden" role="alert"></div>
               <label class="field-row">
@@ -72,7 +72,7 @@
 
           <section id="policy-feedback" class="policy-box" aria-labelledby="policyFeedbackTitle">
             <h2 id="policyFeedbackTitle">Góp ý</h2>
-            <ul>
+            <ul data-policy-list="feedback">
               <li>Dùng bảng <a href="#board/hoi-dap">Hỏi đáp</a> cho góp ý public về tính năng, nội quy, lỗi hiển thị hoặc trải nghiệm sử dụng.</li>
               <li>Viết góp ý cụ thể: vấn đề gặp phải, nơi xảy ra, ảnh hưởng và gợi ý cải thiện nếu có.</li>
               <li>Không đưa thông tin riêng tư của người khác vào bài góp ý; hãy dùng báo cáo nếu nội dung cần xử lý kín.</li>
@@ -81,7 +81,7 @@
 
           <section id="policy-contact" class="policy-box" aria-labelledby="policyContactTitle">
             <h2 id="policyContactTitle">Liên hệ</h2>
-            <ul>
+            <ul data-policy-list="contact">
               <li>Vấn đề public hoặc câu hỏi chung: đăng tại <a href="#board/hoi-dap">Hỏi đáp</a> để admin và cộng đồng cùng phản hồi.</li>
               <li>Vấn đề liên quan bài viết cụ thể, riêng tư hoặc vi phạm: dùng nút <strong>[Báo cáo]</strong> ngay dưới bài đó.</li>
               <li>Yêu cầu khẩn cấp ngoài phạm vi diễn đàn nên gửi trực tiếp tới nhà trường, đơn vị quản lý hoặc cơ quan chức năng phù hợp.</li>
@@ -91,7 +91,7 @@
 
         <section class="policy-box policy-pii" aria-labelledby="policyPiiTitle">
           <h2 id="policyPiiTitle">PII cần tránh</h2>
-          <p>
+          <p data-policy-text="pii">
             PII là thông tin cá nhân có thể nhận diện. Không đăng tên thật kèm ngữ cảnh nhận diện, số điện thoại,
             email cá nhân, mã sinh viên, lớp học cụ thể, phòng ký túc xá, lịch trình riêng, giấy tờ hoặc ảnh có thể
             nhận ra người khác. Nếu thấy thông tin này, hãy báo cáo để admin xử lý.

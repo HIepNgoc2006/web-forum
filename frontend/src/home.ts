@@ -140,14 +140,14 @@ export function renderHomeBoards(threadsByBoard: AnyRecord = {}, stats: AnyRecor
       return `
         <tr>
           <td class="portal-board-icon-cell"><span class="board-row-icon" aria-hidden="true"></span></td>
-          <td class="portal-board-name-cell">
+          <td class="portal-board-name-cell" data-label="Bảng">
             <a class="portal-board-link" href="#board/${board.slug}" title="${escapeHtml(board.description)}">
               <span class="board-path">${escapeHtml(board.path)}</span> - ${escapeHtml(board.name)}
             </a>
           </td>
-          <td class="portal-board-desc-cell">${escapeHtml(board.description)}</td>
-          <td class="portal-board-number-cell">${boardUsers.toLocaleString()}</td>
-          <td class="portal-board-number-cell">${postCount.toLocaleString()}</td>
+          <td class="portal-board-desc-cell" data-label="Mô tả">${escapeHtml(board.description)}</td>
+          <td class="portal-board-number-cell portal-board-users-cell" data-label="Người dùng">${boardUsers.toLocaleString()}</td>
+          <td class="portal-board-number-cell portal-board-posts-cell" data-label="Bài viết">${postCount.toLocaleString()}</td>
         </tr>
       `;
     })

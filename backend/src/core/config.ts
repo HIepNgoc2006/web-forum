@@ -63,6 +63,57 @@ export type PublicConfig = {
   ai: AiConfigStatus;
 };
 
+/** Owner-editable public site copy (policy page and related text). */
+export type SiteContent = {
+  policyTitle: string;
+  policySubtitle: string;
+  rules: string[];
+  privacy: string[];
+  ai: string[];
+  report: string[];
+  appealIntro: string;
+  feedback: string[];
+  contact: string[];
+  pii: string;
+};
+
+export const DEFAULT_SITE_CONTENT: SiteContent = {
+  policyTitle: 'Nội quy, riêng tư và báo cáo',
+  policySubtitle: 'Bản ngắn cho người dùng public trước khi đăng hoặc báo cáo bài viết.',
+  rules: [
+    'Không đăng đe dọa, quấy rối, kích động thù ghét, spam hoặc nội dung bất hợp pháp.',
+    'Không doxxing, không tố cáo cá nhân chưa kiểm chứng, không đăng ảnh riêng tư của người khác.',
+    'Giữ bài đúng bảng; bài sai bảng, lặp lại hoặc cố tình né kiểm duyệt có thể bị xóa.'
+  ],
+  privacy: [
+    'Không cần tài khoản. Public chỉ thấy tên mặc định, số bài và mã poster ẩn danh trong ngữ cảnh thread.',
+    'Trình duyệt giữ poster token cục bộ để nhận diện OP/xóa bài; server chỉ dùng hash cho chống lạm dụng.',
+    'Raw IP, captcha token, poster token và admin token không được trả về public và không gửi lên AI.'
+  ],
+  ai: [
+    'AI quét bài trước khi public để phát hiện độc hại, spam, thù ghét, tin giả và rủi ro PII.',
+    'Bài bị gắn cờ sẽ bị giữ khỏi public cho đến khi quản trị viên xem xét.',
+    'AI hỗ trợ kiểm duyệt, không phải quyết định cuối cùng; admin có quyền duyệt hoặc xóa.'
+  ],
+  report: [
+    'Bấm [Báo cáo] dưới bài viết và nhập lý do ngắn, ví dụ: lộ số điện thoại, quấy rối, spam.',
+    'Báo cáo đi vào hàng đợi admin; người báo cáo chỉ được lưu dưới dạng hash, không lộ poster token.',
+    'Nếu có nguy cơ khẩn cấp ngoài đời thật, hãy liên hệ nhà trường hoặc cơ quan chức năng trước.'
+  ],
+  appealIntro: 'Dán mã kháng nghị đã nhận khi đăng bài và viết lý do ngắn để admin xem lại quyết định xóa.',
+  feedback: [
+    'Dùng bảng Hỏi đáp cho góp ý public về tính năng, nội quy, lỗi hiển thị hoặc trải nghiệm sử dụng.',
+    'Viết góp ý cụ thể: vấn đề gặp phải, nơi xảy ra, ảnh hưởng và gợi ý cải thiện nếu có.',
+    'Không đưa thông tin riêng tư của người khác vào bài góp ý; hãy dùng báo cáo nếu nội dung cần xử lý kín.'
+  ],
+  contact: [
+    'Vấn đề public hoặc câu hỏi chung: đăng tại Hỏi đáp để admin và cộng đồng cùng phản hồi.',
+    'Vấn đề liên quan bài viết cụ thể, riêng tư hoặc vi phạm: dùng nút [Báo cáo] ngay dưới bài đó.',
+    'Yêu cầu khẩn cấp ngoài phạm vi diễn đàn nên gửi trực tiếp tới nhà trường, đơn vị quản lý hoặc cơ quan chức năng phù hợp.'
+  ],
+  pii: 'PII là thông tin cá nhân có thể nhận diện. Không đăng tên thật kèm ngữ cảnh nhận diện, số điện thoại, email cá nhân, mã sinh viên, lớp học cụ thể, phòng ký túc xá, lịch trình riêng, giấy tờ hoặc ảnh có thể nhận ra người khác. Nếu thấy thông tin này, hãy báo cáo để admin xử lý.'
+};
+
 export const BOARDS: BoardConfig[] = [
   {
     slug: 'confession',
@@ -187,7 +238,8 @@ export const BOARD_GROUPS: BoardGroup[] = [
 ];
 
 export const MODERATION_LABELS: string[] = ['Toxic', 'Spam', 'Hate Speech', 'Fake News', 'PII Risk'];
-export const DEFAULT_MAX_IMAGE_BYTES = 1_500_000;
+/** Max decoded media payload size per file (images/videos). Default 50 MiB. */
+export const DEFAULT_MAX_IMAGE_BYTES = 50 * 1024 * 1024;
 export const DEFAULT_MAX_THUMBNAIL_BYTES = 120_000;
 const DEFAULT_BOARD_DESCRIPTION = 'Diễn đàn ảnh sinh viên ẩn danh có AI kiểm duyệt.';
 const DEFAULT_BOARD_RULES = [
@@ -246,6 +298,41 @@ function sanitizePlainText(value: unknown = '', fallback: unknown = '', maxLengt
     .replace(/\s+/g, ' ')
     .trim();
   return text.slice(0, maxLength);
+}
+
+function sanitizeSiteLines(
+  value: unknown,
+  fallback: string[],
+  { maxItems = 12, maxLength = 500 }: { maxItems?: number; maxLength?: number } = {}
+): string[] {
+  const source = Array.isArray(value)
+    ? value
+    : typeof value === 'string'
+      ? value.split(/\r?\n/)
+      : fallback;
+  const lines = source
+    .map((line) => sanitizePlainText(line, '', maxLength))
+    .filter(Boolean)
+    .slice(0, maxItems);
+  return lines.length ? lines : fallback.map((line) => sanitizePlainText(line, '', maxLength)).filter(Boolean);
+}
+
+export function normalizeSiteContent(value: unknown = {}): SiteContent {
+  const input = value && typeof value === 'object' ? (value as Partial<SiteContent>) : {};
+  const defaults = DEFAULT_SITE_CONTENT;
+  return {
+    policyTitle: sanitizePlainText(input.policyTitle, defaults.policyTitle, 120) || defaults.policyTitle,
+    policySubtitle:
+      sanitizePlainText(input.policySubtitle, defaults.policySubtitle, 300) || defaults.policySubtitle,
+    rules: sanitizeSiteLines(input.rules, defaults.rules),
+    privacy: sanitizeSiteLines(input.privacy, defaults.privacy),
+    ai: sanitizeSiteLines(input.ai, defaults.ai),
+    report: sanitizeSiteLines(input.report, defaults.report),
+    appealIntro: sanitizePlainText(input.appealIntro, defaults.appealIntro, 500) || defaults.appealIntro,
+    feedback: sanitizeSiteLines(input.feedback, defaults.feedback),
+    contact: sanitizeSiteLines(input.contact, defaults.contact),
+    pii: sanitizePlainText(input.pii, defaults.pii, 1000) || defaults.pii
+  };
 }
 
 function sanitizeBoardRules(board: BoardConfig, description: string): string[] {

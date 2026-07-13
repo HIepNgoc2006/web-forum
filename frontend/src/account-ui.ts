@@ -18,6 +18,8 @@ export function createAccountUiController({
   readContentFilters,
   readReplyTemplates,
   readPosterNotes,
+  readHiddenPosts,
+  readHiddenThreads,
   renderReplyTemplatePickers,
   setAccountSession,
   refreshAccountPostNumbers,
@@ -159,7 +161,75 @@ export function createAccountUiController({
     `;
   }
 
+  function renderBrowserHiddenData() {
+    if (!els.browserHiddenSummary) {
+      return;
+    }
+    const posts = (typeof readHiddenPosts === 'function' ? readHiddenPosts() : []).sort(
+      (a, b) => Number(a) - Number(b) || String(a).localeCompare(String(b))
+    );
+    const threads = (typeof readHiddenThreads === 'function' ? readHiddenThreads() : []).sort((a, b) =>
+      String(a).localeCompare(String(b))
+    );
+    const knownThreads = Array.isArray(state.boardThreads) ? state.boardThreads : [];
+    const threadMetaById = new Map(
+      knownThreads.map((thread: AnyRecord) => [String(thread.id || ''), thread])
+    );
+    const loggedIn = Boolean(state.accountToken && state.account);
+    const syncNote = loggedIn
+      ? 'Đang đồng bộ với tài khoản — dùng được trên nhiều thiết bị khi đăng nhập.'
+      : 'Chỉ lưu trên trình duyệt này. Đăng nhập để đồng bộ ẩn bài/chủ đề giữa các thiết bị.';
+    const postList = posts.length
+      ? posts
+          .map(
+            (number) => `
+            <div class="watch-item hidden-item">
+              <div class="watch-thread-link">
+                <span class="watch-board">Bài</span>
+                <span class="watch-preview">No.${escapeHtml(number)}</span>
+              </div>
+              <button class="primary-button watch-remove unhide-action" data-unhide-post="${escapeHtml(number)}" type="button">[Hiện lại]</button>
+            </div>
+          `
+          )
+          .join('')
+      : '<p class="latest-empty">Chưa ẩn bài nào. Khi ẩn trong thread, bài vẫn còn dòng stub [Hiện lại].</p>';
+    const threadList = threads.length
+      ? threads
+          .map((id) => {
+            const meta = threadMetaById.get(String(id));
+            const number = meta?.globalNumber ? `No.${meta.globalNumber}` : '';
+            const shortId = String(id).length > 12 ? `${String(id).slice(0, 8)}…` : String(id);
+            const label = number || shortId;
+            return `
+            <div class="watch-item hidden-item">
+              <div class="watch-thread-link">
+                <span class="watch-board">Chủ đề</span>
+                <span class="watch-preview" title="${escapeHtml(id)}">${escapeHtml(label)}</span>
+                ${number ? `<a class="link-button" href="#thread/${escapeHtml(id)}">[Mở]</a>` : ''}
+              </div>
+              <button class="primary-button watch-remove unhide-action" data-unhide-thread="${escapeHtml(id)}" type="button">[Hiện lại]</button>
+            </div>
+          `;
+          })
+          .join('')
+      : '<p class="latest-empty">Chưa ẩn chủ đề nào. Ẩn từ bảng bằng [Ẩn chủ đề] — dòng stub vẫn hiện trên bảng.</p>';
+
+    els.browserHiddenSummary.innerHTML = `
+      <p class="muted">${syncNote}</p>
+      <section class="hidden-section">
+        <h3>Bài đã ẩn (${posts.length})</h3>
+        <div class="hidden-item-list">${postList}</div>
+      </section>
+      <section class="hidden-section">
+        <h3>Chủ đề đã ẩn (${threads.length})</h3>
+        <div class="hidden-item-list">${threadList}</div>
+      </section>
+    `;
+  }
+
   function renderAccountPrivateData() {
+    renderBrowserHiddenData();
     if (!els.accountPrivateDataPanel || !els.accountPrivateDataSummary) {
       renderReplyTemplatePickers();
       return;
@@ -259,8 +329,17 @@ export function createAccountUiController({
 
   async function loadAccountSettings() {
     setScreen('account');
+    // Show settings immediately so anonymous users always see hide-list + local prefs,
+    // even if board option sync or account session refresh is slow/fails.
+    if (els.accountSettingsForm) {
+      els.accountSettingsForm.classList.remove('hidden');
+    }
     setFormError(els.accountSettingsError);
-    syncAccountHomeBoardOptions();
+    try {
+      syncAccountHomeBoardOptions();
+    } catch {
+      // Boards may not be loaded yet; fillAccountSettings still works with local prefs.
+    }
     if (!state.account && state.accountToken) {
       await loadAccountSession();
     }
@@ -287,6 +366,7 @@ export function createAccountUiController({
     renderContentFilters,
     renderReplyTemplates,
     renderPosterNotes,
+    renderBrowserHiddenData,
     renderAccountPrivateData,
     renderAccountRecoveryPanel,
     saveCurrentBoardSearch,

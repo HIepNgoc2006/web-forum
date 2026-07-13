@@ -1,4 +1,5 @@
 import type { AnyRecord } from './types';
+import { clearAdminToken, writeAdminToken } from './storage';
 
 export function bindAdminAuthEvents({
   els,
@@ -29,7 +30,7 @@ export function bindAdminAuthEvents({
         return;
       }
       state.token = result.token;
-      localStorage.setItem('adminToken', state.token);
+      writeAdminToken(state.token);
       await loadAdmin();
     } catch (error) {
       showToast(error.message);
@@ -51,7 +52,7 @@ export function bindAdminAuthEvents({
       });
       state.adminTemp2FAToken = null;
       state.token = result.token;
-      localStorage.setItem('adminToken', state.token);
+      writeAdminToken(state.token);
       els.admin2FAVerifyForm.classList.add('hidden');
       showToast('Xác thực 2FA thành công.');
       await loadAdmin();
@@ -94,7 +95,7 @@ export function bindAdminAuthEvents({
       });
       showToast('Kích hoạt 2FA thành công! Vui lòng đăng nhập lại với mã 2FA.');
       state.token = '';
-      localStorage.removeItem('adminToken');
+      clearAdminToken();
       els.admin2FASetupPanel?.classList.add('hidden');
       loadAdmin();
     } catch (error) {
@@ -104,7 +105,7 @@ export function bindAdminAuthEvents({
 
   els.logoutButton.addEventListener('click', () => {
     state.token = '';
-    localStorage.removeItem('adminToken');
+    clearAdminToken();
     loadAdmin();
   });
 }

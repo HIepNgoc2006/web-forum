@@ -1,4 +1,5 @@
 import type { AnyRecord } from './types';
+import { clearAdminToken } from './storage';
 
 /**
  * Lazy-load the admin-only React island so public routes never pay for react-dom.
@@ -57,6 +58,7 @@ export function createAdminLoadController(dependencies: AnyRecord) {
     els.admin2FASetupPanel?.classList.add('hidden');
     els.logoutButton.classList.toggle('hidden', !loggedIn);
     els.adminTools.classList.toggle('hidden', !loggedIn);
+    els.pendingList.classList.toggle('hidden', !loggedIn);
     els.adminPasskeysPanel?.classList.add('hidden');
     if (!loggedIn) {
       resetAdminModerationSettingsCache();
@@ -96,6 +98,7 @@ export function createAdminLoadController(dependencies: AnyRecord) {
       if (error.setupRequired) {
         els.loginForm.classList.add('hidden');
         els.adminTools.classList.add('hidden');
+        els.pendingList.classList.add('hidden');
         els.admin2FASetupPanel?.classList.remove('hidden');
         els.admin2FASetupStart?.classList.remove('hidden');
         els.admin2FASetupQR?.classList.add('hidden');
@@ -112,7 +115,7 @@ export function createAdminLoadController(dependencies: AnyRecord) {
         return;
       }
       state.token = '';
-      localStorage.removeItem('adminToken');
+      clearAdminToken();
       showToast(error.message);
       loadAdmin();
     } finally {

@@ -1,6 +1,6 @@
 import { POST_REACTIONS } from './constants';
 import { escapeHtml } from './format';
-import { readReaction, readVote } from './storage';
+import { readReaction, readVote, writeReaction } from './storage';
 import type { AnyRecord } from './types';
 
 export function reactionControlHtml(post: AnyRecord = {}): string {
@@ -19,6 +19,54 @@ export function reactionControlHtml(post: AnyRecord = {}): string {
       }).join('')}
     </span>
   `;
+}
+
+/** Apply server reaction payload to every matching control on the page. */
+export function applyReactionControls(
+  globalNumber: string | number,
+  reactions: AnyRecord = {},
+  myReaction: string | null | undefined = ''
+): void {
+  const target = String(globalNumber || '');
+  if (!target) {
+    return;
+  }
+  const activeType = myReaction ? String(myReaction) : '';
+  writeReaction(target, activeType);
+
+  document.querySelectorAll(`[data-reaction-target="${CSS.escape(target)}"]`).forEach((node) => {
+    if (!(node instanceof HTMLButtonElement)) {
+      return;
+    }
+    const type = String(node.dataset.reaction || '');
+    const count = Math.max(0, Number(reactions?.[type]) || 0);
+    node.classList.toggle('active', Boolean(activeType) && activeType === type);
+    node.disabled = false;
+
+    let countEl = node.querySelector('.reaction-count');
+    if (count > 0) {
+      if (!(countEl instanceof HTMLElement)) {
+        countEl = document.createElement('span');
+        countEl.className = 'reaction-count';
+        node.appendChild(countEl);
+      }
+      countEl.textContent = String(count);
+    } else if (countEl) {
+      countEl.remove();
+    }
+  });
+}
+
+export function setReactionControlsBusy(globalNumber: string | number, busy: boolean): void {
+  const target = String(globalNumber || '');
+  if (!target) {
+    return;
+  }
+  document.querySelectorAll(`[data-reaction-target="${CSS.escape(target)}"]`).forEach((node) => {
+    if (node instanceof HTMLButtonElement) {
+      node.disabled = busy;
+    }
+  });
 }
 
 export function voteControlHtml(post: AnyRecord = {}): string {

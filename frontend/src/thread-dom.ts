@@ -110,6 +110,16 @@ export function handleThreadMediaClick(event, { showToast }: AnyRecord = {}) {
   return false;
 }
 
+/** Roots that can collapse: thread posts, board OPs, board reply previews. */
+const POST_COLLAPSE_ROOT_SELECTOR = 'article.post, .thread-op, article.reply-preview';
+
+export function findPostCollapseRoot(from: Element | null): HTMLElement | null {
+  if (!from) {
+    return null;
+  }
+  return from.closest(POST_COLLAPSE_ROOT_SELECTOR);
+}
+
 export function handleThreadPostCollapseClick(event, { showToast }: AnyRecord = {}) {
   const target = event.target;
   if (!(target instanceof Element)) {
@@ -118,7 +128,7 @@ export function handleThreadPostCollapseClick(event, { showToast }: AnyRecord = 
 
   const collapsePostButton = target.closest('[data-collapse-post]');
   if (collapsePostButton) {
-    const post = collapsePostButton.closest('article.post');
+    const post = findPostCollapseRoot(collapsePostButton);
     const collapsed = !post?.classList.contains('post-collapsed');
     setPostCollapsed(post, collapsed);
     syncThreadPostCollapseToolbarState();
@@ -188,6 +198,21 @@ export function setPostCollapsed(post, collapsed) {
     button.textContent = collapsed ? '[Mở]' : '[Thu]';
     button.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
     button.title = collapsed ? 'Mở lại bài viết' : 'Thu gọn bài viết';
+  }
+  // Keep Vietnamese in the DOM (UTF-8 HTML/JS), not CSS content strings.
+  const meta = post.querySelector('.post-meta');
+  if (meta) {
+    let label = meta.querySelector('.post-collapsed-label');
+    if (collapsed) {
+      if (!label) {
+        label = document.createElement('span');
+        label.className = 'post-collapsed-label';
+        label.textContent = '(đã thu gọn)';
+        meta.appendChild(label);
+      }
+    } else if (label) {
+      label.remove();
+    }
   }
 }
 

@@ -1,4 +1,5 @@
 import { confirmPrivacyBeforeSubmit, updatePrivacyWarning } from './composer';
+import { escapeHtml } from './format';
 import { clearDisplayName, capcodeValue, displayNameValue, formValue, hasOption, withImageSpoiler } from './post-form';
 import type { AnyRecord } from './types';
 
@@ -284,10 +285,35 @@ export function createComposerController({
       els.quickReplyFile.value = '';
       state.quickReplyImage = [];
       els.quickReplyFileName.textContent = 'Chưa chọn tệp';
+      if (els.quickReplyForm?.elements?.imageSpoiler) {
+        els.quickReplyForm.elements.imageSpoiler.checked = false;
+      }
+      if (els.quickReplyForm?.elements?.capcode) {
+        els.quickReplyForm.elements.capcode.checked = false;
+      }
+      if (els.quickReplyImagePreview) {
+        els.quickReplyImagePreview.innerHTML = '';
+        els.quickReplyImagePreview.classList.add('hidden');
+      }
+      if (els.quickReplyAiRewriteLabel) {
+        els.quickReplyAiRewriteLabel.classList.add('hidden');
+      }
+      if (els.quickReplySuggestions) {
+        els.quickReplySuggestions.innerHTML = '';
+        els.quickReplySuggestions.classList.add('hidden');
+      }
+      if (els.quickReplyAudio) {
+        els.quickReplyAudio.value = '';
+      }
       resetHcaptcha(els.quickReplyCaptcha);
       showToast(postSubmitToast(result, 'Đã gửi.', 'Bình luận đang chờ duyệt.'));
+      const stayOnBoard = Boolean(state.quickReplyFromBoard) || (window.location.hash || '').startsWith('#board/');
       closeQuickReply();
-      await loadThread();
+      if (stayOnBoard) {
+        await loadBoard();
+      } else {
+        await loadThread();
+      }
     } catch (error) {
       showToast(error.message);
     } finally {
@@ -434,7 +460,19 @@ export function createComposerController({
     syncReplyComposer();
   }
 
+  function isNarrowQuickReplyViewport(win = window) {
+    return win.matchMedia('(max-width: 640px)').matches || win.innerWidth <= 640;
+  }
+
   function positionQuickReply(event: PointerEvent) {
+    // Phones: CSS bottom-sheet owns placement — clear inline coords from desktop drag.
+    if (isNarrowQuickReplyViewport()) {
+      els.quickReply.style.left = '';
+      els.quickReply.style.top = '';
+      els.quickReply.style.right = '';
+      els.quickReply.style.bottom = '';
+      return;
+    }
     const width = Math.min(360, window.innerWidth - 12);
     const height = Math.min(420, window.innerHeight - 12);
     const left = clamp(event.clientX - 24, 6, window.innerWidth - width - 6);
@@ -467,35 +505,113 @@ export function createComposerController({
     updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
   }
 
-  function openQuickReply(number, event: PointerEvent, { selectedQuote = '' }: AnyRecord = {}) {
+  function openQuickReply(
+    number,
+    event: PointerEvent,
+    {
+      selectedQuote = '',
+      threadId = '',
+      isLocked,
+      isArchived,
+      fromBoard = false
+    }: AnyRecord = {}
+  ) {
+    const switchedThread = Boolean(threadId && String(threadId) !== String(state.threadId || ''));
+
+    if (threadId) {
+      state.threadId = String(threadId);
+      if (number) {
+        state.threadGlobalNumber = number;
+      }
+    }
+    if (typeof isArchived === 'boolean') {
+      state.threadIsArchived = isArchived;
+    } else if (typeof isArchived === 'string') {
+      state.threadIsArchived = isArchived === '1' || isArchived === 'true';
+    }
+    if (typeof isLocked === 'boolean') {
+      state.threadIsLocked = isLocked;
+    } else if (typeof isLocked === 'string') {
+      state.threadIsLocked = isLocked === '1' || isLocked === 'true';
+    }
+
     if (state.threadIsArchived || state.threadIsLocked) {
       showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
       return;
     }
+    if (!state.threadId) {
+      showToast('Không xác định được chủ đề để trả lời.');
+      return;
+    }
+
+    // Avoid stacking the inline reply form under the floating panel on small screens.
+    if (state.replyComposerOpen) {
+      closeReplyComposer();
+    }
     const wasHidden = els.quickReply.classList.contains('hidden');
     const threadNumber = state.threadGlobalNumber || number;
-    els.quickReplyTitle.textContent = `Trả lời chủ đề No.${threadNumber}`;
-    if (wasHidden) {
-      els.quickReplyBody.value = readDraft(draftKey('quickReply', state.threadId));
+    const openThreadHref = `#thread/${encodeURIComponent(state.threadId)}`;
+    state.quickReplyFromBoard = Boolean(fromBoard) || Boolean((window.location.hash || '').startsWith('#board/'));
+    if (state.quickReplyFromBoard) {
+      els.quickReplyTitle.innerHTML = `Trả lời <a class="quick-reply-thread-link" href="${openThreadHref}">chủ đề No.${escapeHtml(String(threadNumber))}</a>`;
+    } else {
+      els.quickReplyTitle.textContent = `Trả lời chủ đề No.${threadNumber}`;
     }
-    addQuoteToQuickReply(number, selectedQuote);
+    if (wasHidden || switchedThread) {
+      els.quickReplyBody.value = readDraft(draftKey('quickReply', state.threadId));
+      els.quickReplyFile.value = '';
+      state.quickReplyImage = [];
+      els.quickReplyFileName.textContent = 'Chưa chọn tệp';
+      if (els.quickReplyForm?.elements?.imageSpoiler) {
+        els.quickReplyForm.elements.imageSpoiler.checked = false;
+      }
+      if (els.quickReplyImagePreview) {
+        els.quickReplyImagePreview.innerHTML = '';
+        els.quickReplyImagePreview.classList.add('hidden');
+      }
+      if (els.quickReplyAiRewriteLabel) {
+        els.quickReplyAiRewriteLabel.classList.add('hidden');
+      }
+      if (els.quickReplySuggestions) {
+        els.quickReplySuggestions.innerHTML = '';
+        els.quickReplySuggestions.classList.add('hidden');
+      }
+      if (els.quickReplyAudio) {
+        els.quickReplyAudio.value = '';
+      }
+    }
+    if (number) {
+      addQuoteToQuickReply(number, selectedQuote);
+    }
     els.quickReplyCaptcha.value = state.hcaptchaSiteKey ? '' : els.commentCaptcha.value || 'dev-pass';
-    els.quickReplyFile.value = '';
-    state.quickReplyImage = [];
-    els.quickReplyFileName.textContent = 'Chưa chọn tệp';
     if (wasHidden) {
       positionQuickReply(event);
     }
     els.quickReply.classList.remove('hidden');
-    els.refPreview.classList.add('hidden');
+    document.body.classList.add('quick-reply-open');
+    // Tear down floating >>N preview so it doesn't sit over quick-reply.
+    window.clearTimeout(state.refPreviewHideTimer);
+    window.clearTimeout(state.refPreviewShowTimer);
+    state.refPreviewRequestId = Number(state.refPreviewRequestId || 0) + 1;
     state.refPreviewPinned = false;
+    state.refPreviewHoverNumber = '';
+    document.querySelectorAll('.ref-hover-target').forEach((node) => {
+      node.classList.remove('ref-hover-target');
+    });
+    els.refPreview.classList.add('hidden');
+    els.refPreview.classList.remove('ref-preview-loading', 'ref-preview-error', 'ref-preview-visible', 'ref-preview-pinned');
+    els.refPreview.innerHTML = '';
     window.setTimeout(() => els.quickReplyBody.focus(), 0);
   }
 
   function closeQuickReply() {
     els.quickReply.classList.add('hidden');
+    document.body.classList.remove('quick-reply-open');
     updatePrivacyWarning('', els.quickReplyPrivacyWarning);
     state.quickReplyDrag = null;
+    state.quickReplyFromBoard = false;
+    els.quickReply.style.left = '';
+    els.quickReply.style.top = '';
   }
 
   function bindComposerInputEvents() {
@@ -516,6 +632,9 @@ export function createComposerController({
     els.quickReplyBody.addEventListener('input', () => {
       writeDraft(draftKey('quickReply', state.threadId), els.quickReplyBody.value);
       updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
+      if (els.quickReplyAiRewriteLabel) {
+        els.quickReplyAiRewriteLabel.classList.add('hidden');
+      }
     });
   }
 

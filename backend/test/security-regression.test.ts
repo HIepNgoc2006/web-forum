@@ -151,6 +151,54 @@ test('security: sanitizeText escapes all dangerous HTML characters', () => {
 });
 
 // =============================================
+// HTTP Security Headers
+// =============================================
+
+test('security: API responses include baseline browser security headers', async () => {
+  await withServer(async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/health`);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
+    assert.equal(response.headers.get('x-frame-options'), 'DENY');
+    assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
+    assert.match(String(response.headers.get('permissions-policy') || ''), /camera=\(\)/);
+    assert.equal(response.headers.get('cross-origin-opener-policy'), 'same-origin');
+    const csp = String(response.headers.get('content-security-policy') || '');
+    assert.match(csp, /default-src 'self'/);
+    assert.match(csp, /frame-ancestors 'none'/);
+    assert.match(csp, /object-src 'none'/);
+  });
+});
+
+test('security: metrics endpoint requires token when METRICS_TOKEN is configured', async () => {
+  const previous = process.env.METRICS_TOKEN;
+  process.env.METRICS_TOKEN = 'unit-metrics-secret';
+  try {
+    await withServer(async (baseUrl) => {
+      const open = await fetch(`${baseUrl}/metrics`);
+      assert.equal(open.status, 401);
+
+      const wrong = await fetch(`${baseUrl}/metrics`, {
+        headers: { 'x-metrics-token': 'wrong' }
+      });
+      assert.equal(wrong.status, 401);
+
+      const okResponse = await fetch(`${baseUrl}/metrics`, {
+        headers: { 'x-metrics-token': 'unit-metrics-secret' }
+      });
+      assert.equal(okResponse.status, 200);
+      assert.match(await okResponse.text(), /chan36_health_ready/);
+    });
+  } finally {
+    if (previous === undefined) {
+      delete process.env.METRICS_TOKEN;
+    } else {
+      process.env.METRICS_TOKEN = previous;
+    }
+  }
+});
+
+// =============================================
 // Upload Validation Regression Tests
 // =============================================
 
