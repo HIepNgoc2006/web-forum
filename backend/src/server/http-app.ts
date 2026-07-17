@@ -11,6 +11,7 @@ import {
   publicConfig,
   readPositiveInteger
 } from '../core/config.ts';
+import type { KlipyClient } from '../core/klipy.ts';
 import {
   createRateLimiter,
   getClientIp,
@@ -37,6 +38,7 @@ type CreateHttpServerOptions = {
   rateLimitStore?: any;
   rateLimitFailureMode?: RateLimitFailureMode;
   rateLimitLogger?: (error: any) => void;
+  gifClient?: KlipyClient;
   forceConnectionClose?: boolean;
 };
 
@@ -72,6 +74,7 @@ const MIME_TYPES = new Map([
   ['.svg', 'image/svg+xml']
 ]);
 const MAX_MEDIA_PER_POST = 4;
+const INITIAL_HOME_SNAPSHOT_MARKER = '<script id="initialHomeSnapshot" type="application/json">null</script>';
 const PRIVILEGED_ACCOUNT_ROLES = new Set(['owner', 'admin', 'moderator', 'viewer']);
 const STORE_METRIC_NAMES = {
   threads: 'threads',
@@ -106,6 +109,9 @@ function adminPermissionForRequest(method, routePath, parts = []) {
   if (routePath === '/api/admin/users' || match(parts, ['api', 'admin', 'users', ':id'])) {
     return 'admin:manage_users';
   }
+  if (routePath === '/api/admin/stickers' || match(parts, ['api', 'admin', 'stickers', ':key'])) {
+    return 'admin:manage_settings';
+  }
   if (
     method === 'PUT' &&
     (routePath === '/api/admin/moderation-settings' || routePath === '/api/admin/site-content')
@@ -135,7 +141,9 @@ const BASE_SECURITY_HEADERS: Record<string, string> = {
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
   'referrer-policy': 'strict-origin-when-cross-origin',
-  'permissions-policy': 'camera=(), microphone=(), geolocation=(), payment=()',
+  // microphone=(self): [Nói] uses Web Speech API, which requires mic on this origin.
+  // camera/geolocation/payment stay disabled.
+  'permissions-policy': 'camera=(), microphone=(self), geolocation=(), payment=()',
   'cross-origin-opener-policy': 'same-origin',
   'content-security-policy': [
     "default-src 'self'",
@@ -525,7 +533,17 @@ async function requireAdmin(
     error.statusCode = 401;
     throw error;
   }
+  if (service.isSessionRevoked?.(token)) {
+    const error = new Error('Phiên đăng nhập đã bị thu hồi');
+    error.statusCode = 401;
+    throw error;
+  }
   const user = await service.getAccount(payload.sub);
+  if (!isAccountAuthEpochCurrent(payload, user)) {
+    const error = new Error('Phiên đăng nhập đã hết hiệu lực');
+    error.statusCode = 401;
+    throw error;
+  }
   const role = normalizeAdminRole(user.role);
   if (user.disabled || !hasAdminPermission(role, permission)) {
     const error = new Error('Không có quyền truy cập');
@@ -553,29 +571,46 @@ async function requireAdmin(
   };
 }
 
-function requireAccount(
+function isAccountAuthEpochCurrent(payload, account) {
+  const tokenEpoch = Number(payload?.authEpoch ?? 0);
+  const accountEpoch = Number(account?.authEpoch ?? 0);
+  return Number.isSafeInteger(tokenEpoch)
+    && Number.isSafeInteger(accountEpoch)
+    && tokenEpoch >= 0
+    && tokenEpoch === accountEpoch;
+}
+
+async function requireAccount(
   request: HttpRequest,
   jwtSecret: string,
   service: any,
   { allowAdmin2FASetup = false }: { allowAdmin2FASetup?: boolean } = {}
-) {
+): Promise<any> {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   try {
     const payload = verifyJwt(token, jwtSecret);
-    const role = normalizeAdminRole(payload.role);
+    const tokenRole = normalizeAdminRole(payload.role);
     if (!(payload.role === 'user' || PRIVILEGED_ACCOUNT_ROLES.has(String(payload.role || '').toLowerCase())) || !payload.sub) {
       throw new Error('Không có quyền truy cập');
     }
     if (service?.isSessionRevoked?.(token)) {
       throw new Error('Phiên đăng nhập đã bị thu hồi');
     }
+    const account = await service.getAccount(payload.sub);
+    if (account.disabled || !isAccountAuthEpochCurrent(payload, account)) {
+      throw new Error('Phiên đăng nhập đã hết hiệu lực');
+    }
+    const role = normalizeAdminRole(account.role);
     if (payload.isTwoFactorVerified === false && !(allowAdmin2FASetup && PRIVILEGED_ACCOUNT_ROLES.has(role))) {
       const error = new Error('Yêu cầu xác thực 2FA');
       error.statusCode = 401;
       throw error;
     }
-    return payload;
+    if (PRIVILEGED_ACCOUNT_ROLES.has(tokenRole) && !PRIVILEGED_ACCOUNT_ROLES.has(role)) {
+      throw new Error('Phiên đăng nhập đã hết hiệu lực');
+    }
+    return { ...payload, role, authEpoch: account.authEpoch };
   } catch (error) {
     if (error.statusCode) throw error;
     const err = new Error('Vui lòng đăng nhập tài khoản');
@@ -584,7 +619,7 @@ function requireAccount(
   }
 }
 
-function getOptionalAccount(request: HttpRequest, jwtSecret: string, service: any) {
+async function getOptionalAccount(request: HttpRequest, jwtSecret: string, service: any) {
   const header = request.headers.authorization ?? '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : '';
   if (!token) return undefined;
@@ -592,7 +627,9 @@ function getOptionalAccount(request: HttpRequest, jwtSecret: string, service: an
     const payload = verifyJwt(token, jwtSecret);
     if (service?.isSessionRevoked?.(token)) return undefined;
     const role = String(payload.role || '').toLowerCase();
-    if ((role === 'user' || PRIVILEGED_ACCOUNT_ROLES.has(role)) && payload.sub) return payload.sub;
+    if (!(role === 'user' || PRIVILEGED_ACCOUNT_ROLES.has(role)) || !payload.sub) return undefined;
+    const account = await service.getAccount(payload.sub);
+    if (!account.disabled && isAccountAuthEpochCurrent(payload, account)) return payload.sub;
   } catch {}
   return undefined;
 }
@@ -611,7 +648,7 @@ async function getOptionalCapcode(request: HttpRequest, jwtSecret: string, servi
     if (service?.isSessionRevoked?.(token)) return null;
     if (!payload.sub) return null;
     const account = await service.getAccount(payload.sub);
-    if (account?.disabled) return null;
+    if (account?.disabled || !isAccountAuthEpochCurrent(payload, account)) return null;
     const role = normalizeAdminRole(account?.role);
     if (role === 'owner') {
       return 'admin';
@@ -643,6 +680,7 @@ function accountToken(account, jwtSecret, isTwoFactorVerified = null) {
     role: account.role || 'user',
     sub: account.id,
     username: account.username,
+    authEpoch: Number(account.authEpoch ?? 0),
     isTwoFactorVerified: verified
   }, jwtSecret, {
     expiresInSeconds
@@ -657,9 +695,30 @@ function requireAccountJwt(jwtSecret) {
   }
 }
 
+function optionalIntegerQuery(searchParams: URLSearchParams, name: string): number | undefined {
+  const value = searchParams.get(name);
+  if (value === null || value.trim() === '') {
+    return undefined;
+  }
+  return /^\d+$/.test(value) ? Number(value) : Number.NaN;
+}
+
+function requireGifClient(gifClient?: KlipyClient): KlipyClient {
+  if (!gifClient?.configured) {
+    const error = new Error('Chưa cấu hình KLIPY_API_KEY cho dịch vụ GIF.');
+    error.statusCode = 503;
+    throw error;
+  }
+  return gifClient;
+}
+
 function rateLimitForRequest({ method, pathname, searchParams, parts, ip, limiters }) {
   if (parts[0] !== 'api') {
     return null;
+  }
+
+  if (parts[1] === 'media' && parts[2] === 'gifs') {
+    return { limiter: limiters.gif, key: `${ip}:gif` };
   }
 
   if (method === 'GET') {
@@ -1011,8 +1070,53 @@ function safeDecodePath(value) {
   }
 }
 
+function inlineJson(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (character) => ({
+    '<': '\\u003c',
+    '>': '\\u003e',
+    '&': '\\u0026',
+    '\u2028': '\\u2028',
+    '\u2029': '\\u2029'
+  })[character] || character);
+}
 
-async function serveStatic(request, response, staticRoot) {
+async function sendIndexResponse(
+  request: HttpRequest,
+  response: HttpResponse,
+  indexPath: string,
+  initialHomeSnapshot?: () => Promise<unknown>
+) {
+  const source = await fs.readFile(indexPath, 'utf8');
+  let html = source;
+  if (source.includes(INITIAL_HOME_SNAPSHOT_MARKER) && typeof initialHomeSnapshot === 'function') {
+    try {
+      const snapshot = await initialHomeSnapshot();
+      html = source.replace(
+        INITIAL_HOME_SNAPSHOT_MARKER,
+        `<script id="initialHomeSnapshot" type="application/json">${inlineJson(snapshot)}</script>`
+      );
+    } catch {
+      // The browser falls back to GET /api/home when startup snapshot generation fails.
+    }
+  }
+  const body = Buffer.from(html);
+  response.writeHead(
+    200,
+    withSecurityHeaders({
+      'content-type': 'text/html; charset=utf-8',
+      'content-length': body.length,
+      'cache-control': 'no-cache'
+    })
+  );
+  if (request.method === 'HEAD') {
+    response.end();
+    return;
+  }
+  response.end(body);
+}
+
+
+async function serveStatic(request, response, staticRoot, initialHomeSnapshot?: () => Promise<unknown>) {
   if (request.method !== 'GET' && request.method !== 'HEAD') {
     return false;
   }
@@ -1035,6 +1139,10 @@ async function serveStatic(request, response, staticRoot) {
       return false;
     }
     const extension = path.extname(candidate).toLowerCase();
+    if (extension === '.html' && path.basename(candidate).toLowerCase() === 'index.html') {
+      await sendIndexResponse(request, response, candidate, initialHomeSnapshot);
+      return true;
+    }
     await sendFileResponse(
       request,
       response,
@@ -1055,18 +1163,7 @@ async function serveStatic(request, response, staticRoot) {
         if (!isPathInsideRoot(safeRoot, indexPath)) {
           return false;
         }
-        const indexStat = await fs.stat(indexPath);
-        await sendFileResponse(
-          request,
-          response,
-          indexPath,
-          {
-            'content-type': 'text/html; charset=utf-8',
-            'content-length': indexStat.size,
-            'cache-control': 'no-cache'
-          },
-          indexStat
-        );
+        await sendIndexResponse(request, response, indexPath, initialHomeSnapshot);
         return true;
       }
       return false;
@@ -1150,6 +1247,7 @@ export function createHttpServer({
   rateLimitStore,
   rateLimitFailureMode = 'closed',
   rateLimitLogger = (error) => console.error('RATE LIMIT STORE ERROR:', error),
+  gifClient,
   forceConnectionClose = false
 }: CreateHttpServerOptions) {
   const sharedLimiterOptions = {
@@ -1164,6 +1262,7 @@ export function createHttpServer({
     account: createRateLimiter({ ...sharedLimiterOptions, limit: 20, windowMs: 60_000 }),
     admin: createRateLimiter({ ...sharedLimiterOptions, limit: 30, windowMs: 60_000 }),
     search: createRateLimiter({ ...sharedLimiterOptions, limit: 10, windowMs: 60_000 }),
+    gif: createRateLimiter({ ...sharedLimiterOptions, limit: 30, windowMs: 60_000 }),
     generic: createRateLimiter({ ...sharedLimiterOptions, limit: 60, windowMs: 60_000 })
   };
   // Short in-process TTL for hot public GETs to cut whole-state re-reads under bursty traffic.
@@ -1178,6 +1277,13 @@ export function createHttpServer({
     const value = await loader();
     publicReadCache.set(key, value);
     return value;
+  }
+
+  function readHomeSnapshot() {
+    return cachedPublicRead('home', async () => ({
+      config: publicConfig(),
+      ...(await service.getHomeSnapshot())
+    }));
   }
 
   return http.createServer(async (request, response) => {
@@ -1205,9 +1311,50 @@ export function createHttpServer({
         rateLimitForRequest({ method: request.method, pathname: routePath, searchParams: url.searchParams, parts, ip, limiters })
       );
 
+      if (request.method === 'GET' && routePath === '/api/home') {
+        ok(response, await readHomeSnapshot());
+        return;
+      }
+
       if (request.method === 'GET' && routePath === '/api/config') {
         // Static/env-derived payload — safe to cache briefly under burst traffic.
         ok(response, await cachedPublicRead('config', async () => publicConfig()));
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/media/gifs/trending') {
+        const client = requireGifClient(gifClient);
+        ok(response, await client.trending({
+          page: optionalIntegerQuery(url.searchParams, 'page'),
+          perPage: optionalIntegerQuery(url.searchParams, 'perPage')
+        }));
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/media/gifs/search') {
+        const client = requireGifClient(gifClient);
+        ok(response, await client.search({
+          query: url.searchParams.get('q') ?? '',
+          page: optionalIntegerQuery(url.searchParams, 'page'),
+          perPage: optionalIntegerQuery(url.searchParams, 'perPage')
+        }));
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/media/gifs/items') {
+        const client = requireGifClient(gifClient);
+        ok(response, await client.items((url.searchParams.get('slugs') ?? '').split(',')));
+        return;
+      }
+
+      const gifShareParams = match(parts, ['api', 'media', 'gifs', ':slug', 'share']);
+      if (request.method === 'POST' && gifShareParams) {
+        const client = requireGifClient(gifClient);
+        const body = await readJson(request, 4_000);
+        ok(response, await client.share({
+          slug: gifShareParams.slug,
+          query: body.query
+        }));
         return;
       }
 
@@ -1220,6 +1367,12 @@ export function createHttpServer({
       if (request.method === 'GET' && routePath === '/api/site-content') {
         // Not cached: owner edits to /policy/ copy should be visible immediately.
         ok(response, await service.getSiteContent());
+        return;
+      }
+
+      if (request.method === 'GET' && routePath === '/api/stickers') {
+        // Includes inactive entries so historical custom sticker tokens keep rendering.
+        ok(response, await service.getCustomStickers());
         return;
       }
 
@@ -1345,6 +1498,24 @@ export function createHttpServer({
         return;
       }
 
+      if (request.method === 'POST' && routePath === '/api/ai/chat') {
+        const body = await readJson(request, 20_000);
+        ok(
+          response,
+          await service.answerChat({
+            question: body.question,
+            scope: body.scope,
+            page: body.page,
+            boardSlug: body.boardSlug,
+            threadId: body.threadId,
+            history: body.history,
+            ip,
+            posterToken: body.posterToken
+          })
+        );
+        return;
+      }
+
       if (request.method === 'POST' && routePath === '/api/ai/rewrite') {
         const body = await readJson(request, 20_000);
         ok(response, {
@@ -1405,13 +1576,19 @@ export function createHttpServer({
       if (request.method === 'POST' && routePath === '/api/account/register') {
         requireAccountJwt(jwtSecret);
         const body = await readJson(request, 20_000);
-        const { account, recoveryCode } = await service.registerAccount({
+        const { account, recoveryCode, verificationEmailSent } = await service.registerAccount({
           username: body.username,
           password: body.password,
+          email: body.email,
           captchaToken: body.captchaToken,
           ip
         });
-        ok(response, { account, recoveryCode, token: accountToken(account, jwtSecret) }, 201);
+        ok(response, {
+          account,
+          recoveryCode,
+          verificationEmailSent,
+          token: accountToken(account, jwtSecret)
+        }, 201);
         return;
       }
 
@@ -1431,6 +1608,51 @@ export function createHttpServer({
         return;
       }
 
+      if (request.method === 'POST' && routePath === '/api/account/password-reset/email/request') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        ok(response, await service.requestAccountPasswordResetEmail({
+          identifier: body.identifier,
+          captchaToken: body.captchaToken,
+          ip
+        }));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/account/password-reset/email/confirm') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        const { recoveryCode } = await service.resetAccountPasswordWithEmailCode({
+          identifier: body.identifier,
+          code: body.code,
+          newPassword: body.newPassword
+        });
+        ok(response, { ok: true, recoveryCode });
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/account/recovery-code/email/request') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        ok(response, await service.requestRecoveryCodeResetEmail({
+          identifier: body.identifier,
+          captchaToken: body.captchaToken,
+          ip
+        }));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/account/recovery-code/email/confirm') {
+        requireAccountJwt(jwtSecret);
+        const body = await readJson(request, 20_000);
+        const { recoveryCode } = await service.resetRecoveryCodeWithEmailCode({
+          identifier: body.identifier,
+          code: body.code
+        });
+        ok(response, { ok: true, recoveryCode });
+        return;
+      }
+
       if (request.method === 'POST' && routePath === '/api/account/login') {
         requireAccountJwt(jwtSecret);
         const body = await readJson(request, 20_000);
@@ -1444,7 +1666,13 @@ export function createHttpServer({
           ok(response, {
             requires2FA: true,
             tempToken: signJwt(
-              { role: account.role || 'user', sub: account.id, username: account.username, isTwoFactorVerified: false },
+              {
+                role: account.role || 'user',
+                sub: account.id,
+                username: account.username,
+                authEpoch: Number(account.authEpoch ?? 0),
+                isTwoFactorVerified: false
+              },
               jwtSecret,
               { expiresInSeconds: 300 }
             )
@@ -1469,6 +1697,16 @@ export function createHttpServer({
           error.statusCode = 400;
           throw error;
         }
+        const pendingAccount = await service.getAccount(payload.sub);
+        if (
+          payload.isTwoFactorVerified !== false
+          || pendingAccount.disabled
+          || !isAccountAuthEpochCurrent(payload, pendingAccount)
+        ) {
+          const error = new Error('Yêu cầu xác thực đã hết hạn hoặc không hợp lệ');
+          error.statusCode = 400;
+          throw error;
+        }
         const result = await service.verify2FALogin(payload.sub, body.code);
         ok(response, { ok: true, token: accountToken(result.account, jwtSecret, true), account: result.account });
         return;
@@ -1485,6 +1723,16 @@ export function createHttpServer({
           error.statusCode = 400;
           throw error;
         }
+        const pendingAccount = await service.getAccount(payload.sub);
+        if (
+          payload.isTwoFactorVerified !== false
+          || pendingAccount.disabled
+          || !isAccountAuthEpochCurrent(payload, pendingAccount)
+        ) {
+          const error = new Error('Yêu cầu xác thực đã hết hạn hoặc không hợp lệ');
+          error.statusCode = 400;
+          throw error;
+        }
         const result = await service.verifyBackupCodeLogin(payload.sub, body.code);
         ok(response, { ok: true, token: accountToken(result.account, jwtSecret, true), account: result.account });
         return;
@@ -1494,7 +1742,8 @@ export function createHttpServer({
         const header = request.headers.authorization ?? '';
         const rawToken = header.startsWith('Bearer ') ? header.slice(7) : '';
         if (rawToken) {
-          await service.logoutAccount(rawToken);
+          const accountSession = await requireAccount(request, jwtSecret, service, { allowAdmin2FASetup: true });
+          await service.logoutAccount(accountSession.sub, rawToken);
         }
         ok(response, { ok: true });
         return;
@@ -1534,16 +1783,42 @@ export function createHttpServer({
           ['/api/account/2fa/setup', '/api/account/2fa/verify'].includes(routePath) ||
           routePath === '/api/account/passkeys' ||
           routePath.startsWith('/api/account/passkeys/');
-        const accountSession = requireAccount(request, jwtSecret, service, { allowAdmin2FASetup });
+        const accountSession = await requireAccount(request, jwtSecret, service, { allowAdmin2FASetup });
 
         if (request.method === 'GET' && routePath === '/api/account/posts') {
-          const accountSession = requireAccount(request, jwtSecret, service);
+          const accountSession = await requireAccount(request, jwtSecret, service);
           ok(response, await service.listAccountPosts(accountSession.sub));
           return;
         }
 
         if (request.method === 'GET' && routePath === '/api/account/me') {
           ok(response, await service.getAccount(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/email/verify') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.verifyAccountEmail(accountSession.sub, body.code));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/email/resend') {
+          ok(response, await service.resendAccountEmailVerification(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/email/change') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.requestAccountEmailChange(accountSession.sub, {
+            newEmail: body.newEmail,
+            password: body.password
+          }));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/account/email/change/confirm') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.confirmAccountEmailChange(accountSession.sub, body.code));
           return;
         }
 
@@ -1563,13 +1838,22 @@ export function createHttpServer({
           const body = await readJson(request, 20_000);
           const hostHeader = request.headers.host || 'localhost';
           const rpID = hostHeader.split(':')[0];
-          ok(response, await service.verifyWebAuthnRegisterResponse(accountSession.sub, { body, origin: requestOrigin(request), rpID }));
+          const result = await service.verifyWebAuthnRegisterResponse(accountSession.sub, {
+            body,
+            origin: requestOrigin(request),
+            rpID
+          });
+          ok(response, { ...result, token: accountToken(result.account, jwtSecret, true) });
           return;
         }
 
         const accountParams = match(parts, ['api', 'account', 'passkeys', ':id']);
         if (accountParams && request.method === 'DELETE') {
-          ok(response, await service.deletePasskey(accountSession.sub, accountParams.id));
+          const result = await service.deletePasskey(accountSession.sub, accountParams.id);
+          ok(response, {
+            ...result,
+            token: accountToken(result.account, jwtSecret, accountSession.isTwoFactorVerified !== false)
+          });
           return;
         }
 
@@ -1602,20 +1886,27 @@ export function createHttpServer({
 
         if (request.method === 'POST' && routePath === '/api/account/2fa/verify') {
           const body = await readJson(request, 20_000);
-          ok(response, await service.verify2FASetup(accountSession.sub, body.code));
+          const result = await service.verify2FASetup(accountSession.sub, body.code);
+          ok(response, { ...result, token: accountToken(result.account, jwtSecret, true) });
           return;
         }
 
         if (request.method === 'POST' && routePath === '/api/account/2fa/disable') {
           const body = await readJson(request, 20_000);
-          ok(response, await service.disable2FA(accountSession.sub, body.password));
+          const result = await service.disable2FA(accountSession.sub, body.password);
+          ok(response, { ...result, token: accountToken(result.account, jwtSecret) });
           return;
         }
 
         if (request.method === 'POST' && routePath === '/api/account/recovery-code') {
           const body = await readJson(request, 20_000);
-          const { recoveryCode } = await service.regenerateRecoveryCode(accountSession.sub, body.password);
-          ok(response, { ok: true, recoveryCode });
+          const { recoveryCode, account } = await service.regenerateRecoveryCode(accountSession.sub, body.password);
+          ok(response, {
+            ok: true,
+            recoveryCode,
+            account,
+            token: accountToken(account, jwtSecret, accountSession.isTwoFactorVerified !== false)
+          });
           return;
         }
       }
@@ -1660,7 +1951,7 @@ export function createHttpServer({
             posterToken: body.posterToken,
             displayName: body.displayName,
             capcode: await getOptionalCapcode(request, jwtSecret, service, body.capcode),
-            accountId: getOptionalAccount(request, jwtSecret, service)
+            accountId: await getOptionalAccount(request, jwtSecret, service)
           }),
           201
         );
@@ -1804,7 +2095,7 @@ export function createHttpServer({
             posterToken: body.posterToken,
             displayName: body.displayName,
             capcode: await getOptionalCapcode(request, jwtSecret, service, body.capcode),
-            accountId: getOptionalAccount(request, jwtSecret, service)
+            accountId: await getOptionalAccount(request, jwtSecret, service)
           }),
           201
         );
@@ -1850,7 +2141,7 @@ export function createHttpServer({
 
       params = match(parts, ['api', 'posts', ':globalNumber', 'reactions']);
       if (params && request.method === 'POST') {
-        const account = requireAccount(request, jwtSecret, service);
+        const account = await requireAccount(request, jwtSecret, service);
         const body = await readJson(request, 20_000);
         ok(
           response,
@@ -1865,7 +2156,7 @@ export function createHttpServer({
 
       params = match(parts, ['api', 'posts', ':globalNumber', 'vote']);
       if (params && request.method === 'POST') {
-        const account = requireAccount(request, jwtSecret, service);
+        const account = await requireAccount(request, jwtSecret, service);
         const body = await readJson(request, 20_000);
         ok(
           response,
@@ -1896,7 +2187,7 @@ export function createHttpServer({
           );
           return;
         }
-        const account = requireAccount(request, jwtSecret, service);
+        const account = await requireAccount(request, jwtSecret, service);
         ok(
           response,
           await service.editAccountPost(params.globalNumber, {
@@ -1910,7 +2201,7 @@ export function createHttpServer({
         return;
       }
       if (params && request.method === 'DELETE') {
-        const account = requireAccount(request, jwtSecret, service);
+        const account = await requireAccount(request, jwtSecret, service);
         const body = await readJson(request, 20_000);
         ok(
           response,
@@ -1970,7 +2261,13 @@ export function createHttpServer({
           ok(response, {
             requires2FA: true,
             tempToken: signJwt(
-              { role: adminAccount.role || 'owner', username: adminUsername, sub: adminAccount.id, isTwoFactorVerified: false },
+              {
+                role: adminAccount.role || 'owner',
+                username: adminUsername,
+                sub: adminAccount.id,
+                authEpoch: Number(adminAccount.authEpoch ?? 0),
+                isTwoFactorVerified: false
+              },
               jwtSecret,
               { expiresInSeconds: 300 }
             )
@@ -2090,6 +2387,36 @@ export function createHttpServer({
         if (request.method === 'PUT' && routePath === '/api/admin/site-content') {
           const body = await readJson(request, 50_000);
           ok(response, await service.updateSiteContent(body, { actor: admin.username ?? 'admin' }));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/admin/stickers') {
+          ok(response, await service.getCustomStickers());
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/admin/stickers') {
+          const body = await readJson(request, 5_000);
+          ok(
+            response,
+            await service.addCustomSticker(
+              { label: body.label, url: body.url },
+              { actor: admin.username ?? 'admin' }
+            ),
+            201
+          );
+          return;
+        }
+
+        params = match(parts, ['api', 'admin', 'stickers', ':key']);
+        if (params && request.method === 'PATCH') {
+          const body = await readJson(request, 2_000);
+          ok(
+            response,
+            await service.setCustomStickerActive(params.key, body.active, {
+              actor: admin.username ?? 'admin'
+            })
+          );
           return;
         }
 
@@ -2350,7 +2677,7 @@ export function createHttpServer({
         }
       }
 
-      if (await serveStatic(request, response, staticRoot)) {
+      if (await serveStatic(request, response, staticRoot, readHomeSnapshot)) {
         return;
       }
 

@@ -90,11 +90,13 @@
                     <button class="composer-chip composer-chip-emoji" data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
                   </div>
                   <div class="composer-toolbar-group">
-                    <span class="composer-toolbar-label">Sticker</span>
-                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
-                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
-                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:study]" type="button">Học</button>
-                    <button class="composer-chip sticker-insert-button" data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
+                    <button
+                      class="composer-chip composer-media-trigger"
+                      data-composer-media-open="thread"
+                      type="button"
+                      aria-controls="composerMediaPicker"
+                      aria-expanded="false"
+                    >Sticker / GIF</button>
                   </div>
                 </div>
                 <div class="reply-template-picker" data-reply-template-picker="thread" aria-label="Mẫu trả lời đã lưu"></div>
@@ -106,6 +108,22 @@
                   <button class="composer-chip composer-chip-muted" data-thread-template-dismiss type="button">Bỏ</button>
                 </div>
               </div>
+              <div
+                class="composer-sticker-preview"
+                data-composer-sticker-preview="thread"
+                aria-label="Xem trước sticker đã chọn"
+                hidden
+              >
+                <span class="composer-sticker-preview-label">Xem trước</span>
+                <div class="composer-sticker-preview-items" data-composer-sticker-preview-items></div>
+              </div>
+              <span
+                class="composer-sticker-preview-status"
+                data-composer-sticker-preview-status="thread"
+                role="status"
+                aria-live="polite"
+                aria-atomic="true"
+              ></span>
             </div>
 
             <div id="threadPrivacyWarning" class="privacy-warning hidden" role="status"></div>
@@ -130,7 +148,13 @@
                 <div class="composer-advanced-body">
                   <label class="field-row">
                     <span>Thăm dò</span>
-                    <textarea id="threadPollOptions" rows="3" maxlength="600" placeholder="Mỗi dòng một lựa chọn, bỏ trống nếu không cần"></textarea>
+                    <textarea
+                      id="threadPollOptions"
+                      name="pollOptions"
+                      rows="3"
+                      maxlength="725"
+                      placeholder="Mỗi dòng một lựa chọn, bỏ trống nếu không cần"
+                    ></textarea>
                   </label>
                   <label class="field-row">
                     <span>Âm thanh</span>

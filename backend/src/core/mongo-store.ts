@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import mongoose from 'mongoose';
-import type { Connection, Model, SchemaOptions } from 'mongoose';
+import type { ClientSession, Connection, Model, SchemaOptions } from 'mongoose';
 
 import { BOARDS } from './config.ts';
 import { EMPTY_STATE, normalizeState } from './forum-store.ts';
@@ -26,6 +26,9 @@ type MongoModels = Record<
 type MongoStoreOptions = {
   uri?: string;
   dbName?: string;
+  mutationLockLeaseMs?: number;
+  mutationLockTimeoutMs?: number;
+  mutationLockRetryMs?: number;
 };
 
 type MongoForumStore = {
@@ -33,6 +36,7 @@ type MongoForumStore = {
   read(): Promise<ForumState>;
   write(nextState: unknown): Promise<ForumState>;
   appendPostCreate(delta: AppendPostCreateDelta): Promise<ForumState>;
+  withMutationLock<T>(callback: () => Promise<T>): Promise<T>;
   health(): Promise<AnyRecord>;
   close(): Promise<void>;
   [key: string]: any;
@@ -55,6 +59,67 @@ type AppendPostCreateDelta = {
 type StatusError = Error & {
   statusCode?: number;
 };
+
+const DEFAULT_MUTATION_LOCK_LEASE_MS = 120_000;
+const DEFAULT_MUTATION_LOCK_TIMEOUT_MS = 30_000;
+const DEFAULT_MUTATION_LOCK_RETRY_MS = 100;
+
+function positiveInteger(value: unknown, fallback: number, minimum = 1) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= minimum ? parsed : fallback;
+}
+
+function wait(milliseconds: number) {
+  return new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+function sessionOptions(session?: ClientSession) {
+  return session ? { session } : {};
+}
+
+function mongoUserDocuments(users: AnyRecord[]) {
+  return users.map((user) => {
+    const document = { ...user };
+    if (typeof document.email !== 'string' || !document.email.trim()) {
+      delete document.email;
+    }
+    return document;
+  });
+}
+
+function isUnsupportedTransactionError(error: any) {
+  return error?.code === 20
+    || error?.codeName === 'IllegalOperation'
+    || String(error?.message ?? '').includes('Transaction numbers are only allowed');
+}
+
+async function runMongoTransaction<T>(connection: Connection, callback: (session: ClientSession) => Promise<T>) {
+  const session = await connection.startSession();
+  let result: T | undefined;
+  try {
+    await session.withTransaction(
+      async () => {
+        result = await callback(session);
+      },
+      {
+        readConcern: { level: 'snapshot' },
+        writeConcern: { w: 'majority' }
+      }
+    );
+  } catch (error) {
+    if (isUnsupportedTransactionError(error)) {
+      const wrapped = new Error(
+        'MongoDB transactions are required for forum writes. Configure a replica set or sharded cluster.'
+      );
+      (wrapped as AnyRecord).cause = error;
+      throw wrapped;
+    }
+    throw error;
+  } finally {
+    await session.endSession();
+  }
+  return result as T;
+}
 
 const MODEL_OPTIONS = {
   strict: false,
@@ -81,7 +146,9 @@ const STATE_META_SCHEMA = new mongoose.Schema(
     _id: { type: String, required: true },
     version: Number,
     nextGlobalNumber: Number,
-    adminSettings: mongoose.Schema.Types.Mixed
+    adminSettings: mongoose.Schema.Types.Mixed,
+    lockOwner: String,
+    lockExpiresAt: Date
   },
   { versionKey: false }
 );
@@ -98,6 +165,10 @@ const USER_SCHEMA = new mongoose.Schema(
   {
     username: String,
     passwordHash: String,
+    email: String,
+    emailVerifiedAt: Date,
+    emailChallenges: mongoose.Schema.Types.Mixed,
+    authEpoch: Number,
     role: String,
     settings: mongoose.Schema.Types.Mixed,
     privateData: mongoose.Schema.Types.Mixed,
@@ -107,6 +178,13 @@ const USER_SCHEMA = new mongoose.Schema(
   MODEL_OPTIONS
 );
 USER_SCHEMA.index({ username: 1 }, { unique: true, sparse: true });
+USER_SCHEMA.index(
+  { email: 1 },
+  {
+    unique: true,
+    partialFilterExpression: { email: { $type: 'string' } }
+  }
+);
 USER_SCHEMA.index({ id: 1 }, { unique: true, sparse: true });
 USER_SCHEMA.index({ role: 1, createdAt: -1 });
 
@@ -261,26 +339,26 @@ export function createMongoModels(connection: Connection): MongoModels {
   };
 }
 
-async function replaceCollection(model: MongoModel, items: AnyRecord[]) {
-  await model.deleteMany({});
+async function replaceCollection(model: MongoModel, items: AnyRecord[], session?: ClientSession) {
+  await model.deleteMany({}, sessionOptions(session));
   if (items.length > 0) {
     // `id: false` on the schema keeps the literal UUID `id` field, while Mongo
     // assigns its own ObjectId `_id`. plainDocument() reads `id` back unchanged.
-    await model.insertMany(items, { ordered: true });
+    await model.insertMany(items, { ordered: true, ...sessionOptions(session) });
   }
 }
 
-async function insertDocuments(model: MongoModel, items: AnyRecord[]) {
+async function insertDocuments(model: MongoModel, items: AnyRecord[], session?: ClientSession) {
   if (items.length === 1) {
-    await model.collection.insertOne(items[0]);
+    await model.collection.insertOne(items[0], sessionOptions(session));
     return;
   }
   if (items.length > 1) {
-    await model.collection.insertMany(items, { ordered: true });
+    await model.collection.insertMany(items, { ordered: true, ...sessionOptions(session) });
   }
 }
 
-async function updateDocumentsById(model: MongoModel, items: AnyRecord[]) {
+async function updateDocumentsById(model: MongoModel, items: AnyRecord[], session?: ClientSession) {
   if (items.length === 0) {
     return;
   }
@@ -291,7 +369,7 @@ async function updateDocumentsById(model: MongoModel, items: AnyRecord[]) {
         update: { $set: item }
       }
     })),
-    { ordered: true }
+    { ordered: true, ...sessionOptions(session) }
   );
 }
 
@@ -302,18 +380,18 @@ export async function appendMongoPostCreate(models, {
   updatedThreads = [],
   moderationActions = [],
   appeals = []
-}: AppendPostCreateDelta = {}): Promise<ForumState> {
+}: AppendPostCreateDelta = {}, session?: ClientSession): Promise<ForumState> {
   const normalized = normalizeState(state);
   const threadsToInsert = thread ? [thread] : [];
   const commentsToInsert = comment ? [comment] : [];
   const threadIdsToInsert = new Set(threadsToInsert.map((item) => item.id));
   const threadsToUpdate = updatedThreads.filter((item) => item?.id && !threadIdsToInsert.has(item.id));
 
-  await insertDocuments(models.Thread, threadsToInsert);
-  await insertDocuments(models.Comment, commentsToInsert);
-  await insertDocuments(models.ModerationAction, moderationActions);
-  await insertDocuments(models.Appeal, appeals);
-  await updateDocumentsById(models.Thread, threadsToUpdate);
+  await insertDocuments(models.Thread, threadsToInsert, session);
+  await insertDocuments(models.Comment, commentsToInsert, session);
+  await insertDocuments(models.ModerationAction, moderationActions, session);
+  await insertDocuments(models.Appeal, appeals, session);
+  await updateDocumentsById(models.Thread, threadsToUpdate, session);
   await models.StateMeta.updateOne(
     { _id: 'global' },
     {
@@ -323,20 +401,79 @@ export async function appendMongoPostCreate(models, {
         adminSettings: normalized.adminSettings
       }
     },
-    { upsert: true }
+    { upsert: true, ...sessionOptions(session) }
   );
   return normalizeState(normalized);
 }
 
-export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: MongoStoreOptions = {}): MongoForumStore {
+export async function replaceMongoState(
+  models: MongoModels,
+  nextState: unknown,
+  session?: ClientSession
+): Promise<ForumState> {
+  const normalized = normalizeState(nextState);
+  const users = mongoUserDocuments(normalized.users);
+  await models.StateMeta.updateOne(
+    { _id: 'global' },
+    {
+      $set: {
+        version: normalized.version,
+        nextGlobalNumber: normalized.nextGlobalNumber,
+        adminSettings: normalized.adminSettings
+      }
+    },
+    { upsert: true, ...sessionOptions(session) }
+  );
+  await replaceCollection(models.Board, normalized.boards, session);
+  await replaceCollection(models.User, users, session);
+  await replaceCollection(models.Thread, normalized.threads, session);
+  await replaceCollection(models.Comment, normalized.comments, session);
+  await replaceCollection(models.ModerationAction, normalized.moderationActions, session);
+  await replaceCollection(models.Report, normalized.reports, session);
+  await replaceCollection(models.Appeal, normalized.appeals, session);
+  await replaceCollection(models.Sanction, normalized.sanctions, session);
+  await replaceCollection(models.AiUsage, objectToKeyValues(normalized.aiUsage), session);
+  await replaceCollection(models.AiSummaryCache, objectToKeyValues(normalized.aiSummaryCache), session);
+  return normalizeState({ ...normalized, users });
+}
+
+export function createMongoStore({
+  uri = process.env.MONGODB_URI,
+  dbName,
+  mutationLockLeaseMs,
+  mutationLockTimeoutMs,
+  mutationLockRetryMs
+}: MongoStoreOptions = {}): MongoForumStore {
   if (!uri) {
     throw new Error('MONGODB_URI is required when STORE_DRIVER=mongo');
   }
 
   let connectionPromise: Promise<Connection> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
+  const instanceId = crypto.randomUUID();
+  const lockLeaseMs = positiveInteger(
+    mutationLockLeaseMs ?? process.env.MONGO_MUTATION_LOCK_LEASE_MS,
+    DEFAULT_MUTATION_LOCK_LEASE_MS,
+    5_000
+  );
+  const lockTimeoutMs = positiveInteger(
+    mutationLockTimeoutMs ?? process.env.MONGO_MUTATION_LOCK_TIMEOUT_MS,
+    DEFAULT_MUTATION_LOCK_TIMEOUT_MS,
+    1_000
+  );
+  const lockRetryMs = positiveInteger(
+    mutationLockRetryMs ?? process.env.MONGO_MUTATION_LOCK_RETRY_MS,
+    DEFAULT_MUTATION_LOCK_RETRY_MS,
+    10
+  );
 
-  async function getModels() {
+  function enqueue<T>(callback: () => Promise<T>): Promise<T> {
+    const job = queue.then(callback);
+    queue = job.then(() => undefined, () => undefined);
+    return job;
+  }
+
+  async function getConnection() {
     if (!connectionPromise) {
       const connection = mongoose.createConnection(uri, dbName ? { dbName } : undefined);
       connectionPromise = connection.asPromise().catch(async (error) => {
@@ -345,7 +482,86 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
         throw error;
       });
     }
-    return createMongoModels(await connectionPromise);
+    return connectionPromise;
+  }
+
+  async function getModels() {
+    return createMongoModels(await getConnection());
+  }
+
+  async function acquireMutationLock(models: MongoModels, owner: string) {
+    const now = new Date();
+    try {
+      const lock = await models.StateMeta.findOneAndUpdate(
+        {
+          _id: 'mutation-lock',
+          $or: [
+            { lockOwner: owner },
+            { lockExpiresAt: { $exists: false } },
+            { lockExpiresAt: { $lte: now } }
+          ]
+        },
+        {
+          $set: {
+            lockOwner: owner,
+            lockExpiresAt: new Date(now.getTime() + lockLeaseMs)
+          }
+        },
+        { upsert: true, new: true }
+      ).lean();
+      return lock?.lockOwner === owner;
+    } catch (error: any) {
+      if (error?.code === 11000) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async function runWithMutationLock<T>(callback: () => Promise<T>) {
+    const models = await getModels();
+    const owner = instanceId + ':' + crypto.randomUUID();
+    const deadline = Date.now() + lockTimeoutMs;
+    while (!(await acquireMutationLock(models, owner))) {
+      if (Date.now() >= deadline) {
+        throw new Error('Timed out after ' + lockTimeoutMs + 'ms waiting for the MongoDB mutation lock.');
+      }
+      await wait(Math.min(lockRetryMs, Math.max(1, deadline - Date.now())));
+    }
+
+    let lockLost = false;
+    let renewal = Promise.resolve();
+    const renew = () => {
+      renewal = renewal.then(async () => {
+        const result = await models.StateMeta.updateOne(
+          { _id: 'mutation-lock', lockOwner: owner },
+          { $set: { lockExpiresAt: new Date(Date.now() + lockLeaseMs) } }
+        );
+        if (result.matchedCount !== 1) {
+          lockLost = true;
+        }
+      }).catch(() => {
+        lockLost = true;
+      });
+    };
+    const heartbeat = setInterval(renew, Math.max(1_000, Math.floor(lockLeaseMs / 3)));
+    heartbeat.unref?.();
+
+    try {
+      const result = await callback();
+      await renewal;
+      if (lockLost) {
+        throw new Error('Lost the MongoDB mutation lock before the operation completed.');
+      }
+      return result;
+    } finally {
+      clearInterval(heartbeat);
+      await renewal;
+      await models.StateMeta.updateOne(
+        { _id: 'mutation-lock', lockOwner: owner },
+        { $unset: { lockOwner: '', lockExpiresAt: '' } }
+      ).catch(() => undefined);
+    }
   }
 
   async function ensureBoards(models) {
@@ -406,12 +622,13 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
       role = 'owner',
       settings = {},
       privateData = {},
+      authEpoch = 0,
       disabled = false,
       createdAt,
       updatedAt
     }: AnyRecord = {}) {
       const models = await getModels();
-      queue = queue.then(async () => {
+      return enqueue(async () => {
         const existing = await models.User.findOne({ username }).lean();
         if (existing) {
           const existingPlain = plainDocument(existing);
@@ -423,6 +640,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
                 passwordHash,
                 role,
                 disabled,
+                authEpoch,
                 privateData: existingPlain.privateData ?? privateData,
                 updatedAt
               }
@@ -436,6 +654,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
             role,
             settings,
             privateData,
+            authEpoch,
             disabled,
             createdAt,
             updatedAt
@@ -444,7 +663,6 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
         const user = await models.User.findOne({ username }).lean();
         return user ? plainDocument(user) : null;
       });
-      return queue;
     },
 
     async readDeletedModerationState({ limit = 50, filters = {} }: AnyRecord = {}) {
@@ -645,7 +863,7 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
       createdAt = new Date().toISOString(),
       expiresAt
     }: AnyRecord = {}) {
-      queue = queue.then(async () => {
+      return enqueue(async () => {
         const models = await getModels();
         const postNumber = Number(globalNumber);
         const [thread, comment] = await Promise.all([
@@ -696,11 +914,10 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
         ]);
         return sanction;
       });
-      return queue;
     },
 
     async revokeSanction({ id, reason = '', actor = 'admin', revokedAt = new Date().toISOString() }: AnyRecord = {}) {
-      queue = queue.then(async () => {
+      return enqueue(async () => {
         const models = await getModels();
         const revokeReason = String(reason || '').slice(0, 240);
         const sanction = await models.Sanction.findOneAndUpdate(
@@ -749,11 +966,10 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
         }
         return { sanction: plainSanction };
       });
-      return queue;
     },
 
     async approvePending({ id, reason = '', actor = 'admin', createdAt = new Date().toISOString() }: AnyRecord = {}) {
-      queue = queue.then(async () => {
+      return enqueue(async () => {
         const models = await getModels();
         const moderationReason = String(reason || '').slice(0, 240);
         const thread = await models.Thread.findOneAndUpdate(
@@ -857,7 +1073,6 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
           moderationAction
         };
       });
-      return queue;
     },
 
     async read() {
@@ -894,44 +1109,24 @@ export function createMongoStore({ uri = process.env.MONGODB_URI, dbName }: Mong
     },
 
     async write(nextState: unknown) {
-      const writeJob = queue.then<ForumState>(async () => {
+      return enqueue<ForumState>(async () => {
+        const connection = await getConnection();
         const models = await getModels();
-        const normalized = normalizeState(nextState);
-        await models.StateMeta.updateOne(
-          { _id: 'global' },
-          {
-            $set: {
-              version: normalized.version,
-              nextGlobalNumber: normalized.nextGlobalNumber,
-              adminSettings: normalized.adminSettings
-            }
-          },
-          { upsert: true }
-        );
-        await replaceCollection(models.Board, normalized.boards);
-        await replaceCollection(models.User, normalized.users);
-        await replaceCollection(models.Thread, normalized.threads);
-        await replaceCollection(models.Comment, normalized.comments);
-        await replaceCollection(models.ModerationAction, normalized.moderationActions);
-        await replaceCollection(models.Report, normalized.reports);
-        await replaceCollection(models.Appeal, normalized.appeals);
-        await replaceCollection(models.Sanction, normalized.sanctions);
-        await replaceCollection(models.AiUsage, objectToKeyValues(normalized.aiUsage));
-        await replaceCollection(models.AiSummaryCache, objectToKeyValues(normalized.aiSummaryCache));
-        return normalizeState(normalized);
+        return runMongoTransaction(connection, (session) => replaceMongoState(models, nextState, session));
       });
-      queue = writeJob;
-      return writeJob;
     },
 
     async appendPostCreate(delta: AppendPostCreateDelta) {
-      const appendJob = queue.then<ForumState>(async () => {
+      return enqueue<ForumState>(async () => {
+        const connection = await getConnection();
         const models = await getModels();
         await ensureBoards(models);
-        return appendMongoPostCreate(models, delta);
+        return runMongoTransaction(connection, (session) => appendMongoPostCreate(models, delta, session));
       });
-      queue = appendJob;
-      return appendJob;
+    },
+
+    async withMutationLock<T>(callback: () => Promise<T>) {
+      return runWithMutationLock(callback);
     },
 
     async health() {

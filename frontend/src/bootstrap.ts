@@ -1,19 +1,21 @@
 import { setupHcaptcha } from './hcaptcha';
 import { homeBoardKey } from './constants';
-import { preloadBoardThreads, resolveStartupBoardSlug } from './board-preload';
+import { preloadBoardThreads, resolveStartupBoardSlug, startupBoardPreloadMode } from './board-preload';
+import { applyHomeSnapshotState, readEmbeddedHomeSnapshot } from './home-snapshot';
 import { screenNameFromHash } from './router';
 import type { AnyRecord } from './types';
 
-const APP_READY_CLASS = 'app-ready';
-const APP_READY_FAILSAFE_MS = 15000;
-
-export function markAppReady(): void {
-  const root = document.documentElement;
-  root.classList.add(APP_READY_CLASS);
-  if (root.dataset.initialScreen) {
-    delete root.dataset.initialScreen;
+function applyPublicConfigState(state: AnyRecord, config: AnyRecord, boards = config.boards): void {
+  state.boards = Array.isArray(boards) ? boards : [];
+  state.boardGroups = Array.isArray(config.boardGroups) ? config.boardGroups : [];
+  state.lifecycle = config.lifecycle || state.lifecycle;
+  state.aiConfigured = Boolean(config.ai?.configured);
+  state.moderationConfidenceThreshold = Number(config.ai?.moderationConfidenceThreshold || 0);
+  state.hcaptchaSiteKey = config.hcaptchaSiteKey || '';
+  const maxImageBytes = Number(config.maxImageBytes);
+  if (Number.isFinite(maxImageBytes) && maxImageBytes > 0) {
+    state.maxImageBytes = maxImageBytes;
   }
-  document.getElementById('appBootLoader')?.setAttribute('hidden', '');
 }
 
 export async function bootstrapApp(dependencies: AnyRecord): Promise<void> {
@@ -29,6 +31,7 @@ export async function bootstrapApp(dependencies: AnyRecord): Promise<void> {
     refreshPublicBoards,
     syncAccountHomeBoardOptions,
     loadAccountSession,
+    refreshHomePersonalData,
     syncAdminBoardFilter,
     route,
     setScreen,
@@ -36,13 +39,12 @@ export async function bootstrapApp(dependencies: AnyRecord): Promise<void> {
     writeBoardThreadsCache
   } = dependencies;
 
-  // Failsafe: never leave the UI permanently hidden if bootstrap hangs.
-  const failsafe = window.setTimeout(markAppReady, APP_READY_FAILSAFE_MS);
-
   try {
-    // Prepare the correct screen shell while content stays hidden until ready.
+    const hash = window.location.hash || '#home';
+    const startupScreen = screenNameFromHash(hash);
+    // Paint the correct hash-routed shell before async startup work begins.
     if (typeof setScreen === 'function') {
-      setScreen(screenNameFromHash(window.location.hash));
+      setScreen(startupScreen);
     }
 
     bindEvents(dependencies);
@@ -51,23 +53,61 @@ export async function bootstrapApp(dependencies: AnyRecord): Promise<void> {
     applyDisplayPreferences();
     applyNotificationPreferences();
 
-    const config = await api('/api/config');
-    state.boards = config.boards;
-    state.boardGroups = config.boardGroups || [];
-    state.lifecycle = config.lifecycle || state.lifecycle;
-    state.aiConfigured = Boolean(config.ai?.configured);
-    state.moderationConfidenceThreshold = Number(config.ai?.moderationConfidenceThreshold || 0);
-    syncAdminModerationSettings({ moderationConfidenceThreshold: state.moderationConfidenceThreshold });
-    state.hcaptchaSiteKey = config.hcaptchaSiteKey || '';
-    const maxImageBytes = Number(config.maxImageBytes);
-    if (Number.isFinite(maxImageBytes) && maxImageBytes > 0) {
-      state.maxImageBytes = maxImageBytes;
+    const embeddedHomeSnapshot = readEmbeddedHomeSnapshot();
+
+    async function completeHomeStartup(snapshot: AnyRecord) {
+      applyHomeSnapshotState(state, snapshot);
+      state.initialHomeSnapshot = snapshot;
+      syncAdminModerationSettings({ moderationConfidenceThreshold: state.moderationConfidenceThreshold });
+      syncAccountHomeBoardOptions();
+      syncAdminBoardFilter();
+
+      // loadHome consumes the embedded payload synchronously before its first await.
+      const routePromise = route();
+      setupHcaptcha(showToast).catch((error) => showToast(error.message));
+      const accountPromise = loadAccountSession();
+
+      // Keep later board navigation warm without blocking the first home paint.
+      void preloadBoardThreads({
+        api,
+        writeBoardThreadsCache,
+        boards: state.boards || [],
+        pageSize: state.boardPageSize,
+        sort: state.boardSort,
+        filter: state.boardFilter
+      });
+
+      await Promise.all([routePromise, accountPromise]);
+      if (screenNameFromHash(window.location.hash) === 'home' && typeof refreshHomePersonalData === 'function') {
+        await refreshHomePersonalData();
+      }
     }
-    await refreshPublicBoards({ fallbackBoards: config.boards });
+
+    if (startupScreen === 'home') {
+      if (embeddedHomeSnapshot) {
+        await completeHomeStartup(embeddedHomeSnapshot);
+        return;
+      }
+      let fetchedHomeSnapshot = null;
+      try {
+        fetchedHomeSnapshot = await api('/api/home');
+      } catch {
+        // Older or temporarily unavailable backends fall through to the compatible startup path.
+      }
+      if (fetchedHomeSnapshot) {
+        await completeHomeStartup(fetchedHomeSnapshot);
+        return;
+      }
+    }
+
+    const config = await api('/api/config');
+    applyPublicConfigState(state, config);
+    const boards = await refreshPublicBoards({ fallbackBoards: config.boards });
+    applyPublicConfigState(state, config, boards);
+    syncAdminModerationSettings({ moderationConfidenceThreshold: state.moderationConfidenceThreshold });
     setupHcaptcha(showToast).catch((error) => showToast(error.message));
     syncAccountHomeBoardOptions();
 
-    const hash = window.location.hash || '#home';
     const startupSlug = resolveStartupBoardSlug({
       hash,
       homeBoard: localStorage.getItem(homeBoardKey) || state.account?.settings?.homeBoard || '',
@@ -83,35 +123,37 @@ export async function bootstrapApp(dependencies: AnyRecord): Promise<void> {
       filter: state.boardFilter
     };
 
-    // Warm the board the user is about to see before routing, and warm the rest
-    // so later board navigations skip the loading flash. Home needs every board.
-    const primaryPreload = preloadBoardThreads({
-      ...preloadOptions,
-      boards: primaryBoard.length ? primaryBoard : (state.boards || []).slice(0, 1)
-    });
-    const remainingPreload = preloadBoardThreads({
-      ...preloadOptions,
-      boards: remainingBoards
-    });
-    const needsAllBoards = hash === '#home' || hash.startsWith('#home') || hash === '';
+    const preloadMode = startupScreen === 'home' ? 'none' : startupBoardPreloadMode(hash);
+    let boardPreload: Promise<unknown> = Promise.resolve();
+    if (preloadMode === 'all') {
+      boardPreload = Promise.all([
+        preloadBoardThreads({
+          ...preloadOptions,
+          boards: primaryBoard.length ? primaryBoard : (state.boards || []).slice(0, 1)
+        }),
+        preloadBoardThreads({
+          ...preloadOptions,
+          boards: remainingBoards
+        })
+      ]);
+    } else if (preloadMode === 'primary') {
+      boardPreload = preloadBoardThreads({
+        ...preloadOptions,
+        boards: primaryBoard.length ? primaryBoard : (state.boards || []).slice(0, 1)
+      });
+    }
 
     await Promise.all([
       loadAccountSession(),
-      needsAllBoards ? Promise.all([primaryPreload, remainingPreload]) : primaryPreload
+      boardPreload
     ]);
     syncAdminBoardFilter();
-    // Wait for the first route's data so users never see empty section shells.
+    // Finish the first route once its startup data is available.
     await route();
-    if (!needsAllBoards) {
-      void remainingPreload;
-    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (typeof showToast === 'function') {
       showToast(message);
     }
-  } finally {
-    window.clearTimeout(failsafe);
-    markAppReady();
   }
 }

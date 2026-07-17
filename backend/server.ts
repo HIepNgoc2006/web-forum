@@ -3,9 +3,11 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 
 import { createAiClient } from './src/core/ai.ts';
+import { createResendEmailClient } from './src/core/email.ts';
 import { createForumService } from './src/core/forum-service.ts';
 import { createJsonStore } from './src/core/forum-store.ts';
 import { createLocalImageStorage, createS3ImageStorage } from './src/core/image-storage.ts';
+import { createKlipyClient } from './src/core/klipy.ts';
 import { createMongoStore } from './src/core/mongo-store.ts';
 import { createRateLimitStoreFromEnv } from './src/core/rate-limit-store.ts';
 import { createHttpServer } from './src/server/http-app.ts';
@@ -74,12 +76,18 @@ const imageStorage =
     ? createS3ImageStorage()
     : createLocalImageStorage({ root: uploadRoot });
 const rateLimit = await createRateLimitStoreFromEnv({ logger });
+const emailClient = createResendEmailClient({
+  from: process.env.EMAIL_FROM
+});
+const gifClient = createKlipyClient();
 const service = createForumService({
   store,
   ai: createAiClient(),
   realtime,
   logger,
-  imageStorage
+  imageStorage,
+  emailClient,
+  appBaseUrl: process.env.APP_BASE_URL
 });
 
 const server = createHttpServer({
@@ -97,6 +105,7 @@ const server = createHttpServer({
     event: 'rate_limit.store.failure',
     message: error?.message ?? String(error)
   }),
+  gifClient,
   forceConnectionClose
 });
 server.on('close', () => {
@@ -114,6 +123,8 @@ server.listen(port, () => {
   console.log(`36chan đang chạy tại http://localhost:${port}`);
   console.log(`Store: ${storeDriver === 'mongo' ? 'MongoDB' : 'JSON'}`);
   console.log(`Image storage: ${imageStorageDriver === 's3' ? 'S3-compatible' : 'local disk'}`);
+  console.log(`Email: ${emailClient.configured ? 'Resend' : 'disabled'}`);
+  console.log(`GIF service: ${gifClient.configured ? 'KLIPY enabled' : 'disabled'}`);
   console.log(`Rate limit store: ${rateLimit.driver}${rateLimit.driver === 'redis' ? ` (${rateLimit.failureMode})` : ''}`);
   if (!process.env.ADMIN_USERNAME || !process.env.ADMIN_PASSWORD || !process.env.JWT_SECRET) {
     console.log('Đăng nhập quản trị viên bị tắt cho đến khi cấu hình ADMIN_USERNAME, ADMIN_PASSWORD và JWT_SECRET.');

@@ -40,11 +40,16 @@ export function createHomeController(dependencies: AnyRecord = {}) {
   };
 
   function renderBoards() {
+    // Short board codes keep the sticky topbar compact (classic imageboard style).
+    // Full display name stays in the title tooltip.
     els.boardNav.innerHTML = state.boards
-      .map(
-        (board) =>
-          `<a class="${board.slug === state.boardSlug ? 'active' : ''}" href="#board/${board.slug}" title="${board.path}">${board.name}</a>`
-      )
+      .map((board) => {
+        const slug = String(board.slug || '');
+        const label = escapeHtml(slug);
+        const title = escapeHtml(board.name ? `${board.name} (/${slug}/)` : `/${slug}/`);
+        const active = board.slug === state.boardSlug ? 'active' : '';
+        return `<a class="${active}" href="#board/${encodeURIComponent(slug)}" title="${title}">${label}</a>`;
+      })
       .join('');
   }
 
@@ -132,10 +137,16 @@ export async function loadHomeThreadsByBoard({ writeBoardThreadsCache }: AnyReco
   return Object.fromEntries(entries);
 }
 
-export function renderHomeBoards(threadsByBoard: AnyRecord = {}, stats: AnyRecord = {}) {
+export function renderHomeBoards(
+  threadsByBoard: AnyRecord = {},
+  stats: AnyRecord = {},
+  boardPostCounts: AnyRecord = {}
+) {
   const rows = homeBoardList()
     .map((board) => {
-      const postCount = boardPostCount(threadsByBoard[board.slug]);
+      const postCount = Object.hasOwn(boardPostCounts, board.slug)
+        ? Number(boardPostCounts[board.slug] || 0)
+        : boardPostCount(threadsByBoard[board.slug]);
       const boardUsers = Number(stats.boardUsers?.[board.slug] || 0);
       return `
         <tr>

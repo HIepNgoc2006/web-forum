@@ -9,6 +9,8 @@ export function createScreenHelpers(dependencies: AnyRecord) {
     homeController,
     stopAutoUpdateTimer,
     closeThreadComposer = () => {},
+    closeReplyComposer = () => {},
+    closeQuickReply = () => {},
     showToast = () => {},
     readWatchedThreads,
     writeWatchedThreads,
@@ -29,18 +31,15 @@ export function createScreenHelpers(dependencies: AnyRecord) {
     }
     if (name !== 'thread') {
       stopAutoUpdateTimer();
+      closeReplyComposer({ restoreFocus: false });
     }
     // Keep floating quick-reply on thread + board (board-side reply). Hide elsewhere.
     if (name !== 'thread' && name !== 'board') {
       if (els.quickReply && !els.quickReply.classList.contains('hidden')) {
-        els.quickReply.classList.add('hidden');
-        document.body.classList.remove('quick-reply-open');
-        if (state) {
-          state.quickReplyFromBoard = false;
-        }
+        closeQuickReply({ restoreFocus: false });
       }
     }
-    for (const screen of [
+    const screens = [
       els.homeScreen,
       els.policyScreen,
       els.boardScreen,
@@ -52,8 +51,33 @@ export function createScreenHelpers(dependencies: AnyRecord) {
       els.forgotScreen,
       els.accountScreen,
       els.adminScreen
-    ]) {
-      screen.classList.remove('active');
+    ];
+    const targetScreen =
+      name === 'home'
+        ? els.homeScreen
+        : name === 'policy'
+          ? els.policyScreen
+          : name === 'catalog'
+            ? els.catalogScreen
+            : name === 'archive'
+              ? els.archiveScreen
+              : name === 'thread'
+                ? els.threadScreen
+                : name === 'register'
+                  ? els.registerScreen
+                  : name === 'login'
+                    ? els.loginScreen
+                    : name === 'forgot'
+                      ? els.forgotScreen
+                      : name === 'account'
+                        ? els.accountScreen
+                        : name === 'admin'
+                          ? els.adminScreen
+                          : els.boardScreen;
+    for (const screen of screens) {
+      if (screen !== targetScreen) {
+        screen.classList.remove('active');
+      }
     }
     document.body.classList.toggle('home-page', name === 'home');
     document.body.classList.toggle('policy-page', name === 'policy');
@@ -62,29 +86,7 @@ export function createScreenHelpers(dependencies: AnyRecord) {
       'board-page',
       name === 'board' || name === 'catalog' || name === 'archive' || name === 'thread'
     );
-    if (name === 'home') {
-      els.homeScreen.classList.add('active');
-    } else if (name === 'policy') {
-      els.policyScreen.classList.add('active');
-    } else if (name === 'catalog') {
-      els.catalogScreen.classList.add('active');
-    } else if (name === 'archive') {
-      els.archiveScreen.classList.add('active');
-    } else if (name === 'thread') {
-      els.threadScreen.classList.add('active');
-    } else if (name === 'register') {
-      els.registerScreen.classList.add('active');
-    } else if (name === 'login') {
-      els.loginScreen.classList.add('active');
-    } else if (name === 'forgot') {
-      els.forgotScreen.classList.add('active');
-    } else if (name === 'account') {
-      els.accountScreen.classList.add('active');
-    } else if (name === 'admin') {
-      els.adminScreen.classList.add('active');
-    } else {
-      els.boardScreen.classList.add('active');
-    }
+    targetScreen.classList.add('active');
   }
 
   function currentBoard() {

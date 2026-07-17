@@ -1,4 +1,6 @@
 import type { AnyRecord } from './types';
+import { normalizeCommentComposerMode } from './comment-composer-mode';
+export { normalizeCommentComposerMode } from './comment-composer-mode';
 import {
   WATCHED_THREAD_SORTS,
   deletePasswordKey,
@@ -137,7 +139,8 @@ export function localDisplayPreferences() {
     compactThreads: Boolean(value.compactThreads),
     hideThumbnails: Boolean(value.hideThumbnails),
     watchedUnreadOnly: Boolean(value.watchedUnreadOnly),
-    watchedSort: normalizeWatchedSort(value.watchedSort)
+    watchedSort: normalizeWatchedSort(value.watchedSort),
+    commentComposerMode: normalizeCommentComposerMode(value.commentComposerMode)
   };
 }
 
@@ -146,7 +149,8 @@ export function writeLocalDisplayPreferences(preferences: AnyRecord = {}) {
     compactThreads: Boolean(preferences.compactThreads),
     hideThumbnails: Boolean(preferences.hideThumbnails),
     watchedUnreadOnly: Boolean(preferences.watchedUnreadOnly),
-    watchedSort: normalizeWatchedSort(preferences.watchedSort)
+    watchedSort: normalizeWatchedSort(preferences.watchedSort),
+    commentComposerMode: normalizeCommentComposerMode(preferences.commentComposerMode)
   };
   writeJsonLocal(displayPreferencesKey, safe);
   return safe;
@@ -207,6 +211,31 @@ export function draftKey(kind, id) {
   return `draft:${kind}:${id}`;
 }
 
+const DRAFT_UPDATED_AT_PREFIX = 'draftUpdatedAt:';
+const LEGACY_DRAFT_UPDATED_AT = '1970-01-01T00:00:00.000Z';
+
+export function draftUpdatedAtKey(key = '') {
+  return `${DRAFT_UPDATED_AT_PREFIX}${String(key)}`;
+}
+
+export function writeLocalDraft(key = '', body = '', updatedAt = new Date().toISOString()) {
+  const safeKey = String(key);
+  const safeBody = String(body ?? '');
+  if (!safeBody) {
+    removeLocalDraft(safeKey);
+    return '';
+  }
+  localStorage.setItem(safeKey, safeBody);
+  localStorage.setItem(draftUpdatedAtKey(safeKey), String(updatedAt || new Date().toISOString()));
+  return safeBody;
+}
+
+export function removeLocalDraft(key = '') {
+  const safeKey = String(key);
+  localStorage.removeItem(safeKey);
+  localStorage.removeItem(draftUpdatedAtKey(safeKey));
+}
+
 export function parseDraftKey(key = '') {
   const [, kind = '', id = ''] = String(key).split(':');
   return { kind, id };
@@ -224,7 +253,8 @@ export function localDraftEntries() {
       continue;
     }
     const { kind, id } = parseDraftKey(key);
-    drafts.push({ key, kind, id, body, updatedAt: new Date().toISOString() });
+    const updatedAt = localStorage.getItem(draftUpdatedAtKey(key)) || LEGACY_DRAFT_UPDATED_AT;
+    drafts.push({ key, kind, id, body, updatedAt });
   }
   return drafts;
 }

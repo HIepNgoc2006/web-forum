@@ -1,5 +1,11 @@
 import { safePrivateText, safeReplyTemplateBody } from './account';
-import { MAX_MEDIA_BYTES, MAX_MEDIA_PER_POST, SUPPORTED_VIDEO_TYPES, THREAD_TEMPLATES } from './constants';
+import {
+  DRAFT_MAX_CHARS,
+  MAX_MEDIA_BYTES,
+  MAX_MEDIA_PER_POST,
+  SUPPORTED_VIDEO_TYPES,
+  THREAD_TEMPLATES
+} from './constants';
 import { els } from './dom';
 import {
   dataUrlBytes,
@@ -10,6 +16,77 @@ import {
   scanDraftRisks
 } from './format';
 import type { AnyRecord } from './types';
+
+export function countDraftWords(text: unknown = ''): number {
+  const trimmed = String(text ?? '').trim();
+  if (!trimmed) {
+    return 0;
+  }
+  return trimmed.split(/\s+/).filter(Boolean).length;
+}
+
+/** Keep caret/end and scrollable composer panels in view while draft grows. */
+export function scrollComposerDraft(textarea: HTMLTextAreaElement | null | undefined): void {
+  if (!textarea) {
+    return;
+  }
+  const selectionEnd = Number(textarea.selectionEnd);
+  const atEnd = !Number.isFinite(selectionEnd) || selectionEnd >= textarea.value.length - 1;
+  if (atEnd) {
+    textarea.scrollTop = textarea.scrollHeight;
+  } else {
+    // Approximate: keep focused line near the middle when editing mid-text.
+    try {
+      const lineHeight = Number.parseFloat(getComputedStyle(textarea).lineHeight) || 18;
+      const before = textarea.value.slice(0, Math.max(0, selectionEnd));
+      const line = before.split('\n').length;
+      const target = Math.max(0, line * lineHeight - textarea.clientHeight / 2);
+      textarea.scrollTop = target;
+    } catch {
+      // Ignore style read failures.
+    }
+  }
+
+  let node: HTMLElement | null = textarea.parentElement;
+  while (node && node !== document.body) {
+    const style = getComputedStyle(node);
+    const canScroll =
+      /(auto|scroll|overlay)/.test(style.overflowY) || /(auto|scroll|overlay)/.test(style.overflow);
+    if (canScroll && node.scrollHeight > node.clientHeight + 2) {
+      if (atEnd || node.scrollHeight - node.scrollTop - node.clientHeight < 96) {
+        node.scrollTop = node.scrollHeight;
+      }
+    }
+    if (node.classList?.contains('quick-reply') || node.classList?.contains('composer')) {
+      break;
+    }
+    node = node.parentElement;
+  }
+}
+
+export function updateDraftMeter(
+  textarea: HTMLTextAreaElement | null | undefined,
+  meter: HTMLElement | null | undefined
+): void {
+  if (!meter) {
+    return;
+  }
+  if (!textarea) {
+    meter.textContent = '';
+    meter.classList.add('hidden');
+    return;
+  }
+  const text = String(textarea.value || '');
+  const words = countDraftWords(text);
+  const chars = text.length;
+  const nearChars = chars >= DRAFT_MAX_CHARS * 0.9;
+  const overChars = chars >= DRAFT_MAX_CHARS;
+  meter.textContent = `Đã viết ${words} từ · ${chars}/${DRAFT_MAX_CHARS} ký tự`;
+  meter.title = `Đang đếm từ và ký tự. Tối đa ${DRAFT_MAX_CHARS} ký tự.`;
+  meter.classList.toggle('is-over-limit', overChars);
+  meter.classList.toggle('is-near-limit', !overChars && nearChars);
+  meter.classList.remove('hidden');
+}
 
 export function updatePrivacyWarning(text, box) {
   if (!box) {
@@ -469,13 +546,16 @@ export function createReplyTemplateComposerController({
     const templates = readReplyTemplates();
     document.querySelectorAll('[data-reply-template-picker]').forEach((root) => {
       const target = root.dataset.replyTemplatePicker;
+      const selectId = `replyTemplateSelect-${String(target || 'composer')}`;
       const scopedTemplates = templates.filter((template) => !template.boardSlug || template.boardSlug === state.boardSlug);
       const options = scopedTemplates
         .map((template) => '<option value="' + escapeHtml(template.id) + '">' + escapeHtml(template.title) + '</option>')
         .join('');
       root.innerHTML =
         '<span>Mẫu đã lưu</span>' +
-        '<select data-reply-template-select ' +
+        '<select id="' +
+        escapeHtml(selectId) +
+        '" name="replyTemplate" data-reply-template-select ' +
         (scopedTemplates.length ? '' : 'disabled') +
         ' aria-label="Mẫu đã lưu">' +
         (scopedTemplates.length ? options : '<option value="">Chưa có mẫu</option>') +

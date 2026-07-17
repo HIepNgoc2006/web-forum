@@ -84,12 +84,16 @@ const mockWebAuthn = {
   }
 };
 
-async function withServer(callback, jwtSecret = 'test-jwt-secret') {
+async function withServer(
+  callback,
+  jwtSecret = 'test-jwt-secret',
+  { now = () => new Date('2026-06-10T12:00:00Z') } = {}
+) {
   const store = createMemoryStore();
   const service = createForumService({
     store,
     ai: { moderate: async () => ({ status: 'Safe', labels: [] }) },
-    now: () => new Date('2026-06-10T12:00:00Z'),
+    now,
     webauthn: mockWebAuthn as unknown as Parameters<typeof createForumService>[0]['webauthn']
   });
   const server = createHttpServer({
@@ -166,11 +170,13 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       });
       assert.strictEqual(verifyRes.status, 200);
       const verifyData = (await readApiBody(verifyRes)).data;
-      assert.deepStrictEqual(verifyData, { ok: true });
+      assert.strictEqual(verifyData.ok, true);
+      assert.strictEqual(verifyData.account.authEpoch, 1);
+      assert.strictEqual(typeof verifyData.token, 'string');
 
       // Verify listing passkeys now returns 1 registered passkey
       const listRes = await fetch(`${baseUrl}/api/account/passkeys`, {
-        headers: { Authorization: `Bearer ${userToken}` }
+        headers: { Authorization: `Bearer ${verifyData.token}` }
       });
       assert.strictEqual(listRes.status, 200);
       const passkeys = (await readApiBody(listRes)).data;
@@ -215,15 +221,17 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       // 6. Delete the passkey
       const deleteRes = await fetch(`${baseUrl}/api/account/passkeys/mockCredentialID_123`, {
         method: 'DELETE',
-        headers: { Authorization: `Bearer ${userToken}` }
+        headers: { Authorization: `Bearer ${loginVerifyData.token}` }
       });
       assert.strictEqual(deleteRes.status, 200);
       const deleteData = (await readApiBody(deleteRes)).data;
-      assert.deepStrictEqual(deleteData, { ok: true });
+      assert.strictEqual(deleteData.ok, true);
+      assert.strictEqual(deleteData.account.authEpoch, 2);
+      assert.strictEqual(typeof deleteData.token, 'string');
 
       // Verify passkey is gone
       const listAfterDeleteRes = await fetch(`${baseUrl}/api/account/passkeys`, {
-        headers: { Authorization: `Bearer ${userToken}` }
+        headers: { Authorization: `Bearer ${deleteData.token}` }
       });
       assert.strictEqual(listAfterDeleteRes.status, 200);
       const passkeysAfterDelete = (await readApiBody(listAfterDeleteRes)).data;
@@ -261,7 +269,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       });
       assert.strictEqual(verifyRes.status, 400);
       const errorData = await readApiBody(verifyRes);
-      assert.strictEqual(errorData.error.message, 'Không tìm thấy yêu cầu đăng ký tương ứng');
+      assert.strictEqual(errorData.error.message, 'Yêu cầu đăng ký đã hết hạn hoặc không hợp lệ');
     }, jwtSecret);
   });
 
@@ -283,7 +291,7 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
       });
       assert.strictEqual(loginVerifyRes.status, 401);
       const errorData = await readApiBody(loginVerifyRes);
-      assert.strictEqual(errorData.error.message, 'Tên tài khoản hoặc mật khẩu không đúng');
+      assert.strictEqual(errorData.error.message, 'Tên tài khoản hoặc thiết bị đăng nhập không đúng');
     }, jwtSecret);
   });
 
@@ -367,17 +375,100 @@ describe('WebAuthn Passkey Registration and Authentication API', () => {
     }, jwtSecret);
   });
 
-  it('does not reveal whether a username exists when requesting login options', async () => {
+  it('expires registration and login challenges after five minutes', async () => {
+    let currentTime = new Date('2026-06-10T12:00:00Z');
     await withServer(async (baseUrl) => {
-      const loginOptRes = await fetch(`${baseUrl}/api/auth/webauthn/login-options`, {
+      const registerUser = async (username) => {
+        const response = await fetch(`${baseUrl}/api/account/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password: 'securepass123', captchaToken: 'dev-pass' })
+        });
+        return (await readApiBody(response)).data.token;
+      };
+      const registrationResponse = {
+        id: 'mockCredentialID_123',
+        rawId: 'mockCredentialID_123',
+        type: 'public-key',
+        response: {
+          clientDataJSON: 'mockClientDataJSON',
+          attestationObject: 'mockAttestationObject',
+          transports: ['internal']
+        }
+      };
+
+      const expiredToken = await registerUser('expired_register');
+      await fetch(`${baseUrl}/api/account/passkeys/register-options`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${expiredToken}`, 'Content-Type': 'application/json' }
+      });
+      currentTime = new Date('2026-06-10T12:06:00Z');
+      const expiredRegistration = await fetch(`${baseUrl}/api/account/passkeys/register-verify`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${expiredToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(registrationResponse)
+      });
+      assert.strictEqual(expiredRegistration.status, 400);
+
+      const loginToken = await registerUser('expired_login');
+      await fetch(`${baseUrl}/api/account/passkeys/register-options`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${loginToken}`, 'Content-Type': 'application/json' }
+      });
+      const registeredPasskey = await fetch(`${baseUrl}/api/account/passkeys/register-verify`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${loginToken}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(registrationResponse)
+      });
+      assert.strictEqual(registeredPasskey.status, 200);
+
+      await fetch(`${baseUrl}/api/auth/webauthn/login-options`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: 'missinguser' })
+        body: JSON.stringify({ username: 'expired_login' })
       });
-      assert.strictEqual(loginOptRes.status, 401);
-      const errorData = await readApiBody(loginOptRes);
-      assert.strictEqual(errorData.error.message, 'Tên tài khoản hoặc thiết bị đăng nhập không đúng');
-      assert.equal(errorData.error.message.includes('không tồn tại'), false);
+      currentTime = new Date('2026-06-10T12:12:00Z');
+      const expiredLogin = await fetch(`${baseUrl}/api/auth/webauthn/login-verify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: 'expired_login',
+          assertionResponse: {
+            id: 'mockCredentialID_123',
+            rawId: 'mockCredentialID_123',
+            type: 'public-key',
+            response: {}
+          }
+        })
+      });
+      assert.strictEqual(expiredLogin.status, 400);
+    }, jwtSecret, { now: () => currentTime });
+  });
+
+  it('does not reveal whether a username exists when requesting login options', async () => {
+    await withServer(async (baseUrl) => {
+      await fetch(`${baseUrl}/api/account/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'knownuser', password: 'securepass123', captchaToken: 'dev-pass' })
+      });
+      const requestOptions = (username) => fetch(`${baseUrl}/api/auth/webauthn/login-options`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username })
+      });
+      const [knownResponse, missingResponse] = await Promise.all([
+        requestOptions('knownuser'),
+        requestOptions('missinguser')
+      ]);
+      const known = (await readApiBody(knownResponse)).data;
+      const missing = (await readApiBody(missingResponse)).data;
+
+      assert.strictEqual(knownResponse.status, 200);
+      assert.strictEqual(missingResponse.status, 200);
+      assert.deepStrictEqual(Object.keys(known).sort(), Object.keys(missing).sort());
+      assert.deepStrictEqual(known.allowCredentials, []);
+      assert.deepStrictEqual(missing.allowCredentials, []);
     }, jwtSecret);
   });
 });

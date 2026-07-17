@@ -20,6 +20,7 @@
           <h2>Nội quy bảng</h2>
           <ul data-board-rules-list></ul>
         </section>
+        <div id="replyComposerHost">
         <section id="replyComposer" class="composer reply-composer hidden" aria-labelledby="replyTitle">
           <div class="reply-panel-title">
             <h2 id="replyTitle">Đăng trả lời</h2>
@@ -31,6 +32,18 @@
                 <option value="privacy-safer">An toàn riêng tư</option>
               </select>
               <button id="rewriteButton" class="ghost-button" type="button">[AI sửa an toàn]</button>
+              <select id="commentTranslateTarget" class="rewrite-tone-select" aria-label="Ngôn ngữ dịch nháp">
+                <option value="en">EN</option>
+                <option value="vi">VI</option>
+                <option value="ja">JA</option>
+                <option value="ko">KO</option>
+                <option value="zh">ZH</option>
+                <option value="fr">FR</option>
+                <option value="es">ES</option>
+                <option value="de">DE</option>
+                <option value="th">TH</option>
+              </select>
+              <button id="commentTranslateButton" class="ghost-button" type="button">[Dịch nháp]</button>
               <button id="commentCaptionButton" class="ghost-button" type="button">[AI mô tả ảnh]</button>
               <button id="commentOcrButton" class="ghost-button" type="button">[AI trích chữ]</button>
               <span id="commentAiRewriteLabel" class="ai-label hidden">Đã sửa bằng AI</span>
@@ -56,6 +69,12 @@
               <span>Bình luận</span>
               <textarea id="commentBody" rows="4" maxlength="5000" placeholder="Viết bình luận..."></textarea>
             </label>
+            <div class="field-row draft-meter-field">
+              <span>Độ dài</span>
+              <div class="draft-meter-row draft-meter-row-inline">
+                <p id="commentDraftMeter" class="draft-meter" aria-live="polite">Đã viết 0 từ · 0/5000 ký tự</p>
+              </div>
+            </div>
             <div class="composer-picker" data-composer-picker="comment" aria-label="Emoji và sticker cho trả lời">
               <span>Emoji</span>
               <button class="link-button" data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
@@ -63,12 +82,30 @@
               <button class="link-button" data-composer-insert="😢" type="button" aria-label="Chèn emoji buồn">😢</button>
               <button class="link-button" data-composer-insert="🔥" type="button" aria-label="Chèn emoji nóng">🔥</button>
               <button class="link-button" data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
-              <span>Sticker</span>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:study]" type="button">Học</button>
-              <button class="link-button sticker-insert-button" data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
+              <button
+                class="link-button composer-media-trigger"
+                data-composer-media-open="comment"
+                type="button"
+                aria-controls="composerMediaPicker"
+                aria-expanded="false"
+              >Sticker / GIF</button>
             </div>
+            <div
+              class="composer-sticker-preview"
+              data-composer-sticker-preview="comment"
+              aria-label="Xem trước sticker đã chọn"
+              hidden
+            >
+              <span class="composer-sticker-preview-label">Xem trước</span>
+              <div class="composer-sticker-preview-items" data-composer-sticker-preview-items></div>
+            </div>
+            <span
+              class="composer-sticker-preview-status"
+              data-composer-sticker-preview-status="comment"
+              role="status"
+              aria-live="polite"
+              aria-atomic="true"
+            ></span>
             <div class="reply-template-picker" data-reply-template-picker="comment" aria-label="Mẫu trả lời đã lưu"></div>
             <div id="commentPrivacyWarning" class="privacy-warning hidden" role="status"></div>
             <div class="field-row">
@@ -111,10 +148,12 @@
               Có thể giữ định dạng code bằng thẻ [code].
             </p>
             <div class="form-actions reply-submit-row">
+              <button id="commentCancelButton" class="ghost-button reply-cancel-button" type="button">[Hủy]</button>
               <button class="primary-button reply-post-button" type="submit">Gửi</button>
             </div>
           </form>
         </section>
+        </div>
         <div class="board-ad board-banner" data-board-banner>
           <img class="board-banner-image hidden" data-board-banner-image alt="" />
           <span data-board-banner-text>Bảng thú nhận sinh viên chính thức</span>

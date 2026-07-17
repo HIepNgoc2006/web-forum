@@ -78,6 +78,66 @@ export async function handleAdminClick(event: Event, deps: AdminEventDependencie
     return true;
   }
 
+  const adminStickerAddButton = target.closest('[data-admin-sticker-add]');
+  if (adminStickerAddButton) {
+    const form = adminStickerAddButton.closest('[data-admin-sticker-add-form]');
+    const labelInput = form?.querySelector<HTMLInputElement>('[data-admin-sticker-label]');
+    const urlInput = form?.querySelector<HTMLInputElement>('[data-admin-sticker-url]');
+    const url = String(urlInput?.value || '').trim();
+    if (!url) {
+      showToast('Vui lòng nhập liên kết Imgur.');
+      urlInput?.focus();
+      return true;
+    }
+    const restore = setButtonLoading(adminStickerAddButton, 'Đang thêm...');
+    try {
+      await api('/api/admin/stickers', {
+        method: 'POST',
+        body: JSON.stringify({
+          label: String(labelInput?.value || '').trim(),
+          url
+        })
+      });
+      window.dispatchEvent(new Event('custom-stickers-changed'));
+      showToast('Đã thêm sticker tùy chỉnh.');
+      await loadAdmin();
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      if (typeof restore === 'function') {
+        restore();
+      }
+    }
+    return true;
+  }
+
+  const adminStickerToggleButton = target.closest('[data-admin-sticker-toggle]');
+  if (adminStickerToggleButton) {
+    const row = adminStickerToggleButton.closest('[data-admin-sticker-row]');
+    const key = row?.dataset.adminStickerRow;
+    if (!key) {
+      return true;
+    }
+    const active = adminStickerToggleButton.dataset.nextActive === 'true';
+    const restore = setButtonLoading(adminStickerToggleButton, active ? 'Đang hiện...' : 'Đang ẩn...');
+    try {
+      await api(`/api/admin/stickers/${encodeURIComponent(key)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ active })
+      });
+      window.dispatchEvent(new Event('custom-stickers-changed'));
+      showToast(active ? 'Đã hiện lại sticker.' : 'Đã ẩn sticker khỏi bộ chọn.');
+      await loadAdmin();
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      if (typeof restore === 'function') {
+        restore();
+      }
+    }
+    return true;
+  }
+
   const adminSiteContentSaveButton = target.closest('[data-admin-site-content-save]');
   if (adminSiteContentSaveButton) {
     const root = adminSiteContentSaveButton.closest('[data-admin-site-content]');

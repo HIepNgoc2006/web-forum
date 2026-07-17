@@ -1,11 +1,12 @@
 import type { AnyRecord } from './types';
+import { normalizeKlipySlug } from './media-tokens';
+import { STICKERS, isCustomStickerKey } from './stickers';
 import {
   API_BASE_URL,
   CAPCODE_LABELS,
   COMMENT_SORT_LABELS,
   REALTIME_URL,
   REPORT_CATEGORIES,
-  STICKERS,
   privacyRiskRules,
   rumorFrictionRules
 } from './constants';
@@ -195,9 +196,32 @@ export function renderStickerText(html) {
   return String(html).replace(/\[sticker:([a-z0-9-]+)\]/gi, (match, key) => {
     const sticker = STICKERS[String(key).toLowerCase()];
     if (!sticker) {
+      if (isCustomStickerKey(key)) {
+        return `<span class="post-sticker post-sticker-custom-placeholder" data-custom-sticker="${escapeHtml(String(key).toLowerCase())}" aria-label="Sticker tùy chỉnh">Sticker</span>`;
+      }
       return match;
     }
+    if (sticker.src) {
+      const width = Number(sticker.width);
+      const height = Number(sticker.height);
+      const dimensions =
+        Number.isFinite(width) && width > 0 && Number.isFinite(height) && height > 0
+          ? ` width="${Math.round(width)}" height="${Math.round(height)}"`
+          : '';
+      const referrerPolicy = sticker.custom ? ' referrerpolicy="no-referrer"' : '';
+      return `<img class="post-sticker" src="${escapeHtml(sticker.src)}" alt="${escapeHtml(sticker.label)}"${dimensions} loading="lazy" decoding="async"${referrerPolicy}>`;
+    }
     return `<span class="post-sticker" role="img" aria-label="${escapeHtml(sticker.label)}">${escapeHtml(sticker.icon)}</span>`;
+  });
+}
+
+export function renderGifText(html) {
+  return String(html).replace(/\[gif:klipy:([^\]]+)\]/gi, (match, value) => {
+    const slug = normalizeKlipySlug(value);
+    if (!slug) {
+      return match;
+    }
+    return `<span class="post-gif" data-klipy-gif="${escapeHtml(slug)}" aria-label="GIF từ KLIPY"><span class="post-gif-placeholder">GIF</span></span>`;
   });
 }
 
@@ -327,7 +351,7 @@ export function commentSortHtml(current = 'old') {
   ).join('');
   return `
     <div class="comment-sort">
-      <label>sắp xếp theo: <select data-comment-sort aria-label="Sắp xếp bình luận">${options}</select></label>
+      <label>sắp xếp theo: <select name="commentSort" data-comment-sort aria-label="Sắp xếp bình luận">${options}</select></label>
     </div>
   `;
 }
@@ -347,7 +371,11 @@ export function moderationLabelText(label) {
       Spam: 'Nội dung rác',
       'Hate Speech': 'Thù ghét',
       'Fake News': 'Tin giả',
-      'PII Risk': 'Rủi ro thông tin cá nhân'
+      'PII Risk': 'Rủi ro thông tin cá nhân',
+      'Graphic Content': 'Nội dung gây sốc',
+      'Sexual Content': 'Nội dung tình dục',
+      Violence: 'Bạo lực',
+      'Self-Harm': 'Tự hại'
     }[label] || label
   );
 }

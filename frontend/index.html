@@ -17,25 +17,6 @@
         );
       })();
     </script>
-    <div id="appBootLoader" role="status" aria-live="polite" aria-busy="true">
-      <div class="boot-logo">
-        <div class="boot-clover" aria-hidden="true">
-          <span></span><span></span><span></span><span></span>
-        </div>
-        <div class="boot-title">36chan</div>
-      </div>
-      <div class="boot-status">Đang tải…</div>
-    </div>
-    <script>
-      // If the app module never loads, still reveal the page after a timeout.
-      setTimeout(function () {
-        if (!document.documentElement.classList.contains('app-ready')) {
-          document.documentElement.classList.add('app-ready');
-          var loader = document.getElementById('appBootLoader');
-          if (loader) loader.setAttribute('hidden', '');
-        }
-      }, 15000);
-    </script>
     <!-- @include index-partials/topbar.html -->
 
     <main class="layout">
@@ -57,6 +38,9 @@
     </main>
 
     <!-- @include index-partials/quick-reply.html -->
+    <!-- @include index-partials/composer-media-picker.html -->
+    <!-- @include index-partials/chatbot.html -->
+    <script id="initialHomeSnapshot" type="application/json">null</script>
     <script type="module" src="/src/app.ts"></script>
   </body>
 </html>

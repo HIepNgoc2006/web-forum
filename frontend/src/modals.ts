@@ -80,7 +80,7 @@ export function createPostEditModal({
       }
 
       fileInput?.addEventListener('change', async () => {
-        const files = Array.from(fileInput.files || []);
+        const files = Array.from((fileInput?.files || []) as File[]);
         if (!files.length) {
           resetSelectedMedia();
           return;

@@ -1,13 +1,21 @@
-import { confirmPrivacyBeforeSubmit, updatePrivacyWarning } from './composer';
+import {
+  confirmPrivacyBeforeSubmit,
+  scrollComposerDraft,
+  updateDraftMeter,
+  updatePrivacyWarning
+} from './composer';
+import { appendReplyQuote } from './comment-draft';
 import { escapeHtml } from './format';
 import { clearDisplayName, capcodeValue, displayNameValue, formValue, hasOption, withImageSpoiler } from './post-form';
+import { parsePollOptions } from './poll-options';
+import type { ToastOptions } from './feedback';
 import type { AnyRecord } from './types';
 
 type ComposerControllerDependencies = {
   state: AnyRecord;
   els: AnyRecord;
   api: (url: string, options?: AnyRecord) => Promise<any>;
-  showToast: (message: string) => void;
+  showToast: (message: string, options?: ToastOptions) => void;
   setButtonLoading: (button: AnyRecord, text?: string) => () => void;
   setFormError: (element: AnyRecord, message?: string) => void;
   resetHcaptcha: (element: AnyRecord) => void;
@@ -54,6 +62,13 @@ export function createComposerController({
   canModerateFromAdminToken = () => false,
   showReasonModal
 }: ComposerControllerDependencies) {
+  function showPostSubmitToast(result: AnyRecord, publishedMessage: string, pendingMessage: string) {
+    showToast(postSubmitToast(result, publishedMessage, pendingMessage), {
+      durationMs: result.status === 'pending' ? 12000 : 3400,
+      tone: result.status === 'pending' ? 'warning' : 'neutral'
+    });
+  }
+
   function confirmDuplicateThreadIfNeeded(body: string) {
     return api(`/api/boards/${state.boardSlug}/threads/check-duplicate`, {
       method: 'POST',
@@ -76,10 +91,7 @@ export function createComposerController({
       });
   }
 
-  function createComment(body: string, captchaToken: string) {
-    const useQuickReply = !els.quickReply.classList.contains('hidden');
-    const form = useQuickReply ? els.quickReplyForm : els.commentForm;
-    const image = useQuickReply ? state.quickReplyImage : state.commentImage;
+  function createComment(body: string, captchaToken: string, { form, image }: AnyRecord) {
     return api(`/api/threads/${state.threadId}/comments`, {
       auth: 'account',
       method: 'POST',
@@ -96,6 +108,11 @@ export function createComposerController({
     });
   }
 
+  function clearComposerBody(textarea: HTMLTextAreaElement) {
+    textarea.value = '';
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
   async function submitThread(event: SubmitEvent) {
     event.preventDefault();
     const body = els.threadBody.value;
@@ -106,6 +123,14 @@ export function createComposerController({
     }
     if (state.hcaptchaSiteKey && !captchaToken) {
       showToast('Vui lòng hoàn tất hCaptcha trước khi gửi.');
+      return;
+    }
+    let pollOptions: string[];
+    try {
+      pollOptions = parsePollOptions(els.threadPollOptions.value);
+    } catch (error) {
+      showToast(error instanceof Error ? error.message : 'L\u1ef1a ch\u1ecdn th\u0103m d\u00f2 kh\u00f4ng h\u1ee3p l\u1ec7');
+      els.threadPollOptions.focus();
       return;
     }
     const button = event.submitter;
@@ -119,10 +144,7 @@ export function createComposerController({
       const payload = {
         subject: formValue(els.threadForm, 'subject'),
         body,
-        pollOptions: els.threadPollOptions.value
-          .split('\n')
-          .map((option) => option.trim())
-          .filter(Boolean),
+        pollOptions,
         options,
         displayName: displayNameValue(els.threadForm, state.account),
         deletePassword: deletePasswordValue(),
@@ -137,7 +159,7 @@ export function createComposerController({
         body: JSON.stringify(payload)
       });
       rememberMyPost(result.thread, 'thread');
-      els.threadBody.value = '';
+      clearComposerBody(els.threadBody);
       els.threadPollOptions.value = '';
       if (els.threadForm.elements.subject) {
         els.threadForm.elements.subject.value = '';
@@ -159,7 +181,7 @@ export function createComposerController({
       els.imagePreview.classList.add('hidden');
       resetHcaptcha(els.threadCaptcha);
       closeThreadComposer();
-      showToast(postSubmitToast(result, 'Chủ đề đã công khai.', 'Đã vào hàng đợi chờ quản trị viên duyệt.'));
+      showPostSubmitToast(result, 'Chủ đề đã công khai.', 'Đã vào hàng đợi chờ quản trị viên duyệt.');
       if (hasOption(options, 'noko') && result.thread?.id) {
         window.location.hash = `#thread/${result.thread.id}`;
       } else {
@@ -222,9 +244,12 @@ export function createComposerController({
     }
     const restoreButton = setButtonLoading(button);
     try {
-      const result = await createComment(body, captchaToken);
+      const result = await createComment(body, captchaToken, {
+        form: els.commentForm,
+        image: state.commentImage
+      });
       rememberMyPost(result.comment, 'comment');
-      els.commentBody.value = '';
+      clearComposerBody(els.commentBody);
       clearDisplayName(els.commentForm);
       removeDraft(draftKey('comment', state.threadId));
       updatePrivacyWarning('', els.commentPrivacyWarning);
@@ -248,8 +273,8 @@ export function createComposerController({
       els.commentImagePreview.innerHTML = '';
       els.commentImagePreview.classList.add('hidden');
       resetHcaptcha(els.commentCaptcha);
-      showToast(postSubmitToast(result, 'Đã gửi.', 'Bình luận đang chờ duyệt.'));
-      closeReplyComposer();
+      showPostSubmitToast(result, 'Đã gửi.', 'Bình luận đang chờ duyệt.');
+      closeReplyComposer({ restoreFocus: false });
       await loadThread();
     } catch (error) {
       showToast(error.message);
@@ -278,9 +303,14 @@ export function createComposerController({
     }
     const restoreButton = setButtonLoading(button);
     try {
-      const result = await createComment(body, captchaToken);
+      const result = await createComment(body, captchaToken, {
+        form: els.quickReplyForm,
+        image: state.quickReplyImage
+      });
       rememberMyPost(result.comment, 'comment');
       clearDisplayName(els.quickReplyForm);
+      clearComposerBody(els.quickReplyBody);
+      removeDraft(draftKey('comment', state.threadId));
       removeDraft(draftKey('quickReply', state.threadId));
       els.quickReplyFile.value = '';
       state.quickReplyImage = [];
@@ -306,9 +336,9 @@ export function createComposerController({
         els.quickReplyAudio.value = '';
       }
       resetHcaptcha(els.quickReplyCaptcha);
-      showToast(postSubmitToast(result, 'Đã gửi.', 'Bình luận đang chờ duyệt.'));
+      showPostSubmitToast(result, 'Đã gửi.', 'Bình luận đang chờ duyệt.');
       const stayOnBoard = Boolean(state.quickReplyFromBoard) || (window.location.hash || '').startsWith('#board/');
-      closeQuickReply();
+      closeQuickReply({ restoreFocus: false });
       if (stayOnBoard) {
         await loadBoard();
       } else {
@@ -425,46 +455,243 @@ export function createComposerController({
     els.startThreadButton.classList.remove('hidden');
   }
 
-  function syncReplyComposer() {
-    const canReply = !state.threadIsArchived && !state.threadIsLocked;
-    els.replyComposer.classList.toggle('hidden', !state.replyComposerOpen || !canReply);
-    els.postReplyToggle.classList.toggle('hidden', state.replyComposerOpen || !canReply);
-    if (!state.replyComposerOpen || !canReply) {
-      els.suggestions.classList.add('hidden');
+  function restoreReplyComposerHost() {
+    if (els.replyComposerHost && els.replyComposer.parentElement !== els.replyComposerHost) {
+      els.replyComposerHost.append(els.replyComposer);
     }
   }
 
-  function openReplyComposer({ focus = true }: AnyRecord = {}) {
-    if (state.threadIsArchived || state.threadIsLocked) {
-      showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
+  function isPermanentReplyTarget(target: unknown): target is Element {
+    return (
+      target instanceof Element &&
+      target.isConnected &&
+      !target.closest('#refPreview') &&
+      Boolean(els.threadDetail?.contains(target))
+    );
+  }
+
+  function replyComposerTargetElement() {
+    const inlineTarget = state.replyComposerInlineTarget;
+    if (isPermanentReplyTarget(inlineTarget)) {
+      return inlineTarget;
+    }
+    const number = String(state.replyComposerTargetNumber || '');
+    const target = number
+      ? els.threadDetail?.querySelector('#p' + number)
+      : null;
+    return isPermanentReplyTarget(target) ? target : null;
+  }
+
+  function placeReplyComposer() {
+    const target = replyComposerTargetElement();
+    if (target?.parentElement) {
+      target.insertAdjacentElement('afterend', els.replyComposer);
       return;
     }
-    state.replyComposerOpen = true;
-    syncReplyComposer();
-    const savedDraft = readDraft(draftKey('comment', state.threadId));
-    if (savedDraft && !els.commentBody.value) {
-      els.commentBody.value = savedDraft;
-      updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
+    restoreReplyComposerHost();
+  }
+
+  function syncReplyComposer() {
+    const canReply = !state.threadIsArchived && !state.threadIsLocked;
+    const visible = Boolean(state.replyComposerOpen && canReply);
+    if (visible) {
+      placeReplyComposer();
+    } else {
+      restoreReplyComposerHost();
     }
-    if (focus) {
-      window.setTimeout(() => els.commentBody.focus(), 0);
+    els.replyComposer.classList.toggle('hidden', !visible);
+    els.replyComposer.classList.toggle('reply-composer-targeted', Boolean(visible && state.replyComposerTargetNumber));
+    els.postReplyToggle.classList.toggle('hidden', visible || !canReply);
+    const title = els.replyComposer.querySelector('#replyTitle');
+    if (title) {
+      title.textContent = state.replyComposerTargetNumber
+        ? 'Trả lời No.' + state.replyComposerTargetNumber
+        : 'Đăng trả lời';
+    }
+    if (!visible) {
+      els.suggestions.classList.add('hidden');
     }
   }
 
-  function closeReplyComposer({ clear = false }: AnyRecord = {}) {
+  function addQuoteToComposer(
+    textarea: HTMLTextAreaElement,
+    number: string | number,
+    selectedQuote = ''
+  ) {
+    const result = appendReplyQuote(textarea.value, number, selectedQuote);
+    if (result.changed) {
+      textarea.value = result.value;
+      textarea.setSelectionRange(result.value.length, result.value.length);
+    }
+    return result.changed;
+  }
+
+  function readCommentDraft(threadId: string) {
+    const commentDraftKey = draftKey('comment', threadId);
+    const savedDraft = readDraft(commentDraftKey);
+    if (savedDraft) {
+      return savedDraft;
+    }
+    const legacyDraftKey = draftKey('quickReply', threadId);
+    const legacyDraft = readDraft(legacyDraftKey);
+    if (legacyDraft) {
+      writeDraft(commentDraftKey, legacyDraft);
+      removeDraft(legacyDraftKey);
+    }
+    return legacyDraft;
+  }
+
+  function openInlineReplyComposer({
+    focus = true,
+    number = '',
+    selectedQuote = '',
+    inlineTarget = null,
+    event = null
+  }: AnyRecord = {}) {
+    if (state.threadIsArchived || state.threadIsLocked) {
+      showToast(state.threadIsLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
+      return 'blocked';
+    }
+    if (!els.quickReply.classList.contains('hidden')) {
+      closeQuickReply({ restoreFocus: false });
+    }
+    state.replyComposerInvoker =
+      event?.target instanceof HTMLElement
+        ? event.target
+        : document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
+    state.replyComposerTargetNumber = number ? String(number) : '';
+    state.replyComposerInlineTarget = isPermanentReplyTarget(inlineTarget) ? inlineTarget : null;
+    state.replyComposerOpen = true;
+    const savedDraft = readCommentDraft(String(state.threadId || ''));
+    els.commentBody.value = savedDraft;
+    const draftChanged = number
+      ? addQuoteToComposer(els.commentBody, number, selectedQuote)
+      : false;
+    if (draftChanged) {
+      writeDraft(draftKey('comment', state.threadId), els.commentBody.value);
+    }
+    updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
+    updateDraftMeter(els.commentBody, els.commentDraftMeter);
+    syncReplyComposer();
+    if (focus) {
+      window.setTimeout(() => {
+        els.commentBody.focus();
+        scrollComposerDraft(els.commentBody);
+      }, 0);
+    }
+    return 'normal';
+  }
+
+  function closeReplyComposer({ clear = false, restoreFocus = true }: AnyRecord = {}) {
+    const invoker = state.replyComposerInvoker;
+    const targetAction = replyComposerTargetElement()?.querySelector(
+      '[data-quick-reply], [data-quote]'
+    );
     state.replyComposerOpen = false;
+    state.replyComposerTargetNumber = '';
+    state.replyComposerInlineTarget = null;
+    state.replyComposerInvoker = null;
     if (clear) {
-      els.commentBody.value = '';
+      clearComposerBody(els.commentBody);
       els.suggestions.classList.add('hidden');
     }
     syncReplyComposer();
+    if (restoreFocus) {
+      window.setTimeout(() => {
+        const visibleFocusTarget = (...targets: unknown[]) =>
+          targets.find(
+            (target) =>
+              target instanceof HTMLElement &&
+              target.isConnected &&
+              !target.closest('.hidden, [hidden]') &&
+              target.getClientRects().length > 0
+          ) as HTMLElement | undefined;
+        visibleFocusTarget(invoker, targetAction, els.postReplyToggle)?.focus();
+      }, 0);
+    }
+  }
+
+  function prepareReplyComposerForThreadRender() {
+    const restoreTextareaFocus =
+      Boolean(state.replyComposerOpen) && document.activeElement === els.commentBody;
+    const selectionStart = els.commentBody.selectionStart;
+    const selectionEnd = els.commentBody.selectionEnd;
+    restoreReplyComposerHost();
+
+    return () => {
+      if (!restoreTextareaFocus || !state.replyComposerOpen) {
+        return;
+      }
+      els.commentBody.focus({ preventScroll: true });
+      const max = els.commentBody.value.length;
+      els.commentBody.setSelectionRange(
+        Math.min(selectionStart, max),
+        Math.min(selectionEnd, max)
+      );
+    };
+  }
+
+  function replyFlag(value: unknown, fallback: boolean) {
+    if (typeof value === 'boolean') {
+      return value;
+    }
+    if (typeof value === 'string') {
+      return value === '1' || value === 'true';
+    }
+    return fallback;
+  }
+
+  function openReplyComposer(options: AnyRecord = {}) {
+    const targetThreadId = String(options.threadId || state.threadId || '');
+    const useCurrentThreadState =
+      !options.threadId ||
+      (!options.fromBoard && String(options.threadId) === String(state.threadId || ''));
+    const normalizedOptions = {
+      ...options,
+      isArchived: replyFlag(options.isArchived, useCurrentThreadState ? state.threadIsArchived : false),
+      isLocked: replyFlag(options.isLocked, useCurrentThreadState ? state.threadIsLocked : false)
+    };
+    const useNormal =
+      options.forceNormal || document.body.classList.contains('comment-composer-normal');
+    if (!useNormal) {
+      openQuickReply(options.number || '', options.event, normalizedOptions);
+      return 'floating';
+    }
+
+    const isArchived = normalizedOptions.isArchived;
+    const isLocked = normalizedOptions.isLocked;
+    if (isArchived || isLocked) {
+      showToast(isLocked ? 'Chủ đề đã bị khóa, không thể trả lời.' : 'Chủ đề đã lưu trữ, không thể trả lời.');
+      return 'blocked';
+    }
+    if (!targetThreadId) {
+      showToast('Không xác định được chủ đề để trả lời.');
+      return 'blocked';
+    }
+
+    const onTargetThread =
+      (window.location.hash || '').startsWith('#thread/') &&
+      String(state.threadId || '') === targetThreadId;
+    if (options.fromBoard || (options.threadId && !onTargetThread)) {
+      state.pendingInlineReply = {
+        threadId: targetThreadId,
+        number: options.number ? String(options.number) : '',
+        selectedQuote: String(options.selectedQuote || '')
+      };
+      window.location.hash = '#thread/' + encodeURIComponent(targetThreadId);
+      return 'navigating';
+    }
+
+    return openInlineReplyComposer(normalizedOptions);
   }
 
   function isNarrowQuickReplyViewport(win = window) {
     return win.matchMedia('(max-width: 640px)').matches || win.innerWidth <= 640;
   }
 
-  function positionQuickReply(event: PointerEvent) {
+  function positionQuickReply(event?: PointerEvent | MouseEvent) {
     // Phones: CSS bottom-sheet owns placement — clear inline coords from desktop drag.
     if (isNarrowQuickReplyViewport()) {
       els.quickReply.style.left = '';
@@ -475,39 +702,28 @@ export function createComposerController({
     }
     const width = Math.min(360, window.innerWidth - 12);
     const height = Math.min(420, window.innerHeight - 12);
-    const left = clamp(event.clientX - 24, 6, window.innerWidth - width - 6);
-    const top = clamp(event.clientY + 12, 6, window.innerHeight - height - 6);
+    const pointerX = Number(event?.clientX);
+    const pointerY = Number(event?.clientY);
+    const hasPointer = Number.isFinite(pointerX) && Number.isFinite(pointerY) && (pointerX > 0 || pointerY > 0);
+    const left = hasPointer
+      ? clamp(pointerX - 24, 6, window.innerWidth - width - 6)
+      : clamp(window.innerWidth - width - 24, 6, window.innerWidth - width - 6);
+    const top = hasPointer
+      ? clamp(pointerY + 12, 6, window.innerHeight - height - 6)
+      : clamp(72, 6, window.innerHeight - height - 6);
     els.quickReply.style.left = `${left}px`;
     els.quickReply.style.top = `${top}px`;
   }
 
   function addQuoteToQuickReply(number: string | number, selectedQuote = '') {
-    const quote = `>>${number}`;
-    const lines = els.quickReplyBody.value
-      .split('\n')
-      .map((line) => line.trim())
-      .filter(Boolean);
-    if (!lines.includes(quote)) {
-      lines.push(quote);
-    }
-    if (selectedQuote) {
-      selectedQuote
-        .split('\n')
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .forEach((line) => {
-          if (!lines.includes(line)) {
-            lines.push(line);
-          }
-        });
-    }
-    els.quickReplyBody.value = `${lines.join('\n')}\n`;
+    const changed = addQuoteToComposer(els.quickReplyBody, number, selectedQuote);
     updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
+    return changed;
   }
 
   function openQuickReply(
     number,
-    event: PointerEvent,
+    event: PointerEvent | MouseEvent | undefined,
     {
       selectedQuote = '',
       threadId = '',
@@ -544,10 +760,15 @@ export function createComposerController({
       return;
     }
 
-    // Avoid stacking the inline reply form under the floating panel on small screens.
     if (state.replyComposerOpen) {
-      closeReplyComposer();
+      closeReplyComposer({ restoreFocus: false });
     }
+    state.quickReplyInvoker =
+      event?.target instanceof HTMLElement
+        ? event.target
+        : document.activeElement instanceof HTMLElement
+          ? document.activeElement
+          : null;
     const wasHidden = els.quickReply.classList.contains('hidden');
     const threadNumber = state.threadGlobalNumber || number;
     const openThreadHref = `#thread/${encodeURIComponent(state.threadId)}`;
@@ -558,7 +779,8 @@ export function createComposerController({
       els.quickReplyTitle.textContent = `Trả lời chủ đề No.${threadNumber}`;
     }
     if (wasHidden || switchedThread) {
-      els.quickReplyBody.value = readDraft(draftKey('quickReply', state.threadId));
+      const savedDraft = readCommentDraft(String(state.threadId || ''));
+      els.quickReplyBody.value = savedDraft;
       els.quickReplyFile.value = '';
       state.quickReplyImage = [];
       els.quickReplyFileName.textContent = 'Chưa chọn tệp';
@@ -580,8 +802,11 @@ export function createComposerController({
         els.quickReplyAudio.value = '';
       }
     }
-    if (number) {
-      addQuoteToQuickReply(number, selectedQuote);
+    const draftChanged = number
+      ? addQuoteToQuickReply(number, selectedQuote)
+      : false;
+    if (draftChanged) {
+      writeDraft(draftKey('comment', state.threadId), els.quickReplyBody.value);
     }
     els.quickReplyCaptcha.value = state.hcaptchaSiteKey ? '' : els.commentCaptcha.value || 'dev-pass';
     if (wasHidden) {
@@ -601,17 +826,29 @@ export function createComposerController({
     els.refPreview.classList.add('hidden');
     els.refPreview.classList.remove('ref-preview-loading', 'ref-preview-error', 'ref-preview-visible', 'ref-preview-pinned');
     els.refPreview.innerHTML = '';
-    window.setTimeout(() => els.quickReplyBody.focus(), 0);
+    updateDraftMeter(els.quickReplyBody, els.quickReplyDraftMeter);
+    scrollComposerDraft(els.quickReplyBody);
+    window.setTimeout(() => {
+      els.quickReplyBody.focus();
+      scrollComposerDraft(els.quickReplyBody);
+    }, 0);
   }
 
-  function closeQuickReply() {
+  function closeQuickReply({ restoreFocus = true }: AnyRecord = {}) {
+    const invoker = state.quickReplyInvoker;
     els.quickReply.classList.add('hidden');
     document.body.classList.remove('quick-reply-open');
     updatePrivacyWarning('', els.quickReplyPrivacyWarning);
     state.quickReplyDrag = null;
     state.quickReplyFromBoard = false;
+    state.quickReplyInvoker = null;
     els.quickReply.style.left = '';
     els.quickReply.style.top = '';
+    els.quickReply.style.right = '';
+    els.quickReply.style.bottom = '';
+    if (restoreFocus && invoker instanceof HTMLElement && invoker.isConnected) {
+      window.setTimeout(() => invoker.focus(), 0);
+    }
   }
 
   function bindComposerInputEvents() {
@@ -621,17 +858,22 @@ export function createComposerController({
       if (els.threadAiRewriteLabel) {
         els.threadAiRewriteLabel.classList.add('hidden');
       }
+      scrollComposerDraft(els.threadBody);
     });
     els.commentBody.addEventListener('input', () => {
       writeDraft(draftKey('comment', state.threadId), els.commentBody.value);
       updatePrivacyWarning(els.commentBody.value, els.commentPrivacyWarning);
+      updateDraftMeter(els.commentBody, els.commentDraftMeter);
+      scrollComposerDraft(els.commentBody);
       if (els.commentAiRewriteLabel) {
         els.commentAiRewriteLabel.classList.add('hidden');
       }
     });
     els.quickReplyBody.addEventListener('input', () => {
-      writeDraft(draftKey('quickReply', state.threadId), els.quickReplyBody.value);
+      writeDraft(draftKey('comment', state.threadId), els.quickReplyBody.value);
       updatePrivacyWarning(els.quickReplyBody.value, els.quickReplyPrivacyWarning);
+      updateDraftMeter(els.quickReplyBody, els.quickReplyDraftMeter);
+      scrollComposerDraft(els.quickReplyBody);
       if (els.quickReplyAiRewriteLabel) {
         els.quickReplyAiRewriteLabel.classList.add('hidden');
       }
@@ -648,6 +890,7 @@ export function createComposerController({
     openThreadComposer,
     closeThreadComposer,
     syncReplyComposer,
+    prepareReplyComposerForThreadRender,
     openReplyComposer,
     closeReplyComposer,
     openQuickReply,

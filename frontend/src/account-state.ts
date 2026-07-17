@@ -28,7 +28,9 @@ import {
   parseDraftKey,
   readJsonLocal,
   readLocalList,
+  removeLocalDraft,
   myPosts,
+  writeLocalDraft,
   writeJsonLocal
 } from './storage';
 import { api as defaultApi } from './api';
@@ -42,6 +44,31 @@ export function createAccountStateController({
   renderReplyTemplatePickers
 }: AnyRecord = {}) {
   const apiCall = api || defaultApi;
+
+  function draftUpdatedAtMs(draft: AnyRecord = {}) {
+    const value = Date.parse(String(draft.updatedAt || ''));
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  function mergeAccountDrafts(serverDrafts = [], localDrafts = []) {
+    const drafts = new Map<string, AnyRecord>();
+    for (const draft of serverDrafts) {
+      if (draft?.key) {
+        drafts.set(String(draft.key), draft);
+      }
+    }
+    for (const draft of localDrafts) {
+      const key = String(draft?.key || '');
+      if (!key) {
+        continue;
+      }
+      const current = drafts.get(key);
+      if (!current || draftUpdatedAtMs(draft) > draftUpdatedAtMs(current)) {
+        drafts.set(key, draft);
+      }
+    }
+    return [...drafts.values()];
+  }
 
   function accountDraftSyncEnabled() {
     return state.account?.settings?.syncDrafts !== false;
@@ -356,7 +383,8 @@ export function createAccountStateController({
   }
 
   function writeDraft(key, body) {
-    localStorage.setItem(key, body);
+    const updatedAt = new Date().toISOString();
+    writeLocalDraft(key, body, updatedAt);
     if (!state.accountToken || !state.accountPrivateData || !accountDraftSyncEnabled()) {
       return;
     }
@@ -370,7 +398,7 @@ export function createAccountStateController({
         boardSlug: kind === 'thread' ? id : state.boardSlug,
         threadId: kind === 'comment' || kind === 'quickReply' ? id : '',
         body,
-        updatedAt: new Date().toISOString()
+        updatedAt
       });
     }
     state.accountPrivateData.drafts = drafts.slice(0, 40);
@@ -378,7 +406,7 @@ export function createAccountStateController({
   }
 
   function removeDraft(key) {
-    localStorage.removeItem(key);
+    removeLocalDraft(key);
     if (state.accountToken && state.accountPrivateData && accountDraftSyncEnabled()) {
       state.accountPrivateData.drafts = (state.accountPrivateData.drafts || []).filter((item) => item.key !== key);
       scheduleAccountPrivateDataSave();
@@ -470,7 +498,7 @@ export function createAccountStateController({
     const localHiddenPosts = normalizeHiddenIdList(readLocalList(hiddenPostsKey), 500);
     const localHiddenThreads = normalizeHiddenIdList(readLocalList(hiddenThreadsKey), 200);
     const drafts = accountDraftSyncEnabled()
-      ? mergeByKey([...(serverData.drafts || []), ...localDraftEntries()], (item) => item.key)
+      ? mergeAccountDrafts(serverData.drafts || [], localDraftEntries())
       : serverData.drafts || [];
     return normalizeAccountPrivateData({
       watchlist: mergeByKey([...(serverData.watchlist || []), ...localWatchlist], (item) => item.threadId),
@@ -530,9 +558,10 @@ export function createAccountStateController({
       return null;
     }
     const data = await apiCall('/api/account/private-data', { auth: 'account' });
-    state.accountPrivateData = mergeLocal ? mergeAccountPrivateData(data) : normalizeAccountPrivateData(data);
+    const serverData = normalizeAccountPrivateData(data);
+    state.accountPrivateData = mergeLocal ? mergeAccountPrivateData(serverData) : serverData;
     syncHiddenLocalFromPrivateData(state.accountPrivateData);
-    if (mergeLocal) {
+    if (mergeLocal && JSON.stringify(state.accountPrivateData) !== JSON.stringify(serverData)) {
       await saveAccountPrivateData();
     }
     renderAccountPrivateData?.();
@@ -569,7 +598,7 @@ export function createAccountStateController({
       writeJsonLocal(savedSearchesKey, []);
     }
     if (!section || section === 'drafts') {
-      localDraftEntries().forEach((draft) => localStorage.removeItem(draft.key));
+      localDraftEntries().forEach((draft) => removeLocalDraft(draft.key));
     }
     if (!section || section === 'contentFilters') {
       writeJsonLocal(contentFiltersKey, []);

@@ -161,7 +161,11 @@ test('security: API responses include baseline browser security headers', async 
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
     assert.equal(response.headers.get('x-frame-options'), 'DENY');
     assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin');
-    assert.match(String(response.headers.get('permissions-policy') || ''), /camera=\(\)/);
+    const permissionsPolicy = String(response.headers.get('permissions-policy') || '');
+    assert.match(permissionsPolicy, /camera=\(\)/);
+    // Speech-to-text ([Nói]) needs same-origin microphone; must not be fully disabled.
+    assert.match(permissionsPolicy, /microphone=\(self\)/);
+    assert.doesNotMatch(permissionsPolicy, /microphone=\(\)/);
     assert.equal(response.headers.get('cross-origin-opener-policy'), 'same-origin');
     const csp = String(response.headers.get('content-security-policy') || '');
     assert.match(csp, /default-src 'self'/);

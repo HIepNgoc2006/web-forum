@@ -211,6 +211,26 @@ describe('createS3ImageStorage', () => {
     await assert.rejects(() => storage.save(image), /Không thể lưu ảnh/);
   });
 
+  it('times out a provider request that never settles', async () => {
+    const mockFetch = (() => new Promise<Response>(() => undefined)) as typeof fetch;
+    const storage = createS3ImageStorage({
+      ...validConfig,
+      fetchImpl: mockFetch,
+      requestTimeoutMs: 100
+    });
+    const image = {
+      name: 'timeout.png',
+      type: 'image/png',
+      dataUrl: 'data:image/png;base64,abc=',
+      sizeBytes: 3
+    };
+
+    await assert.rejects(
+      () => storage.save(image),
+      (error: Error & { statusCode?: number }) => error.statusCode === 504 && /timed out/.test(error.message)
+    );
+  });
+
   it('health check returns ready:true on successful probe', async () => {
     const mockFetch = async () => mockResponse({ ok: true, status: 200 });
     const storage = createS3ImageStorage({ ...validConfig, fetchImpl: mockFetch });

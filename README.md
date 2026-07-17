@@ -8,7 +8,9 @@ Features:
 - Admin JWT moderation
 - AI pre-publish moderation
 - AI summary
-- AI reply suggestions.
+- AI reply suggestions
+- Grounded AI chatbot for the current page, board, or thread.
+- Owner-managed custom stickers from validated Imgur image links.
 - Local disk image storage for development.
 
 The app is split into:
@@ -57,8 +59,13 @@ Important runtime values:
 - `MODERATION_FINGERPRINT_SECRET`: secret used to hash poster/IP fingerprints for temporary cooldown/ban enforcement.
 - `POSTER_PROOF_SECRET`: secret used to recognize OP follow-up replies from the same local poster token without exposing the token.
 - `HCAPTCHA_SITE_KEY`, `HCAPTCHA_SECRET`: enable hCaptcha on public posting. In production, posting fails unless `HCAPTCHA_SECRET` is configured.
-- `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable AI summary/suggestions, speech generation, and provider-backed moderation.
+- `RESEND_API_KEY`: enables verification, recovery, and notification email delivery through Resend.
+- `EMAIL_FROM`: verified sender identity.
+- `APP_BASE_URL`: public site URL used in notification links.
+- `EMAIL_OTP_SECRET`: optional dedicated HMAC secret for stored OTP hashes; falls back to `JWT_SECRET`.
+- `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`: enable Google-backed moderation, summaries, suggestions, the grounded chatbot, and speech features. OpenAI-compatible deployments can instead use the existing `OPENAI_COMPATIBLE_*` settings.
 - `GOOGLE_TTS_MODEL`: optional Gemini speech model override for post listening, default `gemini-3.1-flash-tts-preview`.
+- `KLIPY_API_KEY`: enables the server-proxied KLIPY GIF picker. The key stays on the backend; public search, trending, restore-by-slug, and share-trigger calls are rate limited.
 - `AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD`: optional default queue threshold for provider confidence, default `0` to keep every `Flagged` AI result in the admin queue. Admins can override it from the moderation UI. Accepts `0..1` or `0..100`; flagged results without confidence are still queued.
 - `MAX_IMAGE_BYTES`: max decoded size per uploaded image/video in bytes (default `52428800` / 50 MiB).
 - `RATE_LIMIT_STORE`: `memory` by default, or `redis` to share HTTP rate counters across backend instances.
@@ -86,7 +93,22 @@ RATE_LIMIT_REDIS_URL=redis://127.0.0.1:6379
 RATE_LIMIT_FAILURE_MODE=closed
 ```
 
+For account email verification and recovery, verify `email` in Resend, add the DNS records Resend provides, then configure:
+
+```bash
+RESEND_API_KEY=re_...
+EMAIL_FROM=
+APP_BASE_URL=
+EMAIL_OTP_SECRET=
+```
+
+Accounts can log in and post immediately after registration. Email-only features remain disabled until the six-digit OTP is confirmed. OTP challenges expire after 15 minutes, are stored only as HMAC hashes, and are replaced when a new code is sent.
+
 For production readiness and Docker/deployment health checks, `GET /api/health` reports app status, store readiness, image storage readiness, AI provider configured state, hCaptcha configured state, safe counts, and model readiness without returning `MONGODB_URI`, admin credentials, API keys, hCaptcha secrets, storage endpoints, or other secret/raw environment values.
+
+KLIPY searches go through the backend so visitor IPs and private forum identifiers are not sent to the search API. Rendered GIF media is loaded from KLIPY's CDN with `referrerpolicy=no-referrer`, so a viewer's browser still contacts KLIPY when displaying a GIF.
+
+Owners can manage custom stickers from the admin **Sticker** tab. The backend accepts only single-image HTTPS Imgur links, canonicalizes them to `i.imgur.com`, and stores stable `[sticker:custom-…]` tokens. Hiding a sticker removes it from the picker without breaking older posts. The browser loads custom sticker media directly from Imgur with `referrerpolicy=no-referrer`.
 
 ### MongoDB Database Structure
 
@@ -229,6 +251,8 @@ erDiagram
   USER {
     string id PK
     string username UK
+    string email UK
+    datetime emailVerifiedAt
     string passwordHash
     string role
     object settings
@@ -366,7 +390,7 @@ flowchart LR
 
   Http -->|"rate limits and auth checks"| Service
   Http -->|"captcha response only for posting"| HCaptcha
-  Service -->|"redacted moderation, summary, suggestions, rewrite prompts"| AI
+  Service -->|"redacted moderation, grounded chat, summary, suggestions, rewrite prompts"| AI
   Service -->|"normalized forum state read/write"| Store
   Service -->|"validated image bytes and metadata"| Uploads
   Store --> Mongo

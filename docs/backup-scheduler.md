@@ -1,6 +1,6 @@
 # Backup Scheduler
 
-Use the backup scheduler tooling to create timestamped backups of the configured forum state plus upload-storage metadata.
+Use the backup scheduler tooling to create timestamped backups of the configured forum state and recoverable upload data.
 
 The scheduler is disabled by default and all backup commands dry-run by default. A write backup requires `--write`; recurring schedule mode also requires `--enable` or `BACKUP_SCHEDULER_ENABLED=true`.
 
@@ -24,6 +24,14 @@ Mongo-backed state:
 STORE_DRIVER=mongo MONGODB_URI=mongodb://... npm run backup:run -- --store-driver mongo --db staging --driver s3 --destination backend/data/backups --write --operator scheduler
 ```
 
+For S3, this repository writes an object manifest but does not copy bucket bytes. A write backup fails unless provider versioning or a separate bucket export is explicitly confirmed:
+
+```bash
+npm run backup:run -- --driver s3 --write --s3-backup-confirmed
+```
+
+The equivalent environment setting is `S3_BACKUP_CONFIRMED=true`.
+
 S3-compatible upload metadata uses the existing upload environment variables:
 
 ```env
@@ -39,7 +47,8 @@ S3_KEY_PREFIX=uploads
 Each write backup creates:
 
 - `<timestamp>-forum-state.json`: normalized full forum state from the configured store.
-- `<timestamp>-uploads-manifest.json`: upload keys and local file metadata when available.
+- `<timestamp>-uploads/`: copied local upload bytes, preserving storage-key paths.
+- `<timestamp>-uploads-manifest.json`: upload keys, copied-file SHA-256 checksums, sizes, and recoverability status.
 - `<timestamp>-backup-metadata.json`: timestamp, source, destination, operator, host, process id, counts, and failure details.
 
 ## Scheduled Mode
@@ -58,7 +67,7 @@ The scheduler prevents overlapping backup jobs. In development, keep it disabled
 
 ## Failure Handling
 
-Read/list failures make the command fail. Write failures are recorded in backup metadata and in the command output. Treat any non-empty `failures` array as an operational alert.
+Read, copy, manifest, metadata, or state-write failures make the command exit nonzero. The job still attempts to write backup metadata, and the thrown error includes the structured result. S3 write jobs also fail when provider-side byte backup has not been confirmed.
 
 Verify backup health by running:
 

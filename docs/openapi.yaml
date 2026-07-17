@@ -14,12 +14,148 @@ tags:
   - name: Admin
     description: Moderation, reports, sanctions, boards, and operational admin APIs.
   - name: AI
-    description: AI rewrite, summaries, and suggestion helpers with privacy guards.
+    description: Grounded chat, rewrite, summaries, and suggestion helpers with privacy guards.
 paths:
   /config:
     get:
       tags: [Public]
       summary: Get public client configuration
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+  /stickers:
+    get:
+      tags: [Public]
+      summary: List owner-managed custom Imgur stickers
+      description: Returns active and inactive stickers. Inactive records remain public so historical sticker tokens continue rendering, but clients exclude them from the picker.
+      responses:
+        "200":
+          description: Custom sticker catalog
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/Envelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: "#/components/schemas/CustomSticker"
+  /media/gifs/trending:
+    get:
+      tags: [Public]
+      summary: List trending GIFs from KLIPY
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+      responses:
+        '200':
+          $ref: '#/components/responses/AnyData'
+        '400':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /media/gifs/search:
+    get:
+      tags: [Public]
+      summary: Search KLIPY GIFs
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+        - name: perPage
+          in: query
+          schema:
+            type: integer
+            minimum: 8
+            maximum: 50
+      responses:
+        '200':
+          $ref: '#/components/responses/AnyData'
+        '400':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /media/gifs/items:
+    get:
+      tags: [Public]
+      summary: Resolve KLIPY GIFs by slug
+      parameters:
+        - name: slugs
+          in: query
+          required: true
+          description: Comma-separated list of 1 to 50 KLIPY GIF slugs.
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/AnyData'
+        '400':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /media/gifs/{slug}/share:
+    post:
+      tags: [Public]
+      summary: Register a KLIPY GIF share
+      description: Sends only the GIF slug and optional search query to KLIPY.
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+            pattern: '^[A-Za-z0-9][A-Za-z0-9_-]*$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                query:
+                  type: string
+                  maxLength: 200
+      responses:
+        '200':
+          $ref: '#/components/responses/AnyData'
+        '400':
+          $ref: '#/components/responses/Error'
+        '429':
+          $ref: '#/components/responses/Error'
+        '503':
+          $ref: '#/components/responses/Error'
+  /home:
+    get:
+      tags: [Public]
+      summary: Get the initial homepage snapshot in one public state read
+      description: Returns config, public boards, board post counts, popular threads, latest posts, hot boards, campus pulse, and stats.
       responses:
         "200":
           $ref: "#/components/responses/AnyData"
@@ -202,7 +338,8 @@ paths:
   /threads/{threadId}/poll:
     post:
       tags: [Public]
-      summary: Vote in an anonymous thread poll
+      summary: Vote once in an anonymous thread poll
+      description: Voting is rejected after the thread is locked or archived.
       parameters:
         - $ref: "#/components/parameters/ThreadId"
       requestBody:
@@ -220,6 +357,12 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/AnyData"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
   /posts/{globalNumber}:
     get:
       tags: [Public]
@@ -271,6 +414,59 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/AnyData"
+  /ai/chat:
+    post:
+      tags: [AI]
+      summary: Ask a grounded question about the current site, board, or thread
+      description: The server builds a capped context from public allowlisted fields. Raw DOM text, private account data, moderation data, IP addresses, and tokens are never forwarded to the AI provider.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [question, scope]
+              properties:
+                question:
+                  type: string
+                  minLength: 1
+                  maxLength: 1000
+                scope:
+                  type: string
+                  enum: [site, board, thread]
+                page:
+                  type: string
+                  enum: [home, policy, board, catalog, archive, thread, register, login, forgot, account, admin]
+                boardSlug:
+                  type: string
+                threadId:
+                  type: string
+                history:
+                  type: array
+                  maxItems: 6
+                  items:
+                    type: object
+                    required: [role, content]
+                    properties:
+                      role:
+                        type: string
+                        enum: [user, assistant]
+                      content:
+                        type: string
+                        maxLength: 800
+                posterToken:
+                  type: string
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+        "400":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
+        "413":
+          $ref: "#/components/responses/Error"
+        "429":
+          $ref: "#/components/responses/Error"
   /ai/rewrite:
     post:
       tags: [AI]
@@ -460,6 +656,69 @@ paths:
       responses:
         "200":
           $ref: "#/components/responses/AuthData"
+  /admin/stickers:
+    get:
+      tags: [Admin]
+      summary: List custom stickers for owner management
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+        "403":
+          $ref: "#/components/responses/Error"
+    post:
+      tags: [Admin]
+      summary: Add a custom sticker from a single-image Imgur link
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CustomStickerCreate"
+      responses:
+        "201":
+          $ref: "#/components/responses/AnyData"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "409":
+          $ref: "#/components/responses/Error"
+  /admin/stickers/{key}:
+    patch:
+      tags: [Admin]
+      summary: Hide or restore a custom sticker in the picker
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema:
+            type: string
+            pattern: '^custom-[a-z0-9-]{8,80}$'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [active]
+              properties:
+                active:
+                  type: boolean
+      responses:
+        "200":
+          $ref: "#/components/responses/AnyData"
+        "400":
+          $ref: "#/components/responses/Error"
+        "403":
+          $ref: "#/components/responses/Error"
+        "404":
+          $ref: "#/components/responses/Error"
   /admin/boards:
     get:
       tags: [Admin]
@@ -756,6 +1015,37 @@ components:
     ReportCategory:
       type: string
       enum: [Spam, Toxic, PII, Fake News, Illegal, Other]
+    CustomSticker:
+      type: object
+      required: [key, label, url, active, createdAt]
+      properties:
+        key:
+          type: string
+          pattern: '^custom-[a-z0-9-]{8,80}$'
+        label:
+          type: string
+          maxLength: 80
+        url:
+          type: string
+          format: uri
+          pattern: '^https://i\.imgur\.com/[A-Za-z0-9]+\.(png|jpg|gif|webp)$'
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    CustomStickerCreate:
+      type: object
+      required: [url]
+      properties:
+        label:
+          type: string
+          maxLength: 80
+        url:
+          type: string
+          format: uri
+          maxLength: 500
+          description: A single-image HTTPS Imgur page or direct i.imgur.com PNG/JPEG/GIF/WebP URL.
     PageMeta:
       type: object
       properties:
@@ -856,8 +1146,14 @@ components:
           type: string
         pollOptions:
           type: array
+          minItems: 2
+          maxItems: 6
+          uniqueItems: true
+          description: Optional poll choices. Blank, duplicate, or malformed choices are rejected when a poll is supplied.
           items:
             type: string
+            minLength: 1
+            maxLength: 120
         image:
           $ref: "#/components/schemas/Image"
     CreateCommentRequest:

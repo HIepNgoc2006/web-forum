@@ -4,6 +4,7 @@ import { getPosterToken, readAccountToken, readAdminToken } from './storage';
 export const state: AnyRecord = {
   boards: [],
   boardGroups: [],
+  initialHomeSnapshot: null,
   aiConfigured: false,
   hcaptchaSiteKey: '',
   hcaptchaReady: null,
@@ -38,9 +39,14 @@ export const state: AnyRecord = {
   refPreviewPinned: false,
   refPreviewHoverNumber: '',
   quickReplyDrag: null,
+  quickReplyInvoker: null,
   /** True when quick-reply was opened from the board list (not thread screen). */
   quickReplyFromBoard: false,
   replyComposerOpen: false,
+  replyComposerInvoker: null,
+  replyComposerTargetNumber: '',
+  replyComposerInlineTarget: null,
+  pendingInlineReply: null,
   threadIsArchived: false,
   threadIsLocked: false,
   boardPage: 1,

@@ -1,0 +1,71 @@
+    <div id="composerMediaPickerOverlay" class="composer-media-picker-overlay" hidden>
+      <section
+        id="composerMediaPicker"
+        class="composer-media-picker"
+        role="region"
+        aria-labelledby="composerMediaPickerTitle"
+      >
+        <header class="composer-media-picker-header">
+          <div>
+            <h2 id="composerMediaPickerTitle">Chọn sticker hoặc GIF</h2>
+            <p>Sticker riêng của 36chan và GIF do KLIPY cung cấp.</p>
+          </div>
+          <button id="composerMediaPickerClose" type="button" aria-label="Đóng bộ chọn sticker và GIF">×</button>
+        </header>
+
+        <section id="composerStickerPanel" class="composer-media-panel" role="tabpanel" aria-labelledby="composerStickerTab">
+          <p class="composer-media-panel-note">
+            <span>Bộ Pepe vàng vẩu · 34 sticker</span> ·
+            <a href="https://imgur.com/a/f2ntKyZ" target="_blank" rel="noopener noreferrer">Nguồn Imgur</a>
+          </p>
+          <div id="composerStickerGrid" class="composer-sticker-grid" aria-label="Danh sách sticker"></div>
+        </section>
+
+        <section id="composerGifPanel" class="composer-media-panel" role="tabpanel" aria-labelledby="composerGifTab" hidden>
+          <div id="composerGifSearchForm" class="composer-gif-search" role="search" data-i18n-ignore>
+            <input
+              id="composerGifSearchInput"
+              type="search"
+              maxlength="200"
+              placeholder="Search KLIPY"
+              aria-label="Search KLIPY"
+              autocomplete="off"
+            />
+            <button id="composerGifSearchButton" type="button">Search</button>
+          </div>
+          <p id="composerGifStatus" class="composer-gif-status" role="status" aria-live="polite"></p>
+          <div id="composerGifResults" class="composer-gif-grid" aria-label="Kết quả GIF"></div>
+          <button id="composerGifMore" class="composer-gif-more" type="button" hidden>Tải thêm</button>
+          <footer class="composer-klipy-footer">
+            <a href="https://klipy.com" target="_blank" rel="noopener noreferrer">
+              <img src="/branding/powered-by-klipy-black.svg" alt="Powered by KLIPY" />
+            </a>
+            <p>Tìm kiếm đi qua máy chủ 36chan; khi xem GIF, trình duyệt tải media trực tiếp từ KLIPY.</p>
+          </footer>
+        </section>
+
+        <div class="composer-media-tabs" role="tablist" aria-label="Loại media">
+          <button
+            id="composerStickerTab"
+            class="active"
+            type="button"
+            role="tab"
+            aria-selected="true"
+            aria-controls="composerStickerPanel"
+            data-composer-media-tab="sticker"
+          >
+            Sticker
+          </button>
+          <button
+            id="composerGifTab"
+            type="button"
+            role="tab"
+            aria-selected="false"
+            aria-controls="composerGifPanel"
+            data-composer-media-tab="gif"
+          >
+            GIF
+          </button>
+        </div>
+      </section>
+    </div>

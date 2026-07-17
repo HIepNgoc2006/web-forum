@@ -7,7 +7,7 @@ Issue: #61 - Finalize user account and security documentation
 - Accounts are optional. Anonymous posting remains the default way to use 36chan.
 - A public post is not tied to a public account identity unless the poster explicitly chooses a display name for that post.
 - Display names are per-post labels. They are not proof of account ownership and they are not the same thing as account usernames.
-- Account usernames, account ids, private settings, watchlist entries, drafts, saved searches, passkeys, and 2FA state are account-private data.
+- Account usernames, account ids, email addresses, private settings, watchlist entries, drafts, saved searches, passkeys, and 2FA state are account-private data.
 - Public thread/comment responses must not expose account ids, account usernames, raw IPs, poster tokens, delete password hashes, or account-private metadata.
 
 ## User Accounts
@@ -21,8 +21,27 @@ An account lets a user keep private preferences and private helper data across s
 - Account post history.
 - Passkeys.
 - TOTP 2FA and backup codes.
+- Verified email for password recovery, recovery-code reset, change-email confirmation, and opted-in notifications.
 
 Users can still post without an account. When a logged-in user posts, the anonymous post identity is still based on the normal anonymous posting flow, not on public account identity.
+
+## Email Verification and Recovery
+
+- Registration succeeds and issues a normal account session before email verification.
+- Email verification uses a six-digit OTP that expires after 15 minutes.
+- OTP values are stored only as HMAC hashes and are never logged or returned by account APIs.
+- A challenge is invalidated after five failed attempts. Sending a new challenge replaces the previous code.
+- Password reset and recovery-code reset request endpoints return the same response for unknown, unverified, and verified accounts to reduce account enumeration.
+- Email notifications are forced off until the account email is verified.
+- Changing an email requires the current account password and confirmation of an OTP sent to the replacement address.
+
+## Sessions and Revocation
+
+- Account, admin, and temporary 2FA JWTs carry the persisted account `authEpoch`.
+- Protected account and admin requests compare the token epoch with the current account record, so an older token is rejected even when its signature and expiry are otherwise valid.
+- Logout rotates `authEpoch` and invalidates all previously issued sessions for that account, including after a server restart.
+- Password or recovery-code reset, 2FA enable/disable, passkey add/delete, and privileged-user role, disabled-state, or password changes also rotate `authEpoch`.
+- Security-setting endpoints that keep the current browser signed in return a replacement `token` and current `account`; clients must store the replacement token before making another protected request.
 
 ## Display Name vs Account Username
 
@@ -55,8 +74,10 @@ Expected flow:
 
 Security notes:
 
-- Passkey login options should not reveal whether a username exists.
-- Registration and login challenges are one-time server-side challenges.
+- Passkey login options return HTTP 200 with an equivalent response shape for known and unknown usernames, without exposing registered credential ids.
+- Registration and login challenges are one-time server-side challenges that expire after five minutes.
+- A verification attempt consumes its challenge even when the response is invalid or the challenge has expired.
+- Duplicate credentials cannot be registered to the same account.
 - Passkey public metadata is private account data and must not appear on public posts.
 
 ## TOTP 2FA Setup
@@ -119,6 +140,7 @@ Do not send:
 - Poster tokens.
 - Captcha tokens.
 - TOTP secrets or backup codes.
+- Email OTP values or email challenge hashes.
 - Passkey metadata.
 
 AI features may receive public post content after redaction. Email, phone, student-id-like values, and other sensitive text patterns should be redacted before provider calls.

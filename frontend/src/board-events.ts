@@ -10,7 +10,8 @@ export function bindBoardNavigationEvents({
   saveCurrentBoardSearch,
   renderCatalogThreads,
   openThreadComposer,
-  openReplyComposer
+  openReplyComposer,
+  closeReplyComposer
 }: AnyRecord) {
   els.homeBoardSearchForm.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -31,7 +32,8 @@ export function bindBoardNavigationEvents({
   });
   els.catalogSearchInput.addEventListener('input', () => renderCatalogThreads(state.catalogThreads));
   els.startThreadButton.addEventListener('click', () => openThreadComposer());
-  els.postReplyToggle.addEventListener('click', () => openReplyComposer());
+  els.postReplyToggle.addEventListener('click', (event) => openReplyComposer({ event }));
+  els.commentCancelButton?.addEventListener('click', () => closeReplyComposer());
   els.threadStartThreadButton.addEventListener('click', () => {
     window.location.hash = `#board/${state.boardSlug}?new=1`;
   });

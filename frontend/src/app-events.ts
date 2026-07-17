@@ -1,5 +1,7 @@
 import { createAiActions } from './ai-actions';
 import { bindAiActionEvents } from './ai-events';
+import { bindComposerMediaInputEvents, updateDraftMeter } from './composer';
+import { bindComposerMediaPicker } from './composer-media-picker';
 import { bindBoardNavigationEvents, handleBoardCatalogControlClick } from './board-events';
 import { bindAccountFormEvents } from './account-form-events';
 import { bindAdminAuthEvents } from './admin-auth-events';
@@ -7,7 +9,6 @@ import { bindQuickReplyEvents } from './quick-reply-events';
 import { bindThreadSearchEvents } from './thread-search';
 import { handleAdminChange, handleAdminClick } from './admin-events';
 import { bindThreadEvents } from './thread-events';
-import { bindComposerMediaInputEvents } from './composer';
 import { handleBrokenThumbnailError } from './events';
 import { bindThreadMediaKeyboardEvents } from './thread-dom';
 import type { AnyRecord } from './types';
@@ -33,12 +34,12 @@ export function bindEvents(dependencies: AnyRecord): void {
     renderCatalogThreads,
     openThreadComposer,
     openReplyComposer,
+    closeReplyComposer,
     api,
     loadThread,
     loadCatalog,
     loadArchive,
     refreshCurrentScreen,
-    openQuickReply,
     loadBoard,
     updatePrivacyWarning,
     selfDeletePost,
@@ -141,7 +142,8 @@ export function bindEvents(dependencies: AnyRecord): void {
     saveCurrentBoardSearch,
     renderCatalogThreads,
     openThreadComposer,
-    openReplyComposer
+    openReplyComposer,
+    closeReplyComposer
   });
 
   els.threadForm.addEventListener('submit', submitThread);
@@ -150,6 +152,8 @@ export function bindEvents(dependencies: AnyRecord): void {
   els.quickReplyForm.addEventListener('submit', submitQuickReply);
   bindDeletePasswordInputs();
   bindComposerInputEvents();
+  updateDraftMeter(els.commentBody, els.commentDraftMeter);
+  updateDraftMeter(els.quickReplyBody, els.quickReplyDraftMeter);
   bindQuickReplyEvents({
     els,
     state,
@@ -200,6 +204,12 @@ export function bindEvents(dependencies: AnyRecord): void {
     bulkModerate
   };
 
+  bindComposerMediaPicker({
+    api,
+    insertComposerToken,
+    showToast
+  });
+
   bindThreadEvents({
     body: document.body,
     els,
@@ -211,7 +221,6 @@ export function bindEvents(dependencies: AnyRecord): void {
     loadCatalog,
     loadArchive,
     refreshCurrentScreen,
-    openQuickReply,
     openReplyComposer,
     updatePrivacyWarning,
     selfDeletePost,

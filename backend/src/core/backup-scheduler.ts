@@ -1,3 +1,5 @@
+import crypto from 'node:crypto';
+import { createReadStream } from 'node:fs';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -9,12 +11,14 @@ type BackupStore = {
   read: () => Promise<unknown> | unknown;
 };
 type ImageStorage = {
+  type?: string;
   listKeys: () => Promise<unknown[]> | unknown[];
 };
 type S3Metadata = {
   bucket?: unknown;
   endpoint?: unknown;
   keyPrefix?: unknown;
+  backupConfirmed?: unknown;
 };
 type SourceMetadataOptions = {
   storeDriver?: string;
@@ -59,6 +63,13 @@ type BackupJobOptions = {
   logger?: Logger;
   writeJsonImpl?: (filePath: string, value: unknown) => Promise<void>;
 };
+type BackupFailure = {
+  stage: string;
+  error: string;
+};
+type BackupJobError = Error & {
+  result?: Record<string, unknown>;
+};
 type BackupSchedulerOptions = {
   enabled?: boolean;
   intervalMs?: number;
@@ -83,6 +94,26 @@ async function ensureDirectory(dirPath: string): Promise<void> {
 async function writeJson(filePath: string, value: unknown): Promise<void> {
   await ensureDirectory(path.dirname(filePath));
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+async function sha256File(filePath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash('sha256');
+    const stream = createReadStream(filePath);
+    stream.on('error', reject);
+    stream.on('data', (chunk) => hash.update(chunk));
+    stream.on('end', () => resolve(hash.digest('hex')));
+  });
+}
+
+function safeChildPath(root: string, key: string) {
+  const resolvedRoot = path.resolve(root);
+  const normalizedKey = String(key).replace(/\\/g, '/').replace(/^\/+/, '');
+  const resolvedPath = path.resolve(resolvedRoot, normalizedKey);
+  if (!resolvedPath.startsWith(`${resolvedRoot}${path.sep}`) || resolvedPath === resolvedRoot) {
+    throw new Error(`Unsafe local upload key: ${key}`);
+  }
+  return { normalizedKey, resolvedPath };
 }
 
 function backupId(now: Date): string {
@@ -115,17 +146,32 @@ function systemMetadata({ operator, hostname = os.hostname(), pid = process.pid 
 }
 
 async function localUploadMetadata(uploadRoot: string, key: string) {
-  const resolvedRoot = path.resolve(uploadRoot);
-  const resolvedPath = path.resolve(resolvedRoot, key);
-  if (!resolvedPath.startsWith(`${resolvedRoot}${path.sep}`) && resolvedPath !== resolvedRoot) {
-    throw new Error(`Unsafe local upload key: ${key}`);
-  }
+  const { normalizedKey, resolvedPath } = safeChildPath(uploadRoot, key);
   const stat = await fs.stat(resolvedPath);
   return {
-    storageKey: key.replace(/\\/g, '/'),
+    storageKey: normalizedKey,
     sizeBytes: stat.size,
     modifiedAt: stat.mtime.toISOString()
   };
+}
+
+async function copyLocalUploads(uploadRoot: string, backupRoot: string, uploads: Array<Record<string, unknown>>) {
+  const copied = [];
+  for (const upload of uploads) {
+    const storageKey = String(upload.storageKey ?? '');
+    const source = safeChildPath(uploadRoot, storageKey);
+    const destination = safeChildPath(backupRoot, storageKey);
+    await ensureDirectory(path.dirname(destination.resolvedPath));
+    await fs.copyFile(source.resolvedPath, destination.resolvedPath);
+    const stat = await fs.stat(destination.resolvedPath);
+    copied.push({
+      ...upload,
+      sizeBytes: stat.size,
+      sha256: await sha256File(destination.resolvedPath),
+      backupPath: destination.normalizedKey
+    });
+  }
+  return copied;
 }
 
 async function uploadManifest({ imageStorage, imageStorageDriver, uploadRoot }: UploadManifestOptions) {
@@ -185,6 +231,8 @@ export async function runBackupJob({
   const resolvedDestination = path.resolve(destination);
   const state = normalizeState(await store.read());
   const uploads = await uploadManifest({ imageStorage, imageStorageDriver, uploadRoot });
+  const s3BackupConfirmed = s3.backupConfirmed === true
+    || String(s3.backupConfirmed ?? '').toLowerCase() === 'true';
   const metadata = {
     id,
     dryRun: Boolean(dryRun),
@@ -195,21 +243,68 @@ export async function runBackupJob({
       root: resolvedDestination,
       statePath: path.join(resolvedDestination, `${id}-forum-state.json`),
       uploadsPath: path.join(resolvedDestination, `${id}-uploads-manifest.json`),
+      uploadsDirectory: path.join(resolvedDestination, `${id}-uploads`),
       metadataPath: path.join(resolvedDestination, `${id}-backup-metadata.json`)
     },
     system: systemMetadata({ operator }),
     counts: backupSummary({ state, uploads }),
-    failures: []
+    recoverability: {
+      state: { complete: false },
+      uploads: {
+        complete: false,
+        strategy: imageStorageDriver === 'local' ? 'copied-files' : 'provider-managed',
+        reason: dryRun ? 'dry_run' : null
+      }
+    },
+    failures: [] as BackupFailure[]
   };
 
   logger({ event: 'backup_started', id, dryRun: metadata.dryRun, destination: resolvedDestination });
 
+  let manifestUploads = uploads;
   if (!dryRun) {
     try {
       await writeJsonImpl(metadata.destination.statePath, state);
-      await writeJsonImpl(metadata.destination.uploadsPath, { id, generatedAt: startedAt, uploads });
+      metadata.recoverability.state.complete = true;
     } catch (error) {
-      metadata.failures.push({ stage: 'write', error: error instanceof Error ? error.message : String(error) });
+      metadata.failures.push({ stage: 'state', error: error instanceof Error ? error.message : String(error) });
+    }
+
+    if (imageStorageDriver === 'local') {
+      try {
+        manifestUploads = await copyLocalUploads(
+          String(uploadRoot || ''),
+          metadata.destination.uploadsDirectory,
+          uploads as Array<Record<string, unknown>>
+        );
+        metadata.recoverability.uploads.complete = true;
+        metadata.recoverability.uploads.reason = null;
+      } catch (error) {
+        metadata.failures.push({
+          stage: 'uploads',
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
+    } else if (s3BackupConfirmed) {
+      metadata.recoverability.uploads.complete = true;
+      metadata.recoverability.uploads.reason = 'provider_backup_confirmed';
+    } else {
+      metadata.recoverability.uploads.reason = 'provider_backup_not_confirmed';
+      metadata.failures.push({
+        stage: 'uploads',
+        error: 'S3 upload bytes are not backed up by this job. Confirm provider versioning/export with S3_BACKUP_CONFIRMED=true.'
+      });
+    }
+
+    try {
+      await writeJsonImpl(metadata.destination.uploadsPath, {
+        id,
+        generatedAt: startedAt,
+        recoverability: metadata.recoverability.uploads,
+        uploads: manifestUploads
+      });
+    } catch (error) {
+      metadata.failures.push({ stage: 'manifest', error: error instanceof Error ? error.message : String(error) });
     }
   }
 
@@ -228,7 +323,13 @@ export async function runBackupJob({
     failures: metadata.failures.length,
     counts: metadata.counts
   });
-  return jsonClone(metadata);
+  const result = jsonClone(metadata);
+  if (!dryRun && metadata.failures.length > 0) {
+    const error: BackupJobError = new Error(`Backup ${id} failed in ${metadata.failures.length} stage(s)`);
+    error.result = result;
+    throw error;
+  }
+  return result;
 }
 
 export function createBackupScheduler({

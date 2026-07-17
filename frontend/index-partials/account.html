@@ -13,24 +13,37 @@
             <input id="registerUsername" autocomplete="username" maxlength="32" />
           </label>
           <label class="field-row">
-            <span>Mật khẩu</span>
-            <input id="registerPassword" type="password" autocomplete="new-password" />
+            <span>Email</span>
+            <input id="registerEmail" type="email" autocomplete="email" maxlength="254" required />
           </label>
-          <p class="muted account-hint">Mật khẩu cần ít nhất 10 ký tự, không trùng tên tài khoản và không dùng mật khẩu quá phổ biến hoặc quá đơn giản.</p>
+          <label class="field-row">
+            <span>Mật khẩu</span>
+            <input id="registerPassword" type="password" autocomplete="new-password" aria-describedby="registerPasswordHint" required />
+          </label>
+          <label class="field-row">
+            <span>Xác nhận mật khẩu</span>
+            <input id="registerPasswordConfirmation" type="password" autocomplete="new-password" aria-describedby="registerPasswordHint" required />
+          </label>
+          <p id="registerPasswordHint" class="muted account-hint">Mật khẩu cần ít nhất 10 ký tự, không trùng tên tài khoản và không dùng mật khẩu quá phổ biến hoặc quá đơn giản.</p>
           <div class="field-row captcha-field">
             <span>Xác minh</span>
-            <input id="registerCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
-            <div class="captcha-widget hidden" data-hcaptcha-target="registerCaptcha"></div>
+            <div class="captcha-cell">
+              <input id="registerCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="registerCaptcha"></div>
+            </div>
           </div>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Đăng ký</button>
-            [<a href="#login">Đã có tài khoản</a>]
           </div>
+          <p class="account-secondary-links">
+            <span class="bracket-link">[<a href="#login">Đã có tài khoản</a>]</span>
+          </p>
           <p class="account-note">Username tài khoản không tự động hiện trên bài public. Tên hiển thị khi đăng bài vẫn là trường riêng và mặc định là Anonymous.</p>
         </form>
         <div id="registerRecoveryNotice" class="login-panel stack hidden" role="status">
           <h2>Lưu mã khôi phục của bạn</h2>
           <p class="muted">Đây là cách duy nhất để đặt lại mật khẩu nếu bạn quên. Mã chỉ hiển thị một lần — hãy lưu ở nơi an toàn.</p>
+          <p id="registerVerificationStatus" class="muted">Bạn có thể dùng tài khoản ngay. Hãy xác nhận email trong cài đặt trong vòng 15 phút.</p>
           <code id="registerRecoveryCode" class="recovery-code"></code>
           <div class="form-actions account-actions">
             <button id="registerRecoveryCopy" class="ghost-button" type="button">[Sao chép]</button>
@@ -59,15 +72,19 @@
           </label>
           <div class="field-row captcha-field">
             <span>Xác minh</span>
-            <input id="accountLoginCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
-            <div class="captcha-widget hidden" data-hcaptcha-target="accountLoginCaptcha"></div>
+            <div class="captcha-cell">
+              <input id="accountLoginCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="accountLoginCaptcha"></div>
+            </div>
           </div>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Đăng nhập</button>
             <button id="loginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>
-            [<a href="#register">Tạo tài khoản</a>]
-            [<a href="#forgot">Quên mật khẩu</a>]
           </div>
+          <p class="account-secondary-links">
+            <span class="bracket-link">[<a href="#register">Tạo tài khoản</a>]</span>
+            <span class="bracket-link">[<a href="#forgot">Quên mật khẩu</a>]</span>
+          </p>
         </form>
         <form id="account2FAVerifyForm" class="login-panel stack hidden">
           <div id="account2FAVerifyError" class="form-error hidden" role="alert"></div>
@@ -100,10 +117,11 @@
           <div>
             <p class="path-chip">/account/forgot/</p>
             <h1 id="forgotTitle">Quên mật khẩu</h1>
-            <p class="muted">Dùng mã khôi phục bạn đã lưu khi đăng ký để đặt lại mật khẩu. Sau khi đặt lại, bạn sẽ nhận một mã khôi phục mới.</p>
+            <p class="muted">Dùng mã khôi phục đã lưu hoặc mã OTP gửi tới email đã xác nhận. Sau khi đặt lại, bạn sẽ nhận một mã khôi phục mới.</p>
           </div>
         </div>
         <form id="forgotPasswordForm" class="login-panel stack">
+          <h2>Dùng mã khôi phục</h2>
           <div id="forgotError" class="form-error hidden" role="alert"></div>
           <label class="field-row">
             <span>Tài khoản</span>
@@ -120,12 +138,54 @@
           <p class="muted account-hint">Mật khẩu cần ít nhất 10 ký tự, không trùng tên tài khoản và không dùng mật khẩu quá phổ biến hoặc quá đơn giản.</p>
           <div class="field-row captcha-field">
             <span>Xác minh</span>
-            <input id="forgotCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
-            <div class="captcha-widget hidden" data-hcaptcha-target="forgotCaptcha"></div>
+            <div class="captcha-cell">
+              <input id="forgotCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="forgotCaptcha"></div>
+            </div>
           </div>
           <div class="form-actions account-actions">
             <button class="primary-button" type="submit">Đặt lại mật khẩu</button>
-            [<a href="#login">Quay lại đăng nhập</a>]
+          </div>
+          <p class="account-secondary-links">
+            <span class="bracket-link">[<a href="#login">Quay lại đăng nhập</a>]</span>
+          </p>
+        </form>
+        <form id="forgotEmailRequestForm" class="login-panel stack">
+          <h2>Dùng email đã xác nhận</h2>
+          <div id="forgotEmailRequestError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản hoặc email</span>
+            <input id="forgotEmailIdentifier" autocomplete="username" maxlength="254" />
+          </label>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <div class="captcha-cell">
+              <input id="forgotEmailRequestCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="forgotEmailRequestCaptcha"></div>
+            </div>
+          </div>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Gửi mã OTP</button>
+          </div>
+        </form>
+        <form id="forgotEmailConfirmForm" class="login-panel stack hidden">
+          <h2>Nhập mã OTP</h2>
+          <div id="forgotEmailConfirmError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản hoặc email</span>
+            <input id="forgotEmailConfirmIdentifier" autocomplete="username" maxlength="254" readonly />
+          </label>
+          <label class="field-row otp-field-row">
+            <span>Mã OTP</span>
+            <input id="forgotEmailCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu mới</span>
+            <input id="forgotEmailNewPassword" type="password" autocomplete="new-password" />
+          </label>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đặt lại mật khẩu</button>
+            <button id="forgotEmailStartOver" class="ghost-button" type="button">[Gửi mã khác]</button>
           </div>
         </form>
         <div id="forgotSuccess" class="login-panel stack hidden" role="status">
@@ -149,7 +209,10 @@
         </div>
         <div id="accountLoggedOut" class="login-panel account-guest-notice stack">
           <p class="account-note">Bạn chưa đăng nhập tài khoản. Vẫn có thể đọc và đăng bài ẩn danh bình thường.</p>
-          <p class="account-actions">[<a href="#login">Đăng nhập</a>] [<a href="#register">Đăng ký</a>]</p>
+          <p class="account-actions">
+            <span class="bracket-link">[<a href="#login">Đăng nhập</a>]</span>
+            <span class="bracket-link">[<a href="#register">Đăng ký</a>]</span>
+          </p>
         </div>
         <div id="reactAccountPreferencesSummary" class="react-island" data-react-island="account-preferences-summary"></div>
         <form id="accountSettingsForm" class="login-panel account-settings-panel stack hidden">
@@ -189,6 +252,14 @@
               <option value="board">Theo bảng</option>
             </select>
           </label>
+          <label class="field-row">
+            <span>Khung bình luận</span>
+            <select id="accountCommentComposerMode">
+              <option value="floating">Cửa sổ nổi</option>
+              <option value="normal">Bình thường (trong trang)</option>
+            </select>
+            <small class="muted">Áp dụng cho nút Trả lời, số bài, thanh công cụ và phím tắt R.</small>
+          </label>
           <div class="field-row checkbox-row">
             <span>Thông báo</span>
             <div class="field-row-options">
@@ -198,6 +269,7 @@
               <label><input id="accountBrowserNotifyWatchedThreads" type="checkbox" /> Trình duyệt: thread đang theo dõi</label>
             </div>
           </div>
+          <p id="accountEmailNotificationStatus" class="account-note">Xác nhận email để bật thông báo email.</p>
           <p id="accountBrowserNotificationsStatus" class="account-note">Tắt thông báo trình duyệt cho thread đang theo dõi.</p>
           <div class="field-row account-board-settings">
             <span>Bảng theo dõi</span>
@@ -225,6 +297,45 @@
             <button id="addPasskeyButton" class="primary-button" type="button">Thêm Passkey mới</button>
           </div>
         </section>
+        <section id="accountEmailPanel" class="login-panel stack hidden" aria-labelledby="accountEmailTitle">
+          <h2 id="accountEmailTitle">Email tài khoản</h2>
+          <p id="accountEmailStatus" class="muted"></p>
+          <form id="accountEmailVerifyForm" class="stack hidden">
+            <div id="accountEmailVerifyError" class="form-error hidden" role="alert"></div>
+            <label class="field-row otp-field-row">
+              <span>Mã OTP</span>
+              <input id="accountEmailVerifyCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Xác nhận email</button>
+              <button id="accountEmailResend" class="ghost-button" type="button">[Gửi lại mã]</button>
+            </div>
+          </form>
+          <form id="accountEmailChangeForm" class="stack">
+            <div id="accountEmailChangeError" class="form-error hidden" role="alert"></div>
+            <label class="field-row">
+              <span>Email mới</span>
+              <input id="accountEmailNewEmail" type="email" autocomplete="email" maxlength="254" />
+            </label>
+            <label class="field-row">
+              <span>Mật khẩu hiện tại</span>
+              <input id="accountEmailChangePassword" type="password" autocomplete="current-password" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Gửi mã tới email mới</button>
+            </div>
+          </form>
+          <form id="accountEmailChangeConfirmForm" class="stack hidden">
+            <div id="accountEmailChangeConfirmError" class="form-error hidden" role="alert"></div>
+            <label class="field-row otp-field-row">
+              <span>Mã OTP email mới</span>
+              <input id="accountEmailChangeCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Xác nhận đổi email</button>
+            </div>
+          </form>
+        </section>
         <section id="accountRecoveryPanel" class="login-panel stack hidden" aria-labelledby="accountRecoveryTitle">
           <h2 id="accountRecoveryTitle">Mã khôi phục</h2>
           <p class="muted">Mã khôi phục dùng để đặt lại mật khẩu khi bạn quên. Tạo mã mới sẽ vô hiệu hóa mã cũ. Nhập mật khẩu hiện tại để tạo mã mới.</p>
@@ -245,6 +356,30 @@
               <button id="recoveryCodeCopy" class="ghost-button" type="button">[Sao chép]</button>
             </div>
           </div>
+          <form id="recoveryEmailRequestForm" class="stack hidden">
+            <h3>Tạo lại bằng email đã xác nhận</h3>
+            <div id="recoveryEmailRequestError" class="form-error hidden" role="alert"></div>
+            <div class="field-row captcha-field">
+              <span>Xác minh</span>
+              <div class="captcha-cell">
+                <input id="recoveryEmailRequestCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+                <div class="captcha-widget hidden" data-hcaptcha-target="recoveryEmailRequestCaptcha"></div>
+              </div>
+            </div>
+            <div class="form-actions account-actions">
+              <button class="ghost-button" type="submit">[Gửi OTP qua email]</button>
+            </div>
+          </form>
+          <form id="recoveryEmailConfirmForm" class="stack hidden">
+            <div id="recoveryEmailConfirmError" class="form-error hidden" role="alert"></div>
+            <label class="field-row otp-field-row">
+              <span>Mã OTP</span>
+              <input id="recoveryEmailCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Tạo mã khôi phục mới</button>
+            </div>
+          </form>
         </section>
         <section id="accountPrivateDataPanel" class="login-panel stack hidden" aria-labelledby="accountPrivateDataTitle">
           <h2 id="accountPrivateDataTitle">Dữ liệu đồng bộ</h2>

@@ -13,13 +13,23 @@ import {
   readModerationConfidenceThreshold,
   readPositiveInteger
 } from './config.ts';
+import {
+  MAX_CUSTOM_STICKERS,
+  assertCustomStickerKey,
+  createCustomSticker,
+  normalizeCustomStickers,
+  normalizeImgurStickerUrl
+} from './custom-stickers.ts';
 import { redactSensitiveText } from './ai.ts';
+import { assertAccountPassword } from './account-password-policy.ts';
+import { createDisabledEmailClient } from './email.ts';
 import { createInlineImageStorage } from './image-storage.ts';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.ts';
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.ts';
 import * as defaultTotp from './totp-service.ts';
 import * as defaultWebAuthn from './webauthn-service.ts';
 import type { BoardConfig, SiteContent, ThreadLifecycle } from './config.ts';
+import type { EmailClient, EmailMessage } from './email.ts';
 
 type AnyRecord = Record<string, any>;
 
@@ -31,6 +41,8 @@ type ForumServiceOptions = {
   lifecycle?: ThreadLifecycle;
   logger?: (entry: AnyRecord) => void;
   imageStorage?: any;
+  emailClient?: EmailClient;
+  appBaseUrl?: string;
   totp?: AnyRecord;
   webauthn?: AnyRecord;
   moderationConfidenceThreshold?: number;
@@ -87,8 +99,14 @@ const ANONYMOUS_DISPLAY_NAME = 'Anonymous';
 const MAX_DISPLAY_NAME_LENGTH = 40;
 const RESERVED_DISPLAY_NAMES = new Set(['admin', 'administrator', 'moderator', 'mod', 'system']);
 const ACCOUNT_USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
+const ACCOUNT_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MAX_FAILED_LOGINS = 5;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+const EMAIL_OTP_TTL_MS = 15 * 60 * 1000;
+const EMAIL_OTP_RESEND_COOLDOWN_MS = 60 * 1000;
+const EMAIL_OTP_MAX_ATTEMPTS = 5;
+const EMAIL_NOTIFICATION_RECIPIENT_LIMIT = 200;
+const WEBAUTHN_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const ACCOUNT_THEMES = new Set(['yotsuba-b', 'yotsuba', 'tomorrow', 'burichan']);
 const MAX_ACCOUNT_WATCHLIST_ITEMS = 100;
 const MAX_ACCOUNT_DRAFTS = 40;
@@ -102,6 +120,7 @@ const MAX_ACCOUNT_DRAFT_LENGTH = 12_000;
 const MAX_ACCOUNT_REPLY_TEMPLATE_LENGTH = 5_000;
 const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails', 'watchedUnreadOnly'];
 const ACCOUNT_WATCHED_SORTS = new Set(['unread', 'recent', 'board']);
+const ACCOUNT_COMMENT_COMPOSER_MODES = new Set(['floating', 'normal']);
 const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions', 'browserWatchedThreads'];
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
@@ -126,6 +145,9 @@ const RECOMMENDED_THREAD_HIGH_RISK_LABELS = new Set(['PII Risk', 'PII', 'Illegal
 const RECOMMENDED_THREAD_MEDIUM_RISK_LABELS = new Set(['Spam', 'Fake News']);
 const MAX_EDIT_HISTORY_ENTRIES = 100;
 const MAX_THREAD_SUBJECT_LENGTH = 120;
+const MIN_POLL_OPTIONS = 2;
+const MAX_POLL_OPTIONS = 6;
+const MAX_POLL_OPTION_LENGTH = 120;
 const POST_REACTION_TYPES = new Set(['like', 'laugh', 'surprise', 'sad', 'angry', 'thanks']);
 
 function publicPost(post) {
@@ -184,6 +206,46 @@ function mediaItems(post) {
 
 function cloneMediaItems(post) {
   return mediaItems(post).map((item) => JSON.parse(JSON.stringify(item)));
+}
+
+function mediaStorageKeys(items = []) {
+  const keys = new Set<string>();
+  for (const item of items) {
+    if (typeof item?.storageKey === 'string' && item.storageKey) {
+      keys.add(item.storageKey);
+    }
+    if (typeof item?.thumbnail?.storageKey === 'string' && item.thumbnail.storageKey) {
+      keys.add(item.thumbnail.storageKey);
+    }
+  }
+  return [...keys];
+}
+
+async function deleteStoredMedia(
+  imageStorage,
+  items,
+  { exceptKeys = new Set<string>(), onFailure = () => undefined }: AnyRecord = {}
+) {
+  if (typeof imageStorage?.deleteKey !== 'function') {
+    return;
+  }
+  const failures = [];
+  for (const storageKey of mediaStorageKeys(items)) {
+    if (exceptKeys.has(storageKey)) {
+      continue;
+    }
+    try {
+      await imageStorage.deleteKey(storageKey);
+    } catch (error) {
+      failures.push(error);
+      onFailure(storageKey, error);
+    }
+  }
+  if (failures.length > 0) {
+    const error = new Error('Không thể xóa hoàn toàn tệp đã lưu');
+    error.statusCode = 502;
+    throw error;
+  }
 }
 
 function activePublicThread(thread) {
@@ -516,58 +578,56 @@ function assertAccountUsername(value = '') {
   return username;
 }
 
-const MIN_PASSWORD_LENGTH = 10;
-const MAX_PASSWORD_LENGTH = 160;
-
-// Small embedded blocklist of obviously weak/common passwords. Compared
-// case-insensitively. Not exhaustive by design — an online breach (HIBP)
-// check can be layered on later.
-const COMMON_PASSWORDS = new Set([
-  'password', 'password1', 'password12', 'password123', 'passw0rd',
-  '1234567890', '0123456789', '12345678', '123456789', '123123123',
-  'qwertyuiop', 'qwerty123', 'iloveyou1', 'letmein123', 'welcome123',
-  'admin12345', 'changeme12', 'baseball12', 'football12', 'monkey1234',
-  'abc1234567', 'dragon1234', 'sunshine12', 'princess12', '36chan1234'
-]);
-
-function isTrivialSequence(value = '') {
-  if (value.length < 2) {
-    return false;
-  }
-  let ascending = true;
-  let descending = true;
-  for (let i = 1; i < value.length; i += 1) {
-    const delta = value.charCodeAt(i) - value.charCodeAt(i - 1);
-    if (delta !== 1) ascending = false;
-    if (delta !== -1) descending = false;
-  }
-  return ascending || descending;
+function normalizeAccountEmail(value = '') {
+  return String(value ?? '')
+    .normalize('NFKC')
+    .trim()
+    .toLowerCase()
+    .slice(0, 254);
 }
 
-function assertAccountPassword(value = '', { username = '' }: AnyRecord = {}) {
-  const password = String(value ?? '');
-  if (password.length < MIN_PASSWORD_LENGTH || password.length > MAX_PASSWORD_LENGTH) {
-    const error = new Error(`Mật khẩu cần từ ${MIN_PASSWORD_LENGTH} đến ${MAX_PASSWORD_LENGTH} ký tự`);
+function assertAccountEmail(value = '') {
+  const email = normalizeAccountEmail(value);
+  if (!ACCOUNT_EMAIL_PATTERN.test(email)) {
+    const error = new Error('Địa chỉ email không hợp lệ');
     error.statusCode = 400;
     throw error;
   }
-  const lower = password.toLowerCase();
-  if (COMMON_PASSWORDS.has(lower)) {
-    const error = new Error('Mật khẩu quá phổ biến, vui lòng chọn mật khẩu khác');
-    error.statusCode = 400;
-    throw error;
-  }
-  if (username && lower === String(username).toLowerCase()) {
-    const error = new Error('Mật khẩu không được trùng với tên tài khoản');
-    error.statusCode = 400;
-    throw error;
-  }
-  if (/^(.)\1+$/.test(password) || isTrivialSequence(lower)) {
-    const error = new Error('Mật khẩu quá đơn giản, vui lòng chọn mật khẩu khác');
-    error.statusCode = 400;
-    throw error;
-  }
-  return password;
+  return email;
+}
+
+function findUserByAccountIdentifier(users = [], identifier = '') {
+  const raw = String(identifier ?? '').trim();
+  const username = normalizeAccountUsername(raw);
+  const email = normalizeAccountEmail(raw);
+  return users.find((user) =>
+    normalizeAccountUsername(user.username) === username ||
+    (email && normalizeAccountEmail(user.email) === email)
+  );
+}
+
+function timingSafeEqualHex(left = '', right = '') {
+  const leftBuffer = Buffer.from(String(left), 'hex');
+  const rightBuffer = Buffer.from(String(right), 'hex');
+  return leftBuffer.length > 0 && leftBuffer.length === rightBuffer.length && crypto.timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function hashEmailOtp({ userId, purpose, email, code }: AnyRecord = {}) {
+  const secret = process.env.EMAIL_OTP_SECRET || process.env.JWT_SECRET || '36chan-email-otp-development-only';
+  return crypto
+    .createHmac('sha256', secret)
+    .update(`${String(userId)}:${String(purpose)}:${normalizeAccountEmail(email)}:${String(code)}`)
+    .digest('hex');
+}
+
+function escapeEmailHtml(value = '') {
+  return String(value).replace(/[&<>"']/g, (character) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#39;'
+  })[character]);
 }
 
 function normalizeAccountRole(value = 'user') {
@@ -647,7 +707,8 @@ function defaultAccountSettings() {
       compactThreads: false,
       hideThumbnails: false,
       watchedUnreadOnly: false,
-      watchedSort: 'unread'
+      watchedSort: 'unread',
+      commentComposerMode: 'floating'
     },
     notificationPreferences: {
       email: false,
@@ -717,6 +778,9 @@ function normalizeAccountSettings(state: AnyRecord, settings: AnyRecord = {}, cu
     }
     if (ACCOUNT_WATCHED_SORTS.has(settings.displayPreferences.watchedSort)) {
       safe.displayPreferences.watchedSort = settings.displayPreferences.watchedSort;
+    }
+    if (ACCOUNT_COMMENT_COMPOSER_MODES.has(settings.displayPreferences.commentComposerMode)) {
+      safe.displayPreferences.commentComposerMode = settings.displayPreferences.commentComposerMode;
     }
   }
   if (settings.notificationPreferences && typeof settings.notificationPreferences === 'object') {
@@ -992,14 +1056,65 @@ function serializeAccountPrivateData(value: AnyRecord = {}) {
   return normalizeAccountPrivateData(value, value);
 }
 
-function serializeAccount(state: AnyRecord, user: AnyRecord = {}) {
+function serializedEmailChallenge(user: AnyRecord, purpose: string, checkedAt: Date | null = null) {
+  const challenge = user.emailChallenges?.[purpose] || null;
+  if (!challenge || !checkedAt) {
+    return challenge;
+  }
+  const expiresAt = new Date(challenge.expiresAt || 0).getTime();
+  return Number.isFinite(expiresAt) && expiresAt > checkedAt.getTime() ? challenge : null;
+}
+
+function accountAuthEpoch(user: AnyRecord = {}) {
+  const value = Number(user.authEpoch);
+  return Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function bumpAccountAuthEpoch(user: AnyRecord) {
+  user.authEpoch = accountAuthEpoch(user) + 1;
+  return user.authEpoch;
+}
+
+function createWebAuthnChallenge(value: string, issuedAt: Date) {
+  return {
+    value,
+    expiresAt: new Date(issuedAt.getTime() + WEBAUTHN_CHALLENGE_TTL_MS).toISOString()
+  };
+}
+
+function activeWebAuthnChallenge(challenge: unknown, checkedAt: Date) {
+  if (typeof challenge === 'string' && challenge) {
+    return challenge;
+  }
+  if (!challenge || typeof challenge !== 'object') {
+    return '';
+  }
+  const record = challenge as AnyRecord;
+  const expiresAt = new Date(record.expiresAt || 0).getTime();
+  return typeof record.value === 'string'
+    && record.value
+    && Number.isFinite(expiresAt)
+    && expiresAt > checkedAt.getTime()
+    ? record.value
+    : '';
+}
+
+function serializeAccount(state: AnyRecord, user: AnyRecord = {}, checkedAt: Date | null = null) {
+  const verificationChallenge = serializedEmailChallenge(user, 'verify-email', checkedAt);
+  const changeChallenge = serializedEmailChallenge(user, 'change-email', checkedAt);
   return {
     id: user.id,
     username: user.username,
     role: normalizeAccountRole(user.role),
     disabled: Boolean(user.disabled),
+    authEpoch: accountAuthEpoch(user),
     twoFactorEnabled: Boolean(user.twoFactorEnabled),
     hasRecoveryCode: Boolean(user.recoveryCodeHash),
+    email: user.email || null,
+    emailVerified: Boolean(user.email && user.emailVerifiedAt),
+    emailVerifiedAt: user.emailVerifiedAt || null,
+    pendingEmail: changeChallenge?.email || null,
+    emailVerificationExpiresAt: verificationChallenge?.expiresAt || changeChallenge?.expiresAt || null,
     settings: normalizeAccountSettings(state, {}, user.settings),
     createdAt: user.createdAt,
     updatedAt: user.updatedAt
@@ -1069,27 +1184,61 @@ function sanitizeFileName(name) {
 }
 
 function createPoll(pollOptions) {
+  if (pollOptions === undefined || pollOptions === null) {
+    return null;
+  }
   if (!Array.isArray(pollOptions)) {
+    const error = new Error('Thăm dò phải là danh sách lựa chọn');
+    error.statusCode = 400;
+    throw error;
+  }
+  if (pollOptions.length === 0) {
     return null;
   }
-  const seen = new Set();
-  const options = pollOptions
-    .map((option) => normalizeBody(option).slice(0, 120))
-    .filter(Boolean)
-    .filter((option) => {
-      const key = option.toLowerCase();
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    })
-    .slice(0, 6)
-    .map((text, index) => ({ id: String(index + 1), text, votes: 0 }));
 
-  if (options.length < 2) {
-    return null;
+  const seen = new Set();
+  const normalizedOptions: string[] = [];
+  for (const option of pollOptions) {
+    if (typeof option !== 'string') {
+      const error = new Error('Lựa chọn thăm dò phải là văn bản');
+      error.statusCode = 400;
+      throw error;
+    }
+    const text = normalizeBody(option)
+      .replace(/[\u0000-\u001f\u007f]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!text) {
+      const error = new Error('Lựa chọn thăm dò không được để trống');
+      error.statusCode = 400;
+      throw error;
+    }
+    if (text.length > MAX_POLL_OPTION_LENGTH) {
+      const error = new Error('Mỗi lựa chọn thăm dò tối đa ' + MAX_POLL_OPTION_LENGTH + ' ký tự');
+      error.statusCode = 400;
+      throw error;
+    }
+    const key = text.toLowerCase();
+    if (seen.has(key)) {
+      const error = new Error('Các lựa chọn thăm dò không được trùng nhau');
+      error.statusCode = 400;
+      throw error;
+    }
+    seen.add(key);
+    normalizedOptions.push(text);
+    if (normalizedOptions.length > MAX_POLL_OPTIONS) {
+      const error = new Error('Thăm dò có tối đa ' + MAX_POLL_OPTIONS + ' lựa chọn');
+      error.statusCode = 400;
+      throw error;
+    }
   }
+
+  if (normalizedOptions.length < MIN_POLL_OPTIONS) {
+    const error = new Error('Thăm dò cần ít nhất ' + MIN_POLL_OPTIONS + ' lựa chọn');
+    error.statusCode = 400;
+    throw error;
+  }
+  const options = normalizedOptions.map((text, index) => ({ id: String(index + 1), text, votes: 0 }));
   return { options, totalVotes: 0 };
 }
 
@@ -1106,7 +1255,7 @@ function isAccountReactionKey(key) {
 /** Recount reactions from account keys only; drop legacy anon fingerprints. */
 function syncPostReactions(post) {
   const rawVoters = post?.reactionVoters && typeof post.reactionVoters === 'object' ? post.reactionVoters : {};
-  const cleaned = {};
+  const cleaned: Record<string, string> = {};
   for (const [key, value] of Object.entries(rawVoters)) {
     const type = String(value || '');
     if (isAccountReactionKey(key) && POST_REACTION_TYPES.has(type)) {
@@ -1624,8 +1773,13 @@ function applyMediaSpoilers(storedMedia, safeMedia) {
 
 async function saveMediaList(imageStorage, safeMedia) {
   const stored = [];
-  for (const media of safeMedia) {
-    stored.push(await imageStorage.save(media));
+  try {
+    for (const media of safeMedia) {
+      stored.push(await imageStorage.save(media));
+    }
+  } catch (error) {
+    await deleteStoredMedia(imageStorage, stored).catch(() => undefined);
+    throw error;
   }
   return applyMediaSpoilers(stored.filter(Boolean), safeMedia);
 }
@@ -1954,6 +2108,191 @@ function pulseKeywords(body = '') {
         ?.filter((word) => !PULSE_STOP_WORDS.has(word) && !/^\d+$/.test(word)) ?? []
     )
   ];
+}
+
+function latestPostsFromState(state: AnyRecord, limit = 10) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 20));
+  const publicThreadIds = new Set(
+    state.threads
+      .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+      .map((thread) => thread.id)
+  );
+  const threads = state.threads
+    .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+    .map((thread) => ({
+      type: 'thread',
+      threadId: thread.id,
+      ...serializeThread(thread, state.comments)
+    }));
+  const comments = state.comments
+    .filter((comment) => publicPost(comment) && publicThreadIds.has(comment.threadId))
+    .map((comment) => ({
+      type: 'comment',
+      ...serializeComment(comment, state.threads.find((thread) => thread.id === comment.threadId))
+    }));
+
+  return [...threads, ...comments].sort(compareNewestPosts).slice(0, safeLimit);
+}
+
+function hotBoardsFromState(state: AnyRecord, limit = 8, referenceDate = new Date()) {
+  const publicBoards = state.boards.filter(publicBoard);
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 8, publicBoards.length || 1));
+  const oneDayAgo = referenceDate.getTime() - 24 * 60 * 60 * 1000;
+  const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
+  const activeThreadIds = new Set(
+    state.threads
+      .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+      .map((thread) => thread.id)
+  );
+  const metrics = new Map<string, AnyRecord>(
+    publicBoards.map((board) => [
+      board.slug,
+      {
+        boardSlug: board.slug,
+        postCountLast24h: 0,
+        threadCountLast24h: 0,
+        replyCountLast24h: 0,
+        latestActivityAt: null
+      }
+    ])
+  );
+
+  for (const thread of state.threads) {
+    if (publicThread(state, thread) && !thread.isArchived && inLast24h(thread)) {
+      incrementHotBoardMetric(metrics, thread.boardSlug, 'thread', thread.createdAt);
+    }
+  }
+  for (const comment of state.comments) {
+    if (publicPost(comment) && activeThreadIds.has(comment.threadId) && inLast24h(comment)) {
+      incrementHotBoardMetric(metrics, comment.boardSlug, 'comment', comment.createdAt);
+    }
+  }
+
+  return [...metrics.values()]
+    .filter((metric) => metric.postCountLast24h > 0)
+    .sort((left, right) => {
+      const postCompare = right.postCountLast24h - left.postCountLast24h;
+      if (postCompare !== 0) {
+        return postCompare;
+      }
+      return (right.latestActivityAt ?? '').localeCompare(left.latestActivityAt ?? '');
+    })
+    .slice(0, safeLimit);
+}
+
+function campusPulseFromState(state: AnyRecord, limit = 12, referenceDate = new Date()) {
+  const safeLimit = Math.max(1, Math.min(Number(limit) || 12, 24));
+  const oneDayAgo = referenceDate.getTime() - 24 * 60 * 60 * 1000;
+  const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
+  const activeThreadIds = new Set(
+    state.threads
+      .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+      .map((thread) => thread.id)
+  );
+  const metrics = new Map();
+  const publicPosts = [
+    ...state.threads.filter((thread) => publicThread(state, thread) && !thread.isArchived && inLast24h(thread)),
+    ...state.comments.filter((comment) => publicPost(comment) && activeThreadIds.has(comment.threadId) && inLast24h(comment))
+  ];
+
+  for (const post of publicPosts) {
+    for (const keyword of pulseKeywords(post.body)) {
+      const metric = metrics.get(keyword) ?? {
+        keyword,
+        count: 0,
+        boardSlugs: new Set(),
+        latestActivityAt: null
+      };
+      metric.count += 1;
+      metric.boardSlugs.add(post.boardSlug);
+      if (!metric.latestActivityAt || post.createdAt.localeCompare(metric.latestActivityAt) > 0) {
+        metric.latestActivityAt = post.createdAt;
+      }
+      metrics.set(keyword, metric);
+    }
+  }
+
+  return [...metrics.values()]
+    .sort((left, right) => {
+      const countCompare = right.count - left.count;
+      if (countCompare !== 0) {
+        return countCompare;
+      }
+      return (right.latestActivityAt ?? '').localeCompare(left.latestActivityAt ?? '');
+    })
+    .slice(0, safeLimit)
+    .map((metric) => ({
+      keyword: metric.keyword,
+      count: metric.count,
+      boardCount: metric.boardSlugs.size,
+      latestActivityAt: metric.latestActivityAt
+    }));
+}
+
+function statsFromState(state: AnyRecord, referenceDate = new Date(), realtime: AnyRecord = {}) {
+  const publicThreads = state.threads.filter((thread) => publicThread(state, thread));
+  const publicComments = state.comments.filter((comment) => publicComment(state, comment));
+  const publicPosts = [...publicThreads, ...publicComments];
+  const activeBoards = new Set(publicThreads.map((thread) => thread.boardSlug));
+  const publicBoards = state.boards.filter(publicBoard);
+  const files = publicPosts.flatMap((post) => mediaItems(post));
+  const nowMs = referenceDate.getTime();
+  const oneHourAgo = nowMs - 60 * 60 * 1000;
+  const oneDayAgo = nowMs - 24 * 60 * 60 * 1000;
+  const postTime = (post) => new Date(post.createdAt).getTime();
+  const fileBytes = files.reduce((total, file) => total + (file.sizeBytes ?? dataUrlBytes(file.dataUrl)), 0);
+
+  return {
+    totalThreads: publicThreads.length,
+    totalPosts: publicPosts.length,
+    activeBoards: activeBoards.size,
+    publicBoardCount: publicBoards.length,
+    totalBoardCount: state.boards.length,
+    postCountLast24h: publicPosts.filter((post) => postTime(post) >= oneDayAgo).length,
+    postCountLastHour: publicPosts.filter((post) => postTime(post) >= oneHourAgo).length,
+    fileCount: files.length,
+    fileMegabytes: Number((fileBytes / 1024 / 1024).toFixed(1)),
+    activeContentMb: Number((fileBytes / 1024 / 1024).toFixed(1)),
+    currentUsers: Math.max(1, realtime.count?.() ?? 1),
+    boardUsers: realtime.boardCounts?.() ?? {}
+  };
+}
+
+function homeSnapshotFromState(
+  state: AnyRecord,
+  { lifecycle = THREAD_LIFECYCLE, referenceDate = new Date(), realtime = {} }: AnyRecord = {}
+) {
+  const boards = state.boards
+    .filter(publicBoard)
+    .map((board) => serializeBoard(board, { retentionDefaults: lifecycle }));
+  const activeThreads = state.threads.filter((thread) => publicThread(state, thread) && !thread.isArchived);
+  const activeThreadIds = new Set(activeThreads.map((thread) => thread.id));
+  const boardPostCounts = Object.fromEntries(boards.map((board) => [board.slug, 0]));
+
+  for (const thread of activeThreads) {
+    boardPostCounts[thread.boardSlug] = Number(boardPostCounts[thread.boardSlug] || 0) + 1;
+  }
+  for (const comment of state.comments) {
+    if (publicPost(comment) && activeThreadIds.has(comment.threadId)) {
+      boardPostCounts[comment.boardSlug] = Number(boardPostCounts[comment.boardSlug] || 0) + 1;
+    }
+  }
+
+  const popularThreads = [...activeThreads]
+    .sort((left, right) => String(right.bumpedAt ?? '').localeCompare(String(left.bumpedAt ?? '')))
+    .slice(0, 8)
+    .map((thread) => serializeThread(thread, state.comments));
+
+  return {
+    generatedAt: referenceDate.toISOString(),
+    boards,
+    boardPostCounts,
+    popularThreads,
+    latestPosts: latestPostsFromState(state, 10),
+    hotBoards: hotBoardsFromState(state, 8, referenceDate),
+    campusPulse: campusPulseFromState(state, 12, referenceDate),
+    stats: statsFromState(state, referenceDate, realtime)
+  };
 }
 
 function sanitizeReason(reason) {
@@ -2293,6 +2632,255 @@ function serializeAdminReport(report: AnyRecord, state: AnyRecord, priorityConte
   };
 }
 
+const CHAT_QUESTION_MAX_CHARS = 1_000;
+const CHAT_HISTORY_MAX_MESSAGES = 6;
+const CHAT_HISTORY_MESSAGE_MAX_CHARS = 800;
+const CHAT_CONTEXT_MAX_CHARS = 16_000;
+const CHAT_CONTEXT_TEXT_MAX_CHARS = 600;
+const CHAT_BOARD_THREAD_LIMIT = 24;
+const CHAT_THREAD_COMMENT_LIMIT = 30;
+const CHAT_SCOPES = new Set(['site', 'board', 'thread']);
+const CHAT_PAGES = new Set([
+  'home',
+  'policy',
+  'board',
+  'catalog',
+  'archive',
+  'thread',
+  'register',
+  'login',
+  'forgot',
+  'account',
+  'admin'
+]);
+
+function chatRequestError(message: string, statusCode = 400) {
+  const error = new Error(message);
+  error.statusCode = statusCode;
+  return error;
+}
+
+function normalizeChatQuestion(value: unknown) {
+  const question = String(value ?? '').replace(/\r\n/g, '\n').trim();
+  if (!question) {
+    throw chatRequestError('Câu hỏi là bắt buộc');
+  }
+  if (question.length > CHAT_QUESTION_MAX_CHARS) {
+    throw chatRequestError(`Câu hỏi tối đa ${CHAT_QUESTION_MAX_CHARS} ký tự`);
+  }
+  return redactSensitiveText(question);
+}
+
+function normalizeChatHistory(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .slice(-CHAT_HISTORY_MAX_MESSAGES)
+    .map((message) => {
+      const role = message?.role === 'assistant' ? 'assistant' : message?.role === 'user' ? 'user' : '';
+      const content = redactSensitiveText(String(message?.content ?? '').trim()).slice(
+        0,
+        CHAT_HISTORY_MESSAGE_MAX_CHARS
+      );
+      return role && content ? { role, content } : null;
+    })
+    .filter(Boolean);
+}
+
+function normalizeChatScope(value: unknown) {
+  const scope = String(value ?? 'site').trim().toLowerCase();
+  if (!CHAT_SCOPES.has(scope)) {
+    throw chatRequestError('Phạm vi chatbot không hợp lệ');
+  }
+  return scope;
+}
+
+function normalizeChatPage(value: unknown) {
+  const page = String(value ?? 'home').trim().toLowerCase();
+  return CHAT_PAGES.has(page) ? page : 'home';
+}
+
+function compactChatText(value: unknown, maxChars = CHAT_CONTEXT_TEXT_MAX_CHARS) {
+  return redactSensitiveText(String(value ?? '').replace(/\s+/g, ' ').trim()).slice(0, maxChars);
+}
+
+function createChatContextWriter(maxChars = CHAT_CONTEXT_MAX_CHARS) {
+  const lines: string[] = [];
+  let length = 0;
+  return {
+    push(value: unknown) {
+      const line = String(value ?? '').trim();
+      if (!line || length >= maxChars) {
+        return false;
+      }
+      const separatorLength = lines.length ? 1 : 0;
+      const available = maxChars - length - separatorLength;
+      if (available <= 0) {
+        return false;
+      }
+      const next = line.slice(0, available);
+      lines.push(next);
+      length += separatorLength + next.length;
+      return next.length === line.length;
+    },
+    text() {
+      return lines.join('\n');
+    }
+  };
+}
+
+function referencedChatPostNumbers(question = '') {
+  const values = new Set<number>();
+  for (const match of String(question).matchAll(/(?:>>|No\.?\s*)(\d{1,12})/gi)) {
+    const value = Number(match[1]);
+    if (Number.isSafeInteger(value) && value > 0) {
+      values.add(value);
+    }
+  }
+  return values;
+}
+
+function boardChatHeader(writer, board, page = 'board') {
+  const path = compactChatText(board.path || `/${board.slug}/`, 80);
+  const name = compactChatText(board.name || board.title || board.slug, 120);
+  writer.push(`Trang hiện tại: ${page}. Bảng ${path} — ${name}.`);
+  if (board.description) {
+    writer.push(`Mô tả bảng: ${compactChatText(board.description, 400)}`);
+  }
+  const rules = Array.isArray(board.rules) ? board.rules : [];
+  if (rules.length) {
+    writer.push(`Nội quy riêng của bảng: ${rules.map((rule) => compactChatText(rule, 240)).filter(Boolean).join(' | ')}`);
+  }
+}
+
+function buildSiteChatContext(state: AnyRecord, page = 'home') {
+  const writer = createChatContextWriter();
+  const siteContent = normalizeSiteContent(state.adminSettings?.siteContent ?? DEFAULT_SITE_CONTENT);
+  writer.push(`Trang hiện tại: ${page}. Đây là 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.`);
+  writer.push(`Tiêu đề chính sách: ${compactChatText(siteContent.policyTitle, 180)}`);
+  writer.push(`Giới thiệu chính sách: ${compactChatText(siteContent.policySubtitle, 400)}`);
+  writer.push(`Nội quy: ${siteContent.rules.map((line) => compactChatText(line, 300)).join(' | ')}`);
+  writer.push(`Riêng tư: ${siteContent.privacy.map((line) => compactChatText(line, 300)).join(' | ')}`);
+  writer.push(`Thông tin AI: ${siteContent.ai.map((line) => compactChatText(line, 300)).join(' | ')}`);
+  writer.push(`Báo cáo: ${siteContent.report.map((line) => compactChatText(line, 300)).join(' | ')}`);
+  writer.push(`Kháng nghị: ${compactChatText(siteContent.appealIntro, 500)}`);
+  writer.push(`Góp ý: ${siteContent.feedback.map((line) => compactChatText(line, 300)).join(' | ')}`);
+  writer.push(`Liên hệ: ${siteContent.contact.map((line) => compactChatText(line, 300)).join(' | ')}`);
+  writer.push(`Cảnh báo PII: ${compactChatText(siteContent.pii, 800)}`);
+
+  const boards = state.boards.filter(publicBoard);
+  writer.push('Các bảng công khai:');
+  for (const board of boards) {
+    writer.push(
+      `- ${compactChatText(board.path || `/${board.slug}/`, 80)} ${compactChatText(board.name || board.slug, 120)}: ${compactChatText(board.description, 280)}`
+    );
+  }
+
+  const recentThreads = state.threads
+    .filter((thread) => publicThread(state, thread) && !thread.isArchived)
+    .sort((left, right) => String(right.bumpedAt || right.createdAt || '').localeCompare(String(left.bumpedAt || left.createdAt || '')))
+    .slice(0, 12);
+  if (recentThreads.length) {
+    writer.push('Một số chủ đề công khai gần đây:');
+    for (const thread of recentThreads) {
+      writer.push(
+        `- No.${thread.globalNumber} tại /${compactChatText(thread.boardSlug, 80)}/: ${compactChatText(thread.subject, 160)} ${compactChatText(thread.body)}`
+      );
+    }
+  }
+  return { scope: 'site', label: '36chan', context: writer.text() };
+}
+
+function buildBoardChatContext(state: AnyRecord, boardSlug: unknown, page = 'board') {
+  const slug = String(boardSlug ?? '').trim();
+  if (!slug) {
+    throw chatRequestError('Thiếu bảng cho chatbot');
+  }
+  const board = findBoard(state, slug, { publicOnly: true });
+  if (!board) {
+    throw chatRequestError('Không tìm thấy bảng', 404);
+  }
+  const writer = createChatContextWriter();
+  boardChatHeader(writer, board, page);
+  const archived = page === 'archive';
+  const threads = state.threads
+    .filter((thread) => thread.boardSlug === slug && publicPost(thread) && Boolean(thread.isArchived) === archived)
+    .sort(compareBoardThreads)
+    .slice(0, CHAT_BOARD_THREAD_LIMIT);
+  writer.push(archived ? 'Các chủ đề công khai trong kho lưu trữ:' : 'Các chủ đề công khai đang hoạt động:');
+  for (const thread of threads) {
+    const replyCount = publicReplyCount(state, thread.id);
+    writer.push(
+      `- No.${thread.globalNumber} (threadId ${compactChatText(thread.id, 120)}, ${replyCount} phản hồi): ${compactChatText(thread.subject, 180)} ${compactChatText(thread.body)}`
+    );
+  }
+  if (!threads.length) {
+    writer.push('Hiện chưa có chủ đề công khai phù hợp trong phạm vi này.');
+  }
+  return {
+    scope: 'board',
+    label: `${compactChatText(board.path || `/${board.slug}/`, 80)} ${compactChatText(board.name || board.slug, 120)}`.trim(),
+    context: writer.text()
+  };
+}
+
+function buildThreadChatContext(state: AnyRecord, threadId: unknown, question: string) {
+  const id = String(threadId ?? '').trim();
+  if (!id) {
+    throw chatRequestError('Thiếu chủ đề cho chatbot');
+  }
+  const thread = state.threads.find((item) => item.id === id && publicThread(state, item));
+  if (!thread) {
+    throw chatRequestError('Không tìm thấy chủ đề', 404);
+  }
+  const board = findBoard(state, thread.boardSlug, { publicOnly: true });
+  const writer = createChatContextWriter();
+  if (board) {
+    boardChatHeader(writer, board, 'thread');
+  }
+  writer.push(`Chủ đề hiện tại: No.${thread.globalNumber}, threadId ${compactChatText(thread.id, 120)}.`);
+  if (thread.subject) {
+    writer.push(`Tiêu đề: ${compactChatText(thread.subject, 220)}`);
+  }
+  writer.push(`Bài mở đầu: ${compactChatText(thread.body, 1_000)}`);
+
+  const comments = state.comments
+    .filter((comment) => comment.threadId === id && publicPost(comment))
+    .sort((left, right) => Number(left.globalNumber) - Number(right.globalNumber));
+  const referencedNumbers = referencedChatPostNumbers(question);
+  const referenced = comments.filter((comment) => referencedNumbers.has(Number(comment.globalNumber)));
+  const recentLimit = Math.max(0, CHAT_THREAD_COMMENT_LIMIT - referenced.length);
+  const selected = uniqueById([...referenced, ...comments.slice(-recentLimit)])
+    .sort((left, right) => Number(left.globalNumber) - Number(right.globalNumber))
+    .slice(-CHAT_THREAD_COMMENT_LIMIT);
+  writer.push(`Phản hồi công khai (${comments.length} tổng cộng, cung cấp ${selected.length} phản hồi liên quan/gần nhất):`);
+  for (const comment of selected) {
+    writer.push(`- No.${comment.globalNumber}: ${compactChatText(comment.body)}`);
+  }
+  if (!selected.length) {
+    writer.push('Chủ đề chưa có phản hồi công khai.');
+  }
+  return {
+    scope: 'thread',
+    label: `Chủ đề No.${thread.globalNumber}`,
+    context: writer.text()
+  };
+}
+
+function buildChatContext(
+  state: AnyRecord,
+  { scope, page, boardSlug, threadId, question }: AnyRecord
+) {
+  if (scope === 'thread') {
+    return buildThreadChatContext(state, threadId, question);
+  }
+  if (scope === 'board') {
+    return buildBoardChatContext(state, boardSlug, page);
+  }
+  return buildSiteChatContext(state, page);
+}
+
 function aiBudgetKey({ kind, ip = '', posterToken = '', actor = 'public', createdAt }) {
   const day = daySalt(new Date(createdAt));
   const identity = crypto
@@ -2307,6 +2895,8 @@ function consumeAiBudget(state: AnyRecord, { kind, ip, posterToken, actor, creat
   const limits = {
     summary: 20,
     suggestion: 30,
+    chat: 30,
+    chatIp: 120,
     rewrite: 20,
     translate: 40,
     transcribe: 15,
@@ -2455,6 +3045,25 @@ async function readImageStorageHealth(imageStorage) {
   }
 }
 
+async function readEmailClientHealth(emailClient: EmailClient) {
+  if (!emailClient.health) {
+    return {
+      type: emailClient.type,
+      configured: emailClient.configured,
+      ready: emailClient.configured
+    };
+  }
+  try {
+    return await emailClient.health();
+  } catch {
+    return {
+      type: emailClient.type,
+      configured: emailClient.configured,
+      ready: false
+    };
+  }
+}
+
 export function createForumService({
   store,
   ai,
@@ -2463,6 +3072,8 @@ export function createForumService({
   lifecycle = THREAD_LIFECYCLE,
   logger = noopLogger,
   imageStorage = createInlineImageStorage(),
+  emailClient = createDisabledEmailClient(),
+  appBaseUrl = process.env.APP_BASE_URL,
   totp = defaultTotp,
   webauthn = defaultWebAuthn,
   moderationConfidenceThreshold = readModerationConfidenceThreshold(),
@@ -2490,16 +3101,12 @@ export function createForumService({
     logger({ event, ...payload });
   }
 
-  // Serialize the whole read-modify-write so concurrent mutations cannot
-  // interleave. The store model is whole-state RMW and callbacks await slow
-  // work (AI moderation, image upload); without this, two in-flight posts read
-  // the same snapshot and the second write clobbers the first — the post
-  // returns 200 but the thread/comment silently vanishes (and global numbers
-  // collide). Queue is process-local; multi-instance deployments still need a
-  // shared lock (see store notes).
+  // Serialize the whole read-modify-write. Mongo additionally supplies a
+  // distributed lease so separate server processes cannot use stale snapshots.
   let mutateQueue = Promise.resolve();
+  let emailQueue = Promise.resolve();
   function mutate(callback: (state: AnyRecord) => any, { write = null }: AnyRecord = {}) {
-    const run = mutateQueue.then(async () => {
+    const execute = async () => {
       const state = await store.read();
       const result = await callback(state);
       if (write) {
@@ -2508,10 +3115,224 @@ export function createForumService({
         await store.write(state);
       }
       return result;
-    });
+    };
+    const run = mutateQueue.then(() => (
+      typeof store.withMutationLock === 'function'
+        ? store.withMutationLock(execute)
+        : execute()
+    ));
     // Keep the chain alive regardless of this mutation's outcome.
     mutateQueue = run.then(() => undefined, () => undefined);
     return run;
+  }
+
+  function queueEmails(messages: EmailMessage[], event = 'notification') {
+    if (!emailClient.configured || messages.length === 0) {
+      return;
+    }
+    const uniqueMessages = [...new Map(messages.map((message) => [normalizeAccountEmail(message.to), message])).values()]
+      .slice(0, EMAIL_NOTIFICATION_RECIPIENT_LIMIT);
+    emailQueue = emailQueue.then(async () => {
+      const results = await Promise.allSettled(uniqueMessages.map((message) => emailClient.send(message)));
+      const failed = results.filter((result) => result.status === 'rejected').length;
+      logEvent('email.batch', {
+        emailEvent: event,
+        attempted: uniqueMessages.length,
+        delivered: uniqueMessages.length - failed,
+        failed
+      });
+    }).catch(() => {
+      logEvent('email.batch.failed', { emailEvent: event });
+    });
+  }
+
+  function challengeFor(user: AnyRecord, purpose: string) {
+    return user.emailChallenges?.[purpose] || null;
+  }
+
+  function activeChallengeFor(user: AnyRecord, purpose: string, { clearExpired = false }: AnyRecord = {}) {
+    const challenge = challengeFor(user, purpose);
+    if (!challenge) {
+      return null;
+    }
+    const expiresAt = new Date(challenge.expiresAt || 0).getTime();
+    if (Number.isFinite(expiresAt) && expiresAt > now().getTime()) {
+      return challenge;
+    }
+    if (clearExpired && user.emailChallenges) {
+      delete user.emailChallenges[purpose];
+    }
+    return null;
+  }
+
+  function serializeCurrentAccount(state: AnyRecord, user: AnyRecord = {}) {
+    return serializeAccount(state, user, now());
+  }
+
+  function createEmailChallenge(user: AnyRecord, purpose: string, email: string) {
+    const code = String(randomInt(0, 1_000_000)).padStart(6, '0');
+    const sentAt = now().toISOString();
+    const expiresAt = new Date(now().getTime() + EMAIL_OTP_TTL_MS).toISOString();
+    const challenge = {
+      email,
+      codeHash: hashEmailOtp({ userId: user.id, purpose, email, code }),
+      sentAt,
+      expiresAt,
+      attempts: 0
+    };
+    user.emailChallenges = {
+      ...(user.emailChallenges || {}),
+      [purpose]: challenge
+    };
+    user.updatedAt = sentAt;
+    return { code, challenge };
+  }
+
+  function resendAvailable(challenge: AnyRecord = {}) {
+    const sentAt = new Date(challenge.sentAt || 0).getTime();
+    return !sentAt || now().getTime() - sentAt >= EMAIL_OTP_RESEND_COOLDOWN_MS;
+  }
+
+  function consumeEmailChallenge(user: AnyRecord, purpose: string, code: string) {
+    const challenge = challengeFor(user, purpose);
+    if (!challenge || new Date(challenge.expiresAt || 0).getTime() <= now().getTime()) {
+      if (user.emailChallenges) {
+        delete user.emailChallenges[purpose];
+      }
+      return { ok: false, reason: 'expired' };
+    }
+    const actualHash = hashEmailOtp({
+      userId: user.id,
+      purpose,
+      email: challenge.email,
+      code: String(code ?? '').trim()
+    });
+    if (!timingSafeEqualHex(actualHash, challenge.codeHash)) {
+      challenge.attempts = Number(challenge.attempts || 0) + 1;
+      if (challenge.attempts >= EMAIL_OTP_MAX_ATTEMPTS) {
+        delete user.emailChallenges[purpose];
+      }
+      user.updatedAt = now().toISOString();
+      return { ok: false, reason: 'invalid' };
+    }
+    delete user.emailChallenges[purpose];
+    user.updatedAt = now().toISOString();
+    return { ok: true, email: challenge.email };
+  }
+
+  function securityCodeMessage({ to, username, code, purpose }: AnyRecord): EmailMessage {
+    const labels = {
+      'verify-email': 'Xác nhận email',
+      'change-email': 'Xác nhận email mới',
+      'password-reset': 'Đặt lại mật khẩu',
+      'recovery-code-reset': 'Tạo lại mã khôi phục'
+    };
+    const action = labels[purpose] || 'Xác nhận tài khoản';
+    const safeAction = escapeEmailHtml(action);
+    const safeUsername = escapeEmailHtml(username);
+    const safeCode = escapeEmailHtml(code);
+    return {
+      to,
+      subject: `${action} 36chan: ${code}`,
+      text: `${action} cho @${username}. Mã OTP: ${code}. Mã hết hạn sau 15 phút. Nếu bạn không yêu cầu thao tác này, hãy bỏ qua email.`,
+      html: `<p>${safeAction} cho <strong>@${safeUsername}</strong>.</p><p style="font-size:24px;font-weight:bold;letter-spacing:4px">${safeCode}</p><p>Mã hết hạn sau 15 phút. Nếu bạn không yêu cầu thao tác này, hãy bỏ qua email.</p>`
+    };
+  }
+
+  async function sendSecurityCode({ user, purpose, email, code }: AnyRecord) {
+    if (!emailClient.configured) {
+      return false;
+    }
+    try {
+      await emailClient.send(securityCodeMessage({
+        to: email,
+        username: user.username,
+        code,
+        purpose
+      }));
+      logEvent('account.email.code.sent', { accountId: user.id, purpose });
+      return true;
+    } catch {
+      logEvent('account.email.code.failed', {
+        accountId: user.id,
+        purpose
+      });
+      return false;
+    }
+  }
+
+  function postNotificationMessages(state: AnyRecord, { kind, thread, comment, authorAccountId }: AnyRecord) {
+    const board = findBoard(state, thread.boardSlug);
+    const boardLabel = board?.path || `/${thread.boardSlug}/`;
+    const baseUrl = String(appBaseUrl || '').replace(/\/+$/, '');
+    const threadUrl = `${baseUrl}/#thread/${encodeURIComponent(thread.id)}`;
+    const preview = safePrivateString(comment?.body || thread.subject || thread.body, 180);
+    const messages: EmailMessage[] = [];
+
+    for (const user of state.users) {
+      if (!user.email || !user.emailVerifiedAt || user.disabled || user.id === authorAccountId) {
+        continue;
+      }
+      const settings = normalizeAccountSettings(state, {}, user.settings);
+      if (!settings.notificationPreferences.email) {
+        continue;
+      }
+      const watchesThread = normalizeAccountWatchlist(user.privateData?.watchlist)
+        .some((item) => item.threadId === thread.id);
+      const subscribedToBoard = settings.boardSubscriptions.includes(thread.boardSlug);
+      const shouldSend = kind === 'comment'
+        ? settings.notificationPreferences.watchedThreads && watchesThread
+        : settings.notificationPreferences.boardSubscriptions && subscribedToBoard;
+      if (!shouldSend) {
+        continue;
+      }
+      const subject = kind === 'comment'
+        ? `Phản hồi mới trong ${boardLabel}`
+        : `Chủ đề mới trong ${boardLabel}`;
+      messages.push({
+        to: user.email,
+        subject,
+        text: `${subject}\n\n${preview}\n\n${threadUrl}`,
+        html: `<p><strong>${escapeEmailHtml(subject)}</strong></p><p>${escapeEmailHtml(preview)}</p><p><a href="${escapeEmailHtml(threadUrl)}">Mở chủ đề trên 36chan</a></p>`
+      });
+    }
+    return messages;
+  }
+
+  async function queueApprovedPostNotifications(postType: string, postId: string) {
+    if (!emailClient.configured) {
+      return;
+    }
+    try {
+      const state = await store.read();
+      if (postType === 'thread') {
+        const thread = state.threads.find((item) => item.id === postId && activePublicThread(item));
+        if (!thread) {
+          return;
+        }
+        queueEmails(postNotificationMessages(state, {
+          kind: 'thread',
+          thread,
+          authorAccountId: thread.accountId
+        }), 'board-subscription');
+        return;
+      }
+      const comment = state.comments.find((item) => item.id === postId && !item.isPending && !item.isDeleted);
+      const thread = comment
+        ? state.threads.find((item) => item.id === comment.threadId && activePublicThread(item))
+        : null;
+      if (!comment || !thread) {
+        return;
+      }
+      queueEmails(postNotificationMessages(state, {
+        kind: 'comment',
+        thread,
+        comment,
+        authorAccountId: comment.accountId
+      }), 'watched-thread');
+    } catch {
+      logEvent('email.notification.prepare.failed', { postType });
+    }
   }
 
   async function readUserById(userId) {
@@ -2622,6 +3443,20 @@ export function createForumService({
   }
 
   return {
+    async getHomeSnapshot() {
+      const state = await store.read();
+      const referenceDate = now();
+      const checkedAt = referenceDate.toISOString();
+      let archivedExpiredThreads = false;
+      for (const board of state.boards.filter(publicBoard)) {
+        archivedExpiredThreads = archiveExpiredEventThreads(state, board.slug, checkedAt) || archivedExpiredThreads;
+      }
+      if (archivedExpiredThreads) {
+        await store.write(state);
+      }
+      return homeSnapshotFromState(state, { lifecycle, referenceDate, realtime });
+    },
+
     async listBoards() {
       if (typeof store.readBoards === 'function') {
         const boards = await store.readBoards();
@@ -2641,33 +3476,7 @@ export function createForumService({
     },
 
     async getStats() {
-      const state = await store.read();
-      const publicThreads = state.threads.filter((thread) => publicThread(state, thread));
-      const publicComments = state.comments.filter((comment) => publicComment(state, comment));
-      const publicPosts = [...publicThreads, ...publicComments];
-      const activeBoards = new Set(publicThreads.map((thread) => thread.boardSlug));
-      const publicBoards = state.boards.filter(publicBoard);
-      const files = publicPosts.flatMap((post) => mediaItems(post));
-      const nowMs = now().getTime();
-      const oneHourAgo = nowMs - 60 * 60 * 1000;
-      const oneDayAgo = nowMs - 24 * 60 * 60 * 1000;
-      const postTime = (post) => new Date(post.createdAt).getTime();
-      const fileBytes = files.reduce((total, file) => total + (file.sizeBytes ?? dataUrlBytes(file.dataUrl)), 0);
-
-      return {
-        totalThreads: publicThreads.length,
-        totalPosts: publicPosts.length,
-        activeBoards: activeBoards.size,
-        publicBoardCount: publicBoards.length,
-        totalBoardCount: state.boards.length,
-        postCountLast24h: publicPosts.filter((post) => postTime(post) >= oneDayAgo).length,
-        postCountLastHour: publicPosts.filter((post) => postTime(post) >= oneHourAgo).length,
-        fileCount: files.length,
-        fileMegabytes: Number((fileBytes / 1024 / 1024).toFixed(1)),
-        activeContentMb: Number((fileBytes / 1024 / 1024).toFixed(1)),
-        currentUsers: Math.max(1, realtime.count?.() ?? 1),
-        boardUsers: realtime.boardCounts?.() ?? {}
-      };
+      return statsFromState(await store.read(), now(), realtime);
     },
 
     async getModerationSettings() {
@@ -2721,10 +3530,79 @@ export function createForumService({
       });
     },
 
+    async getCustomStickers() {
+      const state = await store.read();
+      return normalizeCustomStickers(state.adminSettings?.customStickers);
+    },
+
+    async addCustomSticker(input: AnyRecord = {}, { actor = 'admin' }: AnyRecord = {}) {
+      const url = normalizeImgurStickerUrl(input.url);
+      return mutate(async (state) => {
+        const stickers = normalizeCustomStickers(state.adminSettings?.customStickers);
+        if (stickers.length >= MAX_CUSTOM_STICKERS) {
+          const error = new Error(`Chỉ được lưu tối đa ${MAX_CUSTOM_STICKERS} sticker tùy chỉnh`);
+          error.statusCode = 409;
+          throw error;
+        }
+        if (stickers.some((sticker) => sticker.url === url)) {
+          const error = new Error('Sticker Imgur này đã có trong danh sách');
+          error.statusCode = 409;
+          throw error;
+        }
+        const sticker = createCustomSticker({
+          key: `custom-${crypto.randomUUID()}`,
+          label: input.label,
+          url,
+          createdAt: now().toISOString()
+        });
+        state.adminSettings = {
+          ...state.adminSettings,
+          customStickers: [...stickers, sticker]
+        };
+        logEvent('admin.custom-sticker.create', {
+          actor,
+          stickerKey: sticker.key,
+          imageHost: new URL(sticker.url).hostname
+        });
+        return sticker;
+      });
+    },
+
+    async setCustomStickerActive(key: unknown, active: unknown, { actor = 'admin' }: AnyRecord = {}) {
+      const safeKey = assertCustomStickerKey(key);
+      if (typeof active !== 'boolean') {
+        const error = new Error('Trạng thái sticker phải là true hoặc false');
+        error.statusCode = 400;
+        throw error;
+      }
+      return mutate(async (state) => {
+        const stickers = normalizeCustomStickers(state.adminSettings?.customStickers);
+        const index = stickers.findIndex((sticker) => sticker.key === safeKey);
+        if (index < 0) {
+          const error = new Error('Không tìm thấy sticker tùy chỉnh');
+          error.statusCode = 404;
+          throw error;
+        }
+        const sticker = { ...stickers[index], active };
+        stickers[index] = sticker;
+        state.adminSettings = {
+          ...state.adminSettings,
+          customStickers: stickers
+        };
+        logEvent('admin.custom-sticker.visibility', {
+          actor,
+          stickerKey: safeKey,
+          active
+        });
+        return sticker;
+      });
+    },
+
     async getHealth() {
-      const [storeHealth, imageStorageHealth] = await Promise.all([
+      const [storeHealth, imageStorageHealth, emailHealth] = await Promise.all([
         readStoreHealth(store),
-        readImageStorageHealth(imageStorage)
+        readImageStorageHealth(imageStorage),
+        readEmailClientHealth(emailClient)
       ]);
       const ready = storeHealth.ready !== false && imageStorageHealth.ready !== false;
       return {
@@ -2736,6 +3614,7 @@ export function createForumService({
           moderationConfidenceThreshold
         },
         imageStorage: imageStorageHealth,
+        email: emailHealth,
         realtime: realtime.metrics?.() ?? {
           clients: realtime.count?.() ?? 0,
           boards: realtime.boardCounts?.() ?? {}
@@ -2769,14 +3648,29 @@ export function createForumService({
       };
     },
 
-    async registerAccount({ username, password, captchaToken, ip }: AnyRecord = {}) {
+    async flushEmailQueue() {
+      await emailQueue;
+      return { ok: true };
+    },
+
+    async registerAccount({ username, password, email, captchaToken, ip }: AnyRecord = {}) {
       await requireCaptcha(captchaToken, ip);
       const safeUsername = assertAccountUsername(username);
       const safePassword = assertAccountPassword(password, { username: safeUsername });
-      return mutate(async (state) => {
+      const safeEmail = email ? assertAccountEmail(email) : '';
+      let verificationDelivery = null;
+      const result = await mutate(async (state) => {
         const existing = state.users.find((user) => normalizeAccountUsername(user.username) === safeUsername);
         if (existing) {
           const error = new Error('Tên tài khoản đã tồn tại');
+          error.statusCode = 409;
+          throw error;
+        }
+        if (safeEmail && state.users.some((user) =>
+          normalizeAccountEmail(user.email) === safeEmail ||
+          normalizeAccountEmail(activeChallengeFor(user, 'change-email', { clearExpired: true })?.email) === safeEmail
+        )) {
+          const error = new Error('Địa chỉ email đã được sử dụng');
           error.statusCode = 409;
           throw error;
         }
@@ -2788,6 +3682,10 @@ export function createForumService({
           username: safeUsername,
           passwordHash: accountPasswordHash(safePassword),
           recoveryCodeHash: hashRecoveryCode(recoveryCode),
+          email: safeEmail || null,
+          emailVerifiedAt: null,
+          emailChallenges: {},
+          authEpoch: 0,
           role: 'user',
           settings: defaultAccountSettings(),
           privateData: defaultAccountPrivateData(),
@@ -2795,9 +3693,250 @@ export function createForumService({
           updatedAt: createdAt
         };
         state.users.push(user);
+        if (safeEmail) {
+          const { code } = createEmailChallenge(user, 'verify-email', safeEmail);
+          verificationDelivery = { user, purpose: 'verify-email', email: safeEmail, code };
+        }
         logEvent('account.register', { username: safeUsername });
-        return { account: serializeAccount(state, user), recoveryCode };
+        return { account: serializeCurrentAccount(state, user), recoveryCode };
       });
+      const verificationEmailSent = verificationDelivery
+        ? await sendSecurityCode(verificationDelivery)
+        : false;
+      return { ...result, verificationEmailSent };
+    },
+
+    async resendAccountEmailVerification(userId: string) {
+      let verificationDelivery = null;
+      const result = await mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!user.email) {
+          const error = new Error('Tài khoản chưa có địa chỉ email');
+          error.statusCode = 400;
+          throw error;
+        }
+        if (user.emailVerifiedAt) {
+          return { account: serializeCurrentAccount(state, user), alreadyVerified: true };
+        }
+        const currentChallenge = activeChallengeFor(user, 'verify-email', { clearExpired: true });
+        if (currentChallenge && !resendAvailable(currentChallenge)) {
+          const retryAfter = Math.ceil(
+            (EMAIL_OTP_RESEND_COOLDOWN_MS - (now().getTime() - new Date(currentChallenge.sentAt).getTime())) / 1000
+          );
+          const error = new Error(`Vui lòng chờ ${retryAfter} giây trước khi gửi lại mã`);
+          error.statusCode = 429;
+          error.retryAfter = retryAfter;
+          throw error;
+        }
+        const { code, challenge } = createEmailChallenge(user, 'verify-email', user.email);
+        verificationDelivery = { user, purpose: 'verify-email', email: user.email, code };
+        return {
+          account: serializeCurrentAccount(state, user),
+          expiresAt: challenge.expiresAt,
+          alreadyVerified: false
+        };
+      });
+      const emailSent = verificationDelivery ? await sendSecurityCode(verificationDelivery) : false;
+      return { ...result, emailSent };
+    },
+
+    async verifyAccountEmail(userId: string, code: string) {
+      const outcome = await mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          return { ok: false, statusCode: 401, message: 'Phiên đăng nhập không còn hợp lệ' };
+        }
+        if (user.emailVerifiedAt) {
+          return { ok: true, account: serializeCurrentAccount(state, user) };
+        }
+        const consumed = consumeEmailChallenge(user, 'verify-email', code);
+        if (!consumed.ok) {
+          return { ok: false, statusCode: 400, message: 'Mã OTP không đúng hoặc đã hết hạn' };
+        }
+        user.email = consumed.email;
+        user.emailVerifiedAt = now().toISOString();
+        user.updatedAt = user.emailVerifiedAt;
+        logEvent('account.email.verified', { accountId: user.id });
+        return { ok: true, account: serializeCurrentAccount(state, user) };
+      });
+      if (!outcome.ok) {
+        const error = new Error(outcome.message);
+        error.statusCode = outcome.statusCode;
+        throw error;
+      }
+      return outcome.account;
+    },
+
+    async requestAccountEmailChange(userId: string, { newEmail, password }: AnyRecord = {}) {
+      const safeEmail = assertAccountEmail(newEmail);
+      let verificationDelivery = null;
+      const result = await mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!verifyAccountPassword(password, user.passwordHash)) {
+          const error = new Error('Mật khẩu không đúng');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (state.users.some((item) => item.id !== userId && (
+          normalizeAccountEmail(item.email) === safeEmail ||
+          normalizeAccountEmail(activeChallengeFor(item, 'change-email', { clearExpired: true })?.email) === safeEmail
+        ))) {
+          const error = new Error('Địa chỉ email đã được sử dụng');
+          error.statusCode = 409;
+          throw error;
+        }
+        const currentChallenge = activeChallengeFor(user, 'change-email', { clearExpired: true });
+        if (currentChallenge && !resendAvailable(currentChallenge)) {
+          const retryAfter = Math.ceil(
+            (EMAIL_OTP_RESEND_COOLDOWN_MS - (now().getTime() - new Date(currentChallenge.sentAt).getTime())) / 1000
+          );
+          const error = new Error(`Vui lòng chờ ${retryAfter} giây trước khi gửi lại mã`);
+          error.statusCode = 429;
+          error.retryAfter = retryAfter;
+          throw error;
+        }
+        const { code, challenge } = createEmailChallenge(user, 'change-email', safeEmail);
+        verificationDelivery = { user, purpose: 'change-email', email: safeEmail, code };
+        return { account: serializeCurrentAccount(state, user), expiresAt: challenge.expiresAt };
+      });
+      const emailSent = await sendSecurityCode(verificationDelivery);
+      return { ...result, emailSent };
+    },
+
+    async confirmAccountEmailChange(userId: string, code: string) {
+      const outcome = await mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          return { ok: false, statusCode: 401, message: 'Phiên đăng nhập không còn hợp lệ' };
+        }
+        const consumed = consumeEmailChallenge(user, 'change-email', code);
+        if (!consumed.ok) {
+          return { ok: false, statusCode: 400, message: 'Mã OTP không đúng hoặc đã hết hạn' };
+        }
+        user.email = consumed.email;
+        user.emailVerifiedAt = now().toISOString();
+        if (user.emailChallenges) {
+          delete user.emailChallenges['verify-email'];
+        }
+        user.updatedAt = user.emailVerifiedAt;
+        logEvent('account.email.changed', { accountId: user.id });
+        return { ok: true, account: serializeCurrentAccount(state, user) };
+      });
+      if (!outcome.ok) {
+        const error = new Error(outcome.message);
+        error.statusCode = outcome.statusCode;
+        throw error;
+      }
+      return outcome.account;
+    },
+
+    async requestAccountPasswordResetEmail({ identifier, captchaToken, ip }: AnyRecord = {}) {
+      await requireCaptcha(captchaToken, ip);
+      let verificationDelivery = null;
+      await mutate(async (state) => {
+        const user = findUserByAccountIdentifier(state.users, identifier);
+        if (!user?.email || !user.emailVerifiedAt || user.disabled) {
+          return;
+        }
+        const currentChallenge = activeChallengeFor(user, 'password-reset', { clearExpired: true });
+        if (currentChallenge && !resendAvailable(currentChallenge)) {
+          return;
+        }
+        const { code } = createEmailChallenge(user, 'password-reset', user.email);
+        verificationDelivery = { user, purpose: 'password-reset', email: user.email, code };
+      });
+      if (verificationDelivery) {
+        await sendSecurityCode(verificationDelivery);
+      }
+      return { ok: true, expiresInSeconds: EMAIL_OTP_TTL_MS / 1000 };
+    },
+
+    async resetAccountPasswordWithEmailCode({ identifier, code, newPassword }: AnyRecord = {}) {
+      const safePassword = assertAccountPassword(newPassword);
+      const outcome = await mutate(async (state) => {
+        const user = findUserByAccountIdentifier(state.users, identifier);
+        if (!user || !user.emailVerifiedAt) {
+          hashEmailOtp({ userId: 'missing', purpose: 'password-reset', email: identifier, code });
+          return { ok: false };
+        }
+        const consumed = consumeEmailChallenge(user, 'password-reset', code);
+        if (!consumed.ok) {
+          return { ok: false };
+        }
+        assertAccountPassword(safePassword, { username: user.username });
+        user.passwordHash = accountPasswordHash(safePassword);
+        const recoveryCode = generateRecoveryCode();
+        user.recoveryCodeHash = hashRecoveryCode(recoveryCode);
+        bumpAccountAuthEpoch(user);
+        user.failedLoginAttempts = 0;
+        user.lockedUntil = null;
+        user.updatedAt = now().toISOString();
+        logEvent('account.password.reset.email', { accountId: user.id });
+        return { ok: true, recoveryCode };
+      });
+      if (!outcome.ok) {
+        const error = new Error('Mã OTP không đúng hoặc đã hết hạn');
+        error.statusCode = 400;
+        throw error;
+      }
+      return { recoveryCode: outcome.recoveryCode };
+    },
+
+    async requestRecoveryCodeResetEmail({ identifier, captchaToken, ip }: AnyRecord = {}) {
+      await requireCaptcha(captchaToken, ip);
+      let verificationDelivery = null;
+      await mutate(async (state) => {
+        const user = findUserByAccountIdentifier(state.users, identifier);
+        if (!user?.email || !user.emailVerifiedAt || user.disabled) {
+          return;
+        }
+        const currentChallenge = activeChallengeFor(user, 'recovery-code-reset', { clearExpired: true });
+        if (currentChallenge && !resendAvailable(currentChallenge)) {
+          return;
+        }
+        const { code } = createEmailChallenge(user, 'recovery-code-reset', user.email);
+        verificationDelivery = { user, purpose: 'recovery-code-reset', email: user.email, code };
+      });
+      if (verificationDelivery) {
+        await sendSecurityCode(verificationDelivery);
+      }
+      return { ok: true, expiresInSeconds: EMAIL_OTP_TTL_MS / 1000 };
+    },
+
+    async resetRecoveryCodeWithEmailCode({ identifier, code }: AnyRecord = {}) {
+      const outcome = await mutate(async (state) => {
+        const user = findUserByAccountIdentifier(state.users, identifier);
+        if (!user || !user.emailVerifiedAt) {
+          hashEmailOtp({ userId: 'missing', purpose: 'recovery-code-reset', email: identifier, code });
+          return { ok: false };
+        }
+        const consumed = consumeEmailChallenge(user, 'recovery-code-reset', code);
+        if (!consumed.ok) {
+          return { ok: false };
+        }
+        const recoveryCode = generateRecoveryCode();
+        user.recoveryCodeHash = hashRecoveryCode(recoveryCode);
+        bumpAccountAuthEpoch(user);
+        user.updatedAt = now().toISOString();
+        logEvent('account.recoveryCode.reset.email', { accountId: user.id });
+        return { ok: true, recoveryCode };
+      });
+      if (!outcome.ok) {
+        const error = new Error('Mã OTP không đúng hoặc đã hết hạn');
+        error.statusCode = 400;
+        throw error;
+      }
+      return { recoveryCode: outcome.recoveryCode };
     },
 
     async loginAccount({ username, password, captchaToken, ip }: AnyRecord = {}) {
@@ -2849,7 +3988,7 @@ export function createForumService({
         user.updatedAt = now().toISOString();
         await store.write(state);
       }
-      return serializeAccount(state, user);
+      return serializeCurrentAccount(state, user);
     },
 
     async resetAccountPasswordWithRecoveryCode({ username, recoveryCode, newPassword, captchaToken, ip }: AnyRecord = {}) {
@@ -2875,12 +4014,13 @@ export function createForumService({
         // Rotate the recovery code: the used one is now spent.
         const nextRecoveryCode = generateRecoveryCode();
         user.recoveryCodeHash = hashRecoveryCode(nextRecoveryCode);
+        bumpAccountAuthEpoch(user);
         user.failedLoginAttempts = 0;
         user.lockedUntil = null;
         user.updatedAt = now().toISOString();
 
         logEvent('account.password.reset', { username: user.username });
-        return { account: serializeAccount(state, user), recoveryCode: nextRecoveryCode };
+        return { account: serializeCurrentAccount(state, user), recoveryCode: nextRecoveryCode };
       });
     },
 
@@ -2900,10 +4040,11 @@ export function createForumService({
 
         const recoveryCode = generateRecoveryCode();
         user.recoveryCodeHash = hashRecoveryCode(recoveryCode);
+        bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
 
         logEvent('account.recoveryCode.regenerate', { username: user.username });
-        return { account: serializeAccount(state, user), recoveryCode };
+        return { account: serializeCurrentAccount(state, user), recoveryCode };
       });
     },
 
@@ -2915,7 +4056,7 @@ export function createForumService({
           error.statusCode = 401;
           throw error;
         }
-        return serializeAccount({ boards: BOARDS }, user);
+        return serializeCurrentAccount({ boards: BOARDS }, user);
       }
       const state = await store.read();
       const user = state.users.find((item) => item.id === userId);
@@ -2924,7 +4065,7 @@ export function createForumService({
         error.statusCode = 401;
         throw error;
       }
-      return serializeAccount(state, user);
+      return serializeCurrentAccount(state, user);
     },
 
     async updateAccountSettings(userId: string, settings: AnyRecord = {}) {
@@ -2936,9 +4077,13 @@ export function createForumService({
           throw error;
         }
         user.settings = normalizeAccountSettings(state, settings, user.settings);
+        if (!user.emailVerifiedAt) {
+          user.settings.emailNotifications = false;
+          user.settings.notificationPreferences.email = false;
+        }
         user.updatedAt = now().toISOString();
         logEvent('account.settings.update', { username: user.username });
-        return serializeAccount(state, user);
+        return serializeCurrentAccount(state, user);
       });
     },
 
@@ -3016,8 +4161,19 @@ export function createForumService({
       return revokedTokens.has(token);
     },
 
-    async logoutAccount(token) {
-      this.revokeSession(token);
+    async logoutAccount(userIdOrToken, token = '') {
+      const rawToken = token || String(userIdOrToken || '');
+      const userId = token ? String(userIdOrToken || '') : '';
+      if (userId) {
+        await mutate(async (state) => {
+          const user = state.users.find((item) => item.id === userId);
+          if (user) {
+            bumpAccountAuthEpoch(user);
+            user.updatedAt = now().toISOString();
+          }
+        });
+      }
+      this.revokeSession(rawToken);
       return { ok: true };
     },
 
@@ -3025,17 +4181,25 @@ export function createForumService({
       const safeUsername = normalizeAccountUsername(username);
       if (typeof store.upsertAdminAccount === 'function') {
         const actionAt = now().toISOString();
+        const privilegedUsers = typeof store.readPrivilegedUsers === 'function'
+          ? await store.readPrivilegedUsers()
+          : [];
+        const existing = privilegedUsers.find(
+          (item) => normalizeAccountUsername(item.username) === safeUsername
+        );
+        const passwordMatches = Boolean(existing && verifyAccountPassword(password, existing.passwordHash));
         const admin = await store.upsertAdminAccount({
           username: safeUsername,
-          passwordHash: accountPasswordHash(password),
+          passwordHash: passwordMatches ? existing.passwordHash : accountPasswordHash(password),
           role: 'owner',
           settings: defaultAccountSettings(),
           privateData: defaultAccountPrivateData(),
+          authEpoch: existing ? accountAuthEpoch(existing) + (passwordMatches ? 0 : 1) : 0,
           disabled: false,
           createdAt: actionAt,
           updatedAt: actionAt
         });
-        return serializeAccount({ boards: BOARDS }, admin);
+        return serializeCurrentAccount({ boards: BOARDS }, admin);
       }
       return mutate(async (state) => {
         let admin = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
@@ -3048,19 +4212,23 @@ export function createForumService({
             role: 'owner',
             settings: defaultAccountSettings(),
             privateData: defaultAccountPrivateData(),
+            authEpoch: 0,
             disabled: false,
             createdAt,
             updatedAt: createdAt
           };
           state.users.push(admin);
         } else {
-          admin.passwordHash = accountPasswordHash(password);
+          if (!verifyAccountPassword(password, admin.passwordHash)) {
+            admin.passwordHash = accountPasswordHash(password);
+            bumpAccountAuthEpoch(admin);
+          }
           admin.role = 'owner';
           admin.disabled = false;
           admin.privateData = normalizeAccountPrivateData(admin.privateData);
           admin.updatedAt = now().toISOString();
         }
-        return serializeAccount(state, admin);
+        return serializeCurrentAccount(state, admin);
       });
     },
 
@@ -3100,6 +4268,7 @@ export function createForumService({
           role: safeRole,
           settings: defaultAccountSettings(),
           privateData: defaultAccountPrivateData(),
+          authEpoch: 0,
           disabled: Boolean(disabled),
           createdAt,
           updatedAt: createdAt
@@ -3133,11 +4302,15 @@ export function createForumService({
           throw error;
         }
 
+        const securityStateChanged = nextRole !== currentRole || nextDisabled !== Boolean(user.disabled);
         user.role = nextRole;
         user.disabled = nextDisabled;
         if (updates.password !== undefined && String(updates.password || '').trim()) {
           const safePassword = assertAccountPassword(updates.password, { username: user.username });
           user.passwordHash = accountPasswordHash(safePassword);
+          bumpAccountAuthEpoch(user);
+        } else if (securityStateChanged) {
+          bumpAccountAuthEpoch(user);
         }
         user.updatedAt = now().toISOString();
         logEvent('admin.user.update', { actor, username: user.username, role: user.role, disabled: user.disabled });
@@ -3193,10 +4366,11 @@ export function createForumService({
         user.twoFactorEnabled = true;
         user.tempTwoFactorSecret = null;
         user.tempBackupCodes = null;
+        bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
 
         logEvent('account.2fa.enable', { username: user.username });
-        return { ok: true, account: serializeAccount(state, user) };
+        return { ok: true, account: serializeCurrentAccount(state, user) };
       });
     },
 
@@ -3217,7 +4391,7 @@ export function createForumService({
         error.statusCode = 400;
         throw error;
       }
-      return { ok: true, account: serializeAccount(state, user) };
+      return { ok: true, account: serializeCurrentAccount(state, user) };
     },
 
     async verifyBackupCodeLogin(userId, code) {
@@ -3247,7 +4421,7 @@ export function createForumService({
         user.updatedAt = now().toISOString();
 
         logEvent('account.2fa.backupCodeUsed', { username: user.username });
-        return { ok: true, account: serializeAccount(state, user) };
+        return { ok: true, account: serializeCurrentAccount(state, user) };
       });
     },
 
@@ -3268,10 +4442,11 @@ export function createForumService({
         user.twoFactorEnabled = false;
         user.twoFactorSecret = null;
         user.backupCodes = null;
+        bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
 
         logEvent('account.2fa.disable', { username: user.username });
-        return { ok: true, account: serializeAccount(state, user) };
+        return { ok: true, account: serializeCurrentAccount(state, user) };
       });
     },
 
@@ -3287,6 +4462,7 @@ export function createForumService({
         user.twoFactorEnabled = false;
         user.twoFactorSecret = null;
         user.backupCodes = null;
+        bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
         logEvent('account.2fa.adminReset', { username: user.username });
         return { ok: true };
@@ -3302,46 +4478,50 @@ export function createForumService({
           throw error;
         }
         const options = await webauthn.getWebAuthnRegisterOptions({ user, rpID });
-        user.webauthnRegistrationChallenge = options.challenge;
+        user.webauthnRegistrationChallenge = createWebAuthnChallenge(options.challenge, now());
         user.updatedAt = now().toISOString();
         return options;
       });
     },
 
     async verifyWebAuthnRegisterResponse(userId, { body, origin, rpID }) {
-      return mutate(async (state) => {
+      const outcome = await mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
           const error = new Error('Phiên đăng nhập không còn hợp lệ');
           error.statusCode = 401;
           throw error;
         }
-        if (!user.webauthnRegistrationChallenge) {
-          const error = new Error('Không tìm thấy yêu cầu đăng ký tương ứng');
-          error.statusCode = 400;
-          throw error;
+        const expectedChallenge = activeWebAuthnChallenge(user.webauthnRegistrationChallenge, now());
+        user.webauthnRegistrationChallenge = null;
+        user.updatedAt = now().toISOString();
+        if (!expectedChallenge) {
+          return { ok: false, statusCode: 400, message: 'Yêu cầu đăng ký đã hết hạn hoặc không hợp lệ' };
         }
-        const verification = await webauthn.verifyWebAuthnRegisterResponse({
-          body,
-          expectedChallenge: user.webauthnRegistrationChallenge,
-          origin,
-          rpID
-        });
+        let verification;
+        try {
+          verification = await webauthn.verifyWebAuthnRegisterResponse({
+            body,
+            expectedChallenge,
+            origin,
+            rpID
+          });
+        } catch {
+          return { ok: false, statusCode: 400, message: 'Xác thực thiết bị WebAuthn thất bại' };
+        }
         if (!verification.verified) {
-          const error = new Error('Xác thực thiết bị WebAuthn thất bại');
-          error.statusCode = 400;
-          throw error;
+          return { ok: false, statusCode: 400, message: 'Xác thực thiết bị WebAuthn thất bại' };
         }
 
         const { registrationInfo } = verification;
         const { credential, credentialDeviceType, credentialBackedUp } = registrationInfo;
         if (!credential?.id || !credential?.publicKey) {
-          const error = new Error('Thiết bị WebAuthn không trả về credential hợp lệ');
-          error.statusCode = 400;
-          throw error;
+          return { ok: false, statusCode: 400, message: 'Thiết bị WebAuthn không trả về credential hợp lệ' };
+        }
+        if ((user.passkeys || []).some((passkey) => passkey.credentialID === credential.id)) {
+          return { ok: false, statusCode: 409, message: 'Passkey này đã được đăng ký' };
         }
 
-        user.webauthnRegistrationChallenge = null;
         user.passkeys = user.passkeys || [];
         user.passkeys.push({
           credentialID: credential.id,
@@ -3352,67 +4532,81 @@ export function createForumService({
           transports: credential.transports || body.response?.transports || [],
           createdAt: now().toISOString()
         });
+        bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
         logEvent('account.passkey.register', { username: user.username });
-        return { ok: true };
+        return { ok: true, account: serializeCurrentAccount(state, user) };
       });
+      if (!outcome.ok) {
+        const error = new Error(outcome.message);
+        error.statusCode = outcome.statusCode;
+        throw error;
+      }
+      return outcome;
     },
 
     async generateWebAuthnLoginOptions(username, rpID) {
       const safeUsername = normalizeAccountUsername(username);
       return mutate(async (state) => {
         const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
-        if (!user) {
-          const error = new Error('Tên tài khoản hoặc thiết bị đăng nhập không đúng');
-          error.statusCode = 401;
-          throw error;
+        const targetUser = user || {
+          id: crypto.createHash('sha256').update(`webauthn:${safeUsername}`).digest('hex'),
+          username: safeUsername || 'account',
+          passkeys: []
+        };
+        const options = await webauthn.getWebAuthnLoginOptions({ user: targetUser, rpID });
+        if (user) {
+          user.webauthnLoginChallenge = createWebAuthnChallenge(options.challenge, now());
+          user.updatedAt = now().toISOString();
         }
-        const options = await webauthn.getWebAuthnLoginOptions({ user, rpID });
-        user.webauthnLoginChallenge = options.challenge;
-        user.updatedAt = now().toISOString();
-        return options;
+        return { ...options, allowCredentials: [] };
       });
     },
 
     async verifyWebAuthnLoginResponse({ username, body, origin, rpID }) {
       const safeUsername = normalizeAccountUsername(username);
-      return mutate(async (state) => {
+      const outcome = await mutate(async (state) => {
         const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
         if (!user) {
-          const error = new Error('Tên tài khoản hoặc mật khẩu không đúng');
-          error.statusCode = 401;
-          throw error;
+          return { ok: false, statusCode: 401, message: 'Tên tài khoản hoặc thiết bị đăng nhập không đúng' };
         }
-        if (!user.webauthnLoginChallenge) {
-          const error = new Error('Yêu cầu đăng nhập không còn hiệu lực. Vui lòng thử lại');
-          error.statusCode = 400;
-          throw error;
+        const expectedChallenge = activeWebAuthnChallenge(user.webauthnLoginChallenge, now());
+        user.webauthnLoginChallenge = null;
+        user.updatedAt = now().toISOString();
+        if (!expectedChallenge) {
+          return { ok: false, statusCode: 400, message: 'Yêu cầu đăng nhập không còn hiệu lực. Vui lòng thử lại' };
         }
         const passkey = (user.passkeys || []).find((p) => p.credentialID === body.id);
         if (!passkey) {
-          const error = new Error('Thiết bị xác thực không hợp lệ cho tài khoản này');
-          error.statusCode = 401;
-          throw error;
+          return { ok: false, statusCode: 401, message: 'Tên tài khoản hoặc thiết bị đăng nhập không đúng' };
         }
-        const verification = await webauthn.verifyWebAuthnLoginResponse({
-          body,
-          expectedChallenge: user.webauthnLoginChallenge,
-          origin,
-          rpID,
-          passkey
-        });
+        let verification;
+        try {
+          verification = await webauthn.verifyWebAuthnLoginResponse({
+            body,
+            expectedChallenge,
+            origin,
+            rpID,
+            passkey
+          });
+        } catch {
+          return { ok: false, statusCode: 401, message: 'Tên tài khoản hoặc thiết bị đăng nhập không đúng' };
+        }
         if (!verification.verified) {
-          const error = new Error('Xác thực chữ ký thiết bị thất bại');
-          error.statusCode = 401;
-          throw error;
+          return { ok: false, statusCode: 401, message: 'Tên tài khoản hoặc thiết bị đăng nhập không đúng' };
         }
 
-        user.webauthnLoginChallenge = null;
         passkey.counter = verification.authenticationInfo.newCounter;
         user.updatedAt = now().toISOString();
         logEvent('account.passkey.login', { username: user.username });
-        return { account: serializeAccount(state, user) };
+        return { ok: true, account: serializeCurrentAccount(state, user) };
       });
+      if (!outcome.ok) {
+        const error = new Error(outcome.message);
+        error.statusCode = outcome.statusCode;
+        throw error;
+      }
+      return { account: outcome.account };
     },
 
     async listPasskeys(userId) {
@@ -3437,36 +4631,22 @@ export function createForumService({
           error.statusCode = 401;
           throw error;
         }
+        const previousCount = (user.passkeys || []).length;
         user.passkeys = (user.passkeys || []).filter((p) => p.credentialID !== credentialId);
+        if (user.passkeys.length === previousCount) {
+          const error = new Error('Không tìm thấy passkey');
+          error.statusCode = 404;
+          throw error;
+        }
+        bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
         logEvent('account.passkey.delete', { username: user.username });
-        return { ok: true };
+        return { ok: true, account: serializeCurrentAccount(state, user) };
       });
     },
 
     async listLatestPosts(limit = 10) {
-      const state = await store.read();
-      const safeLimit = Math.max(1, Math.min(Number(limit) || 10, 20));
-      const publicThreadIds = new Set(
-        state.threads
-          .filter((thread) => publicThread(state, thread) && !thread.isArchived)
-          .map((thread) => thread.id)
-      );
-      const threads = state.threads
-        .filter((thread) => publicThread(state, thread) && !thread.isArchived)
-        .map((thread) => ({
-          type: 'thread',
-          threadId: thread.id,
-          ...serializeThread(thread, state.comments)
-        }));
-      const comments = state.comments
-        .filter((comment) => publicPost(comment) && publicThreadIds.has(comment.threadId))
-        .map((comment) => ({
-          type: 'comment',
-          ...serializeComment(comment, state.threads.find((thread) => thread.id === comment.threadId))
-        }));
-
-      return [...threads, ...comments].sort(compareNewestPosts).slice(0, safeLimit);
+      return latestPostsFromState(await store.read(), limit);
     },
 
     async listRecommendedThreads(limit = 10, options: AnyRecord = {}) {
@@ -3512,100 +4692,11 @@ export function createForumService({
     },
 
     async listHotBoards(limit = 8) {
-      const state = await store.read();
-      const publicBoards = state.boards.filter(publicBoard);
-      const safeLimit = Math.max(1, Math.min(Number(limit) || 8, publicBoards.length || 1));
-      const oneDayAgo = now().getTime() - 24 * 60 * 60 * 1000;
-      const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
-      const activeThreadIds = new Set(
-        state.threads
-          .filter((thread) => publicThread(state, thread) && !thread.isArchived)
-          .map((thread) => thread.id)
-      );
-      const metrics = new Map<string, AnyRecord>(
-        publicBoards.map((board) => [
-          board.slug,
-          {
-            boardSlug: board.slug,
-            postCountLast24h: 0,
-            threadCountLast24h: 0,
-            replyCountLast24h: 0,
-            latestActivityAt: null
-          }
-        ])
-      );
-
-      for (const thread of state.threads) {
-        if (publicThread(state, thread) && !thread.isArchived && inLast24h(thread)) {
-          incrementHotBoardMetric(metrics, thread.boardSlug, 'thread', thread.createdAt);
-        }
-      }
-      for (const comment of state.comments) {
-        if (publicPost(comment) && activeThreadIds.has(comment.threadId) && inLast24h(comment)) {
-          incrementHotBoardMetric(metrics, comment.boardSlug, 'comment', comment.createdAt);
-        }
-      }
-
-      return [...metrics.values()]
-        .filter((metric) => metric.postCountLast24h > 0)
-        .sort((left, right) => {
-          const postCompare = right.postCountLast24h - left.postCountLast24h;
-          if (postCompare !== 0) {
-            return postCompare;
-          }
-          return (right.latestActivityAt ?? '').localeCompare(left.latestActivityAt ?? '');
-        })
-        .slice(0, safeLimit);
+      return hotBoardsFromState(await store.read(), limit, now());
     },
 
     async listCampusPulse(limit = 12) {
-      const state = await store.read();
-      const safeLimit = Math.max(1, Math.min(Number(limit) || 12, 24));
-      const oneDayAgo = now().getTime() - 24 * 60 * 60 * 1000;
-      const inLast24h = (post) => new Date(post.createdAt).getTime() >= oneDayAgo;
-      const activeThreadIds = new Set(
-        state.threads
-          .filter((thread) => publicThread(state, thread) && !thread.isArchived)
-          .map((thread) => thread.id)
-      );
-      const metrics = new Map();
-      const publicPosts = [
-        ...state.threads.filter((thread) => publicThread(state, thread) && !thread.isArchived && inLast24h(thread)),
-        ...state.comments.filter((comment) => publicPost(comment) && activeThreadIds.has(comment.threadId) && inLast24h(comment))
-      ];
-
-      for (const post of publicPosts) {
-        for (const keyword of pulseKeywords(post.body)) {
-          const metric = metrics.get(keyword) ?? {
-            keyword,
-            count: 0,
-            boardSlugs: new Set(),
-            latestActivityAt: null
-          };
-          metric.count += 1;
-          metric.boardSlugs.add(post.boardSlug);
-          if (!metric.latestActivityAt || post.createdAt.localeCompare(metric.latestActivityAt) > 0) {
-            metric.latestActivityAt = post.createdAt;
-          }
-          metrics.set(keyword, metric);
-        }
-      }
-
-      return [...metrics.values()]
-        .sort((left, right) => {
-          const countCompare = right.count - left.count;
-          if (countCompare !== 0) {
-            return countCompare;
-          }
-          return (right.latestActivityAt ?? '').localeCompare(left.latestActivityAt ?? '');
-        })
-        .slice(0, safeLimit)
-        .map((metric) => ({
-          keyword: metric.keyword,
-          count: metric.count,
-          boardCount: metric.boardSlugs.size,
-          latestActivityAt: metric.latestActivityAt
-        }));
+      return campusPulseFromState(await store.read(), limit, now());
     },
 
     async listModerationActions(limit = 50, filters: AnyRecord = {}) {
@@ -3811,10 +4902,11 @@ export function createForumService({
         thread: null,
         updatedThreads: [],
         moderationActions: [],
-        appeals: []
+        appeals: [],
+        notificationMessages: []
       };
 
-      return mutate(async (state) => {
+      const result = await mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
         const moderation = mergeModerationResults(
           await ai.moderate(normalizedBody),
@@ -3882,6 +4974,11 @@ export function createForumService({
         if (!thread.isPending) {
           postCreateDelta.updatedThreads.push(...enforceBoardThreadCap(state, boardSlug, createdAt));
           realtime.publish('thread:created', { thread: serializeThread(thread, state.comments) });
+          postCreateDelta.notificationMessages = postNotificationMessages(state, {
+            kind: 'thread',
+            thread,
+            authorAccountId: accountId
+          });
         }
 
         return {
@@ -3904,6 +5001,8 @@ export function createForumService({
           });
         }
       });
+      queueEmails(postCreateDelta.notificationMessages, 'board-subscription');
+      return result;
     },
 
     async getThread(threadId: string, options: AnyRecord = {}) {
@@ -4020,10 +5119,11 @@ export function createForumService({
         comment: null,
         updatedThreads: [],
         moderationActions: [],
-        appeals: []
+        appeals: [],
+        notificationMessages: []
       };
 
-      return mutate(async (state) => {
+      const result = await mutate(async (state) => {
         const authorFingerprint = enforceSanctions(state, { ip, posterToken, createdAt });
         const thread = state.threads.find((item) => item.id === threadId && publicThread(state, item) && !item.isArchived);
         if (!thread) {
@@ -4109,6 +5209,12 @@ export function createForumService({
 
         if (!comment.isPending) {
           realtime.publish('comment:created', { threadId, comment: serializeComment(comment, thread) });
+          postCreateDelta.notificationMessages = postNotificationMessages(state, {
+            kind: 'comment',
+            thread,
+            comment,
+            authorAccountId: accountId
+          });
           if (!postingOptions.sage && repliesBeforeCreate < retentionPolicy.bumpLimit) {
             thread.bumpedAt = createdAt;
             postCreateDelta.updatedThreads.push(thread);
@@ -4140,6 +5246,8 @@ export function createForumService({
           });
         }
       });
+      queueEmails(postCreateDelta.notificationMessages, 'watched-thread');
+      return result;
     },
 
     async votePoll(threadId: string, { optionId, ip, posterToken }: AnyRecord = {}) {
@@ -4149,6 +5257,11 @@ export function createForumService({
         if (!thread?.poll) {
           const error = new Error('Không tìm thấy thăm dò');
           error.statusCode = 404;
+          throw error;
+        }
+        if (thread.isLocked) {
+          const error = new Error('Thăm dò đã đóng');
+          error.statusCode = 409;
           throw error;
         }
         const option = thread.poll.options.find((item) => item.id === selectedOptionId);
@@ -4396,7 +5509,8 @@ export function createForumService({
         error.statusCode = 401;
         throw error;
       }
-      return mutate(async (state) => {
+      let removedMedia = [];
+      const result = await mutate(async (state) => {
         const found = findPublicPostByGlobalNumber(state, globalNumber);
         if (!found) {
           const error = new Error('Không tìm thấy bài viết');
@@ -4416,6 +5530,7 @@ export function createForumService({
             error.statusCode = 400;
             throw error;
           }
+          removedMedia = cloneMediaItems(found.post);
           found.post.image = null;
           found.post.images = [];
           found.post.fileDeletedAt = deletedAt;
@@ -4434,13 +5549,30 @@ export function createForumService({
         });
 
         if (found.postType === 'thread') {
-          realtime.publish('thread:updated', { threadId: found.post.id, deleted: !fileOnly, fileOnly: Boolean(fileOnly) });
+          realtime.publish('thread:updated', {
+            threadId: found.post.id,
+            boardSlug: found.post.boardSlug,
+            deleted: !fileOnly,
+            fileOnly: Boolean(fileOnly)
+          });
         } else {
           const parent = state.threads.find((thread) => thread.id === found.post.threadId);
           realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
         }
         return { ok: true, fileOnly: Boolean(fileOnly), globalNumber: found.post.globalNumber };
       });
+      if (fileOnly) {
+        await deleteStoredMedia(imageStorage, removedMedia, {
+          onFailure(storageKey, error) {
+            logEvent('media.delete.failed', {
+              globalNumber,
+              storageKey,
+              message: String(error?.message || 'unknown')
+            });
+          }
+        });
+      }
+      return result;
     },
 
     async listPending(filters: AnyRecord = {}, limit = 100) {
@@ -4681,7 +5813,8 @@ export function createForumService({
     },
 
     async adminDeletePost(globalNumber: number, { reason = '', actor = 'admin', fileOnly = false }: AnyRecord = {}) {
-      return mutate(async (state) => {
+      let removedMedia = [];
+      const result = await mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
         if (!found || found.post.isDeleted) {
           const error = new Error('Không tìm thấy bài viết');
@@ -4697,6 +5830,7 @@ export function createForumService({
             error.statusCode = 400;
             throw error;
           }
+          removedMedia = cloneMediaItems(found.post);
           found.post.image = null;
           found.post.images = [];
           found.post.fileDeletedAt = deletedAt;
@@ -4722,13 +5856,31 @@ export function createForumService({
         });
 
         if (found.postType === 'thread') {
-          realtime.publish('thread:updated', { threadId: found.post.id, deleted: !fileOnly, fileOnly: Boolean(fileOnly) });
+          realtime.publish('thread:updated', {
+            threadId: found.post.id,
+            boardSlug: found.post.boardSlug,
+            deleted: !fileOnly,
+            fileOnly: Boolean(fileOnly)
+          });
         } else {
           const parent = state.threads.find((thread) => thread.id === found.post.threadId);
           realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
         }
         return { ok: true, fileOnly: Boolean(fileOnly), globalNumber: found.post.globalNumber };
       });
+      if (fileOnly) {
+        await deleteStoredMedia(imageStorage, removedMedia, {
+          onFailure(storageKey, error) {
+            logEvent('media.delete.failed', {
+              globalNumber,
+              storageKey,
+              actor,
+              message: String(error?.message || 'unknown')
+            });
+          }
+        });
+      }
+      return result;
     },
 
     async editPostWithPassword(globalNumber: number, { password = '', body = '' }: AnyRecord = {}) {
@@ -4848,8 +6000,12 @@ export function createForumService({
       }
       const shouldReplaceImages = Boolean(replaceImages);
       const safeImages = shouldReplaceImages ? validateMediaList({ image, images }) : [];
+      let previousMedia = [];
+      let newMedia = [];
+      let committed = false;
 
-      return mutate(async (state) => {
+      try {
+        const result = await mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
         if (!found || found.post.isDeleted) {
           const error = new Error('Không tìm thấy bài viết');
@@ -4866,6 +6022,10 @@ export function createForumService({
         const previousBody = String(found.post.body ?? '');
         const previousImages = cloneMediaItems(found.post);
         const storedImages = shouldReplaceImages ? await saveMediaList(imageStorage, safeImages) : previousImages;
+        if (shouldReplaceImages) {
+          previousMedia = previousImages;
+          newMedia = storedImages;
+        }
         const moderation = mergeModerationResults(
           await ai.moderate(normalizedBody),
           shouldReplaceImages ? await scanUploadsForModeration(ai, safeImages) : { status: 'Safe', labels: [] }
@@ -4938,7 +6098,35 @@ export function createForumService({
           type: found.postType,
           post: found.postType === 'thread' ? serializeThread(found.post, state.comments) : serializeComment(found.post, parent)
         };
-      });
+        });
+        committed = true;
+        if (shouldReplaceImages) {
+          await deleteStoredMedia(imageStorage, previousMedia, {
+            exceptKeys: new Set(mediaStorageKeys(newMedia)),
+            onFailure(storageKey, error) {
+              logEvent('media.replace.cleanup.failed', {
+                globalNumber,
+                storageKey,
+                message: String(error?.message || 'unknown')
+              });
+            }
+          });
+        }
+        return result;
+      } catch (error) {
+        if (shouldReplaceImages && !committed && newMedia.length > 0) {
+          await deleteStoredMedia(imageStorage, newMedia, {
+            onFailure(storageKey, cleanupError) {
+              logEvent('media.replace.rollback.failed', {
+                globalNumber,
+                storageKey,
+                message: String(cleanupError?.message || 'unknown')
+              });
+            }
+          }).catch(() => undefined);
+        }
+        throw error;
+      }
     },
 
     async addModeratorNote(globalNumber: number, { note = '', actor = 'admin' }: AnyRecord = {}) {
@@ -5134,6 +6322,7 @@ export function createForumService({
           });
           const thread = serializeThread(approved.post, approved.comments ?? []);
           realtime.publish('thread:created', { thread });
+          await queueApprovedPostNotifications('thread', approved.post.id);
           return thread;
         }
         if (approved.postType === 'comment') {
@@ -5146,13 +6335,16 @@ export function createForumService({
           const comment = serializeComment(approved.post, approved.parent);
           realtime.publish('comment:created', { threadId: approved.parent.id, comment });
           realtime.publish('thread:bumped', { thread: serializeThread(approved.parent, approved.comments ?? []) });
+          await queueApprovedPostNotifications('comment', approved.post.id);
           return comment;
         }
       }
-      return mutate(async (state) => {
+      let approvedPostType = '';
+      const result = await mutate(async (state) => {
         const actionAt = now().toISOString();
         const thread = state.threads.find((item) => item.id === id && item.isPending && !item.isDeleted);
         if (thread) {
+          approvedPostType = 'thread';
           thread.isPending = false;
           thread.moderationStatus = 'ApprovedByAdmin';
           thread.moderationReason = sanitizeReason(reason);
@@ -5177,6 +6369,7 @@ export function createForumService({
 
         const comment = state.comments.find((item) => item.id === id && item.isPending && !item.isDeleted);
         if (comment) {
+          approvedPostType = 'comment';
           const parent = state.threads.find((item) => item.id === comment.threadId && activePublicThread(item));
           if (!parent) {
             const error = new Error('Không tìm thấy chủ đề cha');
@@ -5210,6 +6403,8 @@ export function createForumService({
         error.statusCode = 404;
         throw error;
       });
+      await queueApprovedPostNotifications(approvedPostType, id);
+      return result;
     },
 
     async deletePending(id: string, { reason = '', actor = 'admin' }: AnyRecord = {}) {
@@ -5391,6 +6586,72 @@ export function createForumService({
         logEvent('ai.suggestion', { threadId });
         return ai.suggest(items);
       });
+    },
+
+    async answerChat({
+      question,
+      scope = 'site',
+      page = 'home',
+      boardSlug,
+      threadId,
+      history,
+      ip,
+      posterToken,
+      actor = 'public'
+    }: AnyRecord = {}) {
+      if (typeof ai.answer !== 'function') {
+        throw chatRequestError('Trợ lý AI chưa được cấu hình', 503);
+      }
+      const safeQuestion = normalizeChatQuestion(question);
+      const safeScope = normalizeChatScope(scope);
+      const safePage = normalizeChatPage(page);
+      const safeHistory = normalizeChatHistory(history);
+      const snapshot = await store.read();
+      const chatContext = buildChatContext(snapshot, {
+        scope: safeScope,
+        page: safePage,
+        boardSlug,
+        threadId,
+        question: safeQuestion
+      });
+      const createdAt = now().toISOString();
+      await mutate((state) => {
+        consumeAiBudget(state, {
+          kind: 'chat',
+          ip,
+          posterToken,
+          actor,
+          createdAt
+        });
+        consumeAiBudget(state, {
+          kind: 'chatIp',
+          ip,
+          posterToken: '',
+          actor,
+          createdAt
+        });
+        return null;
+      });
+
+      logEvent('ai.chat', {
+        scope: chatContext.scope,
+        boardSlug: chatContext.scope === 'board' ? String(boardSlug || '') : undefined,
+        threadId: chatContext.scope === 'thread' ? String(threadId || '') : undefined,
+        historyLength: safeHistory.length
+      });
+      const answer = String(await ai.answer(safeQuestion, chatContext.context, safeHistory))
+        .trim()
+        .slice(0, 4_000);
+      if (!answer) {
+        throw chatRequestError('AI chưa trả về câu trả lời. Vui lòng thử lại.', 502);
+      }
+      return {
+        answer,
+        context: {
+          scope: chatContext.scope,
+          label: chatContext.label
+        }
+      };
     },
 
     async rewriteDraft({ body, ip, posterToken, actor = 'public', tone = 'neutral' }: AnyRecord = {}) {

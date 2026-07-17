@@ -6,6 +6,7 @@ export type AccountPreferencesSummaryIslandProps = {
   hideThumbnails: boolean;
   watchedUnreadOnly: boolean;
   watchedSortLabel: string;
+  commentComposerModeLabel: string;
   emailNotifications: boolean;
   notifyWatchedThreads: boolean;
   notifyBoardSubscriptions: boolean;
@@ -29,6 +30,7 @@ export function AccountPreferencesSummaryIsland(props: AccountPreferencesSummary
     hideThumbnails,
     watchedUnreadOnly,
     watchedSortLabel,
+    commentComposerModeLabel,
     emailNotifications,
     notifyWatchedThreads,
     notifyBoardSubscriptions,
@@ -67,6 +69,10 @@ export function AccountPreferencesSummaryIsland(props: AccountPreferencesSummary
         <div className="account-summary-row">
           <dt>Sắp xếp watchlist</dt>
           <dd>{watchedSortLabel}</dd>
+        </div>
+        <div className="account-summary-row">
+          <dt>Khung bình luận</dt>
+          <dd>{commentComposerModeLabel}</dd>
         </div>
         <div className="account-summary-row">
           <dt>Thông báo</dt>

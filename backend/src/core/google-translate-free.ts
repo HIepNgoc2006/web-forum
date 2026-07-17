@@ -2,7 +2,6 @@
  * Unofficial Google Translate web endpoint used as a free fallback when no AI
  * provider is configured. This is not Cloud Translation and may break or rate-limit.
  *
- * Endpoint pattern shared by community clients (e.g. lnreader GoogleTranslateFreeEngine).
  */
 
 type TranslateError = Error & {

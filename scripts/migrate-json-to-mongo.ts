@@ -333,7 +333,8 @@ async function migrate(args: MigrationArgs): Promise<void> {
       {
         $set: {
           version: state.version ?? 1,
-          nextGlobalNumber: state.nextGlobalNumber ?? 1
+          nextGlobalNumber: state.nextGlobalNumber ?? 1,
+          adminSettings: state.adminSettings ?? {}
         }
       },
       { upsert: true }

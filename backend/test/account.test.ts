@@ -29,6 +29,27 @@ function createTestService(overrides = {}) {
   });
 }
 
+function createCapturingEmailClient() {
+  const messages: Array<{ to: string; subject: string; text: string; html?: string }> = [];
+  return {
+    type: 'test',
+    configured: true,
+    messages,
+    async send(message) {
+      messages.push(message);
+      return { id: `email-${messages.length}` };
+    }
+  };
+}
+
+function latestEmailCode(emailClient: ReturnType<typeof createCapturingEmailClient>) {
+  const message = emailClient.messages.at(-1);
+  assert.ok(message);
+  const match = message.subject.match(/(\d{6})$/);
+  assert.ok(match);
+  return match[1];
+}
+
 describe('Account registration and login', () => {
   it('registers a new account', async () => {
     const service = createTestService();
@@ -87,6 +108,156 @@ describe('Account registration and login', () => {
       () => service.loginAccount({ username: 'ghost', password: 'securepass12', captchaToken: 'dev-pass' }),
       (error) => isServiceError(error, 401)
     );
+  });
+});
+
+describe('Account email verification', () => {
+  it('keeps a newly registered account usable before email verification', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient });
+    const result = await service.registerAccount({
+      username: 'testuser',
+      email: 'Student@Example.com',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+
+    assert.strictEqual(result.account.email, 'student@example.com');
+    assert.strictEqual(result.account.emailVerified, false);
+    assert.strictEqual(result.verificationEmailSent, true);
+    assert.strictEqual(emailClient.messages.length, 1);
+
+    const loggedIn = await service.loginAccount({
+      username: 'testuser',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+    assert.strictEqual(loggedIn.username, 'testuser');
+    assert.strictEqual(loggedIn.emailVerified, false);
+  });
+
+  it('verifies a six-digit code and enables email settings', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient });
+    const { account } = await service.registerAccount({
+      username: 'testuser',
+      email: 'student@example.com',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+
+    const verified = await service.verifyAccountEmail(account.id, latestEmailCode(emailClient));
+    assert.strictEqual(verified.emailVerified, true);
+    assert.strictEqual(verified.email, 'student@example.com');
+
+    const updated = await service.updateAccountSettings(account.id, {
+      notificationPreferences: { email: true }
+    });
+    assert.strictEqual(updated.settings.notificationPreferences.email, true);
+  });
+
+  it('expires verification codes after 15 minutes and resends a replacement', async () => {
+    let current = new Date('2026-06-10T12:00:00Z');
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient, now: () => current });
+    const { account } = await service.registerAccount({
+      username: 'testuser',
+      email: 'student@example.com',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+    const expiredCode = latestEmailCode(emailClient);
+
+    current = new Date('2026-06-10T12:15:01Z');
+    await assert.rejects(
+      () => service.verifyAccountEmail(account.id, expiredCode),
+      (error) => isServiceError(error, 400)
+    );
+
+    const resent = await service.resendAccountEmailVerification(account.id);
+    assert.strictEqual(resent.emailSent, true);
+    const replacementCode = latestEmailCode(emailClient);
+    assert.strictEqual(emailClient.messages.length, 2);
+    const verified = await service.verifyAccountEmail(account.id, replacementCode);
+    assert.strictEqual(verified.emailVerified, true);
+  });
+
+  it('changes email only after the replacement address confirms its OTP', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient });
+    const { account } = await service.registerAccount({
+      username: 'testuser',
+      email: 'old@example.com',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+    await service.verifyAccountEmail(account.id, latestEmailCode(emailClient));
+
+    const requested = await service.requestAccountEmailChange(account.id, {
+      newEmail: 'new@example.com',
+      password: 'securepass12'
+    });
+    assert.strictEqual(requested.account.email, 'old@example.com');
+    assert.strictEqual(requested.account.pendingEmail, 'new@example.com');
+
+    const changed = await service.confirmAccountEmailChange(account.id, latestEmailCode(emailClient));
+    assert.strictEqual(changed.email, 'new@example.com');
+    assert.strictEqual(changed.emailVerified, true);
+    assert.strictEqual(changed.pendingEmail, null);
+  });
+});
+
+describe('Email account recovery', () => {
+  it('resets a password by verified email and rotates the recovery code', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient });
+    const { account, recoveryCode } = await service.registerAccount({
+      username: 'testuser',
+      email: 'student@example.com',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+    await service.verifyAccountEmail(account.id, latestEmailCode(emailClient));
+    await service.requestAccountPasswordResetEmail({
+      identifier: 'student@example.com',
+      captchaToken: 'dev-pass'
+    });
+
+    const result = await service.resetAccountPasswordWithEmailCode({
+      identifier: 'student@example.com',
+      code: latestEmailCode(emailClient),
+      newPassword: 'brandnewpass34',
+      captchaToken: 'dev-pass'
+    });
+    assert.notStrictEqual(result.recoveryCode, recoveryCode);
+    const loggedIn = await service.loginAccount({
+      username: 'testuser',
+      password: 'brandnewpass34',
+      captchaToken: 'dev-pass'
+    });
+    assert.strictEqual(loggedIn.username, 'testuser');
+  });
+
+  it('regenerates a recovery code by verified email', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient });
+    const { account, recoveryCode } = await service.registerAccount({
+      username: 'testuser',
+      email: 'student@example.com',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+    await service.verifyAccountEmail(account.id, latestEmailCode(emailClient));
+    await service.requestRecoveryCodeResetEmail({
+      identifier: 'testuser',
+      captchaToken: 'dev-pass'
+    });
+    const result = await service.resetRecoveryCodeWithEmailCode({
+      identifier: 'testuser',
+      code: latestEmailCode(emailClient),
+      captchaToken: 'dev-pass'
+    });
+    assert.notStrictEqual(result.recoveryCode, recoveryCode);
   });
 });
 
@@ -267,7 +438,8 @@ describe('Account settings', () => {
         compactThreads: true,
         hideThumbnails: true,
         watchedUnreadOnly: true,
-        watchedSort: 'board'
+        watchedSort: 'board',
+        commentComposerMode: 'normal'
       },
       notificationPreferences: {
         email: true,
@@ -282,24 +454,80 @@ describe('Account settings', () => {
       compactThreads: true,
       hideThumbnails: true,
       watchedUnreadOnly: true,
-      watchedSort: 'board'
+      watchedSort: 'board',
+      commentComposerMode: 'normal'
     });
     assert.deepStrictEqual(updated.settings.notificationPreferences, {
-      email: true,
+      email: false,
       watchedThreads: false,
       boardSubscriptions: true,
       browserWatchedThreads: true
     });
     assert.deepStrictEqual(updated.settings.boardSubscriptions, ['confession', 'hoc-tap']);
-    assert.strictEqual(updated.settings.emailNotifications, true);
+    assert.strictEqual(updated.settings.emailNotifications, false);
   });
 
   it('rejects invalid theme', async () => {
     const service = createTestService();
     const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
-    const updated = await service.updateAccountSettings(account.id, { theme: 'invalid-theme' });
+    const updated = await service.updateAccountSettings(account.id, {
+      theme: 'invalid-theme',
+      displayPreferences: { commentComposerMode: 'side-panel' }
+    });
     // Should keep the default theme instead of accepting invalid
     assert.strictEqual(updated.settings.theme, 'yotsuba-b');
+    assert.strictEqual(updated.settings.displayPreferences.commentComposerMode, 'floating');
+  });
+});
+
+describe('Verified email notifications', () => {
+  it('sends subscribed-board and watched-thread notifications only after verification', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient, appBaseUrl: 'https://example.com' });
+    const { account } = await service.registerAccount({
+      username: 'testuser',
+      email: 'student@example.com',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+
+    const unverifiedSettings = await service.updateAccountSettings(account.id, {
+      notificationPreferences: { email: true, watchedThreads: true, boardSubscriptions: true },
+      boardSubscriptions: ['hoc-tap']
+    });
+    assert.strictEqual(unverifiedSettings.settings.notificationPreferences.email, false);
+
+    await service.verifyAccountEmail(account.id, latestEmailCode(emailClient));
+    await service.updateAccountSettings(account.id, {
+      notificationPreferences: { email: true, watchedThreads: true, boardSubscriptions: true },
+      boardSubscriptions: ['hoc-tap']
+    });
+    emailClient.messages.length = 0;
+
+    const created = await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Chu de moi cho nguoi dang ky bang',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.10'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
+    assert.match(emailClient.messages[0].subject, /Chủ đề mới/);
+
+    await service.updateAccountPrivateData(account.id, {
+      watchlist: [{ threadId: created.thread.id, boardSlug: 'hoc-tap' }]
+    });
+    emailClient.messages.length = 0;
+    await service.createComment({
+      threadId: created.thread.id,
+      body: 'Phan hoi moi cho watchlist',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.11'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
+    assert.match(emailClient.messages[0].subject, /Phản hồi mới/);
+    assert.match(emailClient.messages[0].text, /https:\/\/example\.com\/#thread\//);
   });
 });
 

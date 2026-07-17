@@ -107,30 +107,115 @@ describe('backup job', () => {
     assert.equal(state.threads.length, 1);
     assert.equal(uploads.uploads[0].storageKey, 'keep.png');
     assert.equal(uploads.uploads[0].sizeBytes, 5);
+    assert.match(uploads.uploads[0].sha256, /^[a-f0-9]{64}$/);
+    assert.equal(await fs.readFile(path.join(result.destination.uploadsDirectory, 'keep.png'), 'utf8'), 'image');
     assert.equal(metadata.system.operator, 'backup-test');
     assert.equal(metadata.counts.uploads, 1);
+    assert.equal(metadata.recoverability.state.complete, true);
+    assert.equal(metadata.recoverability.uploads.complete, true);
   });
 
-  it('records write and metadata failures without throwing', async () => {
+  it('restores state and local upload bytes into empty target directories', async () => {
+    const root = await tempDir();
+    const uploadRoot = path.join(root, 'uploads-source');
+    const destination = path.join(root, 'backups');
+    const restoreRoot = path.join(root, 'restore');
+    await fs.mkdir(path.join(uploadRoot, '2026', '07'), { recursive: true });
+    await fs.writeFile(path.join(uploadRoot, '2026', '07', 'restored.png'), 'restorable-bytes');
+    const state = {
+      threads: [{
+        id: 'thread-restore',
+        boardSlug: 'demo',
+        body: 'Restore me',
+        globalNumber: 1,
+        image: { storage: 'local', storageKey: '2026/07/restored.png', url: '/uploads/2026/07/restored.png' },
+        images: [{ storage: 'local', storageKey: '2026/07/restored.png', url: '/uploads/2026/07/restored.png' }]
+      }],
+      comments: []
+    };
     const result = await runBackupJob({
-      store: memoryStore(),
+      store: memoryStore(state),
       imageStorage: {
-        type: 's3-compatible',
+        type: 'local-disk',
         async listKeys() {
-          return [];
+          return ['2026/07/restored.png'];
         }
-      } as { type: string; listKeys(): Promise<string[]> },
-      destination: 'backups',
-      storeDriver: 'mongo',
-      imageStorageDriver: 's3',
+      },
+      destination,
+      storeDriver: 'json',
+      imageStorageDriver: 'local',
+      uploadRoot,
       dryRun: false,
-      writeJsonImpl() {
-        throw new Error('disk unavailable');
-      }
+      now: () => new Date('2026-07-15T12:00:00.000Z')
     });
 
-    assert.equal(result.failures.length, 2);
-    assert.deepEqual(result.failures.map((failure) => failure.stage), ['write', 'metadata']);
+    await fs.mkdir(path.join(restoreRoot, 'uploads'), { recursive: true });
+    await fs.copyFile(result.destination.statePath, path.join(restoreRoot, 'forum.json'));
+    await fs.cp(result.destination.uploadsDirectory, path.join(restoreRoot, 'uploads'), { recursive: true });
+
+    const restoredState = JSON.parse(await fs.readFile(path.join(restoreRoot, 'forum.json'), 'utf8'));
+    assert.equal(restoredState.threads[0].image.storageKey, '2026/07/restored.png');
+    assert.equal(
+      await fs.readFile(path.join(restoreRoot, 'uploads', '2026', '07', 'restored.png'), 'utf8'),
+      'restorable-bytes'
+    );
+  });
+
+  it('throws with failure metadata when backup writes fail', async () => {
+    let failureResult;
+    await assert.rejects(
+      () => runBackupJob({
+        store: memoryStore(),
+        imageStorage: {
+          type: 's3-compatible',
+          async listKeys() {
+            return [];
+          }
+        } as { type: string; listKeys(): Promise<string[]> },
+        destination: 'backups',
+        storeDriver: 'mongo',
+        imageStorageDriver: 's3',
+        s3: { backupConfirmed: true },
+        dryRun: false,
+        writeJsonImpl() {
+          throw new Error('disk unavailable');
+        }
+      }),
+      (error: Error & { result?: any }) => {
+        failureResult = error.result;
+        return /failed in 3 stage/.test(error.message);
+      }
+    );
+
+    assert.deepEqual(failureResult.failures.map((failure) => failure.stage), ['state', 'manifest', 'metadata']);
+  });
+
+  it('fails S3 write backups unless provider backup is explicitly confirmed', async () => {
+    const root = await tempDir();
+    let failureResult;
+    await assert.rejects(
+      () => runBackupJob({
+        store: memoryStore(),
+        imageStorage: {
+          type: 's3-compatible',
+          async listKeys() {
+            return ['uploads/a.png'];
+          }
+        },
+        destination: root,
+        storeDriver: 'mongo',
+        imageStorageDriver: 's3',
+        dryRun: false
+      }),
+      (error: Error & { result?: any }) => {
+        failureResult = error.result;
+        return /failed in 1 stage/.test(error.message);
+      }
+    );
+
+    assert.equal(failureResult.recoverability.uploads.complete, false);
+    assert.equal(failureResult.recoverability.uploads.reason, 'provider_backup_not_confirmed');
+    assert.equal(failureResult.failures[0].stage, 'uploads');
   });
 });
 
@@ -190,6 +275,19 @@ describe('backup CLI arguments', () => {
 
     assert.equal(args.dryRun, false);
     assert.equal(args.storeDriver, 'mongo');
+  });
+
+  it('accepts explicit provider backup confirmation for S3 bytes', () => {
+    const args = parseBackupArgs([
+      'node',
+      'backup-scheduler.ts',
+      'run',
+      '--driver',
+      's3',
+      '--s3-backup-confirmed'
+    ], {});
+
+    assert.equal(args.s3.backupConfirmed, true);
   });
 
   it('rejects conflicting dry-run and write flags', () => {

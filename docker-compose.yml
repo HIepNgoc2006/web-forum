@@ -6,7 +6,7 @@ services:
       NODE_ENV: production
       PORT: 3000
       STORE_DRIVER: mongo
-      MONGODB_URI: mongodb://mongo:27017/36chan
+      MONGODB_URI: mongodb://mongo:27017/36chan?replicaSet=rs0
       IMAGE_STORAGE_DRIVER: local
       UPLOAD_ROOT: data/uploads
       ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env before running compose}
@@ -16,12 +16,17 @@ services:
       POSTER_PROOF_SECRET: ${POSTER_PROOF_SECRET:?Set POSTER_PROOF_SECRET in .env before running compose}
       HCAPTCHA_SITE_KEY: ${HCAPTCHA_SITE_KEY:?Set HCAPTCHA_SITE_KEY in .env before running compose}
       HCAPTCHA_SECRET: ${HCAPTCHA_SECRET:?Set HCAPTCHA_SECRET in .env before running compose}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      EMAIL_FROM: ${EMAIL_FROM:-}
+      APP_BASE_URL: ${APP_BASE_URL:-}
+      EMAIL_OTP_SECRET: ${EMAIL_OTP_SECRET:-}
       AI_PROVIDER: ${AI_PROVIDER:-}
       GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
       GOOGLE_AI_MODEL: ${GOOGLE_AI_MODEL:-gemini-1.5-flash}
       OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
       OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
       OPENAI_COMPATIBLE_MODEL: ${OPENAI_COMPATIBLE_MODEL:-gpt-4-turbo}
+      KLIPY_API_KEY: ${KLIPY_API_KEY:-}
       MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-52428800}
     ports:
       - "3000:3000"
@@ -39,10 +44,17 @@ services:
   mongo:
     image: mongo:7
     restart: unless-stopped
+    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
     volumes:
       - mongo-data:/data/db
     healthcheck:
-      test: ["CMD", "mongosh", "--quiet", "--eval", "db.adminCommand('ping').ok"]
+      test:
+        - CMD
+        - mongosh
+        - --quiet
+        - --eval
+        - >-
+          try { quit(rs.status().ok ? 0 : 1) } catch (error) { quit(rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok ? 0 : 1) }
       interval: 10s
       timeout: 5s
       retries: 10

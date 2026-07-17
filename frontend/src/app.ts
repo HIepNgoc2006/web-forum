@@ -92,6 +92,7 @@ import { bootstrapApp } from './bootstrap';
 import { createBoardLoadController } from './board-loader';
 import { createAdminLoadController } from './admin-loader';
 import { createThreadLoadController } from './thread-loader';
+import { setupI18n } from './i18n';
 import { reactionControlHtml, voteControlHtml } from './post-controls';
 import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButtonHtml } from './post-owner-actions';
 import { pollHtml } from './post-poll';
@@ -186,6 +187,7 @@ import {
   writeVote,
   writeReaction
 } from './storage';
+setupI18n();
 const showPostEditModal = createPostEditModal({
   showToast,
   maxMediaPerPost: MAX_MEDIA_PER_POST,
@@ -401,7 +403,8 @@ const { renderPasskeys: renderPasskeysFromController, handleAccountPasskeyClick 
   showToast,
   setFormError,
   setButtonLoading,
-  finishAccountLogin
+  finishAccountLogin,
+  setAccountSession
 });
 renderPasskeys = renderPasskeysFromController;
 const { handleAccountPrivateDataClick } = bindAccountPrivateDataEvents({
@@ -588,7 +591,7 @@ loadAdmin = createAdminLoadController({
   isAdminSessionError
 }).loadAdmin;
 
-const { loadHome } = createHomeLoadController({
+const { loadHome, refreshHomePersonalData } = createHomeLoadController({
   setScreen,
   state,
   homeController,
@@ -656,12 +659,14 @@ loadThread = createThreadLoadController({
   setupRealtime: () => setupRealtime(),
   closeReplyComposer: (options) => closeReplyComposer(options),
   syncReplyComposer: () => syncReplyComposer(),
+  prepareReplyComposerForThreadRender: () => prepareReplyComposerForThreadRender(),
   syncThreadMediaToolbarState,
   syncThreadPostCollapseToolbarState,
   resetAutoUpdateTimer,
   normalizeThreadSearchTerm
 }).loadThread;
 let openReplyComposerTarget = (_options: AnyRecord = {}) => {};
+let closeQuickReplyTarget = (_options: AnyRecord = {}) => {};
 function setupRealtime() {
   setupRealtimeConnection({
     loadHome,
@@ -687,9 +692,16 @@ function resetForgotPasswordForm() {
   }
   els.forgotPasswordForm.reset();
   els.forgotPasswordForm.classList.remove('hidden');
+  els.forgotEmailRequestForm?.reset();
+  els.forgotEmailRequestForm?.classList.remove('hidden');
+  els.forgotEmailConfirmForm?.reset();
+  els.forgotEmailConfirmForm?.classList.add('hidden');
   els.forgotSuccess.classList.add('hidden');
   setFormError(els.forgotError);
+  setFormError(els.forgotEmailRequestError);
+  setFormError(els.forgotEmailConfirmError);
   resetHcaptcha(els.forgotCaptcha);
+  resetHcaptcha(els.forgotEmailRequestCaptcha);
 }
 const routerController = createRouterController({
   els,
@@ -712,7 +724,8 @@ const routerController = createRouterController({
   setupRealtime,
   moveKeyboardNavigation,
   eventInTextInput,
-  openReplyComposer: (options) => openReplyComposerTarget(options)
+  openReplyComposer: (options) => openReplyComposerTarget(options),
+  closeQuickReply: (options) => closeQuickReplyTarget(options)
 });
 const {
   route,
@@ -729,9 +742,9 @@ const {
   openThreadComposer,
   closeThreadComposer,
   syncReplyComposer,
+  prepareReplyComposerForThreadRender,
   openReplyComposer,
   closeReplyComposer,
-  openQuickReply,
   closeQuickReply,
   bindComposerInputEvents
 } = createComposerController({
@@ -760,12 +773,15 @@ const {
   showReasonModal
 });
 openReplyComposerTarget = openReplyComposer;
+closeQuickReplyTarget = closeQuickReply;
 screenHelpers = createScreenHelpers({
   state,
   els,
   homeController,
   stopAutoUpdateTimer,
   closeThreadComposer,
+  closeReplyComposer,
+  closeQuickReply,
   showToast,
   readWatchedThreads,
   writeWatchedThreads: watchlistController.writeWatchedThreads,
@@ -798,12 +814,12 @@ bootstrapApp({
   renderCatalogThreads,
   openThreadComposer,
   openReplyComposer,
+  closeReplyComposer,
   api,
   loadThread,
   loadCatalog,
   loadArchive,
   refreshCurrentScreen,
-  openQuickReply,
   loadBoard,
   updatePrivacyWarning,
   selfDeletePost,
@@ -876,6 +892,7 @@ bootstrapApp({
   closeQuickReply,
   syncAccountHomeBoardOptions,
   loadAccountSession,
+  refreshHomePersonalData,
   syncAdminBoardFilter,
   syncAdminModerationSettings,
   writeBoardThreadsCache,

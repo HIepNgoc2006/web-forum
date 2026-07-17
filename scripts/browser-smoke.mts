@@ -24,6 +24,7 @@ type SmokePage = {
   url: string;
   checks: string[];
   accessibilityCheck?: boolean;
+  initialHomeContentCheck?: boolean;
   before?: () => Promise<void> | void;
   interaction?: (cdp: CdpSession) => Promise<void> | void;
   ignoreBrowserError?: (event: CdpMessage) => boolean;
@@ -286,8 +287,12 @@ async function createSeedThread() {
     const body = await neighborResponse.text().catch(() => '');
     throw new Error(`Could not create smoke neighbor thread: ${neighborResponse.status} ${body}`);
   }
+  const neighborPayload = await neighborResponse.json();
 
-  return threadId;
+  return {
+    threadId,
+    neighborThreadId: neighborPayload.data.thread.id
+  };
 }
 
 async function createPendingThread(body, posterToken, media = {}) {
@@ -435,6 +440,967 @@ function assertContrastPairs(pairs, label) {
   }
 }
 
+async function assertComposerMediaPickerFlow(cdp: CdpSession) {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: `(async () => {
+      const waitFor = async (predicate, label) => {
+        const deadline = Date.now() + 7000;
+        while (Date.now() < deadline) {
+          const value = predicate();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('Timed out waiting for ' + label);
+      };
+      const originalFetch = window.fetch;
+      const gifRequests = [];
+      window.fetch = (input, init) => {
+        const url = typeof input === 'string' ? input : input?.url || String(input);
+        if (url.includes('/api/media/gifs/')) gifRequests.push(url);
+        return originalFetch.call(window, input, init);
+      };
+      try {
+        document.querySelector('#postReplyToggle')?.click();
+        await waitFor(
+          () => !document.querySelector('#quickReply')?.classList.contains('hidden'),
+          'quick reply media picker host'
+        );
+        const trigger = document.querySelector(
+          '#quickReply [data-composer-media-open="quickReply"]'
+        );
+        if (!trigger) throw new Error('Quick reply media trigger is missing');
+        trigger.click();
+        const overlay = await waitFor(
+          () => {
+            const value = document.querySelector('#composerMediaPickerOverlay');
+            return value && !value.hidden ? value : null;
+          },
+          'inline media picker'
+        );
+        const picker = document.querySelector('#composerMediaPicker');
+        const anchor = trigger.closest('[data-composer-picker]');
+        const stickerPanel = document.querySelector('#composerStickerPanel');
+        const gifPanel = document.querySelector('#composerGifPanel');
+        const tabs = document.querySelector('.composer-media-tabs');
+        const children = [...picker.children];
+        const headerIndex = children.indexOf(document.querySelector('.composer-media-picker-header'));
+        const stickerIndex = children.indexOf(stickerPanel);
+        const gifIndex = children.indexOf(gifPanel);
+        const tabsIndex = children.indexOf(tabs);
+        const searchHost = document.querySelector('#composerGifSearchForm');
+        const searchButton = document.querySelector('#composerGifSearchButton');
+        const searchInput = document.querySelector('#composerGifSearchInput');
+        const outerForm = document.querySelector('#quickReplyForm');
+        const initial = {
+          reparentedInline:
+            overlay.parentElement === anchor.parentElement &&
+            overlay.previousElementSibling === anchor,
+          relativePosition: getComputedStyle(overlay).position === 'relative',
+          noNestedForm: !picker.querySelector('form'),
+          searchRole: searchHost?.getAttribute('role') || '',
+          searchHostTag: searchHost?.tagName || '',
+          searchButtonType: searchButton?.getAttribute('type') || '',
+          triggerExpanded: trigger.getAttribute('aria-expanded') || '',
+          orderAligned:
+            headerIndex >= 0 &&
+            headerIndex < stickerIndex &&
+            stickerIndex < gifIndex &&
+            gifIndex < tabsIndex,
+          ownerLabelRemoved: !picker.textContent.toLowerCase().includes('owner custom stickers')
+        };
+
+        document.querySelector('#composerGifTab')?.click();
+        await waitFor(
+          () => gifRequests.some((url) => url.includes('/api/media/gifs/trending')),
+          'initial GIF load'
+        );
+        searchInput.value = 'picker auto load';
+        searchInput.dispatchEvent(new Event('input', { bubbles: true }));
+        await waitFor(
+          () =>
+            gifRequests.some((url) => {
+              if (!url.includes('/api/media/gifs/search')) return false;
+              return new URL(url, location.href).searchParams.get('q') === 'picker auto load';
+            }),
+          'debounced GIF search'
+        );
+
+        let outerSubmitCount = 0;
+        const blockOuterSubmit = (event) => {
+          outerSubmitCount += 1;
+          event.preventDefault();
+          event.stopImmediatePropagation();
+        };
+        outerForm.addEventListener('submit', blockOuterSubmit, true);
+        searchButton.click();
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        outerForm.removeEventListener('submit', blockOuterSubmit, true);
+
+        searchInput.focus();
+        const escapeEvent = new KeyboardEvent('keydown', {
+          key: 'Escape',
+          bubbles: true,
+          cancelable: true
+        });
+        searchInput.dispatchEvent(escapeEvent);
+        await waitFor(() => overlay.hidden, 'media picker Escape close');
+        const escapeState = {
+          defaultPrevented: escapeEvent.defaultPrevented,
+          pickerClosed: overlay.hidden,
+          quickReplyStillOpen: !document.querySelector('#quickReply')?.classList.contains('hidden'),
+          triggerCollapsed: trigger.getAttribute('aria-expanded') === 'false'
+        };
+        document.querySelector('#quickReplyClose')?.click();
+        return {
+          initial,
+          autoSearchRequested: gifRequests.some((url) => {
+            if (!url.includes('/api/media/gifs/search')) return false;
+            return new URL(url, location.href).searchParams.get('q') === 'picker auto load';
+          }),
+          outerSubmitCount,
+          escapeState
+        };
+      } finally {
+        window.fetch = originalFetch;
+      }
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  if (result.exceptionDetails) {
+    throw new Error(
+      `composer media picker evaluation failed: ${
+        result.exceptionDetails.exception?.description ||
+        result.exceptionDetails.text ||
+        JSON.stringify(result.exceptionDetails)
+      }`
+    );
+  }
+  const payload = result.result?.value || {};
+  if (
+    !payload.initial?.reparentedInline ||
+    !payload.initial?.relativePosition ||
+    !payload.initial?.noNestedForm ||
+    payload.initial?.searchRole !== 'search' ||
+    payload.initial?.searchHostTag !== 'DIV' ||
+    payload.initial?.searchButtonType !== 'button' ||
+    payload.initial?.triggerExpanded !== 'true' ||
+    !payload.initial?.orderAligned ||
+    !payload.initial?.ownerLabelRemoved ||
+    !payload.autoSearchRequested ||
+    payload.outerSubmitCount !== 0 ||
+    !payload.escapeState?.defaultPrevented ||
+    !payload.escapeState?.pickerClosed ||
+    !payload.escapeState?.quickReplyStillOpen ||
+    !payload.escapeState?.triggerCollapsed
+  ) {
+    throw new Error(`composer media picker flow failed: ${JSON.stringify(payload)}`);
+  }
+}
+
+async function assertStickerPreviewLifecycle(
+  cdp: CdpSession,
+  target: 'thread' | 'comment' | 'quickReply'
+) {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: `(async () => {
+      const target = ${JSON.stringify(target)};
+      const isThread = target === 'thread';
+      const isQuickReply = target === 'quickReply';
+      const composerSelector = isThread
+        ? '#threadComposer'
+        : isQuickReply
+          ? '#quickReply'
+          : '#replyComposer';
+      const formSelector = isThread
+        ? '#threadForm'
+        : isQuickReply
+          ? '#quickReplyForm'
+          : '#commentForm';
+      const bodySelector = isThread
+        ? '#threadBody'
+        : isQuickReply
+          ? '#quickReplyBody'
+          : '#commentBody';
+      const previewSelector = '[data-composer-sticker-preview="' + target + '"]';
+      const statusSelector = '[data-composer-sticker-preview-status="' + target + '"]';
+      const waitFor = async (predicate, label) => {
+        const deadline = Date.now() + 10000;
+        while (Date.now() < deadline) {
+          const value = predicate();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('Timed out waiting for ' + label);
+      };
+      const isHidden = (element) =>
+        !element || element.hidden || element.classList.contains('hidden');
+      const previewItems = () =>
+        document
+          .querySelector(previewSelector)
+          ?.querySelector('[data-composer-sticker-preview-items]');
+      const previewImages = () => [
+        ...(previewItems()?.querySelectorAll('img') || [])
+      ];
+      const previewEmpty = () => (previewItems()?.children.length || 0) === 0;
+      const setBody = (value) => {
+        const textarea = document.querySelector(bodySelector);
+        textarea.value = value;
+        textarea.setSelectionRange(value.length, value.length);
+        textarea.dispatchEvent(new Event('input', { bubbles: true }));
+        return textarea;
+      };
+
+      if (isThread) {
+        document.querySelector('#startThreadButton')?.click();
+      } else {
+        document.querySelector('#postReplyToggle')?.click();
+      }
+      const composer = await waitFor(
+        () => {
+          const value = document.querySelector(composerSelector);
+          return value && !value.classList.contains('hidden') ? value : null;
+        },
+        target + ' composer open'
+      );
+      const form = document.querySelector(formSelector);
+      const textarea = document.querySelector(bodySelector);
+      const preview = document.querySelector(previewSelector);
+      const status = document.querySelector(statusSelector);
+      const trigger = form?.querySelector(
+        '[data-composer-media-open="' + target + '"]'
+      );
+      if (!form || !textarea || !preview || !status || !trigger) {
+        throw new Error(target + ' sticker preview controls are missing');
+      }
+      const initial = {
+        hasClass: preview.classList.contains('composer-sticker-preview'),
+        hidden: isHidden(preview),
+        empty: previewEmpty(),
+        statusMounted: status.getAttribute('role') === 'status' && !status.closest('[hidden]'),
+        statusEmpty: !status.textContent.trim()
+      };
+
+      trigger.click();
+      await waitFor(
+        () => {
+          const overlay = document.querySelector('#composerMediaPickerOverlay');
+          return overlay && !overlay.hidden ? overlay : null;
+        },
+        target + ' sticker picker open'
+      );
+      const choices = [
+        ...document.querySelectorAll('#composerStickerGrid [data-composer-sticker]')
+      ].slice(0, 2);
+      if (choices.length < 2) {
+        throw new Error('Sticker preview smoke requires at least two stickers');
+      }
+      const firstKey = choices[0].dataset.composerSticker || '';
+      const secondKey = choices[1].dataset.composerSticker || '';
+      const firstSrc = choices[0].querySelector('img')?.src || '';
+      const secondSrc = choices[1].querySelector('img')?.src || '';
+      choices[0].click();
+      await waitFor(
+        () =>
+          textarea.value.includes('[sticker:' + firstKey + ']') &&
+          !isHidden(preview) &&
+          previewImages().length === 1 &&
+          status.textContent.includes('1 sticker'),
+        target + ' selected sticker preview'
+      );
+      const selectedImages = previewImages();
+      const selected = {
+        tokenInserted: textarea.value.includes('[sticker:' + firstKey + ']'),
+        count: selectedImages.length,
+        sourceMatches: selectedImages[0]?.src === firstSrc,
+        statusText: status.textContent
+      };
+
+      setBody(
+        'Sticker preview sequence [sticker:' +
+          firstKey +
+          '] between [sticker:' +
+          secondKey +
+          ']'
+      );
+      await waitFor(
+        () =>
+          !isHidden(preview) &&
+          previewImages().length === 2 &&
+          status.textContent.includes('2 sticker'),
+        target + ' updated sticker preview'
+      );
+      const updatedImages = previewImages();
+      const updated = {
+        count: updatedImages.length,
+        sourcesMatch:
+          updatedImages[0]?.src === firstSrc && updatedImages[1]?.src === secondSrc,
+        statusText: status.textContent
+      };
+
+      setBody('Sticker preview tokens removed');
+      await waitFor(
+        () =>
+          isHidden(preview) &&
+          previewImages().length === 0 &&
+          /Đã bỏ|Removed/.test(status.textContent),
+        target + ' removed sticker preview'
+      );
+      const removed = {
+        hidden: isHidden(preview),
+        empty: previewEmpty(),
+        statusText: status.textContent
+      };
+
+      const nonce = String(Date.now()) + '-' + Math.random().toString(16).slice(2);
+      setBody(
+        'Browser smoke sticker preview ' +
+          target +
+          ' ' +
+          nonce +
+          ' [sticker:' +
+          firstKey +
+          ']'
+      );
+      if (isThread) {
+        const subject = form.elements.namedItem('subject');
+        if (subject) subject.value = 'Sticker preview smoke ' + nonce;
+      }
+      await waitFor(
+        () => !isHidden(preview) && previewImages().length === 1,
+        target + ' pre-submit sticker preview'
+      );
+      form.requestSubmit(form.querySelector('button[type="submit"]'));
+      await waitFor(
+        () =>
+          composer.classList.contains('hidden') &&
+          document.querySelector(bodySelector)?.value === '',
+        target + ' sticker preview submission'
+      );
+      const finalPreview = document.querySelector(previewSelector);
+      const final = {
+        composerClosed: composer.classList.contains('hidden'),
+        bodyCleared: document.querySelector(bodySelector)?.value === '',
+        hidden: isHidden(finalPreview),
+        empty:
+          (finalPreview
+            ?.querySelector('[data-composer-sticker-preview-items]')
+            ?.children.length || 0) === 0,
+        statusText: document.querySelector(statusSelector)?.textContent || ''
+      };
+
+      return { initial, selected, updated, removed, final };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  if (result.exceptionDetails) {
+    throw new Error(
+      `${target} sticker preview evaluation failed: ${
+        result.exceptionDetails.exception?.description ||
+        result.exceptionDetails.text ||
+        JSON.stringify(result.exceptionDetails)
+      }`
+    );
+  }
+  const payload = result.result?.value || {};
+  if (
+    !payload.initial?.hasClass ||
+    !payload.initial?.hidden ||
+    !payload.initial?.empty ||
+    !payload.initial?.statusMounted ||
+    !payload.initial?.statusEmpty ||
+    !payload.selected?.tokenInserted ||
+    payload.selected?.count !== 1 ||
+    !payload.selected?.sourceMatches ||
+    !payload.selected?.statusText?.includes('1 sticker') ||
+    payload.updated?.count !== 2 ||
+    !payload.updated?.sourcesMatch ||
+    !payload.updated?.statusText?.includes('2 sticker') ||
+    !payload.removed?.hidden ||
+    !payload.removed?.empty ||
+    !/Đã bỏ|Removed/.test(payload.removed?.statusText || '') ||
+    !payload.final?.composerClosed ||
+    !payload.final?.bodyCleared ||
+    !payload.final?.hidden ||
+    !payload.final?.empty ||
+    !/Đã bỏ|Removed/.test(payload.final?.statusText || '')
+  ) {
+    throw new Error(`${target} sticker preview lifecycle failed: ${JSON.stringify(payload)}`);
+  }
+}
+
+async function assertCommentComposerModeFlow(
+  cdp: CdpSession,
+  threadId: string,
+  mode: 'floating' | 'normal'
+) {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: `(async () => {
+      const threadId = ${JSON.stringify(threadId)};
+      const mode = ${JSON.stringify(mode)};
+      const normal = mode === 'normal';
+      const composerSelector = normal ? '#replyComposer' : '#quickReply';
+      const otherSelector = normal ? '#quickReply' : '#replyComposer';
+      const bodySelector = normal ? '#commentBody' : '#quickReplyBody';
+      const formSelector = normal ? '#commentForm' : '#quickReplyForm';
+      const closeSelector = normal ? '#commentCancelButton' : '#quickReplyClose';
+      const draftKey = 'draft:comment:' + threadId;
+      const legacyDraftKey = 'draft:quickReply:' + threadId;
+      const legacyDraft = 'legacy quick reply draft\\n\\n  legacy indented line';
+      const draft = mode + ' composer draft line 1\\n\\n  indented line\\nline 3';
+      const submittedBody = 'browser-' + mode + '-composer-ui-submit';
+      const waitFor = async (predicate, label) => {
+        const deadline = Date.now() + 7000;
+        while (Date.now() < deadline) {
+          const value = predicate();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('Timed out waiting for ' + label);
+      };
+      const visible = (selector) => !document.querySelector(selector)?.classList.contains('hidden');
+      const state = () => ({
+        selectedOpen: visible(composerSelector),
+        otherOpen: visible(otherSelector),
+        quickReplyOpenClass: document.body.classList.contains('quick-reply-open')
+      });
+
+      localStorage.removeItem(draftKey);
+      localStorage.removeItem(legacyDraftKey);
+      if (normal) {
+        localStorage.setItem(legacyDraftKey, legacyDraft);
+      }
+      await waitFor(
+        () =>
+          document.body.classList.contains('comment-composer-' + mode) &&
+          !document.body.classList.contains('comment-composer-' + (normal ? 'floating' : 'normal')) &&
+          document.querySelector('#postReplyToggle'),
+        mode + ' preference'
+      );
+      const body = document.querySelector(bodySelector);
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'r', bubbles: true }));
+      await waitFor(() => visible(composerSelector), mode + ' keyboard entry');
+      const keyboardEntry = state();
+      const legacyMigration = normal
+        ? {
+            value: body.value,
+            migrated: localStorage.getItem(draftKey) || '',
+            legacyRemoved: !localStorage.getItem(legacyDraftKey)
+          }
+        : null;
+      document.querySelector(closeSelector)?.click();
+      await waitFor(() => !visible(composerSelector), mode + ' close control');
+      const closeState = state();
+      let previewTargetState = null;
+      if (normal) {
+        const refLink = document.querySelector('#threadDetail .ref-link[data-ref]');
+        if (!refLink) throw new Error('Normal mode reference preview link is missing');
+        refLink.dispatchEvent(
+          new MouseEvent('mouseover', { bubbles: true, clientX: 90, clientY: 150 })
+        );
+        const previewReply = await waitFor(
+          () => {
+            const preview = document.querySelector('#refPreview');
+            return preview && !preview.classList.contains('hidden')
+              ? preview.querySelector('[data-quick-reply], [data-quote]')
+              : null;
+          },
+          'normal reference preview reply control'
+        );
+        const previewNumber = String(
+          previewReply.dataset.quickReply || previewReply.dataset.quote || ''
+        ).replaceAll('>', '').trim();
+        previewReply.click();
+        await waitFor(() => visible(composerSelector), 'normal reference preview reply');
+        previewTargetState = {
+          previewNumber,
+          inReferencePreview: Boolean(document.querySelector('#replyComposer')?.closest('#refPreview')),
+          placement: document.querySelector('#replyComposer')?.previousElementSibling?.id || ''
+        };
+        document.querySelector(closeSelector)?.click();
+        await waitFor(() => !visible(composerSelector), 'normal reference preview cancel');
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
+
+      document.querySelector('#postReplyToggle')?.click();
+      await waitFor(() => visible(composerSelector), mode + ' reply button entry');
+      const buttonEntry = state();
+      body.value = draft;
+      body.dispatchEvent(new Event('input', { bubbles: true }));
+      if (normal) {
+        document.querySelector(closeSelector)?.click();
+      } else {
+        window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      }
+      await waitFor(() => !visible(composerSelector), mode + ' draft close');
+      const draftCloseState = state();
+      const storedDraft = localStorage.getItem(draftKey) || '';
+
+      const quoteButton = document.querySelector('#threadDetail [data-quote]');
+      if (!quoteButton) throw new Error(mode + ' quote entry is missing');
+      const quoteNumber = String(quoteButton.dataset.quote || '').replaceAll('>', '').trim();
+      quoteButton.click();
+      await waitFor(
+        () => visible(composerSelector) && document.querySelector(bodySelector)?.value.includes('>>' + quoteNumber),
+        mode + ' quote entry'
+      );
+      const quoteEntry = state();
+      const continuityValue = document.querySelector(bodySelector)?.value || '';
+      const caretOffset = Math.max(0, continuityValue.indexOf('indented') + 3);
+      body.focus();
+      body.setSelectionRange(caretOffset, caretOffset);
+      let rerenderState = null;
+      if (normal) {
+        const rerenderMarker = 'normal composer live rerender marker';
+        const captcha = document.querySelector('#commentCaptcha');
+        captcha.value = 'captcha state survives rerender';
+        const focusedBeforeFetch = document.activeElement === body;
+        const rerenderResponse = await fetch('/api/threads/' + encodeURIComponent(threadId) + '/comments', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            body: rerenderMarker,
+            captchaToken: 'dev-pass',
+            posterToken: 'ci-poster-normal-composer-rerender',
+            options: 'sage'
+          })
+        });
+        if (!rerenderResponse.ok) {
+          throw new Error('Normal composer rerender setup failed: ' + rerenderResponse.status);
+        }
+        body.focus();
+        body.setSelectionRange(caretOffset, caretOffset);
+        const focusedAfterResponse = document.activeElement === body;
+        await waitFor(
+          () => (document.querySelector('#threadDetail')?.innerText || '').includes(rerenderMarker),
+          'normal composer live rerender'
+        );
+        const currentBody = document.querySelector(bodySelector);
+        const replyComposer = document.querySelector('#replyComposer');
+        rerenderState = {
+          focusedBeforeFetch,
+          focusedAfterResponse,
+          sameTextarea: currentBody === body,
+          value: currentBody?.value || '',
+          selectionStart: currentBody?.selectionStart,
+          selectionEnd: currentBody?.selectionEnd,
+          focused: document.activeElement === currentBody,
+          activeElementId: document.activeElement?.id || '',
+          activeElementTag: document.activeElement?.tagName || '',
+          placement: replyComposer?.previousElementSibling?.id || '',
+          inReferencePreview: Boolean(replyComposer?.closest('#refPreview')),
+          captchaValue: document.querySelector('#commentCaptcha')?.value || '',
+          selectedOpen: visible(composerSelector),
+          otherOpen: visible(otherSelector)
+        };
+        document.querySelector('#commentCaptcha').value = 'dev-pass';
+      }
+      const submissionBody = document.querySelector(bodySelector);
+      submissionBody.value = continuityValue + submittedBody;
+      submissionBody.dispatchEvent(new Event('input', { bubbles: true }));
+      const form = document.querySelector(formSelector);
+      form.requestSubmit(form.querySelector('button[type="submit"]'));
+      await waitFor(
+        () =>
+          !visible(composerSelector) &&
+          (document.querySelector('#threadDetail')?.innerText || '').includes(submittedBody),
+        mode + ' UI submission'
+      );
+      return {
+        modeClass: document.body.classList.contains('comment-composer-' + mode),
+        otherModeClass: document.body.classList.contains(
+          'comment-composer-' + (normal ? 'floating' : 'normal')
+        ),
+        keyboardEntry,
+        closeState,
+        previewTargetState,
+        buttonEntry,
+        legacyMigration,
+        draftCloseState,
+        storedDraft,
+        quoteNumber,
+        continuityValue,
+        quoteEntry,
+        caretOffset,
+        rerenderState,
+        submitted: (document.querySelector('#threadDetail')?.innerText || '').includes(submittedBody),
+        draftCleared: !localStorage.getItem(draftKey),
+        finalState: state()
+      };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  if (result.exceptionDetails) {
+    throw new Error(
+      `${mode} comment composer evaluation failed: ${result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)}`
+    );
+  }
+  const payload = result.result?.value || {};
+  if (
+    !payload.modeClass ||
+    payload.otherModeClass ||
+    !payload.keyboardEntry?.selectedOpen ||
+    payload.keyboardEntry?.otherOpen ||
+    Boolean(payload.keyboardEntry?.quickReplyOpenClass) !== (mode === 'floating') ||
+    payload.closeState?.selectedOpen ||
+    payload.closeState?.otherOpen ||
+    payload.closeState?.quickReplyOpenClass ||
+    (mode === 'normal' &&
+      (!payload.previewTargetState?.previewNumber ||
+        payload.previewTargetState?.inReferencePreview ||
+        payload.previewTargetState?.placement !== 'p' + payload.previewTargetState?.previewNumber)) ||
+    !payload.buttonEntry?.selectedOpen ||
+    payload.buttonEntry?.otherOpen ||
+    Boolean(payload.buttonEntry?.quickReplyOpenClass) !== (mode === 'floating') ||
+    (mode === 'normal' &&
+      (payload.legacyMigration?.value !== 'legacy quick reply draft\n\n  legacy indented line' ||
+        payload.legacyMigration?.migrated !== 'legacy quick reply draft\n\n  legacy indented line' ||
+        !payload.legacyMigration?.legacyRemoved)) ||
+    payload.draftCloseState?.selectedOpen ||
+    payload.draftCloseState?.otherOpen ||
+    payload.draftCloseState?.quickReplyOpenClass ||
+    payload.storedDraft !== `${mode} composer draft line 1\n\n  indented line\nline 3` ||
+    !payload.quoteNumber ||
+    !payload.continuityValue?.startsWith(`${mode} composer draft line 1\n\n  indented line\nline 3`) ||
+    !payload.continuityValue?.includes('\n\n  indented line\n') ||
+    !payload.continuityValue?.includes('>>' + payload.quoteNumber) ||
+    !payload.quoteEntry?.selectedOpen ||
+    payload.quoteEntry?.otherOpen ||
+    Boolean(payload.quoteEntry?.quickReplyOpenClass) !== (mode === 'floating') ||
+    (mode === 'normal' &&
+      (!payload.rerenderState?.sameTextarea ||
+        !payload.rerenderState?.focusedBeforeFetch ||
+        !payload.rerenderState?.focusedAfterResponse ||
+        payload.rerenderState?.value !== payload.continuityValue ||
+        payload.rerenderState?.selectionStart !== payload.caretOffset ||
+        payload.rerenderState?.selectionEnd !== payload.caretOffset ||
+        !payload.rerenderState?.focused ||
+        payload.rerenderState?.placement !== 'p' + payload.quoteNumber ||
+        payload.rerenderState?.inReferencePreview ||
+        payload.rerenderState?.captchaValue !== 'captcha state survives rerender' ||
+        !payload.rerenderState?.selectedOpen ||
+        payload.rerenderState?.otherOpen)) ||
+    !payload.submitted ||
+    !payload.draftCleared ||
+    payload.finalState?.selectedOpen ||
+    payload.finalState?.otherOpen ||
+    payload.finalState?.quickReplyOpenClass
+  ) {
+    throw new Error(`${mode} comment composer flow failed: ${JSON.stringify(payload)}`);
+  }
+}
+
+async function assertCommentComposerSettingsPersistence(cdp: CdpSession) {
+  const readMode = async (expectedMode: 'floating' | 'normal') => {
+    const deadline = Date.now() + 7000;
+    while (Date.now() < deadline) {
+      const result = await cdp
+        .send('Runtime.evaluate', {
+          expression: `(() => {
+            let stored = {};
+            try {
+              stored = JSON.parse(localStorage.getItem('displayPreferences') || '{}');
+            } catch {}
+            const form = document.querySelector('#accountSettingsForm');
+            return {
+              ready: Boolean(form && !form.classList.contains('hidden')),
+              selected: document.querySelector('#accountCommentComposerMode')?.value || '',
+              stored: stored.commentComposerMode || '',
+              floatingClass: document.body.classList.contains('comment-composer-floating'),
+              normalClass: document.body.classList.contains('comment-composer-normal')
+            };
+          })()`,
+          returnByValue: true
+        })
+        .catch(() => null);
+      const value = result?.result?.value;
+      if (
+        value?.ready &&
+        value.selected === expectedMode &&
+        value.stored === expectedMode &&
+        value.floatingClass === (expectedMode === 'floating') &&
+        value.normalClass === (expectedMode === 'normal')
+      ) {
+        return value;
+      }
+      await sleep(100);
+    }
+    throw new Error(`Timed out waiting for persisted ${expectedMode} comment composer setting.`);
+  };
+
+  const saveMode = async (mode: 'floating' | 'normal') => {
+    const result = await cdp.send('Runtime.evaluate', {
+      expression: `(async () => {
+        const mode = ${JSON.stringify(mode)};
+        const waitFor = async (predicate, label) => {
+          const deadline = Date.now() + 5000;
+          while (Date.now() < deadline) {
+            const value = predicate();
+            if (value) return value;
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
+          throw new Error('Timed out waiting for ' + label);
+        };
+        const select = await waitFor(
+          () => {
+            const form = document.querySelector('#accountSettingsForm');
+            const input = document.querySelector('#accountCommentComposerMode');
+            return form && !form.classList.contains('hidden') && input ? input : null;
+          },
+          'comment composer setting'
+        );
+        const previous = select.value;
+        select.value = mode;
+        select.dispatchEvent(new Event('change', { bubbles: true }));
+        const form = document.querySelector('#accountSettingsForm');
+        form.requestSubmit(form.querySelector('button[type="submit"]'));
+        const stored = await waitFor(() => {
+          try {
+            return (
+              JSON.parse(localStorage.getItem('displayPreferences') || '{}').commentComposerMode === mode &&
+              document.body.classList.contains('comment-composer-' + mode) &&
+              !document.body.classList.contains(
+                'comment-composer-' + (mode === 'floating' ? 'normal' : 'floating')
+              )
+            );
+          } catch {
+            return false;
+          }
+        }, mode + ' setting save');
+        return {
+          previous,
+          selected: select.value,
+          stored,
+          floatingClass: document.body.classList.contains('comment-composer-floating'),
+          normalClass: document.body.classList.contains('comment-composer-normal')
+        };
+      })()`,
+      awaitPromise: true,
+      returnByValue: true
+    });
+    if (result.exceptionDetails) {
+      throw new Error(
+        `comment composer settings save failed: ${result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)}`
+      );
+    }
+    return result.result?.value || {};
+  };
+
+  const primedFloating = await saveMode('floating');
+  await cdp.send('Page.reload', { ignoreCache: true });
+  const initialFloating = await readMode('floating');
+  const savedNormal = await saveMode('normal');
+  await cdp.send('Page.reload', { ignoreCache: true });
+  const persistedNormal = await readMode('normal');
+  const savedFloating = await saveMode('floating');
+  await cdp.send('Page.reload', { ignoreCache: true });
+  const persistedFloating = await readMode('floating');
+  if (
+    primedFloating.selected !== 'floating' ||
+    !primedFloating.stored ||
+    !primedFloating.floatingClass ||
+    primedFloating.normalClass ||
+    initialFloating.selected !== 'floating' ||
+    savedNormal.previous !== 'floating' ||
+    savedNormal.selected !== 'normal' ||
+    !savedNormal.stored ||
+    savedNormal.floatingClass ||
+    !savedNormal.normalClass ||
+    persistedNormal.selected !== 'normal' ||
+    savedFloating.previous !== 'normal' ||
+    savedFloating.selected !== 'floating' ||
+    !savedFloating.stored ||
+    !savedFloating.floatingClass ||
+    savedFloating.normalClass ||
+    persistedFloating.selected !== 'floating'
+  ) {
+    throw new Error(
+      `comment composer settings persistence failed: ${JSON.stringify({
+        primedFloating,
+        initialFloating,
+        savedNormal,
+        persistedNormal,
+        savedFloating,
+        persistedFloating
+      })}`
+    );
+  }
+}
+
+async function assertFloatingComposerRouteIsolation(
+  cdp: CdpSession,
+  threadId: string,
+  neighborThreadId: string
+) {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: `(async () => {
+      const threadId = ${JSON.stringify(threadId)};
+      const neighborThreadId = ${JSON.stringify(neighborThreadId)};
+      const draft = 'floating route isolation draft A';
+      const draftKeyA = 'draft:comment:' + threadId;
+      const draftKeyB = 'draft:comment:' + neighborThreadId;
+      const waitFor = async (predicate, label) => {
+        const deadline = Date.now() + 7000;
+        while (Date.now() < deadline) {
+          const value = predicate();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('Timed out waiting for ' + label);
+      };
+      localStorage.removeItem(draftKeyA);
+      localStorage.removeItem(draftKeyB);
+      await waitFor(
+        () =>
+          document.body.classList.contains('comment-composer-floating') &&
+          (document.querySelector('#threadDetail')?.innerText || '').includes('Smoke subject title'),
+        'floating route source thread'
+      );
+      document.querySelector('#postReplyToggle')?.click();
+      await waitFor(
+        () => !document.querySelector('#quickReply')?.classList.contains('hidden'),
+        'floating route source composer'
+      );
+      const body = document.querySelector('#quickReplyBody');
+      body.value = draft;
+      body.dispatchEvent(new Event('input', { bubbles: true }));
+      window.location.hash = '#thread/' + encodeURIComponent(neighborThreadId);
+      await waitFor(
+        () =>
+          window.location.hash === '#thread/' + encodeURIComponent(neighborThreadId) &&
+          (document.querySelector('#threadDetail')?.innerText || '').includes('Smoke neighboring thread'),
+        'floating route destination thread'
+      );
+      const closedOnRoute = document.querySelector('#quickReply')?.classList.contains('hidden');
+      const bodyClassCleared = !document.body.classList.contains('quick-reply-open');
+      const draftA = localStorage.getItem(draftKeyA) || '';
+      const draftBBeforeOpen = localStorage.getItem(draftKeyB) || '';
+      document.querySelector('#postReplyToggle')?.click();
+      await waitFor(
+        () => !document.querySelector('#quickReply')?.classList.contains('hidden'),
+        'floating route destination composer'
+      );
+      const destinationBody = document.querySelector('#quickReplyBody')?.value || '';
+      document.querySelector('#quickReplyClose')?.click();
+      return {
+        closedOnRoute,
+        bodyClassCleared,
+        draftA,
+        draftBBeforeOpen,
+        destinationBody,
+        destinationDraft: localStorage.getItem(draftKeyB) || '',
+        destinationText: document.querySelector('#threadDetail')?.innerText || ''
+      };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  if (result.exceptionDetails) {
+    throw new Error(
+      `floating route isolation evaluation failed: ${result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)}`
+    );
+  }
+  const payload = result.result?.value || {};
+  if (
+    !payload.closedOnRoute ||
+    !payload.bodyClassCleared ||
+    payload.draftA !== 'floating route isolation draft A' ||
+    payload.draftBBeforeOpen ||
+    payload.destinationBody.includes('floating route isolation draft A') ||
+    payload.destinationDraft.includes('floating route isolation draft A') ||
+    !payload.destinationText.includes('Smoke neighboring thread')
+  ) {
+    throw new Error(`floating comment composer route isolation failed: ${JSON.stringify(payload)}`);
+  }
+}
+
+async function assertNormalPendingReplyRouteIsolation(
+  cdp: CdpSession,
+  threadId: string,
+  neighborThreadId: string
+) {
+  const result = await cdp.send('Runtime.evaluate', {
+    expression: `(async () => {
+      const threadId = ${JSON.stringify(threadId)};
+      const neighborThreadId = ${JSON.stringify(neighborThreadId)};
+      const waitFor = async (predicate, label) => {
+        const deadline = Date.now() + 7000;
+        while (Date.now() < deadline) {
+          const value = predicate();
+          if (value) return value;
+          await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        throw new Error('Timed out waiting for ' + label);
+      };
+      await waitFor(
+        () =>
+          document.body.classList.contains('comment-composer-normal') &&
+          [...document.querySelectorAll('[data-board-reply]')].some(
+            (button) => button.dataset.boardReply === threadId
+          ),
+        'normal board reply source'
+      );
+      const replyButton = [...document.querySelectorAll('[data-board-reply]')].find(
+        (button) => button.dataset.boardReply === threadId
+      );
+      const quoteNumber = String(replyButton.dataset.boardReplyNumber || '');
+      const originalFetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const requestUrl = String(input?.url || input || '');
+        if (requestUrl.includes('/api/threads/' + encodeURIComponent(threadId) + '?')) {
+          return new Promise((resolve, reject) => {
+            setTimeout(() => originalFetch(input, init).then(resolve, reject), 600);
+          });
+        }
+        return originalFetch(input, init);
+      };
+      replyButton.click();
+      await waitFor(
+        () => window.location.hash === '#thread/' + encodeURIComponent(threadId),
+        'normal pending reply route'
+      );
+      window.location.hash = '#thread/' + encodeURIComponent(neighborThreadId);
+      await waitFor(
+        () =>
+          window.location.hash === '#thread/' + encodeURIComponent(neighborThreadId) &&
+          (document.querySelector('#threadDetail')?.innerText || '').includes('Smoke neighboring thread'),
+        'normal superseding route'
+      );
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      window.fetch = originalFetch;
+      return {
+        quoteNumber,
+        currentHash: window.location.hash,
+        destinationText: document.querySelector('#threadDetail')?.innerText || '',
+        normalOpen: !document.querySelector('#replyComposer')?.classList.contains('hidden'),
+        floatingOpen: !document.querySelector('#quickReply')?.classList.contains('hidden'),
+        commentBody: document.querySelector('#commentBody')?.value || ''
+      };
+    })()`,
+    awaitPromise: true,
+    returnByValue: true
+  });
+  if (result.exceptionDetails) {
+    throw new Error(
+      `normal pending reply isolation evaluation failed: ${result.exceptionDetails.text || JSON.stringify(result.exceptionDetails)}`
+    );
+  }
+  const payload = result.result?.value || {};
+  if (
+    !payload.quoteNumber ||
+    payload.currentHash !== `#thread/${neighborThreadId}` ||
+    !payload.destinationText.includes('Smoke neighboring thread') ||
+    payload.normalOpen ||
+    payload.floatingOpen ||
+    payload.commentBody.includes('>>' + payload.quoteNumber)
+  ) {
+    throw new Error(`normal pending reply route isolation failed: ${JSON.stringify(payload)}`);
+  }
+}
+
 async function createTarget(url) {
   const encodedUrl = encodeURIComponent(url);
   let response = await fetch(`http://127.0.0.1:${chromeDebugPort}/json/new?${encodedUrl}`, { method: 'PUT' });
@@ -459,6 +1425,7 @@ async function smokePage(page) {
     await cdp.send('Page.enable');
     await cdp.send('Runtime.enable');
     await cdp.send('Log.enable').catch(() => {});
+    await cdp.send('Network.enable').catch(() => {});
 
     const preloadStatements = [];
     if (page.theme) {
@@ -469,6 +1436,34 @@ async function smokePage(page) {
         throw new Error(`${page.label} requires an admin token.`);
       }
       preloadStatements.push(`localStorage.setItem('adminToken', ${JSON.stringify(page.adminToken)});`);
+    }
+    if (page.loginAccount) {
+      const accountToken = typeof page.accountToken === 'function' ? page.accountToken() : page.accountToken;
+      if (!accountToken) {
+        throw new Error(`${page.label} requires an account token.`);
+      }
+      preloadStatements.push(`localStorage.setItem('accountToken', ${JSON.stringify(accountToken)});`);
+    }
+    const localStorageEntries =
+      typeof page.localStorageEntries === 'function' ? page.localStorageEntries() : page.localStorageEntries;
+    if (!Object.hasOwn(localStorageEntries || {}, 'uiLocale')) {
+      preloadStatements.push(`localStorage.removeItem('uiLocale');`);
+    }
+    for (const [key, value] of Object.entries(localStorageEntries || {})) {
+      preloadStatements.push(`localStorage.setItem(${JSON.stringify(key)}, ${JSON.stringify(String(value))});`);
+    }
+    if (page.initialHomeContentCheck) {
+      preloadStatements.push(`
+        window.__homeContentAtDomReady = null;
+        document.addEventListener('DOMContentLoaded', () => {
+          window.__homeContentAtDomReady = {
+            boardRows: document.querySelectorAll('#homeBoards tbody tr').length,
+            popularItems: document.querySelectorAll('#popularThreads .popular-item').length,
+            latestItems: document.querySelectorAll('#latestPosts .latest-post-item').length,
+            statsText: (document.querySelector('#homeStats')?.textContent || '').trim()
+          };
+        }, { once: true });
+      `);
     }
     if (preloadStatements.length) {
       await cdp.send('Page.addScriptToEvaluateOnNewDocument', {
@@ -522,6 +1517,22 @@ async function smokePage(page) {
     if (page.width && snapshot.scrollWidth > snapshot.innerWidth) {
       throw new Error(`${page.label} has horizontal overflow: ${snapshot.scrollWidth} > ${snapshot.innerWidth}`);
     }
+    if (page.initialHomeContentCheck) {
+      const initialContentResult = await cdp.send('Runtime.evaluate', {
+        expression: 'window.__homeContentAtDomReady',
+        returnByValue: true
+      });
+      const initialContent = initialContentResult.result?.value;
+      if (
+        !initialContent ||
+        initialContent.boardRows < 1 ||
+        initialContent.popularItems < 1 ||
+        initialContent.latestItems < 1 ||
+        !initialContent.statsText
+      ) {
+        throw new Error(`${page.label} rendered empty home sections at DOMContentLoaded: ${JSON.stringify(initialContent)}`);
+      }
+    }
 
     if (page.contrastCheck) {
       const contrast = await cdp.send('Runtime.evaluate', {
@@ -570,6 +1581,73 @@ async function smokePage(page) {
       assertContrastPairs(contrast.result?.value || [], page.label);
     }
 
+    if (page.renderedContrastChecks?.length) {
+      const renderedContrast = await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const checks = ${JSON.stringify(page.renderedContrastChecks)};
+          const parseColor = (value) => {
+            const match = String(value || '').match(/rgba?\\((\\d+),\\s*(\\d+),\\s*(\\d+)(?:,\\s*([\\d.]+))?/);
+            return match
+              ? [Number(match[1]), Number(match[2]), Number(match[3]), match[4] === undefined ? 1 : Number(match[4])]
+              : null;
+          };
+          const luminance = ([r, g, b]) => {
+            const channels = [r, g, b].map((channel) => {
+              const normalized = channel / 255;
+              return normalized <= 0.03928
+                ? normalized / 12.92
+                : ((normalized + 0.055) / 1.055) ** 2.4;
+            });
+            return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+          };
+          const ratio = (foreground, background) => {
+            const lighter = Math.max(luminance(foreground), luminance(background));
+            const darker = Math.min(luminance(foreground), luminance(background));
+            return Number(((lighter + 0.05) / (darker + 0.05)).toFixed(2));
+          };
+          const backgroundFor = (element) => {
+            for (let current = element; current; current = current.parentElement) {
+              const background = parseColor(getComputedStyle(current).backgroundColor);
+              if (background && background[3] >= 0.95) {
+                return background;
+              }
+            }
+            return [255, 255, 255, 1];
+          };
+          return checks.map((check) => {
+            const element = document.querySelector(check.selector);
+            if (!element) {
+              return { ...check, found: false, ratio: 0 };
+            }
+            const foreground = parseColor(getComputedStyle(element).color);
+            const background = backgroundFor(element);
+            return {
+              ...check,
+              found: Boolean(foreground && background),
+              ratio: foreground && background ? ratio(foreground, background) : 0
+            };
+          });
+        })()`,
+        returnByValue: true
+      });
+      const renderedChecks = renderedContrast.result?.value;
+      if (!Array.isArray(renderedChecks) || renderedChecks.length !== page.renderedContrastChecks.length) {
+        const detail =
+          renderedContrast.exceptionDetails?.exception?.description ||
+          renderedContrast.exceptionDetails?.text ||
+          'missing rendered contrast results';
+        throw new Error(`${page.label} rendered contrast evaluation failed: ${detail}`);
+      }
+      for (const check of renderedChecks) {
+        const minimum = Number(check.minRatio || 4.5);
+        if (!check.found || !Number.isFinite(check.ratio) || check.ratio < minimum) {
+          throw new Error(
+            `${page.label} rendered contrast failed for ${check.label || check.selector}: ${check.ratio} < ${minimum}`
+          );
+        }
+      }
+    }
+
     if (page.accessibilityCheck) {
       const unlabeled = await cdp.send('Runtime.evaluate', {
         expression: `(() => {
@@ -605,6 +1683,22 @@ async function smokePage(page) {
       const unlabeledControls = unlabeled.result?.value || [];
       if (unlabeledControls.length) {
         throw new Error(`${page.label} has visible form controls without accessible names: ${unlabeledControls.join(' | ')}`);
+      }
+    }
+
+    if (page.formSemanticsCheck) {
+      const invalid = await cdp.send('Runtime.evaluate', {
+        expression: `(() => {
+          const controls = [...document.querySelectorAll('input:not([type="hidden"]), select, textarea')];
+          return controls
+            .filter((element) => !element.id && !element.getAttribute('name'))
+            .map((element) => element.outerHTML.slice(0, 180));
+        })()`,
+        returnByValue: true
+      });
+      const invalidControls = invalid.result?.value || [];
+      if (invalidControls.length) {
+        throw new Error(`${page.label} has form controls without id/name: ${invalidControls.join(' | ')}`);
       }
     }
 
@@ -704,7 +1798,8 @@ async function main() {
     await waitForHealth();
     await waitForChromeDebug();
     const adminToken = await createAdminToken();
-    const threadId = await createSeedThread();
+    const { threadId, neighborThreadId } = await createSeedThread();
+    let accountSmokeToken = '';
     let approvePendingThread = null;
     let deletePendingThread = null;
     let appealSmoke = null;
@@ -713,9 +1808,76 @@ async function main() {
         label: 'home desktop',
         url: `${baseUrl}/#home`,
         theme: 'burichan',
+        initialHomeContentCheck: true,
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-home-desktop.png'),
         checks: ['36chan là gì?', 'Bảng', 'Bài mới nhất', 'Chủ đề đang theo dõi', 'Bài của tôi', 'Bảng đang theo dõi', 'Thống Kê Máy Chủ']
+      },
+      {
+        label: 'home tomorrow desktop',
+        url: `${baseUrl}/#home`,
+        theme: 'tomorrow',
+        contrastCheck: true,
+        renderedContrastChecks: [
+          { selector: '.portal-logo h1', label: 'home logo', minRatio: 3 },
+          { selector: '.portal-board-desc-cell', label: 'board description' },
+          { selector: '.portal-box-title-light h2', label: 'portal section title' },
+          { selector: '.latest-post-kind', label: 'latest post kind' },
+          { selector: '.server-stats', label: 'server stats' }
+        ],
+        screenshotPath: path.join(screenshotRoot, 'tomorrow-home-desktop.png'),
+        checks: ['36chan là gì?', 'Bảng', 'Bài mới nhất', 'Chủ đề đang theo dõi', 'Bài của tôi', 'Bảng đang theo dõi', 'Thống Kê Máy Chủ']
+      },
+      {
+        label: 'home english desktop',
+        url: `${baseUrl}/#home`,
+        theme: 'burichan',
+        localStorageEntries: { uiLocale: 'en' },
+        contrastCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-home-english-desktop.png'),
+        checks: ['What is 36chan?', 'Latest posts', 'Watched threads', 'My posts', 'Watched boards', 'Server statistics'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const waitFor = async (predicate, label) => {
+                const deadline = Date.now() + 3000;
+                while (Date.now() < deadline) {
+                  const value = predicate();
+                  if (value) return value;
+                  await new Promise((resolve) => setTimeout(resolve, 50));
+                }
+                throw new Error('Timed out waiting for ' + label);
+              };
+              await waitFor(
+                () => document.documentElement.lang === 'en' && document.querySelector('.portal-locale-switcher button[data-locale="en"]')?.getAttribute('aria-pressed') === 'true',
+                'English locale'
+              );
+              const preservedPostText = document.querySelector('.latest-post-preview')?.textContent || '';
+              document.querySelector('.portal-locale-switcher button[data-locale="vi"]')?.click();
+              await waitFor(() => document.body.innerText.includes('36chan là gì?'), 'Vietnamese locale');
+              const preservedPostTextAfter = document.querySelector('.latest-post-preview')?.textContent || '';
+              return {
+                lang: document.documentElement.lang,
+                storedLocale: localStorage.getItem('uiLocale'),
+                viPressed: document.querySelector('.portal-locale-switcher button[data-locale="vi"]')?.getAttribute('aria-pressed'),
+                preservedPostText,
+                preservedPostTextAfter
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          if (
+            payload.lang !== 'vi' ||
+            payload.storedLocale !== 'vi' ||
+            payload.viPressed !== 'true' ||
+            !payload.preservedPostText.includes('kiểm thử') ||
+            payload.preservedPostTextAfter !== payload.preservedPostText
+          ) {
+            throw new Error(`English locale switch failed: ${JSON.stringify(payload)}`);
+          }
+        }
       },
       {
         label: 'board desktop',
@@ -859,10 +2021,10 @@ async function main() {
         url: `${baseUrl}/#thread/${threadId}`,
         theme: 'burichan',
         contrastCheck: true,
+        formSemanticsCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-thread-desktop.png'),
         checks: ['Đăng trả lời', 'Theo dõi', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử'],
         async interaction(cdp) {
-          return;
           const result = await cdp.send('Runtime.evaluate', {
             expression: `(async () => {
               const threadId = ${JSON.stringify(threadId)};
@@ -1055,8 +2217,6 @@ async function main() {
               let recentFirstBoard = '';
               let boardFirstBoard = '';
               let storedWatchedSort = '';
-              let unreadMarkerText = '';
-              let unreadMarkerBeforePost = false;
               window.location.hash = '#thread/' + encodeURIComponent(threadId);
               const returnThreadDeadline = Date.now() + 5000;
               while (!document.querySelector('#threadSearchInput') && Date.now() < returnThreadDeadline) {
@@ -1185,8 +2345,15 @@ async function main() {
               selection.addRange(range);
               selectedQuoteButton.click();
               await new Promise((resolve) => setTimeout(resolve, 100));
-              const selectedQuoteComposerValue = document.querySelector('#commentBody')?.value || '';
+              const selectedQuoteComposerMode = document.querySelector('#quickReply')?.classList.contains('hidden')
+                ? 'normal'
+                : 'floating';
+              const selectedQuoteComposerValue =
+                document.querySelector(selectedQuoteComposerMode === 'floating' ? '#quickReplyBody' : '#commentBody')?.value || '';
               const selectedQuoteNumber = selectedQuoteButton.dataset.quote || '';
+              const wordLimitSelectorPresent = Boolean(
+                document.querySelector('[data-draft-word-limit], #commentWordLimit, #quickReplyWordLimit')
+              );
               const copyPostLinkButton = document.querySelector('#threadDetail [data-copy-post-link]');
               if (!copyPostLinkButton) {
                 throw new Error('copy post link control missing');
@@ -1301,7 +2468,9 @@ async function main() {
                 unreadMarkerText,
                 unreadMarkerBeforePost,
                 selectedQuoteComposerValue,
+                selectedQuoteComposerMode,
                 selectedQuoteNumber,
+                wordLimitSelectorPresent,
                 copiedPostLink: clipboardWrites[0] || '',
                 collapsedBodyHidden,
                 collapseLabel,
@@ -1339,6 +2508,23 @@ async function main() {
             returnByValue: true
           });
           const payload = result.result?.value || {};
+          if (payload.wordLimitSelectorPresent) {
+            throw new Error('thread desktop still renders the removed draft word-limit selector.');
+          }
+          if (
+            !payload.selectedQuoteNumber ||
+            !payload.selectedQuoteComposerValue?.includes(payload.selectedQuoteNumber) ||
+            !payload.selectedQuoteComposerValue?.includes('browser smoke') ||
+            !['floating', 'normal'].includes(payload.selectedQuoteComposerMode)
+          ) {
+            throw new Error(
+              `thread desktop selected quote did not reach the active composer: ${JSON.stringify({
+                mode: payload.selectedQuoteComposerMode,
+                number: payload.selectedQuoteNumber,
+                value: payload.selectedQuoteComposerValue
+              })}`
+            );
+          }
           if (
             payload.mediaExpandedCount < 2 ||
             payload.mediaButtonAfterExpand !== 'Thu media' ||
@@ -1374,6 +2560,100 @@ async function main() {
             throw new Error('thread desktop did not keep watched thread metadata.');
           }
         }
+      },
+      {
+        label: 'comment composer normal mode desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'burichan',
+        localStorageEntries: {
+          displayPreferences: JSON.stringify({ commentComposerMode: 'normal' })
+        },
+        checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử'],
+        interaction: (cdp) => assertCommentComposerModeFlow(cdp, threadId, 'normal')
+      },
+      {
+        label: 'comment composer floating mode desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'burichan',
+        localStorageEntries: {
+          displayPreferences: JSON.stringify({ commentComposerMode: 'floating' })
+        },
+        checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử'],
+        interaction: (cdp) => assertCommentComposerModeFlow(cdp, threadId, 'floating')
+      },
+      {
+        label: 'inline sticker and GIF picker desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'burichan',
+        localStorageEntries: {
+          displayPreferences: JSON.stringify({ commentComposerMode: 'floating' })
+        },
+        checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử'],
+        interaction: assertComposerMediaPickerFlow
+      },
+      {
+        label: 'thread composer sticker preview lifecycle desktop',
+        url: `${baseUrl}/#board/confession`,
+        theme: 'burichan',
+        checks: ['Tạo chủ đề mới', 'Smoke subject title'],
+        interaction: (cdp) => assertStickerPreviewLifecycle(cdp, 'thread')
+      },
+      {
+        label: 'comment composer sticker preview lifecycle desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'burichan',
+        localStorageEntries: {
+          displayPreferences: JSON.stringify({ commentComposerMode: 'normal' })
+        },
+        checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử'],
+        interaction: (cdp) => assertStickerPreviewLifecycle(cdp, 'comment')
+      },
+      {
+        label: 'quick reply sticker preview lifecycle desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'burichan',
+        localStorageEntries: {
+          displayPreferences: JSON.stringify({ commentComposerMode: 'floating' })
+        },
+        checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử'],
+        interaction: (cdp) => assertStickerPreviewLifecycle(cdp, 'quickReply')
+      },
+      {
+        label: 'floating comment composer route isolation desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'burichan',
+        localStorageEntries: {
+          displayPreferences: JSON.stringify({ commentComposerMode: 'floating' })
+        },
+        checks: ['Đăng trả lời', 'Smoke subject title'],
+        interaction: (cdp) => assertFloatingComposerRouteIsolation(cdp, threadId, neighborThreadId)
+      },
+      {
+        label: 'normal pending reply route isolation desktop',
+        url: `${baseUrl}/#board/confession`,
+        theme: 'burichan',
+        localStorageEntries: {
+          displayPreferences: JSON.stringify({ commentComposerMode: 'normal' })
+        },
+        checks: ['Smoke subject title', 'Smoke neighboring thread'],
+        interaction: (cdp) => assertNormalPendingReplyRouteIsolation(cdp, threadId, neighborThreadId)
+      },
+      {
+        label: 'thread tomorrow desktop',
+        url: `${baseUrl}/#thread/${threadId}`,
+        theme: 'tomorrow',
+        contrastCheck: true,
+        renderedContrastChecks: [
+          { selector: '.topbar .brand', label: 'thread brand' },
+          { selector: '.topbar .board-nav a:not(.active)', label: 'thread board navigation' },
+          { selector: '.thread-page-title h1', label: 'thread title', minRatio: 3 },
+          { selector: '.thread-page-title .muted', label: 'thread board description' },
+          { selector: '.thread-subject', label: 'thread subject' },
+          { selector: '.post-meta', label: 'thread post metadata' },
+          { selector: '.backlinks-label', label: 'thread backlinks label' }
+        ],
+        screenshotPath: path.join(screenshotRoot, 'tomorrow-thread-desktop.png'),
+        checks: ['Đăng trả lời', 'Bài kiểm thử browser smoke cho CI', 'phản hồi kiểm thử']
       },
       {
         label: 'catalog desktop',
@@ -1575,6 +2855,15 @@ async function main() {
         checks: ['Kho lưu trữ', 'Kho lưu trữ chưa có chủ đề']
       },
       {
+        label: 'comment composer settings desktop',
+        url: `${baseUrl}/#account`,
+        theme: 'burichan',
+        contrastCheck: true,
+        formSemanticsCheck: true,
+        checks: ['Cài đặt tài khoản', 'Khung bình luận', 'Cửa sổ nổi', 'Bình thường (trong trang)'],
+        interaction: assertCommentComposerSettingsPersistence
+      },
+      {
         label: 'admin desktop',
         url: `${baseUrl}/#admin`,
         screenshotPath: path.join(screenshotRoot, 'admin-login-desktop.png'),
@@ -1589,53 +2878,351 @@ async function main() {
         checks: ['Đăng nhập tài khoản', 'Tài khoản', 'Mật khẩu']
       },
       {
-        label: 'account desktop',
-        url: `${baseUrl}/#account`,
+        label: 'account register desktop',
+        url: `${baseUrl}/#register`,
         theme: 'burichan',
         contrastCheck: true,
-        screenshotPath: path.join(screenshotRoot, 'burichan-account-desktop.png'),
-        checks: ['Cài đặt tài khoản', 'Giao diện', 'Bảng nhà', 'Trình duyệt: thread đang theo dõi', 'Bạn chưa đăng nhập tài khoản'],
+        accessibilityCheck: true,
+        formSemanticsCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-account-register-desktop.png'),
+        checks: ['Đăng ký tài khoản', 'Email', 'Mật khẩu'],
         async interaction(cdp) {
-          return;
           const result = await cdp.send('Runtime.evaluate', {
             expression: `(async () => {
-              let requestCount = 0;
-              class FakeNotification {
-                static permission = 'default';
-                static async requestPermission() {
-                  requestCount += 1;
-                  FakeNotification.permission = 'denied';
-                  return 'denied';
+              const waitFor = async (predicate, label) => {
+                const deadline = Date.now() + 5000;
+                while (Date.now() < deadline) {
+                  const value = predicate();
+                  if (value) return value;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
                 }
-              }
-              Object.defineProperty(window, 'Notification', { configurable: true, value: FakeNotification });
-              const browserCheckbox = document.querySelector('#accountBrowserNotifyWatchedThreads');
-              browserCheckbox.checked = true;
-              document.querySelector('#accountSettingsForm').requestSubmit();
-              const deadline = Date.now() + 3000;
-              while (requestCount === 0 && Date.now() < deadline) {
-                await new Promise((resolve) => setTimeout(resolve, 50));
-              }
-              await new Promise((resolve) => setTimeout(resolve, 100));
+                throw new Error('Timed out waiting for ' + label);
+              };
+              document.querySelector('#registerUsername').value = 'browser_email_user';
+              document.querySelector('#registerEmail').value = 'browser-email@example.test';
+              document.querySelector('#registerPassword').value = 'browser-email-pass-2026';
+              document.querySelector('#registerPasswordConfirmation').value = 'browser-email-pass-2026';
+              document.querySelector('#registerForm').requestSubmit();
+              await waitFor(
+                () => !document.querySelector('#registerRecoveryNotice')?.classList.contains('hidden'),
+                'registration recovery notice'
+              );
+              const token = localStorage.getItem('accountToken') || '';
+              const meResponse = await fetch('/api/account/me', {
+                headers: token ? { authorization: 'Bearer ' + token } : {}
+              });
+              const me = await meResponse.json().catch(() => ({}));
               return {
-                requestCount,
-                checked: browserCheckbox.checked,
-                status: document.querySelector('#accountBrowserNotificationsStatus')?.textContent || '',
-                preferences: JSON.parse(localStorage.getItem('notificationPreferences') || '{}')
+                token,
+                tokenPresent: Boolean(token),
+                meOk: meResponse.ok,
+                username: me?.data?.username || '',
+                emailVerified: me?.data?.emailVerified,
+                recoveryCode: document.querySelector('#registerRecoveryCode')?.textContent || '',
+                verificationStatus: document.querySelector('#registerVerificationStatus')?.textContent || ''
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          if (result.exceptionDetails) {
+            throw new Error(
+              `account registration interaction evaluation failed: ${
+                result.exceptionDetails.exception?.description ||
+                result.exceptionDetails.text ||
+                JSON.stringify(result.exceptionDetails)
+              }`
+            );
+          }
+          const payload = result.result?.value || {};
+          accountSmokeToken = String(payload.token || '');
+          const safePayload = { ...payload, token: undefined };
+          if (
+            !payload.tokenPresent ||
+            !payload.meOk ||
+            payload.username !== 'browser_email_user' ||
+            payload.emailVerified !== false ||
+            !/^[A-Z0-9]{5}(?:-[A-Z0-9]{5})+$/.test(payload.recoveryCode) ||
+            !payload.verificationStatus.includes('dùng tài khoản ngay')
+          ) {
+            throw new Error(`account registration interaction failed: ${JSON.stringify(safePayload)}`);
+          }
+          await cdp.send('Runtime.evaluate', {
+            expression: `localStorage.removeItem('accountToken')`
+          });
+        }
+      },
+      {
+        label: 'account email recovery desktop',
+        url: `${baseUrl}/#forgot`,
+        theme: 'burichan',
+        contrastCheck: true,
+        accessibilityCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-account-forgot-desktop.png'),
+        checks: ['Quên mật khẩu', 'Dùng mã khôi phục', 'Dùng email đã xác nhận', 'Gửi mã OTP'],
+        async interaction(cdp) {
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const waitFor = async (predicate, label) => {
+                const deadline = Date.now() + 5000;
+                while (Date.now() < deadline) {
+                  const value = predicate();
+                  if (value) return value;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                throw new Error('Timed out waiting for ' + label);
+              };
+              document.querySelector('#forgotEmailIdentifier').value = 'browser-email@example.test';
+              document.querySelector('#forgotEmailRequestForm').requestSubmit();
+              await waitFor(
+                () => !document.querySelector('#forgotEmailConfirmForm')?.classList.contains('hidden'),
+                'email recovery confirmation form'
+              );
+              const identifier = document.querySelector('#forgotEmailConfirmIdentifier')?.value || '';
+              document.querySelector('#forgotEmailStartOver')?.click();
+              return {
+                identifier,
+                requestVisible: !document.querySelector('#forgotEmailRequestForm')?.classList.contains('hidden'),
+                confirmHidden: document.querySelector('#forgotEmailConfirmForm')?.classList.contains('hidden')
               };
             })()`,
             awaitPromise: true,
             returnByValue: true
           });
           const payload = result.result?.value || {};
-          if (payload.requestCount !== 1) {
-            throw new Error(`account desktop expected one browser permission request, got ${payload.requestCount || 0}.`);
+          if (
+            payload.identifier !== 'browser-email@example.test' ||
+            !payload.requestVisible ||
+            !payload.confirmHidden
+          ) {
+            throw new Error(`account email recovery request interaction failed: ${JSON.stringify(payload)}`);
           }
-          if (payload.preferences.browserWatchedThreads) {
-            throw new Error('account desktop persisted browser notifications after denied permission.');
+        }
+      },
+      {
+        label: 'account desktop',
+        url: `${baseUrl}/#account`,
+        theme: process.env.BROWSER_SMOKE_INTERACTIONS === '1' ? 'yotsuba-b' : 'burichan',
+        loginAccount: process.env.BROWSER_SMOKE_INTERACTIONS === '1',
+        accountToken: () => accountSmokeToken,
+        localStorageEntries:
+          process.env.BROWSER_SMOKE_INTERACTIONS === '1'
+            ? {
+                'draft:thread:browser-sync': 'local-stale',
+                'draftUpdatedAt:draft:thread:browser-sync': '2026-07-15T04:00:00.000Z'
+              }
+            : undefined,
+        contrastCheck: true,
+        formSemanticsCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-account-desktop.png'),
+        checks: process.env.BROWSER_SMOKE_INTERACTIONS === '1'
+          ? [
+              'Cài đặt tài khoản',
+              'Đang đăng nhập @browser_email_user',
+              'Chưa xác nhận: browser-email@example.test',
+              'Bảo mật 2 lớp (TOTP 2FA)'
+            ]
+          : ['Cài đặt tài khoản', 'Giao diện', 'Bảng nhà', 'Trình duyệt: thread đang theo dõi', 'Bạn chưa đăng nhập tài khoản'],
+        ignoreBrowserError(event) {
+          const entry = event.method === 'Log.entryAdded' ? event.params?.entry : null;
+          return (
+            process.env.BROWSER_SMOKE_INTERACTIONS === '1' &&
+            entry?.level === 'error' &&
+            entry?.source === 'network' &&
+            String(entry.text || '').includes('status of 400')
+          );
+        },
+        async before() {
+          if (process.env.BROWSER_SMOKE_INTERACTIONS !== '1') {
+            return;
           }
-          if (!payload.status.includes('chặn') && !payload.status.includes('Tắt')) {
-            throw new Error('account desktop did not show denied browser notification status.');
+          const response = await fetch(`${baseUrl}/api/account/private-data`, {
+            method: 'PUT',
+            headers: {
+              authorization: `Bearer ${accountSmokeToken}`,
+              'content-type': 'application/json'
+            },
+            body: JSON.stringify({
+              watchlist: [],
+              drafts: [
+                {
+                  key: 'draft:thread:browser-sync',
+                  kind: 'thread',
+                  id: 'browser-sync',
+                  body: 'server-new',
+                  updatedAt: '2026-07-15T05:00:00.000Z'
+                }
+              ],
+              savedSearches: [],
+              contentFilters: [],
+              replyTemplates: [],
+              posterNotes: [],
+              hiddenPosts: [],
+              hiddenThreads: []
+            })
+          });
+          if (!response.ok) {
+            throw new Error(`could not prepare account sync smoke data: ${response.status}`);
+          }
+        },
+        async interaction(cdp) {
+          const initialRequests = cdp.events.filter((event) => event.method === 'Network.requestWillBeSent');
+          const boardThreadRequests = initialRequests
+            .map((event) => String(event.params?.request?.url || ''))
+            .filter((url) => /\/api\/boards\/[^/]+\/threads(?:\?|$)/.test(url));
+          const privateDataWriteRequests = initialRequests
+            .filter((event) => String(event.params?.request?.method || '').toUpperCase() === 'PUT')
+            .map((event) => String(event.params?.request?.url || ''))
+            .filter((url) => url.includes('/api/account/private-data'));
+          const result = await cdp.send('Runtime.evaluate', {
+            expression: `(async () => {
+              const waitFor = async (predicate, label) => {
+                const deadline = Date.now() + 5000;
+                while (Date.now() < deadline) {
+                  const value = predicate();
+                  if (value) return value;
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                }
+                throw new Error('Timed out waiting for ' + label);
+              };
+              const accountToken = localStorage.getItem('accountToken') || '';
+              const privateDataResponse = await fetch('/api/account/private-data', {
+                headers: accountToken ? { authorization: 'Bearer ' + accountToken } : {}
+              });
+              const privateDataPayload = await privateDataResponse.json().catch(() => ({}));
+              const syncedDraft = (privateDataPayload?.data?.drafts || []).find(
+                (draft) => draft?.key === 'draft:thread:browser-sync'
+              );
+              const visibleControls = [...document.querySelectorAll('input:not([type="hidden"]), select, textarea')]
+                .filter((element) => {
+                  if (element.disabled || element.closest('.hidden,[hidden],[aria-hidden="true"]')) return false;
+                  const style = getComputedStyle(element);
+                  return style.display !== 'none' && style.visibility !== 'hidden';
+                });
+              const unnamedControls = visibleControls.filter(
+                (element) => !element.id && !element.getAttribute('name')
+              ).length;
+              const englishPrivateLabels = visibleControls
+                .map((element) => element.getAttribute('aria-label') || '')
+                .filter((label) => ['Filter value', 'Reply template name', 'Reply template content', 'Poster note label', 'Poster note'].includes(label));
+              const twoFactorPanel = document.querySelector('#accountTwoFactorPanel');
+              const twoFactorPanelVisible = Boolean(twoFactorPanel && !twoFactorPanel.classList.contains('hidden'));
+              document.querySelector('#enable2FAButton')?.click();
+              await waitFor(
+                () =>
+                  !document.querySelector('#account2FASetupSection')?.classList.contains('hidden') &&
+                  document.querySelector('#manualSecretCode')?.textContent &&
+                  document.querySelector('#backupCodesDisplay')?.value,
+                'account 2FA setup'
+              );
+              const twoFactorSetupVisible = !document.querySelector('#account2FASetupSection')?.classList.contains('hidden');
+              const twoFactorSecret = document.querySelector('#manualSecretCode')?.textContent || '';
+              const twoFactorBackupCodes = document.querySelector('#backupCodesDisplay')?.value || '';
+              const twoFactorQr = document.querySelector('#qrcodeImage')?.getAttribute('src') || '';
+              document.querySelector('#cancel2FASetupButton')?.click();
+              await waitFor(
+                () =>
+                  !document.querySelector('#account2FADisabledSection')?.classList.contains('hidden') &&
+                  document.querySelector('#account2FASetupSection')?.classList.contains('hidden'),
+                'account 2FA setup cancel'
+              );
+              const twoFactorCanceled = Boolean(
+                document.querySelector('#account2FASetupSection')?.classList.contains('hidden')
+              );
+              document.querySelector('#accountEmailVerifyCode').value = 'xxxxxx';
+              document.querySelector('#accountEmailVerifyForm').requestSubmit();
+              const verifyError = await waitFor(
+                () => document.querySelector('#accountEmailVerifyError')?.textContent || '',
+                'invalid verification error'
+              );
+
+              document.querySelector('#accountEmailNewEmail').value = 'browser-email-new@example.test';
+              document.querySelector('#accountEmailChangePassword').value = 'browser-email-pass-2026';
+              document.querySelector('#accountEmailChangeForm').requestSubmit();
+              await waitFor(
+                () => !document.querySelector('#accountEmailChangeConfirmForm')?.classList.contains('hidden'),
+                'email change confirmation form'
+              );
+              document.querySelector('#accountEmailChangeCode').value = 'xxxxxx';
+              document.querySelector('#accountEmailChangeConfirmForm').requestSubmit();
+              const changeError = await waitFor(
+                () => document.querySelector('#accountEmailChangeConfirmError')?.textContent || '',
+                'invalid change email error'
+              );
+              const pendingEmail = document.querySelector('#accountEmailNewEmail')?.value || '';
+              const notificationsDisabled = Boolean(document.querySelector('#accountEmailNotifications')?.disabled);
+              await fetch('/api/account/private-data?section=drafts', {
+                method: 'DELETE',
+                headers: accountToken ? { authorization: 'Bearer ' + accountToken } : {}
+              });
+              localStorage.removeItem('draft:thread:browser-sync');
+              localStorage.removeItem('draftUpdatedAt:draft:thread:browser-sync');
+              const logoutButton = document.querySelector('#accountSettingsLogout');
+              if (!logoutButton) {
+                throw new Error('Missing account logout button');
+              }
+              logoutButton.click();
+              await waitFor(() => !localStorage.getItem('accountToken'), 'account logout');
+              return {
+                verifyError,
+                changeError,
+                pendingEmail,
+                notificationsDisabled,
+                privateDataOk: privateDataResponse.ok,
+                syncedDraftBody: syncedDraft?.body || '',
+                unnamedControls,
+                englishPrivateLabels,
+                twoFactorPanelVisible,
+                twoFactorSetupVisible,
+                twoFactorSecret,
+                twoFactorBackupCodes,
+                twoFactorQr,
+                twoFactorCanceled,
+                logoutTokenCleared: !localStorage.getItem('accountToken'),
+                logoutHash: window.location.hash
+              };
+            })()`,
+            awaitPromise: true,
+            returnByValue: true
+          });
+          const payload = result.result?.value || {};
+          const logoutRequests = cdp.events
+            .filter((event) => event.method === 'Network.requestWillBeSent')
+            .filter((event) => String(event.params?.request?.method || '').toUpperCase() === 'POST')
+            .map((event) => String(event.params?.request?.url || ''))
+            .filter((url) => url.includes('/api/account/logout'));
+          const revokedResponse = await fetch(baseUrl + '/api/account/me', {
+            headers: { authorization: 'Bearer ' + accountSmokeToken }
+          });
+          if (
+            !payload.verifyError.includes('OTP') ||
+            !payload.changeError.includes('OTP') ||
+            payload.pendingEmail !== 'browser-email-new@example.test' ||
+            !payload.notificationsDisabled ||
+            !payload.privateDataOk ||
+            payload.syncedDraftBody !== 'server-new' ||
+            payload.unnamedControls !== 0 ||
+            payload.englishPrivateLabels?.length ||
+            !payload.twoFactorPanelVisible ||
+            !payload.twoFactorSetupVisible ||
+            !payload.twoFactorSecret ||
+            !payload.twoFactorBackupCodes ||
+            !payload.twoFactorQr?.startsWith('data:image/') ||
+            !payload.twoFactorCanceled ||
+            !payload.logoutTokenCleared ||
+            payload.logoutHash !== '#home' ||
+            logoutRequests.length !== 1 ||
+            revokedResponse.status !== 401 ||
+            boardThreadRequests.length ||
+            privateDataWriteRequests.length
+          ) {
+            throw new Error(
+              `account settings interaction failed: ${JSON.stringify({
+                ...payload,
+                boardThreadRequests,
+                privateDataWriteRequests
+              })}`
+            );
           }
         }
       },
@@ -1662,7 +3249,7 @@ async function main() {
               };
               document.querySelector('[data-admin-tab="analytics"]')?.click();
               await waitFor(() => document.querySelector('#pendingList .analytics-dashboard'), 'analytics dashboard');
-              const adminToken = localStorage.getItem('adminToken') || '';
+              const adminToken = sessionStorage.getItem('adminToken') || localStorage.getItem('adminToken') || '';
               const response = await fetch('/api/admin/analytics', {
                 headers: adminToken ? { authorization: 'Bearer ' + adminToken } : {}
               });
@@ -1796,6 +3383,21 @@ async function main() {
         checks: ['36chan là gì?', 'Bảng', 'Bài mới nhất', 'Chủ đề đang theo dõi', 'Bài của tôi', 'Bảng đang theo dõi']
       },
       {
+        label: 'home tomorrow mobile',
+        url: `${baseUrl}/#home`,
+        width: 390,
+        height: 844,
+        theme: 'tomorrow',
+        contrastCheck: true,
+        renderedContrastChecks: [
+          { selector: '.portal-board-desc-cell', label: 'mobile board description' },
+          { selector: '.portal-board-number-cell', label: 'mobile board count' },
+          { selector: '.portal-box-title-light h2', label: 'mobile portal section title' }
+        ],
+        screenshotPath: path.join(screenshotRoot, 'tomorrow-home-mobile.png'),
+        checks: ['36chan là gì?', 'Bảng', 'Bài mới nhất', 'Chủ đề đang theo dõi', 'Bài của tôi', 'Bảng đang theo dõi']
+      },
+      {
         label: 'board mobile',
         url: `${baseUrl}/#board/confession`,
         width: 390,
@@ -1824,6 +3426,28 @@ async function main() {
         contrastCheck: true,
         screenshotPath: path.join(screenshotRoot, 'burichan-archive-mobile.png'),
         checks: ['Kho lưu trữ', 'Kho lưu trữ chưa có chủ đề']
+      },
+      {
+        label: 'account register mobile',
+        url: `${baseUrl}/#register`,
+        width: 390,
+        height: 844,
+        theme: 'burichan',
+        contrastCheck: true,
+        accessibilityCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-account-register-mobile.png'),
+        checks: ['Đăng ký tài khoản', 'Email', 'Mật khẩu']
+      },
+      {
+        label: 'account email recovery mobile',
+        url: `${baseUrl}/#forgot`,
+        width: 390,
+        height: 844,
+        theme: 'burichan',
+        contrastCheck: true,
+        accessibilityCheck: true,
+        screenshotPath: path.join(screenshotRoot, 'burichan-account-forgot-mobile.png'),
+        checks: ['Quên mật khẩu', 'Dùng mã khôi phục', 'Dùng email đã xác nhận']
       },
       {
         label: 'admin dashboard mobile',

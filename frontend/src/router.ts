@@ -1,4 +1,4 @@
-import { type AnyRecord } from './types';
+import type { AnyRecord } from './types.ts';
 
 /**
  * Map a location hash to the screen name used by setScreen().
@@ -66,7 +66,8 @@ export function createRouterController(dependencies: AnyRecord) {
     setupRealtime,
     moveKeyboardNavigation,
     eventInTextInput,
-    openReplyComposer
+    openReplyComposer,
+    closeQuickReply
   } = dependencies;
 
   function loadPolicy(section = '') {
@@ -94,6 +95,9 @@ export function createRouterController(dependencies: AnyRecord) {
     const hash = window.location.hash || '#home';
     const [hashPath, hashQuery = ''] = hash.split('?');
     const [, name, id] = hashPath.match(/^#([^/]+)\/?(.+)?$/) || [];
+    if (els.quickReply && !els.quickReply.classList.contains('hidden')) {
+      closeQuickReply?.({ restoreFocus: false });
+    }
     let navigation: Promise<unknown> = Promise.resolve();
     if (name === 'home' || !name) {
       navigation = loadHome();
@@ -124,7 +128,37 @@ export function createRouterController(dependencies: AnyRecord) {
       }
       state.threadId = nextThreadId;
       state.threadCommentPage = Math.max(1, Number(params.get('cp')) || 1);
-      navigation = loadThread({ resetReply: true, focusPost: params.get('p') || '' });
+      const pendingReply =
+        state.pendingInlineReply?.threadId === nextThreadId
+          ? state.pendingInlineReply
+          : null;
+      if (pendingReply) {
+        state.pendingInlineReply = null;
+      }
+      navigation = loadThread({
+        resetReply: true,
+        focusPost: params.get('p') || pendingReply?.number || ''
+      }).then(() => {
+        if (!pendingReply) {
+          return;
+        }
+        const [currentHashPath] = (window.location.hash || '').split('?');
+        const currentThreadMatch = currentHashPath.match(/^#thread\/(.+)$/);
+        const currentThreadId = currentThreadMatch?.[1]
+          ? decodeURIComponent(currentThreadMatch[1])
+          : '';
+        if (state.threadId !== nextThreadId || currentThreadId !== nextThreadId) {
+          return;
+        }
+        openReplyComposer({
+          forceNormal: true,
+          number: pendingReply.number,
+          selectedQuote: pendingReply.selectedQuote,
+          inlineTarget: pendingReply.number
+            ? document.getElementById('p' + pendingReply.number)
+            : null
+        });
+      });
     } else if (name === 'catalog') {
       state.boardSlug = id || 'confession';
       state.boardSearchTerm = '';
@@ -184,7 +218,7 @@ export function createRouterController(dependencies: AnyRecord) {
       refreshCurrentScreen().catch((error) => showToast(error.message));
     } else if (event.key === 'r' && (window.location.hash || '').startsWith('#thread/')) {
       event.preventDefault();
-      openReplyComposer();
+      openReplyComposer({ event });
     } else if (event.key === 'n') {
       if (moveKeyboardNavigation(1)) {
         event.preventDefault();

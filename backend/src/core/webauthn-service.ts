@@ -95,18 +95,11 @@ export async function verifyWebAuthnRegisterResponse({
  * Generate authentication options for WebAuthn login.
  */
 export async function getWebAuthnLoginOptions({
-  user,
   rpID
 }: WebAuthnLoginOptionsArgs): Promise<PublicKeyCredentialRequestOptionsJSON> {
-  const userPasskeys = user.passkeys || [];
-
   return generateAuthenticationOptions({
     rpID,
-    allowCredentials: userPasskeys.map((passkey) => ({
-      id: passkey.credentialID,
-      type: 'public-key',
-      transports: passkey.transports
-    })),
+    allowCredentials: [],
     userVerification: 'required'
   });
 }

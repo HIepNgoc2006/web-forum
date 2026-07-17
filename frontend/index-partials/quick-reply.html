@@ -12,10 +12,15 @@
             <input name="useAccountName" type="checkbox" data-use-account-name /> @username
           </label>
           <input id="quickReplyOptions" name="options" aria-label="Tùy chọn" placeholder="sage, noko" title="sage = không bump thread; noko = quay lại thread sau khi đăng" autocomplete="off" />
-          <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Bình luận"></textarea>
+          <textarea id="quickReplyBody" maxlength="5000" aria-label="Bình luận" placeholder="Viết bình luận..."></textarea>
+          <div class="draft-meter-row">
+            <p id="quickReplyDraftMeter" class="draft-meter" aria-live="polite">Đã viết 0 từ · 0/5000 ký tự</p>
+          </div>
         </div>
+
         <div class="quick-composer-picker" data-composer-picker="quickReply" aria-label="Emoji và sticker cho trả lời nhanh">
           <div class="quick-picker-row quick-picker-emoji">
+            <span class="quick-section-label">Emoji</span>
             <button data-composer-insert="🙂" type="button" aria-label="Chèn emoji vui">🙂</button>
             <button data-composer-insert="😂" type="button" aria-label="Chèn emoji cười">😂</button>
             <button data-composer-insert="😢" type="button" aria-label="Chèn emoji buồn">😢</button>
@@ -23,25 +28,93 @@
             <button data-composer-insert="🙏" type="button" aria-label="Chèn emoji cảm ơn">🙏</button>
           </div>
           <div class="quick-picker-row quick-picker-stickers">
-            <button data-composer-insert="[sticker:cheer]" type="button">Cổ vũ</button>
-            <button data-composer-insert="[sticker:panic]" type="button">Hoảng</button>
-            <button data-composer-insert="[sticker:study]" type="button">Học</button>
-            <button data-composer-insert="[sticker:thanks]" type="button">Cảm ơn</button>
+            <button
+              class="composer-media-trigger"
+              data-composer-media-open="quickReply"
+              type="button"
+              aria-controls="composerMediaPicker"
+              aria-expanded="false"
+            >Sticker / GIF</button>
           </div>
         </div>
+
+        <div
+          class="composer-sticker-preview"
+          data-composer-sticker-preview="quickReply"
+          aria-label="Xem trước sticker đã chọn"
+          hidden
+        >
+          <span class="composer-sticker-preview-label">Xem trước</span>
+          <div class="composer-sticker-preview-items" data-composer-sticker-preview-items></div>
+        </div>
+        <span
+          class="composer-sticker-preview-status"
+          data-composer-sticker-preview-status="quickReply"
+          role="status"
+          aria-live="polite"
+          aria-atomic="true"
+        ></span>
+
         <div class="quick-template-picker" data-reply-template-picker="quickReply" aria-label="Mẫu trả lời đã lưu"></div>
-        <div class="quick-ai-actions" aria-label="Công cụ AI cho trả lời nhanh">
-          <button id="quickReplySuggestButton" class="quick-ai-button" type="button">[AI gợi ý]</button>
-          <select id="quickReplyRewriteTone" class="quick-rewrite-tone" aria-label="Tông giọng">
-            <option value="neutral">Trung lập</option>
-            <option value="less-aggressive">Bớt gay gắt</option>
-            <option value="privacy-safer">An toàn riêng tư</option>
-          </select>
-          <button id="quickReplyRewriteButton" class="quick-ai-button" type="button">[AI sửa]</button>
-          <button id="quickReplyCaptionButton" class="quick-ai-button" type="button">[Mô tả ảnh]</button>
-          <button id="quickReplyOcrButton" class="quick-ai-button" type="button">[OCR]</button>
+
+        <div class="quick-primary-tools" aria-label="Công cụ nhanh">
+          <button id="quickReplySuggestButton" class="quick-ai-button quick-ai-primary" type="button" title="Gợi ý câu trả lời từ AI">
+            Gợi ý AI
+          </button>
+          <div class="quick-tool-pair" title="Chọn tông giọng rồi sửa nháp">
+            <select id="quickReplyRewriteTone" class="quick-rewrite-tone" aria-label="Tông giọng sửa AI">
+              <option value="neutral">Trung lập</option>
+              <option value="less-aggressive">Bớt gay gắt</option>
+              <option value="privacy-safer">An toàn riêng tư</option>
+            </select>
+            <button id="quickReplyRewriteButton" class="quick-ai-button" type="button">Sửa AI</button>
+          </div>
+          <div class="quick-tool-pair" title="Chọn ngôn ngữ rồi dịch nháp">
+            <select id="quickReplyTranslateTarget" class="quick-rewrite-tone" aria-label="Ngôn ngữ dịch nháp">
+              <option value="en">EN</option>
+              <option value="vi">VI</option>
+              <option value="ja">JA</option>
+              <option value="ko">KO</option>
+              <option value="zh">ZH</option>
+              <option value="fr">FR</option>
+              <option value="es">ES</option>
+              <option value="de">DE</option>
+              <option value="th">TH</option>
+            </select>
+            <button id="quickReplyTranslateButton" class="quick-ai-button" type="button">Dịch</button>
+          </div>
           <span id="quickReplyAiRewriteLabel" class="ai-label quick-ai-label hidden">Đã sửa bằng AI</span>
         </div>
+
+        <details class="quick-more-tools">
+          <summary class="quick-more-tools-summary">Thêm công cụ · ảnh · âm thanh</summary>
+          <div class="quick-more-tools-body">
+            <div class="quick-ai-actions" aria-label="Công cụ ảnh AI">
+              <button id="quickReplyCaptionButton" class="quick-ai-button" type="button" title="Mô tả ảnh đính kèm">
+                Mô tả ảnh
+              </button>
+              <button id="quickReplyOcrButton" class="quick-ai-button" type="button" title="Trích chữ từ ảnh">
+                OCR
+              </button>
+            </div>
+            <div class="quick-audio-row" aria-label="Âm thanh sang chữ">
+              <label class="quick-file-button quick-audio-file-button">
+                Âm thanh
+                <input id="quickReplyAudio" type="file" accept="audio/*" aria-label="Chọn file âm thanh để chép" />
+              </label>
+              <select
+                id="quickReplySpeechLang"
+                class="speech-lang-select rewrite-tone-select quick-speech-lang"
+                data-speech-lang
+                aria-label="Ngôn ngữ nhận dạng giọng nói"
+              ></select>
+              <button id="quickReplyRecordButton" class="quick-ai-button audio-record-button" type="button" aria-pressed="false">
+                Nói
+              </button>
+            </div>
+          </div>
+        </details>
+
         <div id="quickReplySuggestions" class="suggestions quick-suggestions hidden"></div>
         <div id="quickReplyPrivacyWarning" class="privacy-warning quick-privacy-warning hidden" role="status"></div>
         <div class="quick-reply-captcha">
@@ -49,21 +122,6 @@
           <div class="captcha-widget hidden" data-hcaptcha-target="quickReplyCaptcha"></div>
         </div>
         <div id="quickReplyImagePreview" class="image-preview quick-image-preview hidden"></div>
-        <div class="quick-audio-row" aria-label="Âm thanh sang chữ">
-          <label class="quick-file-button quick-audio-file-button">
-            Âm thanh
-            <input id="quickReplyAudio" type="file" accept="audio/*" aria-label="Chọn file âm thanh để chép" />
-          </label>
-          <select
-            id="quickReplySpeechLang"
-            class="speech-lang-select rewrite-tone-select quick-speech-lang"
-            data-speech-lang
-            aria-label="Ngôn ngữ nhận dạng giọng nói"
-          ></select>
-          <button id="quickReplyRecordButton" class="quick-ai-button audio-record-button" type="button" aria-pressed="false">
-            [Nói]
-          </button>
-        </div>
         <div class="quick-reply-bottom">
           <div class="quick-reply-file-group">
             <label class="quick-file-button">

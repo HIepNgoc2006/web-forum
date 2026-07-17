@@ -1,4 +1,4 @@
-import { normalizeWatchedSort } from './storage';
+import { normalizeCommentComposerMode, normalizeWatchedSort } from './storage';
 import { type AnyRecord } from './types';
 
 export function createAccountScreenController({
@@ -70,7 +70,20 @@ export function createAccountScreenController({
     els.accountHideThumbnails.checked = Boolean(displayPreferences.hideThumbnails);
     els.accountWatchedUnreadOnly.checked = Boolean(displayPreferences.watchedUnreadOnly);
     els.accountWatchedSort.value = normalizeWatchedSort(displayPreferences.watchedSort);
+    els.accountCommentComposerMode.value = normalizeCommentComposerMode(displayPreferences.commentComposerMode);
     els.accountEmailNotifications.checked = Boolean(notificationPreferences.email ?? settings.emailNotifications);
+    const emailVerified = Boolean(account?.emailVerified);
+    els.accountEmailNotifications.disabled = Boolean(account && !emailVerified);
+    if (account && !emailVerified) {
+      els.accountEmailNotifications.checked = false;
+    }
+    if (els.accountEmailNotificationStatus) {
+      els.accountEmailNotificationStatus.textContent = !account
+        ? 'Thông báo email chỉ hoạt động với tài khoản đã xác nhận email.'
+        : emailVerified
+          ? `Thông báo sẽ gửi tới ${account.email}.`
+          : 'Xác nhận email để bật thông báo email.';
+    }
     els.accountNotifyWatchedThreads.checked = notificationPreferences.watchedThreads !== false;
     els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
     syncBrowserNotificationControls(notificationPreferences);
@@ -83,7 +96,31 @@ export function createAccountScreenController({
       current2FAState();
     }
     renderPasskeys();
+    renderAccountEmailPanel(account);
     renderAccountRecoveryPanel();
+  }
+
+  function renderAccountEmailPanel(account = state.account) {
+    if (!els.accountEmailPanel) {
+      return;
+    }
+    const loggedIn = Boolean(state.accountToken && account);
+    els.accountEmailPanel.classList.toggle('hidden', !loggedIn);
+    if (!loggedIn) {
+      return;
+    }
+    const verified = Boolean(account.emailVerified);
+    const pendingEmail = account.pendingEmail || '';
+    els.accountEmailStatus.textContent = verified
+      ? `Đã xác nhận: ${account.email}`
+      : account.email
+        ? `Chưa xác nhận: ${account.email}. Mã OTP có hiệu lực 15 phút.`
+        : 'Tài khoản chưa có email. Thêm email để dùng khôi phục và thông báo.';
+    els.accountEmailVerifyForm.classList.toggle('hidden', verified || !account.email);
+    els.accountEmailChangeConfirmForm.classList.toggle('hidden', !pendingEmail);
+    if (pendingEmail) {
+      els.accountEmailNewEmail.value = pendingEmail;
+    }
   }
 
   function selectedOptionLabel(selectEl: HTMLSelectElement | null | undefined, fallback: string): string {
@@ -112,6 +149,7 @@ export function createAccountScreenController({
           hideThumbnails: Boolean(els.accountHideThumbnails?.checked),
           watchedUnreadOnly: Boolean(els.accountWatchedUnreadOnly?.checked),
           watchedSortLabel: selectedOptionLabel(els.accountWatchedSort, 'Chưa đọc trước'),
+          commentComposerModeLabel: selectedOptionLabel(els.accountCommentComposerMode, 'Cửa sổ nổi'),
           emailNotifications: Boolean(els.accountEmailNotifications?.checked),
           notifyWatchedThreads: Boolean(els.accountNotifyWatchedThreads?.checked),
           notifyBoardSubscriptions: Boolean(els.accountNotifyBoardSubscriptions?.checked),
@@ -124,16 +162,31 @@ export function createAccountScreenController({
   }
 
   function render2FASection() {
-    if (!els.account2FADisabledSection || !els.account2FASetupSection || !els.account2FAEnabledSection) {
+    if (
+      !els.accountTwoFactorPanel ||
+      !els.account2FADisabledSection ||
+      !els.account2FASetupSection ||
+      !els.account2FAEnabledSection
+    ) {
       return;
     }
     const loggedIn = Boolean(state.accountToken && state.account);
     const enabled = Boolean(state.account?.twoFactorEnabled);
+    els.accountTwoFactorPanel.classList.toggle('hidden', !loggedIn);
     els.account2FADisabledSection.classList.toggle('hidden', !loggedIn || enabled);
     els.account2FASetupSection.classList.add('hidden');
     els.account2FAEnabledSection.classList.toggle('hidden', !loggedIn || !enabled);
     if (els.verify2FACode) {
       els.verify2FACode.value = '';
+    }
+    if (els.qrcodeImage) {
+      els.qrcodeImage.removeAttribute('src');
+    }
+    if (els.manualSecretCode) {
+      els.manualSecretCode.textContent = '';
+    }
+    if (els.backupCodesDisplay) {
+      els.backupCodesDisplay.value = '';
     }
     if (els.disable2FAPassword) {
       els.disable2FAPassword.value = '';
@@ -168,6 +221,7 @@ export function createAccountScreenController({
 
   return {
     fillAccountSettings,
+    renderAccountEmailPanel,
     render2FASection,
     updateAccountNavState,
     syncNotificationSummary

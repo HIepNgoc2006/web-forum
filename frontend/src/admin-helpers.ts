@@ -17,6 +17,7 @@ import {
 } from './admin';
 import { escapeHtml, formatPostDate, moderationConfidenceHtml, moderationLabelText, moderationStatusText, mediaList, mediaToggleHtml } from './format';
 import { moderationPriorityHtml } from './format';
+import { adminCustomStickersHtml } from './admin-stickers';
 import { adminSiteContentHtml } from './site-content';
 import { adminLockButtonHtml, adminStickyButtonHtml, imageHtml, postMediaCount } from './thread';
 
@@ -374,6 +375,9 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
     if (state.adminTab === 'site-content') {
       return '/api/admin/site-content';
     }
+    if (state.adminTab === 'stickers') {
+      return '/api/admin/stickers';
+    }
     if (state.adminTab === 'users') {
       return '/api/admin/users';
     }
@@ -404,6 +408,7 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
     const settingsLikeTab =
       state.adminTab === 'boards' ||
       state.adminTab === 'site-content' ||
+      state.adminTab === 'stickers' ||
       state.adminTab === 'users' ||
       state.adminTab === 'analytics' ||
       state.adminTab === 'health';
@@ -441,6 +446,8 @@ export function createAdminHelpers(dependencies: AdminHelpersDependencies): Admi
     } else if (state.adminTab === 'site-content') {
       const content = Array.isArray(items) ? {} : items || {};
       els.pendingList.innerHTML = adminSiteContentHtml(content);
+    } else if (state.adminTab === 'stickers') {
+      els.pendingList.innerHTML = adminCustomStickersHtml(items);
     } else if (state.adminTab === 'users') {
       els.pendingList.innerHTML = adminUsersHtml(items);
     } else {

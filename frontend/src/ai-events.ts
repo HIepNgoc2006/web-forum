@@ -12,6 +12,8 @@ export function bindAiActionEvents({ els, ai }: AnyRecord) {
   els.threadRewriteButton.addEventListener('click', () => ai.rewriteDraft('thread'));
   els.rewriteButton.addEventListener('click', () => ai.rewriteDraft('comment'));
   els.quickReplyRewriteButton?.addEventListener('click', () => ai.rewriteDraft('quickReply'));
+  els.commentTranslateButton?.addEventListener('click', () => ai.translateDraft('comment'));
+  els.quickReplyTranslateButton?.addEventListener('click', () => ai.translateDraft('quickReply'));
   els.threadCaptionButton?.addEventListener('click', () =>
     ai.captionAttachedImage({ stateKey: 'selectedImage', textarea: els.threadBody, mode: 'describe' })
   );

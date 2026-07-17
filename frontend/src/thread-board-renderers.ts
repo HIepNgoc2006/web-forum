@@ -10,6 +10,7 @@ import {
   renderInlineMarkup,
   renderSpoilerText,
   renderStickerText,
+  renderGifText,
   mediaToggleHtml,
   threadSubjectHtml
 } from './format';
@@ -161,6 +162,7 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
         html = renderInlineMarkup(html);
         html = renderSpoilerText(html);
         html = renderStickerText(html);
+        html = renderGifText(html);
         return `<div class="post-line ${line.type === 'greentext' ? 'greentext' : ''}">${html || '&nbsp;'}</div>`;
       })
       .join('');
@@ -233,7 +235,7 @@ export function createThreadBoardRenderers(dependencies: ThreadBoardRenderDepend
     return `
     <div class="post-meta${compactActions ? ' post-meta-compact' : ''}">
       <span class="post-meta-identity">
-        ${showCheckbox ? `<label class="post-check"><input type="checkbox" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
+        ${showCheckbox ? `<label class="post-check"><input type="checkbox" name="selectedPost" value="${escapeHtml(post.globalNumber)}" aria-label="Chọn bài ${post.globalNumber}"></label>` : ''}
         <span class="name">${escapeHtml(postDisplayName(post))}</span>${post.tripcode ? `<span class="tripcode" title="Tripcode">${escapeHtml(post.tripcode)}</span>` : ''}${capcodeBadgeHtml(post)}
         <span class="date">${formatPostDate(post.createdAt)}</span>
         <span class="post-number"><span class="post-number-prefix">No.</span><a class="number post-number-link" href="${permalink}" data-quick-reply="${post.globalNumber}"${quickReplyThreadAttr} title="Trả lời bài này (No.${post.globalNumber})">${post.globalNumber}</a></span>

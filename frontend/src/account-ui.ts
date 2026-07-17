@@ -80,12 +80,12 @@ export function createAccountUiController({
       <div class="content-filter-manager">
         ${list}
         <div class="content-filter-form">
-          <select data-content-filter-type aria-label="Loại bộ lọc">
+          <select id="accountContentFilterType" name="contentFilterType" data-content-filter-type aria-label="Loại bộ lọc">
             <option value="keyword">Từ khóa</option>
             <option value="poster">Poster ID</option>
           </select>
-          <input data-content-filter-value maxlength="160" placeholder="từ khóa hoặc ID" />
-          <select data-content-filter-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
+          <input id="accountContentFilterValue" name="contentFilterValue" data-content-filter-value maxlength="160" placeholder="từ khóa hoặc ID" aria-label="Giá trị bộ lọc" />
+          <select id="accountContentFilterBoard" name="contentFilterBoard" data-content-filter-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
           <button class="ghost-button" data-add-content-filter type="button">[Thêm]</button>
         </div>
       </div>
@@ -117,9 +117,9 @@ export function createAccountUiController({
       <div class="reply-template-manager">
         ${list}
         <div class="reply-template-form">
-          <input data-reply-template-title maxlength="120" placeholder="tên mẫu" />
-          <select data-reply-template-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
-          <textarea data-reply-template-body maxlength="5000" rows="3" placeholder="nội dung mẫu"></textarea>
+          <input id="accountReplyTemplateTitle" name="replyTemplateTitle" data-reply-template-title maxlength="120" placeholder="tên mẫu" aria-label="Tên mẫu trả lời" />
+          <select id="accountReplyTemplateBoard" name="replyTemplateBoard" data-reply-template-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
+          <textarea id="accountReplyTemplateBody" name="replyTemplateBody" data-reply-template-body maxlength="5000" rows="3" placeholder="nội dung mẫu" aria-label="Nội dung mẫu trả lời"></textarea>
           <button class="ghost-button" data-add-reply-template type="button">[Thêm]</button>
         </div>
       </div>
@@ -151,10 +151,10 @@ export function createAccountUiController({
       <div class="poster-note-manager">
         ${list}
         <div class="poster-note-form">
-          <input data-poster-note-id maxlength="80" placeholder="ID:ABCD1234" />
-          <input data-poster-note-label maxlength="120" placeholder="nhãn ngắn" />
-          <select data-poster-note-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
-          <input data-poster-note-text maxlength="500" placeholder="ghi chú" />
+          <input id="accountPosterNoteId" name="posterNoteId" data-poster-note-id maxlength="80" placeholder="ID:ABCD1234" aria-label="Poster ID" />
+          <input id="accountPosterNoteLabel" name="posterNoteLabel" data-poster-note-label maxlength="120" placeholder="nhãn ngắn" aria-label="Nhãn ghi chú Poster ID" />
+          <select id="accountPosterNoteBoard" name="posterNoteBoard" data-poster-note-board aria-label="Phạm vi bảng">${privateBoardOptions()}</select>
+          <input id="accountPosterNoteText" name="posterNoteText" data-poster-note-text maxlength="500" placeholder="ghi chú" aria-label="Ghi chú Poster ID" />
           <button class="ghost-button" data-add-poster-note type="button">[Thêm]</button>
         </div>
       </div>
@@ -172,7 +172,7 @@ export function createAccountUiController({
       String(a).localeCompare(String(b))
     );
     const knownThreads = Array.isArray(state.boardThreads) ? state.boardThreads : [];
-    const threadMetaById = new Map(
+    const threadMetaById = new Map<string, AnyRecord>(
       knownThreads.map((thread: AnyRecord) => [String(thread.id || ''), thread])
     );
     const loggedIn = Boolean(state.accountToken && state.account);
@@ -318,7 +318,7 @@ export function createAccountUiController({
       state.account = account;
       applyAccountSyncedSettings(account);
       updateAccountNav();
-      await loadAccountPrivateData({ mergeLocal: true });
+      await loadAccountPrivateData();
       await refreshAccountPostNumbers();
       return account;
     } catch {
@@ -344,7 +344,7 @@ export function createAccountUiController({
       await loadAccountSession();
     }
     if (state.account && state.accountToken && !state.accountPrivateData) {
-      await loadAccountPrivateData({ mergeLocal: true });
+      await loadAccountPrivateData();
     }
     fillAccountSettings();
     window.scrollTo({ top: 0 });
@@ -358,7 +358,14 @@ export function createAccountUiController({
     els.accountRecoveryPanel.classList.toggle('hidden', !loggedIn);
     els.recoveryCodeResult.classList.add('hidden');
     els.recoveryCodeResultValue.textContent = '';
+    els.recoveryEmailRequestForm?.classList.toggle('hidden', !loggedIn || !state.account?.emailVerified);
+    els.recoveryEmailConfirmForm?.classList.add('hidden');
+    if (els.recoveryEmailCode) {
+      els.recoveryEmailCode.value = '';
+    }
     setFormError(els.recoveryCodeError);
+    setFormError(els.recoveryEmailRequestError);
+    setFormError(els.recoveryEmailConfirmError);
   }
 
   return {

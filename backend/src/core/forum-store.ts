@@ -39,6 +39,7 @@ export type ForumStore = {
   type?: string;
   read(): Promise<ForumState>;
   write(nextState: unknown): Promise<ForumState>;
+  withMutationLock?<T>(callback: () => Promise<T>): Promise<T>;
   health?(): Promise<StoreHealth>;
   close?(): Promise<void>;
 };
@@ -137,7 +138,7 @@ export function createJsonStore(filePath = path.resolve('data/forum.json')): For
         await fs.writeFile(filePath, JSON.stringify(normalized, null, 2));
         return normalizeState(normalized);
       });
-      queue = writeJob;
+      queue = writeJob.then(() => undefined, () => undefined);
       return writeJob;
     },
     async health() {

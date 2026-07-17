@@ -16,8 +16,7 @@ type ThreadEventDependencies = {
   loadCatalog: () => Promise<any>;
   loadArchive: () => Promise<any>;
   refreshCurrentScreen: () => Promise<any>;
-  openQuickReply: (number: string, event: PointerEvent, options?: AnyRecord) => void;
-  openReplyComposer: (options?: AnyRecord) => void;
+  openReplyComposer: (options?: AnyRecord) => string | void;
   updatePrivacyWarning: (value: string, warningElement: Element | null) => void;
   selfDeletePost: (globalNumber: string, options?: AnyRecord) => Promise<any>;
   selfEditPost: (globalNumber: string, currentBody?: string) => Promise<any>;
@@ -88,7 +87,6 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
     loadCatalog,
     loadArchive,
     refreshCurrentScreen,
-    openQuickReply,
     openReplyComposer,
     updatePrivacyWarning,
     selfDeletePost,
@@ -175,11 +173,14 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
     const boardReplyButton = target.closest('[data-board-reply]');
     if (boardReplyButton) {
       event.preventDefault();
-      openQuickReply(boardReplyButton.dataset.boardReplyNumber, event as PointerEvent, {
+      openReplyComposer({
+        number: boardReplyButton.dataset.boardReplyNumber,
+        event,
         threadId: boardReplyButton.dataset.boardReply,
         isLocked: boardReplyButton.dataset.boardReplyLocked === '1',
         isArchived: boardReplyButton.dataset.boardReplyArchived === '1',
-        fromBoard: true
+        fromBoard: true,
+        inlineTarget: boardReplyButton.closest('.thread')
       });
       return;
     }
@@ -201,10 +202,13 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
       const selectedQuote = selectedPostQuoteText(
         quickReplyNumber.closest('.post, .thread-op, article.reply-preview')
       );
-      openQuickReply(quickReplyNumber.dataset.quickReply, event as PointerEvent, {
+      openReplyComposer({
+        number: quickReplyNumber.dataset.quickReply,
+        event,
         selectedQuote,
         threadId: boundThreadId || undefined,
-        fromBoard: onBoard || Boolean(boundThreadId && !String(window.location.hash || '').startsWith('#thread/'))
+        fromBoard: onBoard || Boolean(boundThreadId && !String(window.location.hash || '').startsWith('#thread/')),
+        inlineTarget: quickReplyNumber.closest('.post, .thread-op, article.reply-preview')
       });
       return;
     }
@@ -371,8 +375,10 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
 
     const replyLink = target.closest('[data-open-reply]');
     if (replyLink) {
-      openReplyComposer();
-      els.replyComposer.scrollIntoView({ block: 'center' });
+      const mode = openReplyComposer({ event });
+      if (mode === 'normal') {
+        els.replyComposer.scrollIntoView({ block: 'center' });
+      }
       return;
     }
 
@@ -651,17 +657,19 @@ export function bindThreadEvents(dependencies: ThreadEventDependencies) {
 
     const quoteButton = target.closest('[data-quote]');
     if (quoteButton) {
-      // 4chan-style floating quick-reply window instead of the bottom form.
       const quoteMatch = String(quoteButton.dataset.quote || '').match(/(\d+)/);
       const quoteNumber = quoteMatch?.[1] || '';
       if (!quoteNumber) {
         return;
       }
       const selectedQuote = selectedPostQuoteText(quoteButton.closest('.post, .thread-op, article.reply-preview'));
-      openQuickReply(quoteNumber, event as PointerEvent, {
+      openReplyComposer({
+        number: quoteNumber,
+        event,
         selectedQuote,
         threadId: quoteButton.dataset.quickReplyThread || undefined,
-        fromBoard: (window.location.hash || '').startsWith('#board/')
+        fromBoard: (window.location.hash || '').startsWith('#board/'),
+        inlineTarget: quoteButton.closest('.post, .thread-op, article.reply-preview')
       });
       return;
     }

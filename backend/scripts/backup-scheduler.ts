@@ -49,6 +49,7 @@ Options:
   --s3-region <region>        S3 region (default: S3_REGION or auto)
   --s3-bucket <bucket>        S3 bucket
   --s3-key-prefix <prefix>    S3 key prefix (default: S3_KEY_PREFIX or uploads)
+  --s3-backup-confirmed       Confirm provider versioning/export protects S3 upload bytes
   -h, --help                  Show this help`;
 }
 
@@ -96,7 +97,9 @@ export function parseBackupArgs(argv = process.argv, env = process.env) {
       accessKeyId: readOption(argv, '--s3-access-key-id', env.S3_ACCESS_KEY_ID),
       secretAccessKey: readOption(argv, '--s3-secret-access-key', env.S3_SECRET_ACCESS_KEY),
       publicBaseUrl: readOption(argv, '--s3-public-base-url', env.S3_PUBLIC_BASE_URL),
-      keyPrefix: readOption(argv, '--s3-key-prefix', env.S3_KEY_PREFIX ?? 'uploads')
+      keyPrefix: readOption(argv, '--s3-key-prefix', env.S3_KEY_PREFIX ?? 'uploads'),
+      backupConfirmed: argv.includes('--s3-backup-confirmed')
+        || String(env.S3_BACKUP_CONFIRMED ?? '').toLowerCase() === 'true'
     }
   };
 }
@@ -192,6 +195,10 @@ if (process.argv[1] === scriptPath) {
   try {
     await runBackupCommand(parseBackupArgs());
   } catch (error) {
+    const result = (error as Error & { result?: unknown }).result;
+    if (result) {
+      console.error(JSON.stringify(result, null, 2));
+    }
     console.error(error instanceof Error ? error.message : error);
     process.exitCode = 1;
   }

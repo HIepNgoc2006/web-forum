@@ -1,11 +1,16 @@
 import { api } from './api';
 import { els } from './dom';
-import { updatePrivacyWarning } from './composer';
+import {
+  scrollComposerDraft,
+  updateDraftMeter,
+  updatePrivacyWarning
+} from './composer';
 import {
   AI_SPEAK_TIMEOUT_MS,
   AI_TRANSCRIBE_TIMEOUT_MS,
   AI_TTS_PROVIDER_COOLDOWN_MS,
   DEFAULT_SPEECH_STT_LANG,
+  DRAFT_MAX_CHARS,
   SPEECH_STT_LANGUAGES,
   SPEECH_STT_LANG_KEY,
   aiNotConfiguredMessage
@@ -99,6 +104,24 @@ export function createAiActions({
     }
   }
 
+  function draftMeterFor(textarea) {
+    if (textarea === els.quickReplyBody) {
+      return els.quickReplyDraftMeter;
+    }
+    if (textarea === els.commentBody) {
+      return els.commentDraftMeter;
+    }
+    return null;
+  }
+
+  function refreshDraftChrome(textarea) {
+    if (!textarea) {
+      return;
+    }
+    updateDraftMeter(textarea, draftMeterFor(textarea));
+    scrollComposerDraft(textarea);
+  }
+
   async function rewriteDraft(target) {
     if (!state.aiConfigured) {
       showToast(aiNotConfiguredMessage);
@@ -151,8 +174,75 @@ export function createAiActions({
       if (label) {
         label.classList.remove('hidden');
       }
+      refreshDraftChrome(textarea);
       textarea.focus();
       showToast('Đã điền bản viết lại vào nháp. Kiểm tra trước khi gửi.');
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      restoreButton();
+    }
+  }
+
+  async function translateDraft(target) {
+    const translateTargets: AnyRecord = {
+      comment: {
+        textarea: els.commentBody,
+        warningBox: els.commentPrivacyWarning,
+        button: els.commentTranslateButton,
+        langSelect: els.commentTranslateTarget
+      },
+      quickReply: {
+        textarea: els.quickReplyBody,
+        warningBox: els.quickReplyPrivacyWarning,
+        button: els.quickReplyTranslateButton,
+        langSelect: els.quickReplyTranslateTarget
+      }
+    };
+    const config = translateTargets[target] || translateTargets.quickReply;
+    const { textarea, warningBox, button, langSelect } = config;
+    if (!textarea) {
+      return;
+    }
+    const text = textarea.value.trim();
+    if (!text) {
+      showToast('Chưa có nội dung để dịch.');
+      return;
+    }
+    const targetLang =
+      langSelect?.value ||
+      els.translateTarget?.value ||
+      (target === 'comment' ? 'en' : 'en');
+    const restoreButton = setButtonLoading(button, 'Đang dịch...');
+    try {
+      const result = await api('/api/ai/translate', {
+        method: 'POST',
+        body: JSON.stringify({ text, targetLang, posterToken: state.posterToken })
+      });
+      const next = String(result.text || '').trim();
+      if (!next) {
+        showToast('Không nhận được bản dịch.');
+        return;
+      }
+      const original = String(textarea.value || '');
+      const separator = original.endsWith('\n\n') ? '' : original.endsWith('\n') ? '\n' : '\n\n';
+      const availableChars = DRAFT_MAX_CHARS - original.length - separator.length;
+      if (availableChars <= 0) {
+        showToast(`Nháp đã đạt giới hạn ${DRAFT_MAX_CHARS} ký tự, không thể thêm bản dịch.`);
+        return;
+      }
+      const appendedTranslation = next.slice(0, availableChars);
+      textarea.value = `${original}${separator}${appendedTranslation}`;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      updatePrivacyWarning(textarea.value, warningBox);
+      refreshDraftChrome(textarea);
+      textarea.focus();
+      const translatedLang = result.targetLang || targetLang;
+      showToast(
+        appendedTranslation.length < next.length
+          ? `Đã thêm một phần bản dịch ${translatedLang} bên dưới do giới hạn ký tự.`
+          : `Đã thêm bản dịch ${translatedLang} bên dưới nháp. Kiểm tra trước khi gửi.`
+      );
     } catch (error) {
       showToast(error.message);
     } finally {
@@ -348,8 +438,10 @@ export function createAiActions({
 
   function appendDraftText(textarea, text) {
     const prefix = textarea.value.trim() ? `${textarea.value.trim()}\n` : '';
-    textarea.value = `${prefix}${text}`;
+    const next = `${prefix}${text}`;
+    textarea.value = next.slice(0, DRAFT_MAX_CHARS);
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    refreshDraftChrome(textarea);
     textarea.focus();
   }
 
@@ -537,7 +629,7 @@ export function createAiActions({
     button.setAttribute('aria-pressed', recording || transcribing ? 'true' : 'false');
     button.disabled = false;
     button.textContent =
-      stateName === 'recording' ? '[Dừng nói]' : stateName === 'transcribing' ? '[Dừng chép]' : '[Nói]';
+      stateName === 'recording' ? 'Dừng nói' : stateName === 'transcribing' ? 'Dừng chép' : 'Nói';
   }
 
   function stopActiveSpeechRecognition(key, { abort = false } = {}) {
@@ -559,8 +651,11 @@ export function createAiActions({
   }
 
   function speechErrorMessage(code: string) {
-    if (code === 'not-allowed' || code === 'service-not-allowed') {
-      return 'Bạn chưa cấp quyền microphone hoặc trình duyệt chặn nhận dạng giọng nói.';
+    if (code === 'not-allowed') {
+      return 'Trình duyệt chặn microphone trên site này (kiểm tra quyền site + Permissions-Policy).';
+    }
+    if (code === 'service-not-allowed') {
+      return 'Trình duyệt chặn dịch vụ nhận dạng giọng nói. Dùng Chrome/Edge (HTTPS) hoặc tải file audio để chép.';
     }
     if (code === 'audio-capture') {
       return 'Không tìm thấy microphone.';
@@ -574,7 +669,7 @@ export function createAiActions({
     if (code === 'no-speech') {
       return 'Không nghe thấy giọng nói. Thử nói lại.';
     }
-    return 'Nhận dạng giọng nói thất bại.';
+    return code ? `Nhận dạng giọng nói thất bại (${code}).` : 'Nhận dạng giọng nói thất bại.';
   }
 
   function toggleAudioRecording({ key, button, textarea, langSelect }: AnyRecord = {}) {
@@ -616,7 +711,8 @@ export function createAiActions({
       intentionallyStopped: false,
       committed: String(textarea?.value || ''),
       finals: '',
-      interim: ''
+      interim: '',
+      charLimitNotified: false
     };
 
     const paintDraft = () => {
@@ -625,20 +721,39 @@ export function createAiActions({
       }
       const base = session.committed;
       const spoken = `${session.finals}${session.interim}`;
-      if (!spoken) {
-        textarea.value = base;
-      } else if (!base.trim()) {
-        textarea.value = spoken.trimStart();
-      } else {
-        const sep = /\s$/.test(base) || /^\s/.test(spoken) ? '' : ' ';
-        textarea.value = `${base}${sep}${spoken}`;
+      let next = !spoken
+        ? base
+        : !base.trim()
+          ? spoken.trimStart()
+          : `${base}${/\s$/.test(base) || /^\s/.test(spoken) ? '' : ' '}${spoken}`;
+      if (next.length > DRAFT_MAX_CHARS) {
+        next = next.slice(0, DRAFT_MAX_CHARS);
+        session.intentionallyStopped = true;
+        if (!session.charLimitNotified) {
+          session.charLimitNotified = true;
+          showToast(`Đã đạt ${DRAFT_MAX_CHARS} ký tự — dừng nhận dạng.`);
+          try {
+            recognition.stop();
+          } catch {
+            // Recognition may already be ending.
+          }
+        }
+      }
+      textarea.value = next;
+      try {
+        const end = next.length;
+        textarea.setSelectionRange(end, end);
+      } catch {
+        // Ignore selection errors.
       }
       textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      refreshDraftChrome(textarea);
     };
 
     recognition.onstart = () => {
       postponeAutoUpdateForAudio();
       setRecordButtonState(button, 'recording');
+      refreshDraftChrome(textarea);
     };
 
     recognition.onresult = (event) => {
@@ -714,6 +829,7 @@ export function createAiActions({
     captionAttachedImage,
     initSpeechLangSelects,
     loadSuggestions,
+    refreshDraftChrome,
     rewriteDraft,
     setRecordButtonState,
     showSummary,
@@ -721,6 +837,7 @@ export function createAiActions({
     syncSpeechLangSelects,
     toggleAudioRecording,
     transcribeAudioFile,
+    translateDraft,
     translatePost
   };
 }

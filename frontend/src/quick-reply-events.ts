@@ -35,6 +35,13 @@ export function bindQuickReplyEvents({ els, state, closeQuickReply, win = window
   win.addEventListener('mouseup', () => {
     state.quickReplyDrag = null;
   });
+  win.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || els.quickReply.classList.contains('hidden')) {
+      return;
+    }
+    event.preventDefault();
+    closeQuickReply();
+  });
   // Keep sheet anchored if the user rotates or resizes into the phone breakpoint.
   win.addEventListener('resize', () => {
     if (els.quickReply?.classList?.contains('hidden')) {

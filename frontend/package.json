@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "test": "node --test test/poll-options.test.ts test/comment-composer-mode.test.ts test/comment-draft.test.ts test/router.test.ts test/media-tokens.test.ts",
     "build": "vite build",
     "lint": "eslint --flag unstable_native_nodejs_ts_config .",
     "preview": "vite preview",

@@ -11,7 +11,8 @@ export function bindAccountPasskeyEvents({
   showToast,
   setFormError,
   setButtonLoading,
-  finishAccountLogin
+  finishAccountLogin,
+  setAccountSession
 }: AnyRecord) {
   async function renderPasskeys() {
     if (!els.accountPasskeysPanel || !els.accountPasskeysList) {
@@ -59,11 +60,14 @@ export function bindAccountPasskeyEvents({
 
       const attestationResponse = await startRegistration(options);
 
-      await api('/api/account/passkeys/register-verify', {
+      const result = await api('/api/account/passkeys/register-verify', {
         auth: 'account',
         method: 'POST',
         body: JSON.stringify(attestationResponse)
       });
+      if (result.token) {
+        setAccountSession({ token: result.token, account: result.account || state.account });
+      }
 
       showToast('Đăng ký thiết bị xác thực (Passkey) thành công!');
       await renderPasskeys();
@@ -128,10 +132,13 @@ export function bindAccountPasskeyEvents({
       }
       return (async () => {
         try {
-          await api(`/api/account/passkeys/${encodeURIComponent(credentialId)}`, {
+          const result = await api(`/api/account/passkeys/${encodeURIComponent(credentialId)}`, {
             auth: 'account',
             method: 'DELETE'
           });
+          if (result.token) {
+            setAccountSession({ token: result.token, account: result.account || state.account });
+          }
           showToast('Đã xóa Passkey.');
           await renderPasskeys();
         } catch (error) {
@@ -201,11 +208,15 @@ export function bindAdminPasskeyEvents({
 
       const attestationResponse = await startRegistration(options);
 
-      await api('/api/account/passkeys/register-verify', {
+      const result = await api('/api/account/passkeys/register-verify', {
         auth: 'admin',
         method: 'POST',
         body: JSON.stringify(attestationResponse)
       });
+      if (result.token) {
+        state.token = result.token;
+        writeAdminToken(result.token);
+      }
 
       showToast('Đăng ký Passkey quản trị thành công!');
       await renderAdminPasskeys();
@@ -277,10 +288,14 @@ export function bindAdminPasskeyEvents({
       }
       return (async () => {
         try {
-          await api(`/api/account/passkeys/${encodeURIComponent(credentialId)}`, {
+          const result = await api(`/api/account/passkeys/${encodeURIComponent(credentialId)}`, {
             auth: 'admin',
             method: 'DELETE'
           });
+          if (result.token) {
+            state.token = result.token;
+            writeAdminToken(result.token);
+          }
           showToast('Đã xóa Passkey.');
           await renderAdminPasskeys();
         } catch (error) {
@@ -302,7 +317,8 @@ export function bindAccountTwoFactorEvents({
   state,
   api,
   showToast,
-  render2FAState
+  render2FAState,
+  setAccountSession
 }: AnyRecord) {
   async function start2FASetup() {
     try {
@@ -311,6 +327,7 @@ export function bindAccountTwoFactorEvents({
         method: 'POST'
       });
       els.qrcodeImage.src = data.qrCodeUrl;
+      els.manualSecretCode.textContent = data.secret;
       els.backupCodesDisplay.value = data.backupCodes.join('\n');
       els.account2FADisabledSection.classList.add('hidden');
       els.account2FASetupSection.classList.remove('hidden');
@@ -332,7 +349,8 @@ export function bindAccountTwoFactorEvents({
         method: 'POST',
         body: JSON.stringify({ code })
       });
-      state.account = result.account || { ...state.account, twoFactorEnabled: true };
+      const account = result.account || { ...state.account, twoFactorEnabled: true };
+      setAccountSession({ token: result.token || state.accountToken, account });
       showToast('Kích hoạt bảo mật 2 lớp (2FA) thành công!');
       render2FAState();
     } catch (error) {
@@ -355,7 +373,8 @@ export function bindAccountTwoFactorEvents({
         method: 'POST',
         body: JSON.stringify({ password })
       });
-      state.account = result.account || { ...state.account, twoFactorEnabled: false };
+      const account = result.account || { ...state.account, twoFactorEnabled: false };
+      setAccountSession({ token: result.token || state.accountToken, account });
       showToast('Đã tắt bảo mật 2 lớp (2FA).');
       render2FAState();
     } catch (error) {

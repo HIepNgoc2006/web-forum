@@ -743,7 +743,18 @@ export function csvEscape(value = '') {
 }
 
 export function postSubmitToast(result, publishedMessage, pendingMessage) {
-  const baseMessage = result.status === 'pending' ? pendingMessage : publishedMessage;
+  const isPending = result.status === 'pending';
+  const post = result.thread || result.comment || {};
+  const moderationLabels = Array.isArray(post.moderationLabels)
+    ? [...new Set(post.moderationLabels.filter(Boolean).map(moderationLabelText))]
+    : [];
+  const postType = result.thread ? 'Chủ đề' : 'Bình luận';
+  const moderationReason = moderationLabels.length
+    ? `Bộ lọc chống spam/AI đã gắn cờ: ${moderationLabels.join(', ')}.`
+    : 'Bộ lọc chống spam/AI đã gắn cờ nội dung.';
+  const baseMessage = isPending
+    ? `${postType} chưa thể hiển thị. ${moderationReason} ${pendingMessage}`
+    : publishedMessage;
   if (result.appealToken) {
     return `${baseMessage} Mã kháng nghị: ${result.appealToken}`;
   }

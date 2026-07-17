@@ -73,13 +73,6 @@ export const THREAD_TEMPLATES = [
 
 export const WATCHED_THREAD_SORTS = new Set(['unread', 'recent', 'board']);
 
-export const STICKERS = {
-  cheer: { icon: '🎉', label: 'Cổ vũ' },
-  panic: { icon: '😱', label: 'Hoảng' },
-  study: { icon: '📚', label: 'Học' },
-  thanks: { icon: '🙏', label: 'Cảm ơn' }
-};
-
 export const POST_REACTIONS = [
   { type: 'like', icon: '👍', label: 'Thích' },
   { type: 'laugh', icon: '😂', label: 'Cười' },
@@ -117,6 +110,8 @@ export const SPEECH_STT_LANGUAGES = [
 export const SPEECH_STT_LANG_KEY = 'speechSttLang';
 
 export const DEFAULT_SPEECH_STT_LANG = 'vi-VN';
+
+export const DRAFT_MAX_CHARS = 5000;
 
 export const AI_TRANSCRIBE_TIMEOUT_MS = 60_000;
 

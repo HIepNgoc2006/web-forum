@@ -31,6 +31,7 @@ export function createThreadLoadController(dependencies: AnyRecord) {
     setupRealtime,
     closeReplyComposer = () => {},
     syncReplyComposer = () => {},
+    prepareReplyComposerForThreadRender = () => () => {},
     syncThreadMediaToolbarState = () => {},
     syncThreadPostCollapseToolbarState = () => {},
     resetAutoUpdateTimer = () => {}
@@ -41,6 +42,7 @@ export function createThreadLoadController(dependencies: AnyRecord) {
     focusPost = '',
     preserveScroll = false
   }: AnyRecord = {}) {
+    const restoreReplyComposerAfterRender = prepareReplyComposerForThreadRender();
     setScreen('thread');
     els.threadSummary.classList.add('hidden');
     const scrollY = preserveScroll ? window.scrollY : null;
@@ -145,6 +147,7 @@ export function createThreadLoadController(dependencies: AnyRecord) {
       })}
     </div>
   `;
+    syncReplyComposer();
     els.threadPagination.innerHTML = pageControlsHtml(state.threadCommentPageMeta, 'thread-comments');
     syncThreadMediaToolbarState();
     const focusedPost = requestedPost;
@@ -155,6 +158,7 @@ export function createThreadLoadController(dependencies: AnyRecord) {
     }
     syncThreadPostCollapseToolbarState();
     resetAutoUpdateTimer();
+    restoreReplyComposerAfterRender();
   }
 
   return {

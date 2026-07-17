@@ -70,6 +70,8 @@ export function createAccountPreferencesController({
     const safe = writeLocalDisplayPreferences(preferences);
     document.body.classList.toggle('display-compact', safe.compactThreads);
     document.body.classList.toggle('display-hide-thumbnails', safe.hideThumbnails);
+    document.body.classList.toggle('comment-composer-floating', safe.commentComposerMode === 'floating');
+    document.body.classList.toggle('comment-composer-normal', safe.commentComposerMode === 'normal');
     if (els?.accountCompactThreads) {
       els.accountCompactThreads.checked = safe.compactThreads;
     }
@@ -81,6 +83,9 @@ export function createAccountPreferencesController({
     }
     if (els?.accountWatchedSort) {
       els.accountWatchedSort.value = safe.watchedSort;
+    }
+    if (els?.accountCommentComposerMode) {
+      els.accountCommentComposerMode.value = safe.commentComposerMode;
     }
     syncWatchedControls({ unreadOnly: safe.watchedUnreadOnly });
     return safe;
@@ -108,14 +113,18 @@ export function createAccountPreferencesController({
     );
     els.accountBoardSubscriptions.innerHTML = state.boards
       .map(
-        (board) => `
-        <label>
-          <input type="checkbox" value="${escapeHtml(board.slug)}" data-account-board-subscription ${
+        (board) => {
+          const safeSlug = escapeHtml(board.slug);
+          const inputId = `accountBoardSubscription-${safeSlug}`;
+          return `
+        <label for="${inputId}">
+          <input id="${inputId}" name="boardSubscriptions" type="checkbox" value="${safeSlug}" data-account-board-subscription ${
             selected.has(board.slug) ? 'checked' : ''
           } />
           ${escapeHtml(board.path)} ${escapeHtml(board.name)}
         </label>
-      `
+      `;
+        }
       )
       .join('');
   }

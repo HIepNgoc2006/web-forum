@@ -27,6 +27,7 @@ type WithServerOptions = {
   store?: unknown;
   now?: () => Date;
   imageStorage?: unknown;
+  emailClient?: unknown;
   uploadRoot?: string;
   staticRoot?: string;
   jwtSecret?: string;
@@ -86,6 +87,25 @@ const flaggedAi = {
   }
 };
 
+function createCapturingEmailClient() {
+  const messages: Array<{ to: string; subject: string; text: string; html?: string }> = [];
+  return {
+    type: 'test',
+    configured: true,
+    messages,
+    async send(message) {
+      messages.push(message);
+      return { id: `email-${messages.length}` };
+    }
+  };
+}
+
+function latestEmailCode(emailClient: ReturnType<typeof createCapturingEmailClient>) {
+  const match = emailClient.messages.at(-1)?.subject.match(/(\d{6})$/);
+  assert.ok(match);
+  return match[1];
+}
+
 async function withServer(
   callback: (baseUrl: string) => Promise<void>,
   {
@@ -93,6 +113,7 @@ async function withServer(
     store = createMemoryStore(),
     now = () => new Date('2026-05-22T08:00:00.000Z'),
     imageStorage,
+    emailClient,
     uploadRoot = path.resolve('data/uploads-test'),
     staticRoot,
     jwtSecret = 'secret',
@@ -108,7 +129,8 @@ async function withServer(
     ai,
     realtime,
     now,
-    imageStorage
+    imageStorage,
+    emailClient
   } as Parameters<typeof createForumService>[0]);
   const server = createHttpServer({
     service,
@@ -573,10 +595,10 @@ test('http admin role demotion and disable affect existing tokens', async () => 
       assert.equal(created.status, 201);
       assert.equal(beforeDemotion.status, 200);
       assert.equal(demoted.status, 200);
-      assert.equal(afterDemotionWrite.status, 403);
-      assert.equal(afterDemotionRead.status, 200);
+      assert.equal(afterDemotionWrite.status, 401);
+      assert.equal(afterDemotionRead.status, 401);
       assert.equal(disabled.status, 200);
-      assert.equal(afterDisableRead.status, 403);
+      assert.equal(afterDisableRead.status, 401);
       assert.equal(disabledLogin.status, 403);
     },
     { ai: flaggedAi }
@@ -629,6 +651,64 @@ test('http static serving treats missing assets as 404 without 500 logging', asy
   } finally {
     console.error = originalError;
     console.warn = originalWarn;
+    await fs.rm(staticRoot, { recursive: true, force: true });
+  }
+});
+
+test('http embeds a one-read home snapshot into the initial document', async () => {
+  const staticRoot = path.resolve('backend/test/tmp-home-static');
+  const store = createMemoryStore();
+  const seedService = createForumService({
+    store,
+    ai: safeAi,
+    realtime: { publish() {} },
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  } as Parameters<typeof createForumService>[0]);
+  await seedService.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Cold start home thread',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.20'
+  } as Parameters<typeof seedService.createThread>[0]);
+
+  const originalRead = store.read.bind(store);
+  let reads = 0;
+  store.read = async () => {
+    reads += 1;
+    return originalRead();
+  };
+
+  try {
+    await fs.rm(staticRoot, { recursive: true, force: true });
+    await fs.mkdir(staticRoot, { recursive: true });
+    await fs.writeFile(
+      path.join(staticRoot, 'index.html'),
+      '<!doctype html><title>36chan</title><script id="initialHomeSnapshot" type="application/json">null</script>'
+    );
+
+    await withServer(
+      async (baseUrl) => {
+        const pageResponse = await fetch(`${baseUrl}/`);
+        const pageBody = await pageResponse.text();
+        const embeddedMatch = pageBody.match(
+          /<script id="initialHomeSnapshot" type="application\/json">([\s\S]*?)<\/script>/
+        );
+        assert.equal(pageResponse.status, 200);
+        assert.ok(embeddedMatch);
+        const embedded = JSON.parse(embeddedMatch[1]);
+        assert.equal(embedded.boardPostCounts['hoc-tap'], 1);
+        assert.equal(embedded.popularThreads[0].body, 'Cold start home thread');
+        assert.equal(embedded.latestPosts[0].body, 'Cold start home thread');
+
+        const apiResponse = await fetch(`${baseUrl}/api/home`);
+        const apiBody = await readJson(apiResponse);
+        assert.equal(apiResponse.status, 200);
+        assert.deepEqual(apiBody.data, embedded);
+        assert.equal(reads, 1);
+      },
+      { staticRoot, store, now: () => new Date('2026-05-22T08:00:00.000Z') }
+    );
+  } finally {
     await fs.rm(staticRoot, { recursive: true, force: true });
   }
 });
@@ -1124,7 +1204,8 @@ test('http account api registers, logs in and saves private settings', async () 
             compactThreads: true,
             hideThumbnails: false,
             watchedUnreadOnly: true,
-            watchedSort: 'recent'
+            watchedSort: 'recent',
+            commentComposerMode: 'normal'
           },
           notificationPreferences: {
             email: true,
@@ -1141,15 +1222,16 @@ test('http account api registers, logs in and saves private settings', async () 
     assert.equal(settingsBody.data.settings.theme, 'burichan');
     assert.equal(settingsBody.data.settings.homeBoard, 'hoc-tap');
     assert.equal(settingsBody.data.settings.syncDrafts, false);
-    assert.equal(settingsBody.data.settings.emailNotifications, true);
+    assert.equal(settingsBody.data.settings.emailNotifications, false);
     assert.deepEqual(settingsBody.data.settings.displayPreferences, {
       compactThreads: true,
       hideThumbnails: false,
       watchedUnreadOnly: true,
-      watchedSort: 'recent'
+      watchedSort: 'recent',
+      commentComposerMode: 'normal'
     });
     assert.deepEqual(settingsBody.data.settings.notificationPreferences, {
-      email: true,
+      email: false,
       watchedThreads: false,
       boardSubscriptions: true,
       browserWatchedThreads: true
@@ -1177,6 +1259,140 @@ test('http account api registers, logs in and saves private settings', async () 
     });
     assert.equal(revokedMe.status, 401);
   });
+});
+
+test('http account email verification keeps login immediate and enables email password reset', async () => {
+  const emailClient = createCapturingEmailClient();
+  await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        username: 'email_user',
+        email: 'student@example.com',
+        password: 'long-enough-pass',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const registeredBody = await readJson(registered);
+    assert.equal(registered.status, 201);
+    assert.equal(registeredBody.data.account.emailVerified, false);
+    assert.equal(registeredBody.data.verificationEmailSent, true);
+
+    const immediateLogin = await fetch(`${baseUrl}/api/account/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'email_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    assert.equal(immediateLogin.status, 200);
+
+    const verified = await fetch(`${baseUrl}/api/account/email/verify`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${registeredBody.data.token}`
+      },
+      body: JSON.stringify({ code: latestEmailCode(emailClient) })
+    });
+    const verifiedBody = await readJson(verified);
+    assert.equal(verified.status, 200);
+    assert.equal(verifiedBody.data.emailVerified, true);
+
+    const requested = await fetch(`${baseUrl}/api/account/password-reset/email/request`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ identifier: 'student@example.com', captchaToken: 'dev-pass' })
+    });
+    const requestedBody = await readJson(requested);
+    assert.equal(requested.status, 200);
+    assert.equal(requestedBody.data.ok, true);
+
+    const reset = await fetch(`${baseUrl}/api/account/password-reset/email/confirm`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        identifier: 'student@example.com',
+        code: latestEmailCode(emailClient),
+        newPassword: 'new-email-pass12',
+        captchaToken: 'dev-pass'
+      })
+    });
+    const resetBody = await readJson(reset);
+    assert.equal(reset.status, 200);
+    assert.match(resetBody.data.recoveryCode, /^[A-Z0-9-]+$/);
+
+    const staleSession = await fetch(`${baseUrl}/api/account/me`, {
+      headers: { authorization: `Bearer ${registeredBody.data.token}` }
+    });
+    assert.equal(staleSession.status, 401);
+
+    const relogin = await fetch(`${baseUrl}/api/account/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'email_user', password: 'new-email-pass12', captchaToken: 'dev-pass' })
+    });
+    assert.equal(relogin.status, 200);
+  }, { emailClient });
+});
+
+test('http security changes rotate auth epoch and return a replacement session', async () => {
+  await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'epoch_user', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    const registeredBody = await readJson(registered);
+    const oldToken = registeredBody.data.token;
+
+    const rotated = await fetch(`${baseUrl}/api/account/recovery-code`, {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${oldToken}`
+      },
+      body: JSON.stringify({ password: 'long-enough-pass' })
+    });
+    const rotatedBody = await readJson(rotated);
+    assert.equal(rotated.status, 200);
+    assert.equal(typeof rotatedBody.data.token, 'string');
+    assert.equal(rotatedBody.data.account.authEpoch, 1);
+
+    const staleSession = await fetch(`${baseUrl}/api/account/me`, {
+      headers: { authorization: `Bearer ${oldToken}` }
+    });
+    assert.equal(staleSession.status, 401);
+
+    const currentSession = await fetch(`${baseUrl}/api/account/me`, {
+      headers: { authorization: `Bearer ${rotatedBody.data.token}` }
+    });
+    assert.equal(currentSession.status, 200);
+  });
+});
+
+test('http logout remains revoked after the service process is recreated', async () => {
+  const store = createMemoryStore();
+  let token = '';
+  await withServer(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/api/account/register`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'durable_logout', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+    });
+    token = (await readJson(registered)).data.token;
+    const logout = await fetch(`${baseUrl}/api/account/logout`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${token}` }
+    });
+    assert.equal(logout.status, 200);
+  }, { store });
+
+  await withServer(async (baseUrl) => {
+    const staleSession = await fetch(`${baseUrl}/api/account/me`, {
+      headers: { authorization: `Bearer ${token}` }
+    });
+    assert.equal(staleSession.status, 401);
+  }, { store });
 });
 
 test('http account api syncs and clears private watchlist drafts saved searches content filters reply templates and poster notes', async () => {
@@ -1982,6 +2198,68 @@ test('http account owner can remove only post files', async () => {
   });
 });
 
+test('http file-only deletion removes local upload bytes and thumbnails', async () => {
+  const dataRoot = path.resolve('data');
+  await fs.mkdir(dataRoot, { recursive: true });
+  const uploadRoot = await fs.mkdtemp(path.join(dataRoot, 'uploads-delete-test-'));
+  try {
+    await withServer(async (baseUrl) => {
+      const registered = await fetch(`${baseUrl}/api/account/register`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'disk_file_owner', password: 'long-enough-pass', captchaToken: 'dev-pass' })
+      });
+      const token = (await readJson(registered)).data.token;
+      const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          body: 'Local file deletion',
+          captchaToken: 'dev-pass',
+          image: {
+            name: 'delete-me.png',
+            type: 'image/png',
+            dataUrl: 'data:image/png;base64,AAAA',
+            sizeBytes: 3,
+            thumbnail: {
+              name: 'delete-me-thumb.jpg',
+              type: 'image/jpeg',
+              dataUrl: 'data:image/jpeg;base64,AAA=',
+              sizeBytes: 2
+            }
+          }
+        })
+      });
+      const createdBody = await readJson(created);
+      const media = createdBody.data.thread.image;
+      assert.equal((await fetch(`${baseUrl}${media.url}`)).status, 200);
+      assert.equal((await fetch(`${baseUrl}${media.thumbnail.url}`)).status, 200);
+
+      const deleted = await fetch(`${baseUrl}/api/posts/${createdBody.data.thread.globalNumber}`, {
+        method: 'DELETE',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({ fileOnly: true })
+      });
+      assert.equal(deleted.status, 200);
+      assert.equal((await fetch(`${baseUrl}${media.url}`)).status, 404);
+      assert.equal((await fetch(`${baseUrl}${media.thumbnail.url}`)).status, 404);
+      await assert.rejects(() => fs.access(path.join(uploadRoot, media.storageKey)), /ENOENT/);
+      await assert.rejects(() => fs.access(path.join(uploadRoot, media.thumbnail.storageKey)), /ENOENT/);
+    }, {
+      uploadRoot,
+      imageStorage: createLocalImageStorage({ root: uploadRoot })
+    });
+  } finally {
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
+});
+
 test('http posts support self edit and admin edit restore history', async () => {
   await withServer(async (baseUrl) => {
     const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
@@ -2176,6 +2454,64 @@ test('http api supports anonymous thread poll voting once per fingerprint', asyn
     assert.equal(JSON.stringify(voteBody.data).includes('fingerprint'), false);
     assert.equal(duplicate.status, 409);
   });
+});
+
+test('http poll validation rejects malformed creation and locked-thread votes', async () => {
+  await withServer(async (baseUrl) => {
+    const invalid = await fetch(baseUrl + '/api/boards/hoc-tap/threads', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: 'Poll chi co mot lua chon',
+        pollOptions: ['Chi mot'],
+        captchaToken: 'dev-pass'
+      })
+    });
+    const invalidBody = await readJson(invalid);
+    assert.equal(invalid.status, 400);
+    assert.match(invalidBody.error?.message ?? '', /ít nhất 2/);
+
+    const listedAfterInvalid = await fetch(baseUrl + '/api/boards/hoc-tap/threads');
+    const listedAfterInvalidBody = await readJson(listedAfterInvalid);
+    assert.equal(listedAfterInvalidBody.data.length, 0);
+  });
+
+  const store = createMemoryStore();
+  const setupService = createForumService({
+    store,
+    ai: safeAi,
+    realtime: { publish() {} },
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  } as Parameters<typeof createForumService>[0]);
+  const created = await setupService.createThread({
+    accountId: null,
+    boardSlug: 'hoc-tap',
+    body: 'Poll se dong khi thread bi khoa',
+    image: null,
+    images: [],
+    pollOptions: ['Co', 'Khong'],
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7',
+    posterToken: 'locked-poll-author'
+  });
+  const locked = await setupService.setThreadLocked(created.thread.id, true);
+  assert.equal(locked.isLocked, true);
+
+  await withServer(async (baseUrl) => {
+    const vote = await fetch(baseUrl + '/api/threads/' + created.thread.id + '/poll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ optionId: '1', posterToken: 'locked-reader' })
+    });
+    const voteBody = await readJson(vote);
+    assert.equal(vote.status, 409);
+    assert.match(voteBody.error?.message ?? '', /đã đóng/);
+
+    const detail = await fetch(baseUrl + '/api/threads/' + created.thread.id);
+    const detailBody = await readJson(detail);
+    assert.equal(detail.status, 200);
+    assert.equal(detailBody.data.thread.poll.totalVotes, 0);
+  }, { store });
 });
 
 test('http api requires account for post reactions', async () => {

@@ -12,7 +12,7 @@
     "dev:frontend": "npm --prefix frontend run dev",
     "dev:frontend-next": "npm --prefix frontend-next run dev",
     "start": "npm run build:frontend && npm --prefix backend start",
-    "test": "npm --prefix backend test",
+    "test": "npm --prefix backend test && npm --prefix frontend test",
     "test:e2e": "node scripts/browser-smoke.mts",
     "loadtest:write": "node scripts/load-test-write-path.mts",
     "build": "npm run build:backend && npm run build:frontend",

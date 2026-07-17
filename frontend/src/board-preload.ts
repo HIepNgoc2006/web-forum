@@ -13,6 +13,8 @@ type PreloadBoardThreadsOptions = {
   filter?: string;
 };
 
+export type StartupBoardPreloadMode = 'all' | 'primary' | 'none';
+
 /** Full unpaged thread lists captured during startup preload (used by home). */
 const fullBoardThreads = new Map<string, AnyRecord[]>();
 
@@ -68,6 +70,17 @@ export function takePreloadedBoardThreads(boardSlug: string): AnyRecord[] | null
 
 export function clearPreloadedBoardThreads(): void {
   fullBoardThreads.clear();
+}
+
+export function startupBoardPreloadMode(hash = typeof window !== 'undefined' ? window.location.hash : ''): StartupBoardPreloadMode {
+  const [hashPath] = String(hash || '#home').split('?');
+  if (!hashPath || hashPath === '#home') {
+    return 'all';
+  }
+  if (/^#(board|catalog|archive)\//i.test(hashPath)) {
+    return 'primary';
+  }
+  return 'none';
 }
 
 /**

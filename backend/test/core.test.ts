@@ -8,7 +8,7 @@ import { createForumService } from '../src/core/forum-service.ts';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createS3ImageStorage } from '../src/core/image-storage.ts';
 import { migrateInlineImages } from '../src/core/image-migration.ts';
-import { appendMongoPostCreate, createMongoModels } from '../src/core/mongo-store.ts';
+import { appendMongoPostCreate, createMongoModels, replaceMongoState } from '../src/core/mongo-store.ts';
 import { publicBoardConfig, publicConfig } from '../src/core/config.ts';
 import { createAiClient, redactSensitiveText } from '../src/core/ai.ts';
 import {
@@ -227,9 +227,50 @@ test('mongo store declares production persistence models without opening a conne
     assert.equal(models.Report.collection.name, 'reports');
     assert.equal(models.Appeal.collection.name, 'appeals');
     assert.equal(models.User.schema.indexes().some(([fields]) => fields.username === 1), true);
+    const emailIndex = models.User.schema.indexes().find(([fields]) => fields.email === 1);
+    assert.equal(emailIndex?.[1]?.unique, true);
+    assert.deepEqual(emailIndex?.[1]?.partialFilterExpression, { email: { $type: 'string' } });
+    assert.equal(emailIndex?.[1]?.sparse, undefined);
   } finally {
     await connection.destroy();
   }
+});
+
+test('mongo full-state replacement uses one session and omits empty optional emails', async () => {
+  const calls = [];
+  const session = { id: 'session-1' } as any;
+  const collectionModel = (name) => ({
+    async deleteMany(filter, options) {
+      calls.push({ name, method: 'deleteMany', filter, options });
+    },
+    async insertMany(items, options) {
+      calls.push({ name, method: 'insertMany', items, options });
+    }
+  });
+  const models = Object.fromEntries(
+    ['Board', 'User', 'Thread', 'Comment', 'ModerationAction', 'Report', 'Appeal', 'Sanction', 'AiUsage', 'AiSummaryCache']
+      .map((name) => [name, collectionModel(name)])
+  ) as any;
+  models.StateMeta = {
+    async updateOne(filter, update, options) {
+      calls.push({ name: 'StateMeta', method: 'updateOne', filter, update, options });
+    }
+  };
+
+  const persisted = await replaceMongoState(models, {
+    users: [
+      { id: 'user-null', username: 'null-email', email: null },
+      { id: 'user-empty', username: 'empty-email', email: '' },
+      { id: 'user-email', username: 'has-email', email: 'user@example.test' }
+    ]
+  }, session);
+
+  assert.equal(calls.every((call) => call.options?.session === session), true);
+  const userInsert = calls.find((call) => call.name === 'User' && call.method === 'insertMany');
+  assert.equal(Object.hasOwn(userInsert.items[0], 'email'), false);
+  assert.equal(Object.hasOwn(userInsert.items[1], 'email'), false);
+  assert.equal(userInsert.items[2].email, 'user@example.test');
+  assert.equal(Object.hasOwn(persisted.users[0], 'email'), false);
 });
 
 test('mongo append post create uses targeted inserts and updates', async () => {
@@ -1372,6 +1413,55 @@ test('capcode is stamped only for authorized roles and ignores forged values', a
   assert.equal(detail.comments.find((comment) => comment.capcode === 'moderator')?.capcode, 'moderator');
 });
 
+test('poll creation rejects invalid definitions instead of silently changing them', async () => {
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  const invalidPolls = [
+    { pollOptions: 'Co\nKhong', message: /danh sách/ },
+    { pollOptions: ['Chi mot'], message: /ít nhất 2/ },
+    { pollOptions: ['Co', '   '], message: /để trống/ },
+    { pollOptions: ['Trung lap', '  TRUNG   LAP  '], message: /trùng nhau/ },
+    { pollOptions: Array.from({ length: 7 }, (_, index) => 'Lua chon ' + index), message: /tối đa 6/ },
+    { pollOptions: ['x'.repeat(121), 'Hop le'], message: /tối đa 120/ },
+    { pollOptions: ['Hop le', 2], message: /phải là văn bản/ }
+  ];
+
+  for (const invalid of invalidPolls) {
+    await assert.rejects(
+      () =>
+        service.createThread({
+          boardSlug: 'hoc-tap',
+          body: 'Thread poll khong hop le',
+          pollOptions: invalid.pollOptions,
+          captchaToken: 'dev-pass',
+          ip: '203.0.113.7'
+        }),
+      (error) => {
+        assert.equal(asServiceError(error).statusCode, 400);
+        assert.match(asServiceError(error).message ?? '', invalid.message);
+        return true;
+      }
+    );
+  }
+
+  assert.equal((await service.listThreads('hoc-tap')).length, 0);
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Thread poll hop le',
+    pollOptions: ['  Lua chon   A  ', 'Lua chon B'],
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+  assert.deepEqual(
+    created.thread.poll.options.map((option) => option.text),
+    ['Lua chon A', 'Lua chon B']
+  );
+});
+
 test('anonymous poll allows one vote per hashed fingerprint without exposing voters', async () => {
   const realtime = createEvents();
   const service = createTestForumService({
@@ -1408,6 +1498,53 @@ test('anonymous poll allows one vote per hashed fingerprint without exposing vot
       }),
     /đã vote/
   );
+});
+
+test('poll voting is atomic and rejects votes after a thread is locked', async () => {
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  const created = await service.createThread({
+    boardSlug: 'hoc-tap',
+    body: 'Poll dong thoi va khoa thread',
+    pollOptions: ['Mot', 'Hai'],
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  const simultaneous = await Promise.allSettled([
+    service.votePoll(created.thread.id, { optionId: '1', ip: '203.0.113.8', posterToken: 'reader-a' }),
+    service.votePoll(created.thread.id, { optionId: '2', ip: '203.0.113.8', posterToken: 'reader-a' })
+  ]);
+  assert.equal(simultaneous.filter((result) => result.status === 'fulfilled').length, 1);
+  const rejected = simultaneous.find((result) => result.status === 'rejected');
+  assert.equal(rejected?.status, 'rejected');
+  if (rejected?.status === 'rejected') {
+    assert.equal(asServiceError(rejected.reason).statusCode, 409);
+  }
+  assert.equal((await service.getThread(created.thread.id)).thread.poll.totalVotes, 1);
+
+  await service.setThreadLocked(created.thread.id, true);
+  await assert.rejects(
+    () => service.votePoll(created.thread.id, { optionId: '1', ip: '203.0.113.9', posterToken: 'reader-b' }),
+    (error) => {
+      assert.equal(asServiceError(error).statusCode, 409);
+      assert.match(asServiceError(error).message ?? '', /đã đóng/);
+      return true;
+    }
+  );
+  assert.equal((await service.getThread(created.thread.id)).thread.poll.totalVotes, 1);
+
+  await service.setThreadLocked(created.thread.id, false);
+  const reopened = await service.votePoll(created.thread.id, {
+    optionId: '1',
+    ip: '203.0.113.9',
+    posterToken: 'reader-b'
+  });
+  assert.equal(reopened.totalVotes, 2);
 });
 
 test('votePost toggles upvote/downvote on a comment without leaking voters', async () => {
@@ -5740,8 +5877,8 @@ test('register enforces the password policy', async () => {
 
   // Too short (below the 10-character minimum).
   await assert.rejects(() => register('shortpw', 'abc12'), (error) => asServiceError(error).statusCode === 400);
-  // Common/blocklisted password.
-  await assert.rejects(() => register('commonpw', 'password123'), (error) => asServiceError(error).statusCode === 400);
+  // Common/blocklisted passwords are matched case-insensitively.
+  await assert.rejects(() => register('commonpw', 'Password123'), (error) => asServiceError(error).statusCode === 400);
   // Password equal to the username.
   await assert.rejects(() => register('sameaspw12', 'sameaspw12'), (error) => asServiceError(error).statusCode === 400);
   // Trivial sequence and single-character repeat.
@@ -5858,4 +5995,57 @@ test('concurrent thread creation never loses a post to interleaved writes', asyn
 
   const globalNumbers = results.map((result) => result.thread.globalNumber).sort((a, b) => a - b);
   assert.deepEqual(globalNumbers, Array.from({ length: count }, (_unused, i) => i + 1));
+});
+
+test('store mutation lock serializes read-modify-write across service instances', async () => {
+  const memory = createTestMemoryStore();
+  let sharedLock = Promise.resolve();
+  let lockEntries = 0;
+  const store = {
+    read: () => memory.read(),
+    write: (state) => memory.write(state),
+    withMutationLock(callback) {
+      const job = sharedLock.then(async () => {
+        lockEntries += 1;
+        return callback();
+      });
+      sharedLock = job.then(() => undefined, () => undefined);
+      return job;
+    }
+  };
+  const slowAi = {
+    async moderate() {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      return { status: 'Safe', labels: [] };
+    }
+  };
+  const createService = () => createTestForumService({
+    store,
+    ai: slowAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-07-15T00:00:00.000Z')
+  });
+
+  const [first, second] = await Promise.all([
+    createService().createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Service A',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.30'
+    }),
+    createService().createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Service B',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.31'
+    })
+  ]);
+
+  const threads = await memory.read();
+  assert.equal(lockEntries, 2);
+  assert.equal(threads.threads.length, 2);
+  assert.deepEqual(
+    [first.thread.globalNumber, second.thread.globalNumber].sort((left, right) => left - right),
+    [1, 2]
+  );
 });

@@ -1,19 +1,24 @@
 import { els } from './dom';
 import type { AnyRecord } from './types';
 
-type ToastOptions = {
+export type ToastOptions = {
   actionLabel?: string;
   onAction?: () => void;
   durationMs?: number;
+  tone?: 'neutral' | 'warning';
 };
 
 export function showToast(message: string, options: ToastOptions = {}) {
-  const { actionLabel = '', onAction, durationMs = 3400 } = options;
+  const { actionLabel = '', onAction, durationMs = 3400, tone = 'neutral' } = options;
   window.clearTimeout((showToast as AnyRecord).timer);
   if (!els.toast) {
     return;
   }
 
+  const isWarning = tone === 'warning';
+  els.toast.classList.toggle('toast-warning', isWarning);
+  els.toast.setAttribute('role', isWarning ? 'alert' : 'status');
+  els.toast.setAttribute('aria-live', isWarning ? 'assertive' : 'polite');
   els.toast.replaceChildren();
   const text = document.createElement('span');
   text.className = 'toast-message';

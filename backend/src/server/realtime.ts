@@ -25,6 +25,11 @@ interface ClientMeta {
   backpressureEvents: number;
 }
 
+interface EventScope {
+  boardSlug: string;
+  threadId: string;
+}
+
 interface RealtimeMetricsState {
   totalConnections: number;
   rejected: number;
@@ -92,6 +97,40 @@ function positiveIntEnv(name: string, fallback: number): number {
 function percentEnv(name: string, fallback: number): number {
   const value = positiveIntEnv(name, fallback);
   return Math.max(1, Math.min(value, 100));
+}
+
+function eventScope(payload: unknown): EventScope {
+  const record = payload && typeof payload === 'object' ? payload as Record<string, any> : {};
+  const thread = record.thread && typeof record.thread === 'object' ? record.thread : {};
+  const comment = record.comment && typeof record.comment === 'object' ? record.comment : {};
+  const post = record.post && typeof record.post === 'object' ? record.post : {};
+  return {
+    boardSlug: String(
+      record.boardSlug
+      || thread.boardSlug
+      || comment.boardSlug
+      || post.boardSlug
+      || record.board?.slug
+      || ''
+    ),
+    threadId: String(
+      record.threadId
+      || thread.id
+      || comment.threadId
+      || post.threadId
+      || ''
+    )
+  };
+}
+
+function clientAcceptsEvent(meta: ClientMeta, scope: EventScope): boolean {
+  if (meta.boardSlug && (!scope.boardSlug || meta.boardSlug !== scope.boardSlug)) {
+    return false;
+  }
+  if (meta.threadId && (!scope.threadId || meta.threadId !== scope.threadId)) {
+    return false;
+  }
+  return true;
 }
 
 /**
@@ -278,8 +317,11 @@ export function createRealtimeHub(options: RealtimeHubOptions = {}): RealtimeHub
 
     publish(event: string, payload: unknown): void {
       const line = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
-      for (const client of [...clients.keys()]) {
-        safeWrite(client, line);
+      const scope = eventScope(payload);
+      for (const [client, meta] of [...clients.entries()]) {
+        if (clientAcceptsEvent(meta, scope)) {
+          safeWrite(client, line);
+        }
       }
     },
 

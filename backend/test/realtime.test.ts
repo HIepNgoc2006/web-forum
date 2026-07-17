@@ -210,3 +210,35 @@ test('SSE hub removes client on request close', () => {
   request.fireClose();
   assert.equal(hub.count(), 0);
 });
+
+test('SSE publish sends events only to matching board and thread subscriptions', () => {
+  const hub = createRealtimeHub({ maxClients: 10, heartbeatMs: 0 });
+  const all = createResponse();
+  const boardA = createResponse();
+  const boardB = createResponse();
+  const threadA = createResponse();
+  const threadB = createResponse();
+  hub.handle(createRequest(), all);
+  hub.handle(createRequest('?boardSlug=hoc-tap'), boardA);
+  hub.handle(createRequest('?boardSlug=an-uong'), boardB);
+  hub.handle(createRequest('?threadId=thread-a'), threadA);
+  hub.handle(createRequest('?threadId=thread-b'), threadB);
+  for (const client of [all, boardA, boardB, threadA, threadB]) {
+    client.chunks.length = 0;
+  }
+
+  hub.publish('thread:updated', {
+    thread: { id: 'thread-a', boardSlug: 'hoc-tap' }
+  });
+
+  assert.equal(all.chunks.some((line) => line.includes('thread:updated')), true);
+  assert.equal(boardA.chunks.some((line) => line.includes('thread:updated')), true);
+  assert.equal(threadA.chunks.some((line) => line.includes('thread:updated')), true);
+  assert.equal(boardB.chunks.length, 0);
+  assert.equal(threadB.chunks.length, 0);
+
+  hub.publish('system:event', { ok: true });
+  assert.equal(all.chunks.some((line) => line.includes('system:event')), true);
+  assert.equal(boardA.chunks.some((line) => line.includes('system:event')), false);
+  assert.equal(threadA.chunks.some((line) => line.includes('system:event')), false);
+});

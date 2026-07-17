@@ -8,6 +8,8 @@ type UploadError = Error & {
   statusCode?: number;
 };
 
+const DEFAULT_S3_REQUEST_TIMEOUT_MS = 10_000;
+
 const IMAGE_EXTENSIONS = new Map([
   ['image/apng', 'apng'],
   ['image/avif', 'avif'],
@@ -246,7 +248,7 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
 
   async function deleteKey(key) {
     const { resolvedPath } = assertSafeLocalKey(resolvedRoot, key);
-    await fs.rm(resolvedPath, { force: false });
+    await fs.rm(resolvedPath, { force: true });
   }
 
   async function health() {
@@ -277,6 +279,7 @@ export function createS3ImageStorage({
   secretAccessKey = process.env.S3_SECRET_ACCESS_KEY,
   publicBaseUrl = process.env.S3_PUBLIC_BASE_URL,
   keyPrefix = process.env.S3_KEY_PREFIX ?? 'uploads',
+  requestTimeoutMs = process.env.S3_REQUEST_TIMEOUT_MS as string | number | undefined,
   fetchImpl = global.fetch,
   now = () => new Date(),
   randomUUID = crypto.randomUUID
@@ -291,6 +294,34 @@ export function createS3ImageStorage({
   const normalizedEndpoint = trimTrailingSlash(endpoint);
   const normalizedPrefix = trimSlashes(keyPrefix);
   const normalizedPublicBaseUrl = publicBaseUrl ? trimTrailingSlash(publicBaseUrl) : null;
+  const parsedRequestTimeoutMs = Number(requestTimeoutMs);
+  const safeRequestTimeoutMs = Number.isInteger(parsedRequestTimeoutMs) && parsedRequestTimeoutMs >= 100
+    ? parsedRequestTimeoutMs
+    : DEFAULT_S3_REQUEST_TIMEOUT_MS;
+
+  async function fetchWithTimeout(
+    url: string | URL | Request,
+    options: RequestInit = {}
+  ): Promise<Response> {
+    const controller = new AbortController();
+    let timer;
+    const timeout = new Promise<Response>((_, reject) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        const error: UploadError = new Error(`S3 request timed out after ${safeRequestTimeoutMs}ms`);
+        error.statusCode = 504;
+        reject(error);
+      }, safeRequestTimeoutMs);
+    });
+    try {
+      return await Promise.race<Response>([
+        fetchImpl(url, { ...options, signal: controller.signal }),
+        timeout
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
 
   function keyFor(image) {
     const date = now();
@@ -342,7 +373,7 @@ export function createS3ImageStorage({
       authorization: authorization.value
     };
 
-    const response = await fetchImpl(requestUrl, {
+    const response = await fetchWithTimeout(requestUrl, {
       method: 'PUT',
       headers,
       body: bytes
@@ -372,7 +403,7 @@ export function createS3ImageStorage({
       region,
       date: signingDate
     });
-    return fetchImpl(url, {
+    return fetchWithTimeout(url, {
       method,
       headers: {
         'x-amz-content-sha256': signingHeaders['x-amz-content-sha256'],
@@ -506,7 +537,7 @@ export function createS3ImageStorage({
         region,
         date: signingDate
       });
-      const response = await fetchImpl(probeUrl, {
+      const response = await fetchWithTimeout(probeUrl, {
         method: 'HEAD',
         headers: {
           'x-amz-content-sha256': signingHeaders['x-amz-content-sha256'],
