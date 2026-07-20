@@ -16,6 +16,8 @@ export type ForumState = {
   reports: ForumRecord[];
   appeals: ForumRecord[];
   sanctions: ForumRecord[];
+  dmConversations: ForumRecord[];
+  dmMessages: ForumRecord[];
   adminSettings: Record<string, unknown>;
   aiUsage: Record<string, unknown>;
   aiSummaryCache: Record<string, unknown>;
@@ -55,6 +57,8 @@ export const EMPTY_STATE: ForumState = {
   reports: [],
   appeals: [],
   sanctions: [],
+  dmConversations: [],
+  dmMessages: [],
   adminSettings: {},
   aiUsage: {},
   aiSummaryCache: {}
@@ -94,6 +98,8 @@ export function normalizeState(value: unknown = {}): ForumState {
     reports: arrayRecords(cloned.reports),
     appeals: arrayRecords(cloned.appeals),
     sanctions: arrayRecords(cloned.sanctions),
+    dmConversations: arrayRecords(cloned.dmConversations),
+    dmMessages: arrayRecords(cloned.dmMessages),
     adminSettings: objectRecord(cloned.adminSettings),
     aiUsage: objectRecord(cloned.aiUsage),
     aiSummaryCache: objectRecord(cloned.aiSummaryCache)

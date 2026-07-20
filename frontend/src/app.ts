@@ -98,8 +98,10 @@ import { accountPostEditButtonHtml, selfDeletePostActionsHtml, selfEditPostButto
 import { pollHtml } from './post-poll';
 import { bindThreadSearchEvents, threadSearchHtml } from './thread-search';
 import { state } from './state';
+import { createDmController } from './dm';
 import {
   applyNotificationPreferences,
+  notifyDirectMessage as notifyDirectMessageWithDependencies,
   notifyWatchedThreadPost as notifyWatchedThreadPostWithDependencies,
   resolveBrowserWatchedThreadPreference,
   syncBrowserNotificationControls
@@ -372,9 +374,23 @@ const {
   renderBrowserHiddenData,
   saveCurrentBoardSearch,
   removeSavedSearch,
-  loadAccountSession,
+  loadAccountSession: loadAccountSessionBase,
   loadAccountSettings
 } = accountUiController;
+async function loadAccountSession() {
+  const account = await loadAccountSessionBase();
+  dmController.updateDmNavVisibility();
+  if (account) {
+    await dmController.refreshUnreadCount().catch(() => 0);
+  }
+  return account;
+}
+const finishAccountLoginBase = finishAccountLogin;
+async function finishAccountLoginWithDm(result: AnyRecord, options?: AnyRecord) {
+  await finishAccountLoginBase(result, options);
+  dmController.updateDmNavVisibility();
+  await dmController.refreshUnreadCount().catch(() => 0);
+}
 renderAccountPrivateData = renderAccountPrivateDataFromController;
 renderAccountRecoveryPanel = renderAccountRecoveryPanelFromController;
 function decodeJwtPayload(token) {
@@ -403,7 +419,7 @@ const { renderPasskeys: renderPasskeysFromController, handleAccountPasskeyClick 
   showToast,
   setFormError,
   setButtonLoading,
-  finishAccountLogin,
+  finishAccountLogin: finishAccountLoginWithDm,
   setAccountSession
 });
 renderPasskeys = renderPasskeysFromController;
@@ -667,6 +683,20 @@ loadThread = createThreadLoadController({
 }).loadThread;
 let openReplyComposerTarget = (_options: AnyRecord = {}) => {};
 let closeQuickReplyTarget = (_options: AnyRecord = {}) => {};
+const dmController = createDmController({
+  api,
+  showToast,
+  setButtonLoading,
+  setScreen,
+  browserNotificationIds: state.browserNotificationIds,
+  notifyDirectMessage: (payload: AnyRecord) => {
+    notifyDirectMessageWithDependencies(payload, {
+      showToast,
+      browserNotificationIds: state.browserNotificationIds
+    });
+  }
+});
+dmController.bindDmEvents();
 function setupRealtime() {
   setupRealtimeConnection({
     loadHome,
@@ -675,7 +705,8 @@ function setupRealtime() {
     loadArchive,
     loadBoard,
     audioWorkInProgress,
-    notifyWatchedThreadPost
+    notifyWatchedThreadPost,
+    handleIncomingDmEvent: (payload: AnyRecord) => dmController.handleIncomingDmEvent(payload)
   });
 }
 const { syncDeletePasswordInputs, deletePasswordValue, bindDeletePasswordInputs } = createDeletePasswordController();
@@ -686,6 +717,7 @@ function notifyWatchedThreadPost(payload: AnyRecord = {}) {
     browserNotificationIds: state.browserNotificationIds
   });
 }
+const loadMessagesScreen = (conversationId = '') => dmController.loadMessagesScreen(conversationId);
 function resetForgotPasswordForm() {
   if (!els.forgotPasswordForm) {
     return;
@@ -716,6 +748,7 @@ const routerController = createRouterController({
   loadArchive: () => loadArchive(),
   loadBoard: () => loadBoard(),
   loadAccountSettings,
+  loadMessagesScreen,
   loadAdmin: () => loadAdmin(),
   resetForgotPasswordForm,
   loadPolicy,
@@ -864,7 +897,7 @@ bootstrapApp({
   normalizeThreadSearchTerm,
   setFormError,
   resetHcaptcha,
-  finishAccountLogin,
+  finishAccountLogin: finishAccountLoginWithDm,
   setAccountSession,
   fillAccountSettings,
   updateAccountNav,

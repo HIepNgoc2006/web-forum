@@ -28,6 +28,9 @@ export function screenNameFromHash(hash = ''): string {
   if (name === 'account') {
     return 'account';
   }
+  if (name === 'messages') {
+    return 'messages';
+  }
   if (name === 'thread' && id) {
     return 'thread';
   }
@@ -58,6 +61,7 @@ export function createRouterController(dependencies: AnyRecord) {
     loadArchive,
     loadBoard,
     loadAccountSettings,
+    loadMessagesScreen,
     loadAdmin,
     resetForgotPasswordForm,
     loadPolicy: loadPolicyFromRoute,
@@ -120,6 +124,11 @@ export function createRouterController(dependencies: AnyRecord) {
       window.scrollTo({ top: 0 });
     } else if (name === 'account') {
       navigation = loadAccountSettings();
+    } else if (name === 'messages') {
+      const conversationId = id ? decodeURIComponent(id) : '';
+      navigation = loadMessagesScreen
+        ? loadMessagesScreen(conversationId)
+        : Promise.resolve(setScreen('messages'));
     } else if (name === 'thread' && id) {
       const params = new URLSearchParams(hashQuery);
       const nextThreadId = decodeURIComponent(id);

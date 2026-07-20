@@ -35,5 +35,7 @@ qa-screenshots/
 task-report/
 CLAUDE.md
 tmp/
+tmp-verify/
 # Root-level screenshots/scratch images (frontend assets live under frontend/)
 /*.png
+phase-tracking/API_INVENTORY.md

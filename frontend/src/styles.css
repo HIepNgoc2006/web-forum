@@ -10104,3 +10104,387 @@ body.composer-media-picker-open {
     background: transparent;
   }
 }
+
+/* Direct messages (account-only encrypted chat) */
+.messages-screen {
+  width: min(1100px, calc(100vw - 16px));
+  max-width: 100%;
+  margin: 0 auto;
+  box-sizing: border-box;
+}
+
+.dm-nav-link {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.dm-nav-badge,
+.dm-item-unread,
+.dm-unread-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.25rem;
+  padding: 0 0.35rem;
+  border-radius: 999px;
+  background: var(--header, #d60a00);
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.messages-shell {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 4px 0 24px;
+}
+
+.messages-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 8px 0 12px;
+  padding: 0 2px;
+}
+
+.messages-header-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.messages-title {
+  margin: 0 0 4px;
+  font-size: 22px;
+  line-height: 1.15;
+  text-align: left;
+}
+
+.messages-subtitle {
+  margin: 0;
+  max-width: 52rem;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.messages-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) minmax(0, 1fr);
+  gap: 10px;
+  align-items: stretch;
+  min-height: min(70vh, 640px);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.messages-sidebar,
+.messages-main {
+  min-width: 0;
+  border: 1px solid var(--reply-border, #d9bfb7);
+  background: var(--reply, rgba(255, 255, 255, 0.55));
+  box-sizing: border-box;
+}
+
+.messages-sidebar {
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+  gap: 8px;
+}
+
+.dm-start-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0;
+  padding: 0 0 10px;
+  border-bottom: 1px solid var(--reply-border, #d9bfb7);
+}
+
+.dm-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  min-width: 0;
+}
+
+.dm-field-label {
+  display: block;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--text, #000);
+  line-height: 1.3;
+}
+
+.dm-field input,
+.dm-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  font: inherit;
+}
+
+.dm-field input {
+  min-height: 28px;
+  padding: 4px 6px;
+}
+
+.dm-start-submit {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 28px;
+  margin: 0;
+  cursor: pointer;
+}
+
+/* Override global .form-error (92px account-form indent) inside DM panels. */
+.messages-screen .dm-form-error.form-error,
+.messages-screen .form-error.dm-form-error {
+  margin: 0;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.dm-conversation-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1 1 auto;
+  min-height: 120px;
+  max-height: none;
+  overflow: auto;
+}
+
+.dm-empty-list {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.dm-conversation-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    'name time'
+    'preview preview';
+  column-gap: 8px;
+  row-gap: 2px;
+  width: 100%;
+  box-sizing: border-box;
+  text-align: left;
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 7px 8px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+
+.dm-conversation-item:hover,
+.dm-conversation-item.is-active {
+  border-color: var(--reply-border, #d9bfb7);
+  background: rgba(255, 255, 255, 0.72);
+}
+
+.dm-conversation-name {
+  grid-area: name;
+  min-width: 0;
+  font-weight: 700;
+  font-size: 13px;
+  line-height: 1.3;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dm-conversation-time {
+  grid-area: time;
+  font-size: 11px;
+  line-height: 1.3;
+  white-space: nowrap;
+  color: var(--text, #333);
+  opacity: 0.8;
+}
+
+.dm-conversation-preview {
+  grid-area: preview;
+  min-width: 0;
+  font-size: 12px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.9;
+}
+
+.dm-item-unread {
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+.messages-main {
+  display: flex;
+  flex-direction: column;
+  min-height: min(70vh, 640px);
+}
+
+.dm-empty-state,
+.messages-logged-out {
+  padding: 16px 14px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.messages-auth-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.dm-thread {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+}
+
+.dm-thread-header {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--reply-border, #d9bfb7);
+}
+
+.dm-thread-header h2 {
+  margin: 0;
+  font-size: 16px;
+  text-align: left;
+  line-height: 1.2;
+}
+
+.dm-thread-header .muted {
+  margin: 3px 0 0;
+  font-size: 12px;
+}
+
+.dm-message-list {
+  flex: 1 1 auto;
+  min-height: 180px;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  box-sizing: border-box;
+}
+
+.dm-message {
+  max-width: min(85%, 36rem);
+  padding: 8px 10px;
+  border: 1px solid var(--reply-border, #d9bfb7);
+  background: rgba(255, 255, 255, 0.82);
+  box-sizing: border-box;
+}
+
+.dm-message.is-mine {
+  justify-self: end;
+  background: rgba(255, 255, 220, 0.92);
+}
+
+.dm-message.is-peer {
+  justify-self: start;
+}
+
+.dm-message-body {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.dm-message-meta {
+  margin-top: 4px;
+  font-size: 11px;
+  line-height: 1.2;
+}
+
+.dm-send-form {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--reply-border, #d9bfb7);
+  padding: 10px 12px;
+  display: grid;
+  gap: 8px;
+  box-sizing: border-box;
+}
+
+.dm-send-field textarea {
+  min-height: 72px;
+  resize: vertical;
+}
+
+.dm-send-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dm-send-actions .dm-form-error {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.dm-send-actions .primary-button {
+  flex: 0 0 auto;
+  min-width: 72px;
+}
+
+@media (max-width: 860px) {
+  .messages-layout {
+    grid-template-columns: 1fr;
+    min-height: 0;
+  }
+
+  .messages-sidebar {
+    max-height: none;
+  }
+
+  .dm-conversation-list {
+    max-height: 220px;
+  }
+
+  .messages-main,
+  .dm-thread {
+    min-height: 420px;
+  }
+}
+
+@media (max-width: 520px) {
+  .messages-screen {
+    width: calc(100vw - 8px);
+  }
+
+  .messages-title {
+    font-size: 18px;
+  }
+
+  .dm-send-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .dm-send-actions .primary-button {
+    width: 100%;
+  }
+}

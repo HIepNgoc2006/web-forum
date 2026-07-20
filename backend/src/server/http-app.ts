@@ -750,7 +750,7 @@ function rateLimitForRequest({ method, pathname, searchParams, parts, ip, limite
   if (method === 'POST' && parts[1] === 'ai') {
     return { limiter: limiters.ai, key: `${ip}:ai:${parts[2] ?? 'generic'}` };
   }
-  if (parts[1] === 'account') {
+  if (parts[1] === 'account' || parts[1] === 'dm') {
     return { limiter: limiters.account, key: `${ip}:account:${method}:${pathname}` };
   }
   if (parts[1] === 'admin') {
@@ -1906,6 +1906,62 @@ export function createHttpServer({
             recoveryCode,
             account,
             token: accountToken(account, jwtSecret, accountSession.isTwoFactorVerified !== false)
+          });
+          return;
+        }
+      }
+
+      // Direct messages — account session required (not available to anonymous posters).
+      if (routePath.startsWith('/api/dm')) {
+        requireAccountJwt(jwtSecret);
+        const accountSession = await requireAccount(request, jwtSecret, service);
+
+        if (request.method === 'GET' && routePath === '/api/dm/conversations') {
+          ok(response, { conversations: await service.listDmConversations(accountSession.sub) });
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/dm/conversations') {
+          const body = await readJson(request, 20_000);
+          ok(response, {
+            conversation: await service.openDmConversation(accountSession.sub, {
+              username: body.username
+            })
+          });
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/dm/unread-count') {
+          ok(response, await service.getDmUnreadCount(accountSession.sub));
+          return;
+        }
+
+        const dmMessagesParams = match(parts, ['api', 'dm', 'conversations', ':id', 'messages']);
+        if (dmMessagesParams && request.method === 'GET') {
+          ok(
+            response,
+            await service.listDmMessages(accountSession.sub, dmMessagesParams.id, {
+              limit: url.searchParams.get('limit'),
+              before: url.searchParams.get('before')
+            })
+          );
+          return;
+        }
+        if (dmMessagesParams && request.method === 'POST') {
+          const body = await readJson(request, 40_000);
+          ok(
+            response,
+            await service.sendDmMessage(accountSession.sub, dmMessagesParams.id, {
+              body: body.body
+            })
+          );
+          return;
+        }
+
+        const dmReadParams = match(parts, ['api', 'dm', 'conversations', ':id', 'read']);
+        if (dmReadParams && request.method === 'POST') {
+          ok(response, {
+            conversation: await service.markDmConversationRead(accountSession.sub, dmReadParams.id)
           });
           return;
         }

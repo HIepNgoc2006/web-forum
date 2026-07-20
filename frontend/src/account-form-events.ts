@@ -478,12 +478,18 @@ export function bindAccountFormEvents({
       watchedSort: els.accountWatchedSort.value,
       commentComposerMode: els.accountCommentComposerMode.value
     });
-    const browserWatchedThreads = await resolveBrowserWatchedThreadPreference(els.accountBrowserNotifyWatchedThreads.checked, showToast);
+    const wantsBrowserNotify =
+      Boolean(els.accountBrowserNotifyWatchedThreads?.checked) ||
+      Boolean(els.accountBrowserNotifyDirectMessages?.checked);
+    const browserPermissionOk = await resolveBrowserWatchedThreadPreference(wantsBrowserNotify, showToast);
     const notificationPreferences = writeLocalNotificationPreferences({
       email: els.accountEmailNotifications.checked,
       watchedThreads: els.accountNotifyWatchedThreads.checked,
       boardSubscriptions: els.accountNotifyBoardSubscriptions.checked,
-      browserWatchedThreads
+      browserWatchedThreads: Boolean(els.accountBrowserNotifyWatchedThreads?.checked) && browserPermissionOk,
+      directMessages: els.accountNotifyDirectMessages ? els.accountNotifyDirectMessages.checked : true,
+      browserDirectMessages:
+        Boolean(els.accountBrowserNotifyDirectMessages?.checked) && browserPermissionOk
     });
     const boardSubscriptions = [...els.accountBoardSubscriptions.querySelectorAll('[data-account-board-subscription]:checked')].map(
       (input) => input.value

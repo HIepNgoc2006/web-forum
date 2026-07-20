@@ -86,6 +86,12 @@ export function createAccountScreenController({
     }
     els.accountNotifyWatchedThreads.checked = notificationPreferences.watchedThreads !== false;
     els.accountNotifyBoardSubscriptions.checked = Boolean(notificationPreferences.boardSubscriptions);
+    if (els.accountNotifyDirectMessages) {
+      els.accountNotifyDirectMessages.checked = notificationPreferences.directMessages !== false;
+    }
+    if (els.accountBrowserNotifyDirectMessages) {
+      els.accountBrowserNotifyDirectMessages.checked = Boolean(notificationPreferences.browserDirectMessages);
+    }
     syncBrowserNotificationControls(notificationPreferences);
     syncAccountBoardSubscriptionOptions(settings);
     renderAccountPrivateData();
@@ -213,6 +219,9 @@ export function createAccountScreenController({
     } else {
       els.accountSettingsLink.textContent = 'Cài đặt';
       els.accountSettingsLink.setAttribute('href', '#account');
+    }
+    if (els.dmNavLink) {
+      els.dmNavLink.classList.toggle('hidden', !loggedIn);
     }
 
     updateAccountDisplayOptions();

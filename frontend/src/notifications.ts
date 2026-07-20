@@ -18,6 +18,12 @@ export function applyNotificationPreferences(preferences = localNotificationPref
   if (els?.accountNotifyBoardSubscriptions) {
     els.accountNotifyBoardSubscriptions.checked = safe.boardSubscriptions;
   }
+  if (els?.accountNotifyDirectMessages) {
+    els.accountNotifyDirectMessages.checked = safe.directMessages !== false;
+  }
+  if (els?.accountBrowserNotifyDirectMessages) {
+    els.accountBrowserNotifyDirectMessages.checked = Boolean(safe.browserDirectMessages);
+  }
   syncBrowserNotificationControls(safe);
   return safe;
 }
@@ -41,6 +47,10 @@ export function syncBrowserNotificationControls(preferences = localNotificationP
   const permission = browserNotificationPermission();
   els.accountBrowserNotifyWatchedThreads.checked = Boolean(preferences.browserWatchedThreads);
   els.accountBrowserNotifyWatchedThreads.disabled = !supported;
+  if (els.accountBrowserNotifyDirectMessages) {
+    els.accountBrowserNotifyDirectMessages.checked = Boolean(preferences.browserDirectMessages);
+    els.accountBrowserNotifyDirectMessages.disabled = !supported;
+  }
   if (!els.accountBrowserNotificationsStatus) {
     return;
   }
@@ -48,14 +58,14 @@ export function syncBrowserNotificationControls(preferences = localNotificationP
     els.accountBrowserNotificationsStatus.textContent = 'Trình duyệt này không hỗ trợ browser notifications.';
   } else if (permission === 'denied') {
     els.accountBrowserNotificationsStatus.textContent = 'Trình duyệt đang chặn browser notifications cho trang này.';
-  } else if (permission === 'granted' && preferences.browserWatchedThreads) {
-    els.accountBrowserNotificationsStatus.textContent = 'Browser notifications cho thread đang theo dõi đang bật.';
+  } else if (permission === 'granted' && (preferences.browserWatchedThreads || preferences.browserDirectMessages)) {
+    els.accountBrowserNotificationsStatus.textContent = 'Browser notifications đang bật (thread / tin nhắn riêng).';
   } else if (permission === 'granted') {
     els.accountBrowserNotificationsStatus.textContent = 'Đã cấp quyền browser notification; tùy chọn đang tắt.';
-  } else if (preferences.browserWatchedThreads) {
+  } else if (preferences.browserWatchedThreads || preferences.browserDirectMessages) {
     els.accountBrowserNotificationsStatus.textContent = 'Cần cấp quyền browser notification khi lưu settings.';
   } else {
-    els.accountBrowserNotificationsStatus.textContent = 'Tắt browser notifications cho thread đang theo dõi.';
+    els.accountBrowserNotificationsStatus.textContent = 'Tắt browser notifications cho thread / tin nhắn riêng.';
   }
 }
 
@@ -147,6 +157,46 @@ export function notifyWatchedThreadPost(payload: AnyRecord = {}, dependencies: A
   notification.onclick = () => {
     window.focus();
     window.location.hash = `#thread/${encodeURIComponent(threadId)}${globalNumber ? `?p=${encodeURIComponent(globalNumber)}` : ''}`;
+    notification.close?.();
+  };
+}
+
+export function notifyDirectMessage(payload: AnyRecord = {}, dependencies: AnyRecord = {}) {
+  const preferences = localNotificationPreferences();
+  const senderUsername = String(payload.senderUsername || 'ai đó');
+  const conversationId = String(payload.conversationId || '');
+  const messageId = String(payload.messageId || `${conversationId}:${payload.createdAt || Date.now()}`);
+
+  if (preferences.directMessages !== false && typeof dependencies.showToast === 'function') {
+    dependencies.showToast(`Tin nhắn mới từ @${senderUsername}`, {
+      durationMs: 5000,
+      tone: 'neutral'
+    });
+  }
+
+  if (
+    !preferences.browserDirectMessages ||
+    !browserNotificationsSupported() ||
+    browserNotificationPermission() !== 'granted'
+  ) {
+    return;
+  }
+  if (dependencies.browserNotificationIds?.has?.(messageId)) {
+    return;
+  }
+  if (dependencies.browserNotificationIds) {
+    rememberBrowserNotificationId(dependencies.browserNotificationIds, messageId);
+  }
+  const notification = new window.Notification(`Tin nhắn từ @${senderUsername}`, {
+    body: 'Bạn có tin nhắn riêng mới (nội dung đã mã hóa).',
+    tag: `dm-${conversationId || messageId}`,
+    data: { conversationId, messageId }
+  });
+  notification.onclick = () => {
+    window.focus();
+    window.location.hash = conversationId
+      ? `#messages/${encodeURIComponent(conversationId)}`
+      : '#messages';
     notification.close?.();
   };
 }

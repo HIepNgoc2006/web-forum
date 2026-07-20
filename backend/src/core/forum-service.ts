@@ -22,6 +22,22 @@ import {
 } from './custom-stickers.ts';
 import { redactSensitiveText } from './ai.ts';
 import { assertAccountPassword } from './account-password-policy.ts';
+import {
+  MAX_DM_CONVERSATIONS_PER_USER,
+  MAX_DM_MESSAGE_PAGE,
+  conversationIncludesUser,
+  countUnreadForUser,
+  createDmConversationRecord,
+  createDmMessageRecord,
+  ensureDmCollections,
+  normalizeDmBody,
+  normalizeParticipantIds,
+  participantKeyFor,
+  serializeDmConversation,
+  serializeDmMessage,
+  trimConversationMessages
+} from './dm.ts';
+import { resolveDmEncryptionSecret } from './dm-crypto.ts';
 import { createDisabledEmailClient } from './email.ts';
 import { createInlineImageStorage } from './image-storage.ts';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.ts';
@@ -47,6 +63,7 @@ type ForumServiceOptions = {
   webauthn?: AnyRecord;
   moderationConfidenceThreshold?: number;
   randomInt?: typeof crypto.randomInt;
+  dmEncryptionSecret?: string;
 };
 
 declare global {
@@ -121,7 +138,14 @@ const MAX_ACCOUNT_REPLY_TEMPLATE_LENGTH = 5_000;
 const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails', 'watchedUnreadOnly'];
 const ACCOUNT_WATCHED_SORTS = new Set(['unread', 'recent', 'board']);
 const ACCOUNT_COMMENT_COMPOSER_MODES = new Set(['floating', 'normal']);
-const ACCOUNT_NOTIFICATION_PREFS = ['email', 'watchedThreads', 'boardSubscriptions', 'browserWatchedThreads'];
+const ACCOUNT_NOTIFICATION_PREFS = [
+  'email',
+  'watchedThreads',
+  'boardSubscriptions',
+  'browserWatchedThreads',
+  'directMessages',
+  'browserDirectMessages'
+];
 const BOARD_SLUG_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const MAX_MEDIA_PER_POST = 4;
 const THREAD_PREVIEW_REPLY_LIMIT = 3;
@@ -714,7 +738,9 @@ function defaultAccountSettings() {
       email: false,
       watchedThreads: true,
       boardSubscriptions: false,
-      browserWatchedThreads: false
+      browserWatchedThreads: false,
+      directMessages: true,
+      browserDirectMessages: false
     },
     boardSubscriptions: []
   };
@@ -3077,8 +3103,16 @@ export function createForumService({
   totp = defaultTotp,
   webauthn = defaultWebAuthn,
   moderationConfidenceThreshold = readModerationConfidenceThreshold(),
-  randomInt = crypto.randomInt
+  randomInt = crypto.randomInt,
+  dmEncryptionSecret
 }: ForumServiceOptions) {
+  const dmSecret = (() => {
+    try {
+      return resolveDmEncryptionSecret(dmEncryptionSecret);
+    } catch {
+      return resolveDmEncryptionSecret(process.env.JWT_SECRET);
+    }
+  })();
   // In-memory token blacklist for session revocation (logout).
   // Each entry maps jti/token → revokedAt timestamp string.
   // Tokens are cleaned up after 14 days (matching JWT maxAge).
@@ -6981,6 +7015,258 @@ export function createForumService({
         const timeDiff = right.post.createdAt.localeCompare(left.post.createdAt);
         if (timeDiff !== 0) return timeDiff;
         return right.post.globalNumber - left.post.globalNumber;
+      });
+    },
+
+    /**
+     * Direct messages — account holders only (user / owner / moderator / viewer).
+     * Message bodies are AES-256-GCM encrypted at rest. Anonymous posters cannot use DMs.
+     */
+    async listDmConversations(accountId: string) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản');
+        error.statusCode = 401;
+        throw error;
+      }
+      const state = await store.read();
+      ensureDmCollections(state);
+      return state.dmConversations
+        .filter((conversation: AnyRecord) => conversationIncludesUser(conversation, accountId))
+        .map((conversation: AnyRecord) => serializeDmConversation(conversation, state, accountId, dmSecret))
+        .sort((left: AnyRecord, right: AnyRecord) =>
+          String(right.lastMessageAt || right.updatedAt || '').localeCompare(
+            String(left.lastMessageAt || left.updatedAt || '')
+          )
+        );
+    },
+
+    async getDmUnreadCount(accountId: string) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản');
+        error.statusCode = 401;
+        throw error;
+      }
+      const state = await store.read();
+      return { unreadCount: countUnreadForUser(state, accountId) };
+    },
+
+    async openDmConversation(accountId: string, { username }: AnyRecord = {}) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản');
+        error.statusCode = 401;
+        throw error;
+      }
+      // Accept "@example" the way users type mentions; store usernames have no @.
+      const safeUsername = normalizeAccountUsername(String(username ?? '').replace(/^@+/, ''));
+      if (!safeUsername) {
+        const error = new Error('Vui lòng nhập tên tài khoản người nhận');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      return mutate(async (state) => {
+        ensureDmCollections(state);
+        const me = state.users.find((item: AnyRecord) => item.id === accountId);
+        if (!me || me.disabled) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        const peer = state.users.find(
+          (item: AnyRecord) => normalizeAccountUsername(item.username) === safeUsername
+        );
+        if (!peer || peer.disabled) {
+          const error = new Error('Không tìm thấy tài khoản người nhận');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (peer.id === me.id) {
+          const error = new Error('Không thể nhắn tin cho chính mình');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const key = participantKeyFor(me.id, peer.id);
+        let conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.participantKey === key
+        );
+        if (!conversation) {
+          const mineCount = state.dmConversations.filter((item: AnyRecord) =>
+            conversationIncludesUser(item, me.id)
+          ).length;
+          if (mineCount >= MAX_DM_CONVERSATIONS_PER_USER) {
+            const error = new Error('Đã đạt giới hạn số cuộc trò chuyện');
+            error.statusCode = 400;
+            throw error;
+          }
+          conversation = createDmConversationRecord([me.id, peer.id], now().toISOString());
+          state.dmConversations.push(conversation);
+          logEvent('dm.conversation.open', {
+            conversationId: conversation.id,
+            from: me.username,
+            to: peer.username
+          });
+        }
+        return serializeDmConversation(conversation, state, accountId, dmSecret);
+      });
+    },
+
+    async listDmMessages(
+      accountId: string,
+      conversationId: string,
+      { limit = 30, before }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản');
+        error.statusCode = 401;
+        throw error;
+      }
+      const state = await store.read();
+      ensureDmCollections(state);
+      const conversation = state.dmConversations.find(
+        (item: AnyRecord) => item.id === conversationId
+      );
+      if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+        const error = new Error('Không tìm thấy cuộc trò chuyện');
+        error.statusCode = 404;
+        throw error;
+      }
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 30, MAX_DM_MESSAGE_PAGE));
+      const beforeTs = before ? String(before) : '';
+      let messages = state.dmMessages
+        .filter((item: AnyRecord) => item.conversationId === conversationId)
+        .sort((left: AnyRecord, right: AnyRecord) => left.createdAt.localeCompare(right.createdAt));
+      if (beforeTs) {
+        messages = messages.filter((item: AnyRecord) => item.createdAt < beforeTs);
+      }
+      const page = messages.slice(-safeLimit).map((item: AnyRecord) =>
+        serializeDmMessage(item, dmSecret)
+      );
+      return {
+        conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
+        messages: page,
+        hasMore: messages.length > safeLimit
+      };
+    },
+
+    async sendDmMessage(accountId: string, conversationId: string, { body }: AnyRecord = {}) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản');
+        error.statusCode = 401;
+        throw error;
+      }
+      const text = normalizeDmBody(body);
+      if (!text) {
+        const error = new Error('Nội dung tin nhắn không được để trống');
+        error.statusCode = 400;
+        throw error;
+      }
+
+      const result = await mutate(async (state) => {
+        ensureDmCollections(state);
+        const me = state.users.find((item: AnyRecord) => item.id === accountId);
+        if (!me || me.disabled) {
+          const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          const error = new Error('Không tìm thấy cuộc trò chuyện');
+          error.statusCode = 404;
+          throw error;
+        }
+        const createdAt = now().toISOString();
+        const message = createDmMessageRecord({
+          conversationId,
+          senderId: accountId,
+          body: text,
+          createdAt,
+          secret: dmSecret
+        });
+        state.dmMessages.push(message);
+        conversation.updatedAt = createdAt;
+        conversation.lastMessageAt = createdAt;
+        conversation.lastMessageId = message.id;
+        conversation.lastCiphertext = message.ciphertext;
+        conversation.lastIv = message.iv;
+        conversation.lastAuthTag = message.authTag;
+        if (!conversation.unreadBy || typeof conversation.unreadBy !== 'object') {
+          conversation.unreadBy = {};
+        }
+        for (const participantId of normalizeParticipantIds(conversation.participantIds)) {
+          if (participantId === accountId) {
+            conversation.unreadBy[participantId] = 0;
+          } else {
+            conversation.unreadBy[participantId] =
+              Math.max(0, Number(conversation.unreadBy[participantId] || 0)) + 1;
+          }
+        }
+        trimConversationMessages(state, conversationId);
+        logEvent('dm.message.send', {
+          conversationId,
+          messageId: message.id,
+          sender: me.username
+        });
+        return {
+          conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
+          message: serializeDmMessage(message, dmSecret),
+          participantIds: normalizeParticipantIds(conversation.participantIds),
+          senderUsername: me.username
+        };
+      });
+
+      // Notification-only SSE payload — never include decrypted body on the wire broadcast.
+      realtime.publish('dm:message', {
+        conversationId,
+        messageId: result.message.id,
+        senderId: accountId,
+        senderUsername: result.senderUsername,
+        participantIds: result.participantIds,
+        createdAt: result.message.createdAt
+      });
+
+      return {
+        conversation: result.conversation,
+        message: result.message
+      };
+    },
+
+    async markDmConversationRead(accountId: string, conversationId: string) {
+      if (!accountId) {
+        const error = new Error('Vui lòng đăng nhập tài khoản');
+        error.statusCode = 401;
+        throw error;
+      }
+      return mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          const error = new Error('Không tìm thấy cuộc trò chuyện');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (!conversation.unreadBy || typeof conversation.unreadBy !== 'object') {
+          conversation.unreadBy = {};
+        }
+        conversation.unreadBy[accountId] = 0;
+        for (const message of state.dmMessages) {
+          if (message.conversationId !== conversationId) {
+            continue;
+          }
+          if (!Array.isArray(message.readBy)) {
+            message.readBy = [];
+          }
+          if (!message.readBy.includes(accountId)) {
+            message.readBy.push(accountId);
+          }
+        }
+        conversation.updatedAt = now().toISOString();
+        return serializeDmConversation(conversation, state, accountId, dmSecret);
       });
     }
   };

@@ -50,6 +50,7 @@ export function createScreenHelpers(dependencies: AnyRecord) {
       els.loginScreen,
       els.forgotScreen,
       els.accountScreen,
+      els.messagesScreen,
       els.adminScreen
     ];
     const targetScreen =
@@ -71,9 +72,11 @@ export function createScreenHelpers(dependencies: AnyRecord) {
                       ? els.forgotScreen
                       : name === 'account'
                         ? els.accountScreen
-                        : name === 'admin'
-                          ? els.adminScreen
-                          : els.boardScreen;
+                        : name === 'messages'
+                          ? els.messagesScreen
+                          : name === 'admin'
+                            ? els.adminScreen
+                            : els.boardScreen;
     for (const screen of screens) {
       if (screen !== targetScreen) {
         screen.classList.remove('active');
@@ -81,7 +84,10 @@ export function createScreenHelpers(dependencies: AnyRecord) {
     }
     document.body.classList.toggle('home-page', name === 'home');
     document.body.classList.toggle('policy-page', name === 'policy');
-    document.body.classList.toggle('account-page', ['register', 'login', 'forgot', 'account'].includes(name));
+    document.body.classList.toggle(
+      'account-page',
+      ['register', 'login', 'forgot', 'account', 'messages'].includes(name)
+    );
     document.body.classList.toggle(
       'board-page',
       name === 'board' || name === 'catalog' || name === 'archive' || name === 'thread'

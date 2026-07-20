@@ -10,7 +10,8 @@ const realtimeEventNames = [
   'thread:updated',
   'comment:created',
   'comment:updated',
-  'thread:archived'
+  'thread:archived',
+  'dm:message'
 ];
 
 function parseRealtimePayload(event: MessageEvent | Event) {
@@ -136,6 +137,10 @@ export function setupRealtime(dependencies: AnyRecord) {
       const payload = parseRealtimePayload(event);
       if (eventName === 'comment:created') {
         dependencies.notifyWatchedThreadPost(payload);
+      }
+      if (eventName === 'dm:message') {
+        dependencies.handleIncomingDmEvent?.(payload);
+        return;
       }
       const hash = window.location.hash || '#home';
       if (hash.startsWith('#home') || hash === '') {

@@ -17,6 +17,8 @@ type MongoModels = Record<
   | 'Report'
   | 'Appeal'
   | 'Sanction'
+  | 'DmConversation'
+  | 'DmMessage'
   | 'AiUsage'
   | 'AiSummaryCache'
   | 'StateMeta',
@@ -195,7 +197,9 @@ const PRODUCTION_MODEL_READINESS = {
   users: true,
   reports: true,
   appeals: true,
-  moderationLogs: true
+  moderationLogs: true,
+  dmConversations: true,
+  dmMessages: true
 };
 
 function flexibleSchema(indexes: FlexibleIndex[] = []) {
@@ -333,6 +337,25 @@ export function createMongoModels(connection: Connection): MongoModels {
       ]),
       'sanctions'
     ),
+    DmConversation: model(
+      'DmConversation',
+      flexibleSchema([
+        { fields: { id: 1 }, options: { unique: true } },
+        { fields: { participantKey: 1 }, options: { unique: true } },
+        { fields: { participantIds: 1 } },
+        { fields: { lastMessageAt: -1 } }
+      ]),
+      'dmConversations'
+    ),
+    DmMessage: model(
+      'DmMessage',
+      flexibleSchema([
+        { fields: { id: 1 }, options: { unique: true } },
+        { fields: { conversationId: 1, createdAt: -1 } },
+        { fields: { senderId: 1, createdAt: -1 } }
+      ]),
+      'dmMessages'
+    ),
     AiUsage: model('AiUsage', KEY_VALUE_SCHEMA, 'aiUsage'),
     AiSummaryCache: model('AiSummaryCache', KEY_VALUE_SCHEMA, 'aiSummaryCache'),
     StateMeta: model('StateMeta', STATE_META_SCHEMA, 'stateMeta')
@@ -432,6 +455,8 @@ export async function replaceMongoState(
   await replaceCollection(models.Report, normalized.reports, session);
   await replaceCollection(models.Appeal, normalized.appeals, session);
   await replaceCollection(models.Sanction, normalized.sanctions, session);
+  await replaceCollection(models.DmConversation, normalized.dmConversations, session);
+  await replaceCollection(models.DmMessage, normalized.dmMessages, session);
   await replaceCollection(models.AiUsage, objectToKeyValues(normalized.aiUsage), session);
   await replaceCollection(models.AiSummaryCache, objectToKeyValues(normalized.aiSummaryCache), session);
   return normalizeState({ ...normalized, users });
@@ -1077,7 +1102,21 @@ export function createMongoStore({
 
     async read() {
       const models = await getModels();
-      const [meta, boards, users, threads, comments, moderationActions, reports, appeals, sanctions, aiUsage, aiSummaryCache] = await Promise.all([
+      const [
+        meta,
+        boards,
+        users,
+        threads,
+        comments,
+        moderationActions,
+        reports,
+        appeals,
+        sanctions,
+        dmConversations,
+        dmMessages,
+        aiUsage,
+        aiSummaryCache
+      ] = await Promise.all([
         models.StateMeta.findById('global').lean(),
         models.Board.find({}).lean(),
         models.User.find({}).lean(),
@@ -1087,6 +1126,8 @@ export function createMongoStore({
         models.Report.find({}).lean(),
         models.Appeal.find({}).lean(),
         models.Sanction.find({}).lean(),
+        models.DmConversation.find({}).lean(),
+        models.DmMessage.find({}).lean(),
         models.AiUsage.find({}).lean(),
         models.AiSummaryCache.find({}).lean()
       ]);
@@ -1103,6 +1144,8 @@ export function createMongoStore({
         reports: reports.map(plainDocument),
         appeals: appeals.map(plainDocument),
         sanctions: sanctions.map(plainDocument),
+        dmConversations: dmConversations.map(plainDocument),
+        dmMessages: dmMessages.map(plainDocument),
         aiUsage: keyValuesToObject(aiUsage),
         aiSummaryCache: keyValuesToObject(aiSummaryCache)
       });

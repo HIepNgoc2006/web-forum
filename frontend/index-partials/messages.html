@@ -1,0 +1,74 @@
+      <section id="messagesScreen" class="screen messages-screen" aria-label="Tin nhắn riêng">
+        <div class="messages-shell">
+          <header class="messages-header">
+            <div class="messages-header-text">
+              <p class="path-chip">/messages/</p>
+              <h1 class="messages-title">Tin nhắn riêng</h1>
+              <p class="muted messages-subtitle">
+                Chat mã hóa cho tài khoản đã đăng nhập (user / mod / admin / owner). Khách ẩn danh không dùng được.
+              </p>
+            </div>
+            <span id="dmUnreadBadge" class="dm-unread-badge hidden" aria-live="polite">0</span>
+          </header>
+
+          <div id="dmLoggedOut" class="messages-logged-out">
+            <p>Đăng nhập tài khoản để gửi tin nhắn riêng được mã hóa.</p>
+            <div class="messages-auth-actions">
+              <a class="primary-button" href="#login">Đăng nhập</a>
+              <a class="ghost-button" href="#register">Đăng ký</a>
+            </div>
+          </div>
+
+          <div id="dmLoggedIn" class="messages-layout hidden">
+            <aside class="messages-sidebar" aria-label="Danh sách hội thoại">
+              <form id="dmStartForm" class="dm-start-form">
+                <label class="dm-field" for="dmPeerUsername">
+                  <span class="dm-field-label">Bắt đầu chat với @username</span>
+                  <input
+                    id="dmPeerUsername"
+                    name="username"
+                    type="text"
+                    autocomplete="off"
+                    maxlength="32"
+                    placeholder="example hoặc @example"
+                    required
+                  />
+                </label>
+                <p id="dmStartError" class="dm-form-error form-error hidden" role="alert"></p>
+                <button type="submit" class="primary-button dm-start-submit">Mở chat</button>
+              </form>
+              <div id="dmConversationList" class="dm-conversation-list" role="list"></div>
+            </aside>
+
+            <section class="messages-main" aria-label="Nội dung hội thoại">
+              <div id="dmEmptyState" class="dm-empty-state muted">
+                Chọn một hội thoại hoặc mở chat mới bằng tên tài khoản.
+              </div>
+              <div id="dmThread" class="dm-thread hidden">
+                <header class="dm-thread-header">
+                  <h2 id="dmThreadTitle">Chat</h2>
+                  <p id="dmThreadMeta" class="muted"></p>
+                </header>
+                <div id="dmMessageList" class="dm-message-list" role="log" aria-live="polite" aria-relevant="additions"></div>
+                <form id="dmSendForm" class="dm-send-form">
+                  <label class="dm-field dm-send-field" for="dmMessageBody">
+                    <span class="ai-chat-visually-hidden">Nội dung tin nhắn</span>
+                    <textarea
+                      id="dmMessageBody"
+                      name="body"
+                      rows="3"
+                      maxlength="4000"
+                      placeholder="Nhập tin nhắn..."
+                      required
+                    ></textarea>
+                  </label>
+                  <div class="dm-send-actions">
+                    <p id="dmSendError" class="dm-form-error form-error hidden" role="alert"></p>
+                    <button type="submit" class="primary-button">Gửi</button>
+                  </div>
+                </form>
+              </div>
+            </section>
+          </div>
+        </div>
+      </section>

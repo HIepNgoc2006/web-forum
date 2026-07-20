@@ -2512,7 +2512,7 @@ test('admin can delete a live post without the delete password', async () => {
 
   const result = await service.adminDeletePost(created.thread.globalNumber, {
     reason: 'vi pham noi quy',
-    actor: 'pengu1'
+    actor: 'example'
   });
   assert.equal(result.ok, true);
 
@@ -2522,7 +2522,7 @@ test('admin can delete a live post without the delete password', async () => {
   const actions = await service.listModerationActions(10);
   const deleteAction = actions.find((action) => action.action === 'admin:delete');
   assert.ok(deleteAction);
-  assert.equal(deleteAction.actor, 'pengu1');
+  assert.equal(deleteAction.actor, 'example');
   assert.equal(deleteAction.reason, 'vi pham noi quy');
 });
 
@@ -2575,7 +2575,7 @@ test('admin delete rejects an unknown post number', async () => {
   });
 
   await assert.rejects(
-    () => service.adminDeletePost(999999, { actor: 'pengu1' }),
+    () => service.adminDeletePost(999999, { actor: 'example' }),
     (error) => asServiceError(error).statusCode === 404
   );
 });
@@ -2748,7 +2748,7 @@ test('published posts can use creation-time appeal token after admin deletion', 
 
   await service.adminDeletePost(created.thread.globalNumber, {
     reason: 'xoa de test khang nghi',
-    actor: 'pengu1'
+    actor: 'example'
   });
   const appeal = await service.submitAppeal({
     token: created.appealToken,
@@ -2862,7 +2862,7 @@ test('admin resolves anonymous appeals with audit history', async () => {
   });
   await service.adminDeletePost(created.thread.globalNumber, {
     reason: 'Xoa de test khang nghi',
-    actor: 'pengu1'
+    actor: 'example'
   });
   const submitted = await service.submitAppeal({
     token: created.appealToken,
@@ -2873,7 +2873,7 @@ test('admin resolves anonymous appeals with audit history', async () => {
   const resolved = await service.resolveAppeal(submitted.id, {
     status: 'accepted',
     reason: 'Dong y xem lai',
-    actor: 'pengu1'
+    actor: 'example'
   });
   const appeals = await service.listAppeals(10);
   const actions = await service.listModerationActions(10);
@@ -2882,7 +2882,7 @@ test('admin resolves anonymous appeals with audit history', async () => {
   const acceptAction = actions.find((action) => action.action === 'admin:appeal-accept');
 
   assert.equal(resolved.status, 'accepted');
-  assert.equal(resolved.resolvedBy, 'pengu1');
+  assert.equal(resolved.resolvedBy, 'example');
   assert.equal(resolved.history.at(-1).action, 'accepted');
   assert.equal(appeals.length, 1);
   assert.equal(appeals[0].status, 'accepted');

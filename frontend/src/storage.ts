@@ -162,7 +162,9 @@ export function localNotificationPreferences() {
     email: Boolean(value.email),
     watchedThreads: value.watchedThreads !== false,
     boardSubscriptions: Boolean(value.boardSubscriptions),
-    browserWatchedThreads: Boolean(value.browserWatchedThreads)
+    browserWatchedThreads: Boolean(value.browserWatchedThreads),
+    directMessages: value.directMessages !== false,
+    browserDirectMessages: Boolean(value.browserDirectMessages)
   };
 }
 
@@ -171,7 +173,9 @@ export function writeLocalNotificationPreferences(preferences: AnyRecord = {}) {
     email: Boolean(preferences.email),
     watchedThreads: preferences.watchedThreads !== false,
     boardSubscriptions: Boolean(preferences.boardSubscriptions),
-    browserWatchedThreads: Boolean(preferences.browserWatchedThreads)
+    browserWatchedThreads: Boolean(preferences.browserWatchedThreads),
+    directMessages: preferences.directMessages !== false,
+    browserDirectMessages: Boolean(preferences.browserDirectMessages)
   };
   writeJsonLocal(notificationPreferencesKey, safe);
   return safe;
