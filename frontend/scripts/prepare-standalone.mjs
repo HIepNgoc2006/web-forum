@@ -5,6 +5,10 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
+if (process.env.VERCEL === '1') {
+  console.log('Vercel build detected: skipping standalone preparation.');
+  process.exit(0);
+}
 const standaloneRoot = path.join(packageRoot, '.next', 'standalone');
 const backendOrigin = new URL(
   process.env.BACKEND_ORIGIN || 'http://127.0.0.1:3000',
