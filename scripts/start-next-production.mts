@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import fs, { readFileSync } from 'node:fs';
 import type http from 'node:http';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
@@ -128,7 +128,13 @@ function supervise(
 
 const commonEnv: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' };
 if (startBackend) {
-  supervise('backend', process.execPath, ['--experimental-strip-types', path.join(backendRoot, 'server.ts')], {
+  const compiledBackendServer = path.join(backendRoot, 'dist', 'server.js');
+  const rawBackendServer = path.join(backendRoot, 'server.ts');
+  const hasCompiledBackend = fs.existsSync(compiledBackendServer);
+  const backendArgs = hasCompiledBackend
+    ? [compiledBackendServer]
+    : ['--experimental-strip-types', rawBackendServer];
+  supervise('backend', process.execPath, backendArgs, {
     cwd: backendRoot,
     env: {
       ...commonEnv,

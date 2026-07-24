@@ -34,6 +34,7 @@ COPY frontend/package*.json ./frontend/
 RUN npm --prefix frontend ci --omit=dev --ignore-scripts
 
 COPY backend ./backend
+COPY --from=build /app/backend/dist ./backend/dist
 COPY scripts/start-next-production.mts ./scripts/start-next-production.mts
 COPY frontend/next.config.mjs ./frontend/next.config.mjs
 COPY frontend/public ./frontend/public
