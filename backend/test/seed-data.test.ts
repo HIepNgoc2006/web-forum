@@ -226,6 +226,36 @@ describe('seed data import safety', () => {
     assert.equal(rollback.threads.length, 0);
   });
 
+  it('holds the store mutation lock across read, plan, rollback, and write', async () => {
+    const root = await tempDir();
+    const rollbackPath = path.join(root, 'locked-rollback.json');
+    let lockHeld = false;
+    const calls: string[] = [];
+    const store = {
+      async withMutationLock(callback) {
+        calls.push('lock');
+        lockHeld = true;
+        try {
+          return await callback();
+        } finally {
+          lockHeld = false;
+        }
+      },
+      async read() {
+        assert.equal(lockHeld, true);
+        calls.push('read');
+        return { version: 1, nextGlobalNumber: 1, boards: [], threads: [], comments: [] };
+      },
+      async write() {
+        assert.equal(lockHeld, true);
+        calls.push('write');
+      }
+    };
+
+    await importSeedData({ store, seed: seedFixture(), dryRun: false, rollbackPath });
+    assert.deepEqual(calls, ['lock', 'read', 'write']);
+  });
+
   it('restores the previous state when a write import fails', async () => {
     const root = await tempDir();
     const rollbackPath = path.join(root, 'rollback.json');
@@ -314,5 +344,20 @@ describe('seed data CLI arguments', () => {
       () => parseSeedArgs(['node', 'seed-data.ts', 'import', '--in', 'seed.json', '--dry-run', '--write'], {}),
       /either --dry-run or --write/i
     );
+  });
+
+  it('requires an explicit maintenance confirmation for production writes', () => {
+    assert.throws(
+      () => parseSeedArgs(
+        ['node', 'seed-data.ts', 'import', '--in', 'seed.json', '--write'],
+        { NODE_ENV: 'production' }
+      ),
+      /maintenance-confirmed/i
+    );
+    const args = parseSeedArgs(
+      ['node', 'seed-data.ts', 'import', '--in', 'seed.json', '--write', '--maintenance-confirmed'],
+      { NODE_ENV: 'production' }
+    );
+    assert.equal(args.maintenanceConfirmed, true);
   });
 });

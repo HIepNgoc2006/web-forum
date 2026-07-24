@@ -73,6 +73,16 @@ const MIME_TYPES = new Map([
   ['.webp', 'image/webp'],
   ['.svg', 'image/svg+xml']
 ]);
+const SAFE_INLINE_UPLOAD_MIME_TYPES = new Map([
+  ['.avif', 'image/avif'],
+  ['.png', 'image/png'],
+  ['.jpg', 'image/jpeg'],
+  ['.jpeg', 'image/jpeg'],
+  ['.gif', 'image/gif'],
+  ['.webp', 'image/webp'],
+  ['.mp4', 'video/mp4'],
+  ['.webm', 'video/webm']
+]);
 const MAX_MEDIA_PER_POST = 4;
 const INITIAL_HOME_SNAPSHOT_MARKER = '<script id="initialHomeSnapshot" type="application/json">null</script>';
 const PRIVILEGED_ACCOUNT_ROLES = new Set(['owner', 'admin', 'moderator', 'viewer']);
@@ -156,8 +166,9 @@ const BASE_SECURITY_HEADERS: Record<string, string> = {
     "font-src 'self' data:",
     "style-src 'self' 'unsafe-inline'",
     "script-src 'self' 'unsafe-inline' https://js.hcaptcha.com https://*.hcaptcha.com",
-    "frame-src https://newassets.hcaptcha.com https://*.hcaptcha.com",
-    "connect-src 'self' https://*.hcaptcha.com",
+    // hCaptcha widgets + click-to-load media embeds (YouTube / Vimeo only).
+    "frame-src https://newassets.hcaptcha.com https://*.hcaptcha.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com",
+    "connect-src 'self' ws: wss: https://*.hcaptcha.com",
     "worker-src 'self' blob:"
   ].join('; ')
 };
@@ -231,11 +242,6 @@ function createTtlCache(ttlMs: number) {
   };
 }
 
-function isLoopbackAddress(address: string | undefined): boolean {
-  const value = String(address || '').replace(/^::ffff:/i, '');
-  return value === '127.0.0.1' || value === '::1' || value === 'localhost';
-}
-
 function timingSafeEqualString(left: string, right: string): boolean {
   const a = Buffer.from(String(left));
   const b = Buffer.from(String(right));
@@ -247,7 +253,7 @@ function timingSafeEqualString(left: string, right: string): boolean {
   return crypto.timingSafeEqual(a, b);
 }
 
-function extractMetricsToken(request: HttpRequest, searchParams: URLSearchParams): string {
+function extractMetricsToken(request: HttpRequest): string {
   const headerAuth = String(request.headers.authorization || '');
   if (headerAuth.startsWith('Bearer ')) {
     return headerAuth.slice(7).trim();
@@ -256,18 +262,18 @@ function extractMetricsToken(request: HttpRequest, searchParams: URLSearchParams
   if (dedicated) {
     return String(Array.isArray(dedicated) ? dedicated[0] : dedicated).trim();
   }
-  return String(searchParams.get('token') || '').trim();
+  return '';
 }
 
 /**
- * Metrics expose capacity/process counters. Require METRICS_TOKEN when set.
- * In production without a token, only loopback scrapes are allowed so the
- * endpoint is not an open reconnaissance surface on the public internet.
+ * Metrics expose capacity/process counters. Production always requires an
+ * explicit token because a public reverse proxy makes downstream connections
+ * appear loopback even when the original client was remote.
  */
-function authorizeMetrics(request: HttpRequest, searchParams: URLSearchParams): void {
+function authorizeMetrics(request: HttpRequest): void {
   const expected = String(process.env.METRICS_TOKEN || '').trim();
   if (expected) {
-    const provided = extractMetricsToken(request, searchParams);
+    const provided = extractMetricsToken(request);
     if (!provided || !timingSafeEqualString(provided, expected)) {
       const error = new Error('Unauthorized');
       error.statusCode = 401;
@@ -277,12 +283,9 @@ function authorizeMetrics(request: HttpRequest, searchParams: URLSearchParams): 
   }
 
   if (process.env.NODE_ENV === 'production') {
-    // Use the direct socket address (not X-Forwarded-For) so clients cannot spoof loopback.
-    if (!isLoopbackAddress(request.socket.remoteAddress)) {
-      const error = new Error('Metrics yêu cầu METRICS_TOKEN trong production');
-      error.statusCode = 401;
-      throw error;
-    }
+    const error = new Error('Metrics yêu cầu METRICS_TOKEN trong production');
+    error.statusCode = 401;
+    throw error;
   }
 }
 
@@ -377,11 +380,25 @@ function fail(response: HttpResponse, error: Error) {
     }
   });
 }
+function sanitizedRequestLogUrl(requestUrl) {
+  try {
+    const url = new URL(String(requestUrl || '/'), 'http://localhost');
+    for (const key of [...url.searchParams.keys()]) {
+      if (/(?:token|secret|password|authorization|api[_-]?key|code)/i.test(key)) {
+        url.searchParams.set(key, '[REDACTED]');
+      }
+    }
+    return `${url.pathname}${url.search}`;
+  } catch {
+    return '/';
+  }
+}
+
 function logRequestFailure(request, routePath, error) {
   const statusCode = error.statusCode ?? 500;
   const details = {
     method: request.method,
-    url: request.url,
+    url: sanitizedRequestLogUrl(request.url),
     routePath,
     statusCode,
     message: error.message
@@ -436,6 +453,16 @@ function healthMetricsText(health: AnyRecord = {}) {
   appendCounter(lines, 'chan36_sse_heartbeats_total', 'Total SSE heartbeat ticks since process start.', realtime.heartbeats);
   appendCounter(lines, 'chan36_sse_backpressure_events_total', 'Total SSE writes that reported backpressure since process start.', realtime.backpressureEvents);
   appendCounter(lines, 'chan36_sse_backpressure_drops_total', 'Total SSE clients dropped after repeated backpressure since process start.', realtime.backpressureDrops);
+  appendGauge(lines, 'chan36_socketio_clients', 'Currently connected Socket.IO clients.', realtime.socketClients);
+  appendCounter(lines, 'chan36_socketio_connections_total', 'Total accepted Socket.IO connections since process start.', realtime.socketConnections);
+  appendCounter(lines, 'chan36_socketio_disconnects_total', 'Total Socket.IO disconnects since process start.', realtime.socketDisconnects);
+  appendCounter(lines, 'chan36_socketio_auth_failures_total', 'Total rejected Socket.IO authentication attempts.', realtime.socketAuthFailures);
+  appendGauge(
+    lines,
+    'chan36_realtime_state_ready',
+    'Shared realtime state readiness (Redis in multi-instance deployments).',
+    realtime.state?.ready === false ? 0 : 1
+  );
 
   for (const [key, metricName] of Object.entries(STORE_METRIC_NAMES)) {
     if (Number.isFinite(Number(health.store?.[key]))) {
@@ -602,7 +629,16 @@ async function requireAccount(
       throw new Error('Phiên đăng nhập đã hết hiệu lực');
     }
     const role = normalizeAdminRole(account.role);
-    if (payload.isTwoFactorVerified === false && !(allowAdmin2FASetup && PRIVILEGED_ACCOUNT_ROLES.has(role))) {
+    let canBootstrapMfa = false;
+    if (
+      payload.isTwoFactorVerified === false &&
+      allowAdmin2FASetup &&
+      PRIVILEGED_ACCOUNT_ROLES.has(role)
+    ) {
+      const mfaState = await service.getAccountMfaState(account.id);
+      canBootstrapMfa = !mfaState.totpEnabled && mfaState.passkeyCount === 0;
+    }
+    if (payload.isTwoFactorVerified === false && !canBootstrapMfa) {
       const error = new Error('Yêu cầu xác thực 2FA');
       error.statusCode = 401;
       throw error;
@@ -617,6 +653,73 @@ async function requireAccount(
     err.statusCode = 401;
     throw err;
   }
+}
+
+export async function authenticateRealtimeSession({
+  accountToken = '',
+  adminToken = '',
+  jwtSecret,
+  service
+}: {
+  accountToken?: string;
+  adminToken?: string;
+  jwtSecret?: string;
+  service: any;
+}) {
+  const secret = String(jwtSecret || '');
+  requireAccountJwt(secret);
+  const candidates = [
+    { kind: 'account', token: String(accountToken || '') },
+    { kind: 'admin', token: String(adminToken || '') }
+  ].filter((candidate, index, list) => (
+    candidate.token &&
+    list.findIndex((item) => item.token === candidate.token) === index
+  ));
+  const identities: Array<{
+    userId: string;
+    username: string;
+    role: string;
+    permissions: string[];
+  }> = [];
+  let account;
+  let moderator;
+  let lastError: unknown;
+
+  for (const candidate of candidates) {
+    try {
+      const request = {
+        headers: { authorization: 'Bearer ' + candidate.token }
+      } as HttpRequest;
+      const session = await requireAccount(request, secret, service);
+      const role = normalizeAdminRole(session.role);
+      const identity = {
+        userId: String(session.sub),
+        username: String(session.username || ''),
+        role,
+        permissions: [...adminPermissionsForRole(role)].map(String)
+      };
+      identities.push(identity);
+      if (candidate.kind === 'account' || !account) {
+        account = identity;
+      }
+      if (PRIVILEGED_ACCOUNT_ROLES.has(role)) {
+        moderator = identity;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (candidates.length > 0 && identities.length === 0) {
+    throw lastError instanceof Error ? lastError : new Error('Phiên realtime không hợp lệ');
+  }
+  return {
+    account,
+    moderator,
+    identities: identities.filter((identity, index, list) => (
+      list.findIndex((item) => item.userId === identity.userId) === index
+    ))
+  };
 }
 
 async function getOptionalAccount(request: HttpRequest, jwtSecret: string, service: any) {
@@ -647,6 +750,7 @@ async function getOptionalCapcode(request: HttpRequest, jwtSecret: string, servi
     const payload = verifyJwt(token, jwtSecret);
     if (service?.isSessionRevoked?.(token)) return null;
     if (!payload.sub) return null;
+    if (payload.isTwoFactorVerified !== true) return null;
     const account = await service.getAccount(payload.sub);
     if (account?.disabled || !isAccountAuthEpochCurrent(payload, account)) return null;
     const role = normalizeAdminRole(account?.role);
@@ -811,35 +915,79 @@ function postPreview(post: AnyRecord = {}) {
     .slice(0, 300);
 }
 
-function requestOrigin(request: HttpRequest) {
-  const origin = request.headers.origin || request.headers.referer || 'http://localhost:3000';
+function firstForwardedHeader(value: string | string[] | undefined): string {
+  return String(Array.isArray(value) ? value[0] ?? '' : value ?? '')
+    .split(',')[0]
+    .trim();
+}
+
+function validHost(value: string): string {
+  if (!value || /[\\/@?#\s]/.test(value)) return '';
   try {
-    return new URL(origin).origin;
+    const parsed = new URL(`http://${value}`);
+    return parsed.username || parsed.password || parsed.pathname !== '/' ? '' : parsed.host;
   } catch {
-    const error = new Error('Origin đăng nhập không hợp lệ');
-    error.statusCode = 400;
-    throw error;
+    return '';
   }
 }
 
-function requestProtocol(request: HttpRequest) {
-  if (isTrustProxyEnabled()) {
-    const forwardedProto = String(request.headers['x-forwarded-proto'] || '')
-      .split(',')[0]
-      .trim()
-      .toLowerCase();
-    if (forwardedProto === 'http' || forwardedProto === 'https') {
-      return forwardedProto;
-    }
+function parsedHttpOrigin(value: string): string {
+  try {
+    const parsed = new URL(value);
+    if (!['http:', 'https:'].includes(parsed.protocol) || parsed.username || parsed.password) return '';
+    return parsed.origin;
+  } catch {
+    return '';
   }
-  // node:http has no TLS socket by default; reverse proxies set X-Forwarded-Proto
-  // when TRUST_PROXY is enabled.
-  return 'http';
+}
+
+function originError(message: string, statusCode: number): Error & { statusCode: number } {
+  return Object.assign(new Error(message), { statusCode });
+}
+
+export function resolvePublicOrigin(
+  request: HttpRequest,
+  env: NodeJS.ProcessEnv = process.env
+): string {
+  const configuredValue = String(env.APP_BASE_URL || '').trim();
+  if (configuredValue) {
+    const configured = parsedHttpOrigin(configuredValue);
+    if (!configured) throw originError('APP_BASE_URL phải là origin HTTP(S) hợp lệ', 500);
+    return configured;
+  }
+
+  let protocol = (request.socket as { encrypted?: boolean }).encrypted ? 'https' : 'http';
+  let host = validHost(firstForwardedHeader(request.headers.host)) || 'localhost';
+  if (isTrustProxyEnabled(env)) {
+    const forwardedHost = validHost(firstForwardedHeader(request.headers['x-forwarded-host']));
+    const forwardedProtocol = firstForwardedHeader(request.headers['x-forwarded-proto']).toLowerCase();
+    if (forwardedHost) host = forwardedHost;
+    if (forwardedProtocol === 'http' || forwardedProtocol === 'https') protocol = forwardedProtocol;
+  }
+  const origin = parsedHttpOrigin(`${protocol}://${host}`);
+  if (!origin) throw originError('Origin công khai không hợp lệ', 400);
+  return origin;
+}
+
+export function resolveWebAuthnContext(
+  request: HttpRequest,
+  env: NodeJS.ProcessEnv = process.env
+): { origin: string; rpID: string } {
+  const origin = resolvePublicOrigin(request, env);
+  return { origin, rpID: new URL(origin).hostname };
+}
+
+function requestOrigin(request: HttpRequest): string {
+  const expected = resolvePublicOrigin(request);
+  const supplied = String(request.headers.origin || request.headers.referer || '').trim();
+  if (!supplied) return expected;
+  const actual = parsedHttpOrigin(supplied);
+  if (!actual || actual !== expected) throw originError('Origin đăng nhập không hợp lệ', 400);
+  return expected;
 }
 
 function absoluteUrl(request: HttpRequest, pathName: string) {
-  const host = request.headers.host || 'localhost';
-  return `${requestProtocol(request)}://${host}${pathName}`;
+  return `${resolvePublicOrigin(request)}${pathName}`;
 }
 
 function feedLimit(value, fallback = 20, max = 50) {
@@ -1173,7 +1321,12 @@ async function serveStatic(request, response, staticRoot, initialHomeSnapshot?: 
 }
 
 function shouldServeSpaFallback(pathname) {
-  if (pathname.startsWith('/api') || pathname.startsWith('/events') || pathname.startsWith('/uploads')) {
+  if (
+    pathname.startsWith('/api') ||
+    pathname.startsWith('/events') ||
+    pathname.startsWith('/socket.io') ||
+    pathname.startsWith('/uploads')
+  ) {
     return false;
   }
   const segments = pathname.split('/').filter(Boolean);
@@ -1216,16 +1369,18 @@ async function serveUploadedFile(request, response, uploadRoot) {
       return false;
     }
     const extension = path.extname(candidate).toLowerCase();
-    // SVG can carry script; even though uploads reject SVG, force a sandbox CSP
-    // if a file with this extension is present on disk.
+    const inlineMime = SAFE_INLINE_UPLOAD_MIME_TYPES.get(extension);
+    // Upload serving has a deliberately narrower MIME map than static assets.
+    // Unknown or legacy active formats are downloaded as inert bytes even if a
+    // file was placed in the upload directory outside the normal validator.
     const extraHeaders: Record<string, string | number> = {
-      'content-type': MIME_TYPES.get(extension) ?? 'application/octet-stream',
+      'content-type': inlineMime ?? 'application/octet-stream',
       'content-length': stat.size,
       'cache-control': 'public, max-age=31536000, immutable',
       'last-modified': stat.mtime.toUTCString(),
       'cross-origin-resource-policy': 'same-site'
     };
-    if (extension === '.svg') {
+    if (!inlineMime) {
       extraHeaders['content-security-policy'] = "default-src 'none'; sandbox";
       extraHeaders['content-disposition'] = 'attachment';
     }
@@ -1263,6 +1418,7 @@ export function createHttpServer({
     admin: createRateLimiter({ ...sharedLimiterOptions, limit: 30, windowMs: 60_000 }),
     search: createRateLimiter({ ...sharedLimiterOptions, limit: 10, windowMs: 60_000 }),
     gif: createRateLimiter({ ...sharedLimiterOptions, limit: 30, windowMs: 60_000 }),
+    realtime: createRateLimiter({ ...sharedLimiterOptions, limit: 60, windowMs: 60_000 }),
     generic: createRateLimiter({ ...sharedLimiterOptions, limit: 60, windowMs: 60_000 })
   };
   // Short in-process TTL for hot public GETs to cut whole-state re-reads under bursty traffic.
@@ -1299,6 +1455,7 @@ export function createHttpServer({
 
     try {
       if (isEventStream && realtime.handle) {
+        await enforceRateLimit({ limiter: limiters.realtime, key: ip + ':realtime-connect' });
         realtime.handle(request, response);
         return;
       }
@@ -1383,26 +1540,18 @@ export function createHttpServer({
       }
 
       if (request.method === 'GET' && routePath === '/api/health') {
-        const security = securityConfigStatus({
-          jwtSecret,
-          adminUsername,
-          adminPassword
-        });
         const health = await service.getHealth();
+        response.setHeader('cache-control', 'no-store');
         const payload = {
-          ...health,
-          captcha: {
-            provider: 'hcaptcha',
-            configured: security.hcaptchaConfigured
-          },
-          security
+          status: health.status,
+          ready: health.status === 'ok'
         };
         ok(response, payload, health.status === 'ok' ? 200 : 503);
         return;
       }
 
       if (request.method === 'GET' && (routePath === '/metrics' || routePath === '/api/metrics')) {
-        authorizeMetrics(request, url.searchParams);
+        authorizeMetrics(request);
         sendText(
           response,
           200,
@@ -1495,6 +1644,12 @@ export function createHttpServer({
 
       if (request.method === 'GET' && routePath === '/api/pulse') {
         ok(response, await service.listCampusPulse(url.searchParams.get('limit') ?? 12));
+        return;
+      }
+
+      if (request.method === 'POST' && routePath === '/api/link-preview') {
+        const body = await readJson(request, 20_000);
+        ok(response, await service.getLinkPreview({ url: body.url }));
         return;
       }
 
@@ -1663,14 +1818,16 @@ export function createHttpServer({
           ip
         });
         if (account.twoFactorEnabled) {
+          const challenge = await service.begin2FALogin(account.id);
           ok(response, {
             requires2FA: true,
             tempToken: signJwt(
               {
-                role: account.role || 'user',
-                sub: account.id,
-                username: account.username,
-                authEpoch: Number(account.authEpoch ?? 0),
+                role: challenge.account.role || 'user',
+                sub: challenge.account.id,
+                username: challenge.account.username,
+                authEpoch: Number(challenge.account.authEpoch ?? 0),
+                twoFactorChallengeId: challenge.challengeId,
                 isTwoFactorVerified: false
               },
               jwtSecret,
@@ -1702,12 +1859,19 @@ export function createHttpServer({
           payload.isTwoFactorVerified !== false
           || pendingAccount.disabled
           || !isAccountAuthEpochCurrent(payload, pendingAccount)
+          || service.isSessionRevoked?.(body.tempToken)
+          || typeof payload.twoFactorChallengeId !== 'string'
         ) {
           const error = new Error('Yêu cầu xác thực đã hết hạn hoặc không hợp lệ');
           error.statusCode = 400;
           throw error;
         }
-        const result = await service.verify2FALogin(payload.sub, body.code);
+        const result = await service.verify2FALogin(
+          payload.sub,
+          body.code,
+          payload.twoFactorChallengeId
+        );
+        service.revokeSession?.(body.tempToken);
         ok(response, { ok: true, token: accountToken(result.account, jwtSecret, true), account: result.account });
         return;
       }
@@ -1728,12 +1892,19 @@ export function createHttpServer({
           payload.isTwoFactorVerified !== false
           || pendingAccount.disabled
           || !isAccountAuthEpochCurrent(payload, pendingAccount)
+          || service.isSessionRevoked?.(body.tempToken)
+          || typeof payload.twoFactorChallengeId !== 'string'
         ) {
           const error = new Error('Yêu cầu xác thực đã hết hạn hoặc không hợp lệ');
           error.statusCode = 400;
           throw error;
         }
-        const result = await service.verifyBackupCodeLogin(payload.sub, body.code);
+        const result = await service.verifyBackupCodeLogin(
+          payload.sub,
+          body.code,
+          payload.twoFactorChallengeId
+        );
+        service.revokeSession?.(body.tempToken);
         ok(response, { ok: true, token: accountToken(result.account, jwtSecret, true), account: result.account });
         return;
       }
@@ -1751,8 +1922,7 @@ export function createHttpServer({
 
       if (request.method === 'POST' && routePath === '/api/auth/webauthn/login-options') {
         const body = await readJson(request, 20_000);
-        const hostHeader = request.headers.host || 'localhost';
-        const rpID = hostHeader.split(':')[0];
+        const { rpID } = resolveWebAuthnContext(request);
         ok(response, await service.generateWebAuthnLoginOptions(body.username, rpID));
         return;
       }
@@ -1760,12 +1930,12 @@ export function createHttpServer({
       if (request.method === 'POST' && routePath === '/api/auth/webauthn/login-verify') {
         requireAccountJwt(jwtSecret);
         const body = await readJson(request, 20_000);
-        const hostHeader = request.headers.host || 'localhost';
-        const rpID = hostHeader.split(':')[0];
+        const origin = requestOrigin(request);
+        const rpID = new URL(origin).hostname;
         const { account } = await service.verifyWebAuthnLoginResponse({
           username: body.username,
           body: body.assertionResponse,
-          origin: requestOrigin(request),
+          origin,
           rpID
         });
         // A passkey requires user verification (biometric/PIN), so it is a
@@ -1776,13 +1946,16 @@ export function createHttpServer({
       }
 
       if (routePath.startsWith('/api/account')) {
-        // Like 2FA setup, passkey management must be reachable by an admin who
-        // has only password-authenticated (isTwoFactorVerified === false), so a
-        // fresh admin can enroll a passkey before any TOTP is configured.
+        // A password-only privileged session may bootstrap exactly one MFA
+        // family while the account has no TOTP or passkey. Existing factors
+        // require a verified step-up before any management route is reachable.
         const allowAdmin2FASetup =
-          ['/api/account/2fa/setup', '/api/account/2fa/verify'].includes(routePath) ||
-          routePath === '/api/account/passkeys' ||
-          routePath.startsWith('/api/account/passkeys/');
+          request.method === 'POST' && [
+            '/api/account/2fa/setup',
+            '/api/account/2fa/verify',
+            '/api/account/passkeys/register-options',
+            '/api/account/passkeys/register-verify'
+          ].includes(routePath);
         const accountSession = await requireAccount(request, jwtSecret, service, { allowAdmin2FASetup });
 
         if (request.method === 'GET' && routePath === '/api/account/posts') {
@@ -1828,20 +2001,22 @@ export function createHttpServer({
         }
 
         if (request.method === 'POST' && routePath === '/api/account/passkeys/register-options') {
-          const hostHeader = request.headers.host || 'localhost';
-          const rpID = hostHeader.split(':')[0];
-          ok(response, await service.generateWebAuthnRegisterOptions(accountSession.sub, rpID));
+          const { rpID } = resolveWebAuthnContext(request);
+          ok(response, await service.generateWebAuthnRegisterOptions(accountSession.sub, rpID, {
+            verifiedStepUp: accountSession.isTwoFactorVerified === true
+          }));
           return;
         }
 
         if (request.method === 'POST' && routePath === '/api/account/passkeys/register-verify') {
           const body = await readJson(request, 20_000);
-          const hostHeader = request.headers.host || 'localhost';
-          const rpID = hostHeader.split(':')[0];
+          const origin = requestOrigin(request);
+          const rpID = new URL(origin).hostname;
           const result = await service.verifyWebAuthnRegisterResponse(accountSession.sub, {
             body,
-            origin: requestOrigin(request),
-            rpID
+            origin,
+            rpID,
+            verifiedStepUp: accountSession.isTwoFactorVerified === true
           });
           ok(response, { ...result, token: accountToken(result.account, jwtSecret, true) });
           return;
@@ -1880,13 +2055,17 @@ export function createHttpServer({
         }
 
         if (request.method === 'POST' && routePath === '/api/account/2fa/setup') {
-          ok(response, await service.generate2FASetup(accountSession.sub));
+          ok(response, await service.generate2FASetup(accountSession.sub, {
+            verifiedStepUp: accountSession.isTwoFactorVerified === true
+          }));
           return;
         }
 
         if (request.method === 'POST' && routePath === '/api/account/2fa/verify') {
           const body = await readJson(request, 20_000);
-          const result = await service.verify2FASetup(accountSession.sub, body.code);
+          const result = await service.verify2FASetup(accountSession.sub, body.code, {
+            verifiedStepUp: accountSession.isTwoFactorVerified === true
+          });
           ok(response, { ...result, token: accountToken(result.account, jwtSecret, true) });
           return;
         }
@@ -1931,8 +2110,67 @@ export function createHttpServer({
           return;
         }
 
+        if (request.method === 'POST' && routePath === '/api/dm/groups') {
+          const body = await readJson(request, 20_000);
+          ok(response, {
+            conversation: await service.createDmGroup(accountSession.sub, {
+              title: body.title,
+              usernames: body.usernames
+            })
+          });
+          return;
+        }
+
         if (request.method === 'GET' && routePath === '/api/dm/unread-count') {
           ok(response, await service.getDmUnreadCount(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/dm/search') {
+          ok(
+            response,
+            await service.searchDmMessages(accountSession.sub, {
+              q: url.searchParams.get('q') || '',
+              limit: url.searchParams.get('limit')
+            })
+          );
+          return;
+        }
+
+        if (request.method === 'GET' && routePath === '/api/dm/blocked') {
+          ok(response, await service.listDmBlockedUsers(accountSession.sub));
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/dm/block') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.setDmUserBlocked(accountSession.sub, {
+              userId: body.userId,
+              username: body.username,
+              blocked: body.blocked !== false
+            })
+          );
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/dm/unblock') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.setDmUserBlocked(accountSession.sub, {
+              userId: body.userId,
+              username: body.username,
+              blocked: false
+            })
+          );
+          return;
+        }
+
+        if (request.method === 'POST' && routePath === '/api/dm/link-preview') {
+          const body = await readJson(request, 20_000);
+          ok(response, await service.getDmLinkPreview(accountSession.sub, { url: body.url }));
           return;
         }
 
@@ -1948,11 +2186,14 @@ export function createHttpServer({
           return;
         }
         if (dmMessagesParams && request.method === 'POST') {
-          const body = await readJson(request, 40_000);
+          const body = await readJson(request, imageUploadJsonLimit());
           ok(
             response,
             await service.sendDmMessage(accountSession.sub, dmMessagesParams.id, {
-              body: body.body
+              body: body.body,
+              image: body.image,
+              images: body.images,
+              replyToId: body.replyToId
             })
           );
           return;
@@ -1963,6 +2204,154 @@ export function createHttpServer({
           ok(response, {
             conversation: await service.markDmConversationRead(accountSession.sub, dmReadParams.id)
           });
+          return;
+        }
+
+        const dmInviteParams = match(parts, ['api', 'dm', 'conversations', ':id', 'invite']);
+        if (dmInviteParams && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(response, {
+            conversation: await service.inviteDmGroupMembers(accountSession.sub, dmInviteParams.id, {
+              usernames: body.usernames
+            })
+          });
+          return;
+        }
+
+        const dmLeaveParams = match(parts, ['api', 'dm', 'conversations', ':id', 'leave']);
+        if (dmLeaveParams && request.method === 'POST') {
+          ok(response, await service.leaveDmConversation(accountSession.sub, dmLeaveParams.id));
+          return;
+        }
+
+        const dmKickParams = match(parts, ['api', 'dm', 'conversations', ':id', 'kick']);
+        if (dmKickParams && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(response, {
+            conversation: await service.kickDmGroupMember(accountSession.sub, dmKickParams.id, {
+              userId: body.userId,
+              username: body.username
+            })
+          });
+          return;
+        }
+
+        const dmRolesParams = match(parts, ['api', 'dm', 'conversations', ':id', 'roles']);
+        if (dmRolesParams && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(response, {
+            conversation: await service.setDmGroupMemberRole(accountSession.sub, dmRolesParams.id, {
+              userId: body.userId,
+              username: body.username,
+              role: body.role
+            })
+          });
+          return;
+        }
+
+        const dmMessageItemParams = match(parts, [
+          'api',
+          'dm',
+          'conversations',
+          ':id',
+          'messages',
+          ':messageId'
+        ]);
+        if (dmMessageItemParams && request.method === 'PATCH') {
+          const body = await readJson(request, 40_000);
+          ok(
+            response,
+            await service.editDmMessage(
+              accountSession.sub,
+              dmMessageItemParams.id,
+              dmMessageItemParams.messageId,
+              { body: body.body }
+            )
+          );
+          return;
+        }
+        if (dmMessageItemParams && request.method === 'DELETE') {
+          ok(
+            response,
+            await service.deleteDmMessage(
+              accountSession.sub,
+              dmMessageItemParams.id,
+              dmMessageItemParams.messageId
+            )
+          );
+          return;
+        }
+
+        const dmReactParams = match(parts, [
+          'api',
+          'dm',
+          'conversations',
+          ':id',
+          'messages',
+          ':messageId',
+          'reactions'
+        ]);
+        if (dmReactParams && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(
+            response,
+            await service.reactDmMessage(
+              accountSession.sub,
+              dmReactParams.id,
+              dmReactParams.messageId,
+              { reaction: body.reaction }
+            )
+          );
+          return;
+        }
+
+        const dmTypingParams = match(parts, ['api', 'dm', 'conversations', ':id', 'typing']);
+        if (dmTypingParams && request.method === 'POST') {
+          ok(response, await service.signalDmTyping(accountSession.sub, dmTypingParams.id));
+          return;
+        }
+
+        const dmMuteParams = match(parts, ['api', 'dm', 'conversations', ':id', 'mute']);
+        if (dmMuteParams && request.method === 'POST') {
+          const body = await readJson(request, 20_000);
+          ok(response, {
+            conversation: await service.setDmConversationMuted(
+              accountSession.sub,
+              dmMuteParams.id,
+              { muted: body.muted !== false }
+            )
+          });
+          return;
+        }
+        if (dmMuteParams && request.method === 'DELETE') {
+          ok(response, {
+            conversation: await service.setDmConversationMuted(
+              accountSession.sub,
+              dmMuteParams.id,
+              { muted: false }
+            )
+          });
+          return;
+        }
+
+        const dmConversationParams = match(parts, ['api', 'dm', 'conversations', ':id']);
+        if (dmConversationParams && request.method === 'PATCH') {
+          const body = await readJson(request, 20_000);
+          ok(response, {
+            conversation: await service.updateDmGroup(accountSession.sub, dmConversationParams.id, {
+              title: body.title
+            })
+          });
+          return;
+        }
+        if (dmConversationParams && request.method === 'DELETE') {
+          const hard = url.searchParams.get('hard') === '1' || url.searchParams.get('hard') === 'true';
+          ok(
+            response,
+            await service.deleteDmConversation(accountSession.sub, dmConversationParams.id, {
+              hard
+            })
+          );
           return;
         }
       }
@@ -2314,14 +2703,16 @@ export function createHttpServer({
         }
         const adminAccount = await service.getOrCreateAdminAccount(adminUsername, adminPassword);
         if (adminAccount.twoFactorEnabled) {
+          const challenge = await service.begin2FALogin(adminAccount.id);
           ok(response, {
             requires2FA: true,
             tempToken: signJwt(
               {
-                role: adminAccount.role || 'owner',
+                role: challenge.account.role || 'owner',
                 username: adminUsername,
-                sub: adminAccount.id,
-                authEpoch: Number(adminAccount.authEpoch ?? 0),
+                sub: challenge.account.id,
+                authEpoch: Number(challenge.account.authEpoch ?? 0),
+                twoFactorChallengeId: challenge.challengeId,
                 isTwoFactorVerified: false
               },
               jwtSecret,

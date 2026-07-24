@@ -1,8 +1,8 @@
 # 36chan API Inventory
 
-Date: 2026-07-17
+Date: 2026-07-23
 
-Base path: same origin backend. Development frontend proxies `/api`, `/events`, and `/uploads`.
+Base path: same origin backend. Development frontend proxies `/api`, `/socket.io`, `/events`, and `/uploads`.
 
 Versioning: `/api/v1/...` is supported as an alias for current `/api/...` routes. Existing `/api/...` clients remain compatible.
 
@@ -32,12 +32,15 @@ HTTP 500 masks internal message as `Lỗi máy chủ nội bộ`.
 | GET | `/api/stickers` | Lay catalog sticker Imgur tuy chinh. | Public, khong auth. Tra `key`, `label`, URL HTTPS `i.imgur.com`, `active`, `createdAt`; entry da an van duoc tra de bai cu voi token `[sticker:custom-...]` tiep tuc render, nhung khong xuat hien trong picker. Trinh duyet tai anh truc tiep tu Imgur voi `referrerpolicy=no-referrer`. |
 | GET | `/api/boards` | Lay danh sach board public. | Source tu state store; excludes hidden/archived boards. Board items include effective `retentionPolicy`. |
 | GET | `/api/stats` | Lay thong ke server. | Includes post/file counts va current SSE clients. |
-| GET | `/api/health` | Health check van hanh. | Tra `status`, `store.type`, `store.configured`, `store.ready`, safe counts/model readiness, AI configured/model, image storage readiness, Resend email configured/readiness, realtime client count/board counts, security readiness warnings; khong tra secret. |
+| GET | `/api/health` | Health check public cho deployment probe. | Khong auth; chi tra `{ status, ready }`, dung HTTP `503` khi degraded va `Cache-Control: no-store`; khong lo driver/provider/count/canh bao cau hinh. |
+| GET | `/api/admin/health` | Health diagnostics chi tiet. | Admin auth va quyen `admin:view`; tra store/AI/image/email/realtime/process/security readiness da sanitize, khong tra raw secret/connection string. |
+| GET | `/metrics`, `/api/metrics` | Prometheus metrics. | Neu co `METRICS_TOKEN`, chi nhan Bearer hoac `X-Metrics-Token` header; khong nhan credential trong query string. Neu khong co token thi production chi cho loopback scrape. |
 | POST | `/api/ai/chat` | Hoi dap AI ve trang hien tai, board hoac thread. | Public, khong auth. Body `{ question, scope: "site"|"board"|"thread", page?, boardSlug?, threadId?, history?, posterToken? }`; `question` toi da 1000 ky tu. Server tu lay va gioi han context public, redact email/phone/student ID, khong nhan raw DOM/context tu client, khong gui IP/token/private/admin data cho provider. Tra `{ answer, context: { scope, label } }`. Dung Google hoac OpenAI-compatible provider da cau hinh; rate limit 8/phut/IP, 30 luot/ngay theo identity va them tran 120 luot/ngay/IP. |
 | GET | `/api/media/gifs/trending?page=&perPage=` | Lay GIF KLIPY dang thinh hanh. | Public, khong auth. Backend giu `KLIPY_API_KEY` server-only, ep content filter cao, loai ad/non-GIF va chi tra URL media HTTPS tu CDN KLIPY duoc allowlist. |
 | GET | `/api/media/gifs/search?q=&page=&perPage=` | Tim GIF KLIPY. | Public, khong auth; query va page size duoc validate, rate limit theo IP. Tra item chuan hoa `slug`, `title`, `preview`, `full`; khong tra API key/provider payload raw. |
 | GET | `/api/media/gifs/items?slugs=a,b` | Khoi phuc GIF da luu theo KLIPY slug. | Public, khong auth; toi da 50 slug/request. Dung de hydrate token `[gif:klipy:slug]` khi render bai cu. |
 | POST | `/api/media/gifs/:slug/share` | Gui share trigger cho KLIPY sau khi user chen GIF. | Public, khong auth; body optional `{ query }`. Khong gui account ID, poster token, fingerprint hay raw IP lam customer identifier. |
+| POST | `/api/link-preview` | Unfurl Open Graph / phan loai link de hien card/embed tren thread. | Public, khong auth. Body `{ url }`. SSRF blocklist (localhost/private IP), timeout ~4s, cap HTML ~200KB. Tra `{ url, domain, title, description, image, kind?, embedId? }` voi `kind` = `og\|youtube\|vimeo\|image\|video`. Rate limit generic theo IP. |
 | GET | `/api/posts/latest?limit=10` | Lay bai moi nhat. | Limit clamp 1-20. Chi public active thread/comment. |
 | GET | `/api/boards/hot?limit=8` | Lay bang dang nong trong 24h. | Limit clamp 1-board count. Chi tinh active public threads/comments. |
 | GET | `/feeds/latest.json?limit=20` | JSON Feed bai moi nhat. | Public feed, khong auth, chi gom public active thread/comment. |
@@ -95,7 +98,7 @@ Account is optional and private. These endpoints require `JWT_SECRET` for issuin
 | POST | `/api/account/email/resend` | Gui OTP verify moi, vo hieu ma cu. | Bearer JWT; cooldown 60 giay; returns account + delivery status. |
 | POST | `/api/account/email/change` | Gui OTP toi email moi sau khi verify password hien tai. | Bearer JWT; body `{ newEmail, password }`; email cu van active cho den khi confirm. |
 | POST | `/api/account/email/change/confirm` | Chuyen sang email moi va danh dau verified. | Bearer JWT; body `{ code }`. |
-| PUT | `/api/account/settings` | Luu account-private settings: `theme`, `homeBoard`, `syncDrafts`, legacy `emailNotifications`, `displayPreferences` (gom `commentComposerMode=floating|normal`), `notificationPreferences` (`email`, `watchedThreads`, `boardSubscriptions`, `browserWatchedThreads`), va `boardSubscriptions`. | Bearer JWT role `user`. |
+| PUT | `/api/account/settings` | Luu account-private settings: `theme`, `homeBoard`, `syncDrafts`, legacy `emailNotifications`, `displayPreferences` (gom `commentComposerMode=floating|normal`), `notificationPreferences` (`email`, `watchedThreads`, `boardSubscriptions`, `emailMentions`, `emailDirectMessages`, `browserWatchedThreads`, `browserBoardSubscriptions`, `browserMentions`, `directMessages`, `browserDirectMessages`), va `boardSubscriptions`. | Bearer JWT role `user`. |
 | POST | `/api/account/recovery-code` | Tao recovery code moi bang password hien tai. | Bearer JWT; body `{ password }`; code cu bi vo hieu; rotates `authEpoch`; returns `{ ok, recoveryCode, account, token }` voi replacement token. |
 | GET | `/api/account/private-data` | Lay account-private sync bag: `watchlist`, `drafts`, `savedSearches`, `contentFilters`, `replyTemplates`, `posterNotes`, `hiddenPosts`, `hiddenThreads`. | Bearer JWT role `user`; khong expose qua public post serializers. |
 | PUT | `/api/account/private-data` | Luu account-private `{ watchlist, drafts, savedSearches, contentFilters, replyTemplates, posterNotes, hiddenPosts, hiddenThreads }` de dong bo giua thiet bi. | Bearer JWT role `user`; server normalize/gioi han so luong, draft/template body, preview/search text, va id lists (`hiddenPosts` max 500, `hiddenThreads` max 200). |
@@ -109,6 +112,42 @@ Account is optional and private. These endpoints require `JWT_SECRET` for issuin
 | POST | `/api/account/passkeys/register-options` | Tao WebAuthn registration challenge. | Bearer JWT; challenge single-use, het han sau 5 phut. |
 | POST | `/api/account/passkeys/register-verify` | Verify va luu passkey moi. | Bearer JWT; rejects duplicate credential; consumes challenge on every verify attempt; rotates `authEpoch`; returns current `account` va replacement fully verified `token`. |
 | DELETE | `/api/account/passkeys/:id` | Xoa passkey cua account. | Bearer JWT; rotates `authEpoch`; returns current `account` va replacement `token`. |
+
+## Direct messages (account-only encrypted chat)
+
+Account holders only (`user`, `owner`, `moderator`, `viewer`). Anonymous posters cannot use these endpoints. Message bodies are AES-256-GCM encrypted at rest (`DM_ENCRYPTION_KEY` or `JWT_SECRET`). Socket.IO DM events are notification metadata only (no decrypted body in fan-out); clients fetch authoritative encrypted-at-rest content through the authenticated service response/REST read.
+
+| Method | Path | Description | Auth |
+| --- | --- | --- | --- |
+| GET | `/api/dm/conversations` | List conversations (peer/title, last preview, unreadCount, muted). | Bearer account JWT |
+| POST | `/api/dm/conversations` | Open or create a 1:1 conversation. Body `{ "username": "peer" }`. | Bearer account JWT |
+| POST | `/api/dm/groups` | Create group chat (≤50 members). Body `{ "title", "usernames": [] }`. | Bearer account JWT |
+| GET | `/api/dm/unread-count` | Total unread DM count `{ unreadCount }`. | Bearer account JWT |
+| GET | `/api/dm/search` | Search decrypted messages. Query `q` (≥2 chars), `limit`. | Bearer account JWT |
+| GET | `/api/dm/blocked` | List blocked users. | Bearer account JWT |
+| POST | `/api/dm/block` | Block a user. Body `{ "userId" \| "username", "blocked": true }`. | Bearer account JWT |
+| POST | `/api/dm/unblock` | Unblock a user. Body `{ "userId" \| "username" }`. | Bearer account JWT |
+| POST | `/api/dm/link-preview` | Fetch safe OG/title preview for a public http(s) URL. Body `{ "url" }`. | Bearer account JWT |
+| GET | `/api/dm/conversations/:id/messages` | List messages. Query `limit`, `before` (ISO createdAt). Returns `{ messages, hasMore, conversation }`. | Bearer account JWT (participant) |
+| POST | `/api/dm/conversations/:id/messages` | Durable/media fallback send. Body `{ "body", "image"?, "images"?, "replyToId"? }`. Publishes Socket.IO `dm:message` metadata. | Bearer account JWT (participant) |
+| PATCH | `/api/dm/conversations/:id/messages/:messageId` | Edit own message (time-limited). Body `{ "body" }`. Socket.IO `dm:message-updated`. | Bearer account JWT (sender) |
+| DELETE | `/api/dm/conversations/:id/messages/:messageId` | Soft-delete message (sender or group admin/owner). Socket.IO `dm:message-deleted`. | Bearer account JWT (authorized) |
+| POST | `/api/dm/conversations/:id/messages/:messageId/reactions` | Toggle reaction (`like`, `laugh`, `surprise`, `sad`, `agree`, `thanks`). Socket.IO `dm:message-updated`. | Bearer account JWT (participant) |
+| POST | `/api/dm/conversations/:id/read` | Idempotent fallback to mark read; emits Socket.IO `dm:read` receipt. | Bearer account JWT (participant) |
+| POST | `/api/dm/conversations/:id/typing` | Idempotent typing fallback; emits Socket.IO `dm:typing` (no persistence). | Bearer account JWT (participant) |
+| POST | `/api/dm/conversations/:id/mute` | Mute notifications for conversation. Body `{ "muted": true }`. | Bearer account JWT (participant) |
+| DELETE | `/api/dm/conversations/:id/mute` | Unmute conversation. | Bearer account JWT (participant) |
+| POST | `/api/dm/conversations/:id/invite` | Invite users to group. Body `{ "usernames": [] }`. | Bearer account JWT (group admin/owner) |
+| POST | `/api/dm/conversations/:id/leave` | Leave group chat. | Bearer account JWT (group member) |
+| POST | `/api/dm/conversations/:id/kick` | Kick member. Body `{ "userId" \| "username" }`. | Bearer account JWT (group admin/owner) |
+| POST | `/api/dm/conversations/:id/roles` | Set member role. Body `{ "userId" \| "username", "role": "admin\|member" }`. | Bearer account JWT (group owner) |
+| PATCH | `/api/dm/conversations/:id` | Rename group. Body `{ "title" }`. | Bearer account JWT (group admin/owner) |
+| DELETE | `/api/dm/conversations/:id` | Hide conversation for self, or `?hard=1` hard-delete group (owner). | Bearer account JWT (participant / owner for hard) |
+
+## Auth (WebAuthn login)
+
+| Method | Path | Purpose | Auth |
+| --- | --- | --- | --- |
 | POST | `/api/auth/webauthn/login-options` | Tao WebAuthn login challenge theo username. | Public; known/unknown username deu tra HTTP 200 voi response shape tuong duong va `allowCredentials: []`; persisted challenge single-use, het han sau 5 phut cho account ton tai. |
 | POST | `/api/auth/webauthn/login-verify` | Verify passkey login response. | Public; consumes challenge on every verify attempt; returns `{ account, token }` voi fully verified JWT khi thanh cong. |
 
@@ -156,18 +195,41 @@ Admin auth uses privileged account roles. `owner` can view/moderate/manage board
 
 ## Realtime events
 
-Endpoint: `GET /events?boardSlug=&threadId=`
+Primary endpoint: Socket.IO at `/socket.io`. Handshake `auth` accepts
+`{ accountToken, adminToken }`. Anonymous connections receive public events;
+valid account tokens join `user:<accountId>` rooms and privileged sessions join
+`moderation` after live role/2FA/auth-epoch/revocation validation.
 
-Transport: Server-Sent Events.
+Client-to-server events:
 
-| Event | Emitted when | Public safety rule |
+| Event | Payload | Result / authorization |
 | --- | --- | --- |
-| `connected` | Client opens SSE connection. | Payload `{ "ok": true }`. |
+| `realtime:scope` | `{ boardSlug, threadId }` | Updates connection metadata/viewer counts; no auth required. |
+| `dm:send` | `{ conversationId, body, replyToId? }` | Text-only send with acknowledgement; account participant required. Media remains REST. |
+| `dm:typing` | `{ conversationId }` | Best-effort typing signal; account participant required. |
+| `dm:read` | `{ conversationId }` | Durable read update and receipt; account participant required. |
+| `presence:query` | `{ userIds: [] }` (max 50) | Returns online booleans; authenticated account required. |
+
+Server-to-client events:
+
+| Event | Emitted when | Scope / safety rule |
+| --- | --- | --- |
+| `connected` | Socket connects. | Per-connection auth status only. |
 | `thread:created` | Safe thread created or pending thread approved. | Only public serialized thread. |
 | `comment:created` | Safe comment created or pending comment approved. | Only public serialized comment/thread. |
 | `thread:bumped` | Public comment bumps active thread. | No pending/deleted payload. |
 | `thread:updated` | Public thread metadata changes such as sticky or slow mode. | Only public serialized thread or null parent after safe update. |
 | `thread:archived` | Thread archived by lifecycle/admin. | Only public archived thread. |
+| `dm:message` | Message persisted. | Participant user rooms; notification metadata only. |
+| `dm:message-updated` / `dm:message-deleted` | Edit, reaction, or delete persisted. | Participant user rooms. |
+| `dm:conversation-deleted` | Group hard-deleted. | Participant user rooms. |
+| `dm:typing` | Participant signals typing. | Participant user rooms; expires after four seconds. |
+| `dm:read` | Participant marks a conversation read. | Participant user rooms; reader/time/last message metadata. |
+| `moderation:event` | Report/appeal/moderation mutation commits. | `moderation` room only; no public delivery. |
+
+Compatibility endpoint: `GET /events?boardSlug=&threadId=` uses SSE for public
+thread/comment events only. Private event families (`dm:`, `notification:`,
+`presence:`, `moderation:`) are explicitly blocked from SSE.
 
 ## Important data fields
 
@@ -219,7 +281,7 @@ Status: per-post `displayName` is implemented for public thread/comment create e
 - Public post serializers must never include `accountId`, `username`, `email`, session identifiers, linked local identity records, or admin/moderator role as author data.
 - Account-private serializers may include `email`, `emailVerified`, `emailVerifiedAt`, `pendingEmail`, and verification expiry, but never OTP plaintext or challenge hashes.
 - Logout and security-sensitive credential changes rotate persisted `authEpoch`; older account/admin/temp-2FA JWTs stay revoked across process restarts. Endpoints that preserve the active browser session return a replacement token.
-- Email notifications require `emailVerified=true`, `notificationPreferences.email=true`, plus the matching watched-thread or board-subscription preference. Notification delivery is queued so posting does not fail when Resend is unavailable.
+- Email notifications require `emailVerified=true` and `notificationPreferences.email=true`. Post activity additionally requires a watched thread, subscribed board, or `emailMentions=true`; direct messages require `emailDirectMessages=true` and an unmuted conversation. DM email contains no decrypted message body. Notification delivery is queued so posting/messaging does not fail when Resend is unavailable.
 - Account-private convenience data uses `/api/account/private-data` with sections: `watchlist`, `drafts`, `savedSearches`, `contentFilters`, `replyTemplates`, `posterNotes`, `hiddenPosts`, `hiddenThreads`. Logged-out clients keep the same data in browser localStorage; login merges local ∪ server then persists. Hidden posts/threads are viewer-local UI filters only (not moderation delete). Future appeal history and security/session state must be added to this inventory when implemented.
 - AI payload tests must confirm account identity fields and private-data sections are absent.
 

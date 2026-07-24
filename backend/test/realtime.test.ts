@@ -1,7 +1,13 @@
 import assert from 'node:assert/strict';
+import { once } from 'node:events';
+import http from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { test } from 'node:test';
 
+import { io as createSocketClient } from 'socket.io-client';
+
 import { createRealtimeHub } from '../src/server/realtime.ts';
+import { createMemoryRealtimeState } from '../src/server/realtime-state.ts';
 
 type TestResponse = {
   statusCode: number;
@@ -87,6 +93,26 @@ test('SSE hub caps concurrent connections and rejects over-cap with 503', () => 
   assert.equal(metrics.maxClients, 2);
   assert.equal(metrics.rejected, 1);
   assert.equal(metrics.totalConnections, 2);
+});
+
+test('SSE hub caps concurrent connections per source and releases slots on close', () => {
+  const hub = createRealtimeHub({
+    maxClients: 10,
+    maxConnectionsPerAddress: 1,
+    heartbeatMs: 0
+  });
+  const firstRequest = createRequest();
+  const first = createResponse();
+  const rejected = createResponse();
+  hub.handle(firstRequest, first);
+  hub.handle(createRequest(), rejected);
+  assert.equal(first.statusCode, 200);
+  assert.equal(rejected.statusCode, 429);
+
+  firstRequest.fireClose();
+  const replacement = createResponse();
+  hub.handle(createRequest(), replacement);
+  assert.equal(replacement.statusCode, 200);
 });
 
 test('SSE metrics report capacity warning and critical thresholds', () => {
@@ -241,4 +267,185 @@ test('SSE publish sends events only to matching board and thread subscriptions',
   assert.equal(all.chunks.some((line) => line.includes('system:event')), true);
   assert.equal(boardA.chunks.some((line) => line.includes('system:event')), false);
   assert.equal(threadA.chunks.some((line) => line.includes('system:event')), false);
+});
+
+test('Socket.IO authenticates rooms, delivers private events, and accepts bidirectional DM signals', async () => {
+  const state = createMemoryRealtimeState({ presenceTtlSeconds: 30 });
+  const hub = createRealtimeHub({
+    state,
+    serverId: 'server-a',
+    heartbeatMs: 0,
+    maxClients: 10
+  });
+  const serviceCalls: Array<{ action: string; userId: string; conversationId: string }> = [];
+  const service = {
+    async sendDmMessage(userId: string, conversationId: string) {
+      serviceCalls.push({ action: 'send', userId, conversationId });
+      return { message: { id: 'm1' } };
+    },
+    async signalDmTyping(userId: string, conversationId: string) {
+      if (conversationId === 'internal-failure') {
+        throw new Error('redis://private-host:6379');
+      }
+      serviceCalls.push({ action: 'typing', userId, conversationId });
+      return { ok: true };
+    },
+    async markDmConversationRead(userId: string, conversationId: string) {
+      serviceCalls.push({ action: 'read', userId, conversationId });
+      return { id: conversationId, unreadCount: 0 };
+    }
+  };
+  const server = http.createServer((_request, response) => response.end('not found'));
+  await hub.attach(server, {
+    service,
+    async authenticate({ accountToken }) {
+      if (accountToken === 'alice') {
+        const identity = { userId: 'u1', username: 'alice', role: 'user', permissions: [] };
+        return { account: identity, identities: [identity] };
+      }
+      if (accountToken === 'bob') {
+        const identity = { userId: 'u2', username: 'bob', role: 'user', permissions: [] };
+        return { account: identity, identities: [identity] };
+      }
+      throw new Error('invalid token');
+    }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = (server.address() as AddressInfo).port;
+  const endpoint = 'http://127.0.0.1:' + port;
+  const alice = createSocketClient(endpoint, {
+    path: '/socket.io',
+    transports: ['websocket'],
+    auth: { accountToken: 'alice' }
+  });
+  const bob = createSocketClient(endpoint, {
+    path: '/socket.io',
+    transports: ['websocket'],
+    auth: { accountToken: 'bob' }
+  });
+  const anonymous = createSocketClient(endpoint, {
+    path: '/socket.io',
+    addTrailingSlash: false,
+    transports: ['websocket']
+  });
+
+  const waitForConnection = (socket: ReturnType<typeof createSocketClient>) =>
+    new Promise<void>((resolve, reject) => {
+      socket.once('connect', () => resolve());
+      socket.once('connect_error', reject);
+    });
+  try {
+    await Promise.all([
+      waitForConnection(alice),
+      waitForConnection(bob),
+      waitForConnection(anonymous)
+    ]);
+    let anonymousDmEvents = 0;
+    anonymous.on('dm:message', () => {
+      anonymousDmEvents += 1;
+    });
+    const aliceMessage = new Promise<any>((resolve) => alice.once('dm:message', resolve));
+    const bobMessage = new Promise<any>((resolve) => bob.once('dm:message', resolve));
+    hub.publish('dm:message', {
+      conversationId: 'c1',
+      messageId: 'm1',
+      participantIds: ['u1', 'u2']
+    });
+    assert.equal((await aliceMessage).messageId, 'm1');
+    assert.equal((await bobMessage).messageId, 'm1');
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(anonymousDmEvents, 0);
+
+    const typingAck = await alice.timeout(1_000).emitWithAck('dm:typing', {
+      conversationId: 'c1'
+    });
+    assert.equal(typingAck.ok, true);
+    assert.deepEqual(serviceCalls.at(-1), {
+      action: 'typing',
+      userId: 'u1',
+      conversationId: 'c1'
+    });
+
+    const failedAck = await alice.timeout(1_000).emitWithAck('dm:typing', {
+      conversationId: 'internal-failure'
+    });
+    assert.equal(failedAck.statusCode, 500);
+    assert.equal(failedAck.error, 'Realtime request failed.');
+
+    const presenceAck = await alice.timeout(1_000).emitWithAck('presence:query', {
+      userIds: ['u1', 'missing']
+    });
+    assert.deepEqual(presenceAck.data.presence, { u1: true, missing: false });
+    assert.equal(hub.metrics().socketClients, 3);
+  } finally {
+    alice.close();
+    bob.close();
+    anonymous.close();
+    await hub.close();
+    if (server.listening) {
+      server.close();
+      await once(server, 'close');
+    }
+  }
+});
+
+test('Socket.IO reauthentication leaves rooms for revoked secondary identities', async () => {
+  let refresh: (() => void) | undefined;
+  let secondaryRevoked = false;
+  const hub = createRealtimeHub({
+    heartbeatMs: 0,
+    maxClients: 10,
+    setIntervalFn(callback) {
+      refresh = callback;
+      return { unref() {} };
+    },
+    clearIntervalFn() {}
+  });
+  const primary = { userId: 'u-primary', username: 'primary', role: 'user', permissions: [] };
+  const secondary = { userId: 'u-secondary', username: 'secondary', role: 'user', permissions: [] };
+  const server = http.createServer((_request, response) => response.end('not found'));
+  await hub.attach(server, {
+    service: {},
+    async authenticate() {
+      return {
+        account: primary,
+        identities: secondaryRevoked ? [primary] : [primary, secondary]
+      };
+    }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = (server.address() as AddressInfo).port;
+  const socket = createSocketClient('http://127.0.0.1:' + port, {
+    path: '/socket.io',
+    transports: ['websocket'],
+    auth: { accountToken: 'combined' }
+  });
+  try {
+    await new Promise<void>((resolve, reject) => {
+      socket.once('connect', resolve);
+      socket.once('connect_error', reject);
+    });
+    let secondaryEvents = 0;
+    socket.on('dm:message', () => {
+      secondaryEvents += 1;
+    });
+    secondaryRevoked = true;
+    refresh?.();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    hub.publish('dm:message', {
+      participantIds: ['u-secondary'],
+      messageId: 'revoked-message'
+    });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.equal(secondaryEvents, 0);
+  } finally {
+    socket.close();
+    await hub.close();
+    if (server.listening) {
+      server.close();
+      await once(server, 'close');
+    }
+  }
 });

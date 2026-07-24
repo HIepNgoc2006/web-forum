@@ -1,0 +1,135 @@
+      <section id="homeScreen" class="screen active" aria-labelledby="homeTitle">
+        <div class="portal">
+          <header class="portal-logo" aria-labelledby="homeTitle">
+            <div class="clover" aria-hidden="true">
+              <span></span><span></span><span></span><span></span>
+            </div>
+            <h1 id="homeTitle">36chan</h1>
+            <div class="locale-switcher portal-locale-switcher" role="group" aria-label="Language">
+              <button class="locale-button" data-locale="vi" type="button" aria-label="Vietnamese">VI</button>
+              <button class="locale-button" data-locale="en" type="button" aria-label="English">EN</button>
+            </div>
+          </header>
+
+          <section class="portal-box" aria-labelledby="whatTitle">
+            <div class="portal-box-title">
+              <h2 id="whatTitle">36chan là gì?</h2>
+              <span class="close-glyph">X</span>
+            </div>
+            <div class="portal-box-body">
+              <p>
+                36chan là bảng tin ảnh ẩn danh đơn giản cho sinh viên. Ai cũng có thể đăng
+                bài tâm sự ẩn danh, bình luận và hình ảnh mà không cần tạo tài khoản. Mỗi bảng dành cho
+                một mảng riêng như đời sống trường lớp, học tập, ảnh chế, sự kiện, việc làm, ký túc xá
+                và thảo luận linh tinh.
+              </p>
+              <p>
+                AI kiểm duyệt sẽ giữ nội dung độc hại, nội dung rác, thù ghét và tin giả khỏi bảng công khai
+                cho đến khi quản trị viên xem xét. Chọn bảng bạn quan tâm và tham gia ngay.
+              </p>
+            </div>
+          </section>
+
+          <section class="portal-box portal-board-box" aria-labelledby="homeBoardsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="homeBoardsTitle">Bảng</h2>
+            </div>
+            <form id="homeBoardSearchForm" class="home-board-search" role="search">
+              <label for="homeBoardSearchInput">Tìm bảng</label>
+              <input id="homeBoardSearchInput" type="search" placeholder="confession, học tập, ăn uống..." autocomplete="off" />
+              <button type="submit">Đi</button>
+            </form>
+            <div id="homeBoards" class="portal-board-grid"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="popularTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="popularTitle">Chủ đề nổi bật</h2>
+            </div>
+            <div id="popularThreads" class="popular-grid"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="latestPostsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="latestPostsTitle">Bài mới nhất</h2>
+            </div>
+            <div id="latestPosts" class="latest-post-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="watchedThreadsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="watchedThreadsTitle">Chủ đề đang theo dõi</h2>
+              <span class="portal-title-actions">
+                <select id="watchedSortSelect" class="portal-title-select" aria-label="Sắp xếp danh sách theo dõi">
+                  <option value="unread">chưa đọc trước</option>
+                  <option value="recent">mới cập nhật</option>
+                  <option value="board">theo bảng</option>
+                </select>
+                <button id="watchedUnreadToggle" class="portal-title-button" type="button" aria-pressed="false">chưa đọc</button>
+                <button id="watchedMarkAllRead" class="portal-title-button" type="button" disabled>đã đọc hết</button>
+              </span>
+            </div>
+            <div id="watchedThreads" class="watch-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="myPostsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="myPostsTitle">Bài của tôi</h2>
+            </div>
+            <div id="myPosts" class="watch-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="subscribedBoardsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="subscribedBoardsTitle">Bảng đang theo dõi</h2>
+            </div>
+            <div id="subscribedBoards" class="hot-board-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="hotBoardsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="hotBoardsTitle">Đang nóng</h2>
+            </div>
+            <div id="hotBoards" class="hot-board-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="campusPulseTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="campusPulseTitle">Nhịp campus</h2>
+            </div>
+            <div id="campusPulse" class="hot-board-list"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="statsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="statsTitle">Thống kê</h2>
+            </div>
+            <div id="homeStats" class="stats-row"></div>
+          </section>
+
+          <section class="portal-box" aria-labelledby="serverStatsTitle">
+            <div class="portal-box-title portal-box-title-light">
+              <h2 id="serverStatsTitle">Thống Kê Máy Chủ</h2>
+            </div>
+            <div id="serverStats" class="server-stats"></div>
+          </section>
+
+          <nav class="portal-footer-nav" aria-label="Chân trang">
+            <a href="#home">Trang chủ</a>
+            <a href="#board/confession">Thú nhận</a>
+            <a href="#board/hoc-tap">Học tập</a>
+            <a href="#policy">Nội quy</a>
+            <a href="#admin">Quản trị</a>
+            <a href="#board/random">Ngẫu nhiên</a>
+          </nav>
+          <p class="portal-small-links">
+            <a href="#policy/rules">Nội quy & riêng tư</a> •
+            <a href="#policy/feedback">Góp ý</a> •
+            <a href="#policy/report">Cách báo cáo</a> •
+            <a href="#policy/contact">Liên hệ</a>
+          </p>
+          <p class="portal-copyright">
+            Bản quyền © 2026 dự án sinh viên 36chan. Không liên kết với 4chan.
+          </p>
+        </div>
+      </section>

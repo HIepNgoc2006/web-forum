@@ -1,6 +1,6 @@
 # 36chan
 
-Node.js + Vite for fullstack
+Node.js API + Next.js App Router frontend
 
 Features:
 - Anonymous public boards
@@ -15,35 +15,46 @@ Features:
 
 The app is split into:
 
-- `backend/`: Node API, persistence, moderation, admin routes, and static serving.
-- `frontend/`: Vite-hosted browser UI.
+- `backend/`: Node API, persistence, moderation, admin routes, uploads, feeds, Socket.IO, and a public SSE compatibility endpoint.
+- `frontend/`: primary Next.js runtime serving the Vite-derived legacy UI with same-origin API/Socket.IO/SSE/upload proxies.
+
 
 ## Run
 
+Install the root/legacy dependencies and the separately locked Next dependencies:
+
 ```bash
-npm test
-npm run dev
+npm ci
+npm --prefix frontend ci
 ```
+
+Run development in two terminals. The backend listens on `http://127.0.0.1:3000`; the default frontend command starts Next on `http://127.0.0.1:3001` and proxies backend traffic through `BACKEND_ORIGIN`.
 
 ```bash
 npm run dev:backend
 npm run dev:frontend
 ```
 
-Browser smoke verification runs the built frontend against a temporary backend store and Chrome headless:
+Default build and browser smoke verification target Next:
 
 ```bash
 npm run build
 npm run test:e2e
 ```
 
-Use the full release gate before deployment:
+`npm start` performs the default build, then supervises the loopback backend on port `3000`, private Next on port `3002`, and a public streaming proxy on port `3001`. The proxy overwrites forwarding headers, routes Socket.IO polling to the backend, and sanitizes WebSocket upgrades before tunneling them. If a child exits, the supervisor terminates the others; `SIGINT` and `SIGTERM` are propagated cleanly.
+
+```bash
+npm start
+```
+
+Use the full release gate before deployment. It validates the backend and Next-hosted legacy UI through unit checks, typechecks, production builds, and the browser smoke:
 
 ```bash
 npm run release:verify
 ```
 
-CI runs the same release verification through `.github/workflows/ci.yml`.
+CI runs the same release verification through `.github/workflows/ci.yml`. The Next app serves the legacy shell at `/` and all supported UI entry routes, with `/legacy` retained as an in-app compatibility alias.
 
 For account, anonymous posting, passkey, 2FA, and admin security rules, see `docs/account-security.md`.
 
@@ -72,11 +83,20 @@ Important runtime values:
 - `RATE_LIMIT_REDIS_URL` or `REDIS_URL`: required when `RATE_LIMIT_STORE=redis`.
 - `RATE_LIMIT_FAILURE_MODE`: `closed` by default to deny requests when the shared limiter backend is unavailable; set `open` only when availability is preferred over strict abuse control.
 - `RATE_LIMIT_REDIS_PREFIX`: optional Redis key prefix for rate-limit counters.
+- `REALTIME_REDIS_URL` (or `UPSTASH_REDIS_URL`/`REDIS_URL`): TLS Redis endpoint used for Socket.IO fan-out, presence, connection metadata, per-user realtime limits, and unread-count cache. Upstash must use its `rediss://` endpoint; its REST URL cannot provide Pub/Sub.
+- `REALTIME_REDIS_REQUIRED`: fail startup when shared realtime Redis is unavailable. Set `true` for multi-instance production; local development defaults to the in-memory implementation.
+- `REALTIME_REDIS_FAILURE_MODE`: `closed` by default for per-user realtime limits; `open` keeps actions available if Redis fails.
+- `REALTIME_PRESENCE_TTL_SECONDS`, `REALTIME_UNREAD_TTL_SECONDS`: TTLs for derived presence/connection state and unread-count cache.
+- `SOCKET_IO_MAX_BUFFER_BYTES`: inbound Socket.IO payload cap. Media messages stay on the REST upload path.
+- `DM_SEND_RATE_LIMIT`, `DM_READ_RATE_LIMIT`, `DM_TYPING_RATE_LIMIT`: per-account shared limits enforced through the realtime state adapter for both Socket.IO and REST fallbacks.
 - `IMAGE_STORAGE_DRIVER`: `local` by default, or `s3` for S3-compatible object storage.
 - `UPLOAD_ROOT`: local disk folder for uploaded images, served as `/uploads/*` when `IMAGE_STORAGE_DRIVER=local`.
 - `S3_ENDPOINT`, `S3_REGION`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY`: required when `IMAGE_STORAGE_DRIVER=s3`.
 - `S3_PUBLIC_BASE_URL`, `S3_KEY_PREFIX`: optional public CDN/base URL and object key prefix for S3-compatible storage.
 - `STATIC_ROOT`: optional override for backend static file serving.
+- `BACKEND_ORIGIN`: internal backend origin used by Next server rendering and proxy rewrites. Build and runtime values must match.
+- `APP_BASE_URL`: canonical public HTTP(S) origin used by WebAuthn and absolute feed/email links.
+- `START_BACKEND=0`: frontend-only mode for a separately deployed backend.
 
 MongoDB is the production persistence store. Mongo storage uses Mongoose models for boards, threads, comments, users, reports, moderation logs, sanctions, AI usage, summary cache, and global state metadata.
 
@@ -93,6 +113,24 @@ RATE_LIMIT_REDIS_URL=redis://127.0.0.1:6379
 RATE_LIMIT_FAILURE_MODE=closed
 ```
 
+Also configure shared realtime state. The same Upstash database may be used
+with separate key prefixes:
+
+```bash
+REALTIME_REDIS_URL=rediss://default:replace-me@your-upstash-host:6379
+REALTIME_REDIS_REQUIRED=true
+REALTIME_REDIS_FAILURE_MODE=closed
+REALTIME_REDIS_PREFIX=36chan:realtime:
+REALTIME_PRESENCE_TTL_SECONDS=45
+REALTIME_UNREAD_TTL_SECONDS=60
+```
+
+MongoDB remains authoritative for conversations, messages, unread state, and
+read receipts. Redis stores only reconstructible low-latency state. The
+`socket.io-client` frontend dependency is intentional: native WebSocket does
+not implement Socket.IO framing, acknowledgements, reconnection, or transport
+fallback.
+
 For account email verification and recovery, verify `email` in Resend, add the DNS records Resend provides, then configure:
 
 ```bash
@@ -104,7 +142,7 @@ EMAIL_OTP_SECRET=
 
 Accounts can log in and post immediately after registration. Email-only features remain disabled until the six-digit OTP is confirmed. OTP challenges expire after 15 minutes, are stored only as HMAC hashes, and are replaced when a new code is sent.
 
-For production readiness and Docker/deployment health checks, `GET /api/health` reports app status, store readiness, image storage readiness, AI provider configured state, hCaptcha configured state, safe counts, and model readiness without returning `MONGODB_URI`, admin credentials, API keys, hCaptcha secrets, storage endpoints, or other secret/raw environment values.
+For production readiness and Docker/deployment probes, public `GET /api/health` returns only `{ status, ready }` and disables caching. Authenticated administrators can use `GET /api/admin/health` for store, image storage, AI, hCaptcha, email, realtime, and process diagnostics; neither endpoint returns raw credentials, keys, connection strings, or storage endpoints.
 
 KLIPY searches go through the backend so visitor IPs and private forum identifiers are not sent to the search API. Rendered GIF media is loaded from KLIPY's CDN with `referrerpolicy=no-referrer`, so a viewer's browser still contacts KLIPY when displaying a GIF.
 
@@ -136,7 +174,7 @@ STORE_DRIVER=mongo
 MONGODB_URI=mongodb://127.0.0.1:27017/36chan
 ```
 
-Never commit a production `MONGODB_URI`, admin credential, JWT secret, AI key, S3 key, or hCaptcha secret. `/api/health` exposes only safe readiness fields and counts for deployment monitors.
+Never commit a production `MONGODB_URI`, admin credential, JWT secret, AI key, S3 key, or hCaptcha secret. `/api/health` exposes only coarse readiness for deployment monitors; detailed diagnostics require admin authentication at `/api/admin/health`.
 
 ## Docker
 
@@ -147,7 +185,9 @@ cp compose.env.example .env
 docker compose up --build
 ```
 
-The compose stack serves the built Vite frontend and backend on `http://localhost:3000`, uses MongoDB via `STORE_DRIVER=mongo`, and stores local uploads in the `uploads` Docker volume.
+The compose stack serves the public frontend proxy on `http://localhost:3000` by mapping host port `3000` to container port `3001`. Private Next listens on loopback port `3002` and the backend listens on loopback port `3000`; the public proxy overwrites forwarding headers, and Next proxies `/api`, `/events`, `/uploads`, and `/feeds` to the backend. MongoDB uses an authenticated replica set with a root bootstrap account, a separate least-privilege `readWrite` application account, and an internal replica-set key. Local uploads remain in the `uploads` Docker volume.
+
+`BACKEND_ORIGIN` is baked into Next rewrite output during the image build. If the backend is moved to another container or host, pass the matching Docker build argument as well as the runtime environment value.
 
 `docker-compose.yml` fails fast when required production secrets are missing. For config validation without committing secrets, run:
 
@@ -165,11 +205,17 @@ MODERATION_FINGERPRINT_SECRET=replace-with-long-random-secret
 POSTER_PROOF_SECRET=replace-with-long-random-secret
 HCAPTCHA_SITE_KEY=10000000-ffff-ffff-ffff-000000000001
 HCAPTCHA_SECRET=replace-with-hcaptcha-secret
+MONGO_ROOT_USERNAME=root
+MONGO_ROOT_PASSWORD=replace-with-long-url-safe-root-password
+MONGO_APP_USERNAME=chanapp
+MONGO_APP_PASSWORD=replace-with-long-url-safe-app-password
+MONGO_REPLICA_SET_KEY=replace-with-long-random-base64-replica-set-key
+METRICS_TOKEN=replace-with-long-random-metrics-token
 STORE_DRIVER=mongo
-MONGODB_URI=mongodb://mongo:27017/36chan
+MONGODB_URI=mongodb://chanapp:replace-with-long-url-safe-app-password@mongo:27017/36chan?replicaSet=rs0&authSource=36chan
 ```
 
-Configure `HCAPTCHA_SITE_KEY` and `HCAPTCHA_SECRET` before using the compose stack as a real public deployment. If `NODE_ENV=production` and `HCAPTCHA_SECRET` is empty, thread/comment posting is blocked by design. Use `npm run dev` for local no-secret development.
+Use URL-safe random values for the Mongo passwords when embedding them in `MONGODB_URI`, and keep the root password out of the web service. Configure `HCAPTCHA_SITE_KEY`, `HCAPTCHA_SECRET`, and `METRICS_TOKEN` before using the compose stack as a real public deployment. If `NODE_ENV=production` and `HCAPTCHA_SECRET` is empty, thread/comment posting is blocked by design. Use `npm run dev` for local no-secret development.
 
 For S3-compatible image storage:
 
@@ -346,14 +392,14 @@ flowchart TD
   Submit --> Validate[Rate limit, captcha, input, image, and board lifecycle validation]
   Validate --> AiModeration[AI moderation with redacted text only]
   AiModeration --> Decision{Safe?}
-  Decision -->|Yes| Publish[Persist public post and emit SSE update]
+  Decision -->|Yes| Publish[Persist public post and emit Socket.IO update]
   Decision -->|No| Pending[Persist pending post for admin review]
   Publish --> Browse
 
   Pending --> AdminLogin[Admin logs in with JWT]
   AdminLogin --> Review[Review pending queue, reports, history, labels, and context]
   Review --> AdminDecision{Approve or delete?}
-  AdminDecision -->|Approve| Approve[Mark public, record moderation action, emit SSE update]
+  AdminDecision -->|Approve| Approve[Mark public, record moderation action, emit Socket.IO update]
   AdminDecision -->|Delete| Delete[Mark deleted, record moderation action and reason]
   Approve --> Browse
   Delete --> Browse
@@ -371,7 +417,7 @@ Public reading and anonymous posting do not require an account. Accounts only ad
 
 ```mermaid
 flowchart LR
-  Browser["Browser SPA\nfrontend/src/app.ts"]
+  Browser["Browser UI\nfrontend App Router\nlegacy shell on all UI routes"]
   Admin["Admin user\nJWT-protected UI"]
   Http["Node HTTP API\nbackend/src/server/http-app.ts"]
   Service["Forum service\nbackend/src/core/forum-service.ts"]
@@ -381,7 +427,8 @@ flowchart LR
   Uploads["Image storage\nlocal disk or S3/R2"]
   HCaptcha["hCaptcha verify"]
   AI["AI provider\nGoogle AI Studio"]
-  Realtime["SSE /events\nrealtime hub"]
+  Realtime["Socket.IO /socket.io\npublic SSE compatibility /events"]
+  Redis[("Upstash Redis\npresence TTLs, limits, unread cache, fan-out")]
 
   Browser -->|"public config, boards, threads, catalog, archive, latest, feeds"| Http
   Browser -->|"thread/comment submit: body, captcha token, poster token, optional image metadata"| Http
@@ -395,14 +442,15 @@ flowchart LR
   Service -->|"validated image bytes and metadata"| Uploads
   Store --> Mongo
   Store -. "local/dev/demo only" .-> Json
-  Service -->|"public post events only"| Realtime
-  Realtime -->|"thread:created, comment:created, thread:bumped, moderation updates"| Browser
+  Service -->|"public, DM, read, typing, moderation events"| Realtime
+  Realtime <-->|"presence, metadata, limits, cache, Pub/Sub"| Redis
+  Realtime -->|"public events + authenticated user/moderation rooms"| Browser
 
   Http -. "safe readiness only: no secrets" .-> Browser
   AI -. "no IP, captcha, poster token, admin token, or account private data" .-> Service
 ```
 
-Trust boundaries are explicit: public responses and `/api/health` return readiness and counts without secret values; AI calls receive redacted draft/content text; account/admin JWTs stay in request authorization headers and are not written to public post records.
+Trust boundaries are explicit: public responses and `/api/health` return only coarse readiness without secret values; detailed health requires admin authentication; AI calls receive redacted draft/content text; account/admin JWTs stay in request authorization headers and are not written to public post records.
 
 ### Posting Sequence Diagram
 
@@ -417,7 +465,7 @@ sequenceDiagram
   participant AI as AI provider
   participant Images as Image storage
   participant Store as MongoDB or JSON store
-  participant Events as SSE realtime hub
+  participant Events as Socket.IO realtime hub
   actor Admin
 
   User->>Browser: Compose anonymous thread or comment
@@ -437,7 +485,7 @@ sequenceDiagram
   alt Safe content
     Store-->>Service: Saved public post
     Service->>Events: Publish thread or comment event
-    Events-->>Browser: EventSource update
+    Events-->>Browser: Socket.IO event
     API-->>Browser: 201 public post response
   else Flagged content
     Store-->>Service: Saved pending post
@@ -447,11 +495,11 @@ sequenceDiagram
     Service->>Store: Record moderation action and update post
     alt Admin approves
       Service->>Events: Publish public post event
-      Events-->>Browser: EventSource update
+      Events-->>Browser: Socket.IO event
     else Admin deletes
       Service-->>API: Deleted stays non-public
     end
   end
 ```
 
-Pending and deleted posts are stored for moderation history but are not emitted as public SSE content. Logged-in accounts can sync private data around this flow, but account identity is not copied into the public author field by default.
+Pending and deleted posts are stored for moderation history but are not emitted as public realtime content. Logged-in accounts can sync private data around this flow, but account identity is not copied into the public author field by default. `/events` remains public-only during compatibility migration; private DM, notification, presence, read-receipt, and moderation events are Socket.IO room events.

@@ -1,0 +1,62 @@
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>36chan</title>
+    <meta
+      name="description"
+      content="36chan: diễn đàn ảnh sinh viên ẩn danh theo thời gian thực, có AI kiểm duyệt và quản trị viên duyệt bài."
+    />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="stylesheet" href="/src/styles.css" />
+    <!--
+      First-paint route shell: home is active in HTML by default. Before the
+      module bootstrap finishes network work, force the hash's screen so reloads
+      do not flash the homepage.
+    -->
+    <script>
+      (function () {
+        var raw = location.hash;
+        if (!raw) {
+          var cleanPath = location.pathname.replace(/^\/+|\/+$/g, '');
+          if (cleanPath.toLowerCase() === 'legacy') cleanPath = '';
+          raw = cleanPath ? '#' + cleanPath + location.search : '#home';
+        }
+        var path = raw.split('?')[0];
+        var match = path.match(/^#([^/]+)\/?(.+)?$/);
+        var name = match && match[1] && match[1].toLowerCase();
+        var id = match && match[2];
+        var screen = 'home';
+        if (!name || name === 'home') screen = 'home';
+        else if (name === 'policy') screen = 'policy';
+        else if (name === 'register') screen = 'register';
+        else if (name === 'login') screen = 'login';
+        else if (name === 'forgot') screen = 'forgot';
+        else if (name === 'account') screen = 'account';
+        else if (name === 'messages') screen = 'messages';
+        else if (name === 'thread' && id) screen = 'thread';
+        else if (name === 'catalog') screen = 'catalog';
+        else if (name === 'archive') screen = 'archive';
+        else if (name === 'admin') screen = 'admin';
+        else screen = 'board';
+        document.documentElement.dataset.initialScreen = screen;
+      })();
+    </script>
+    <style id="initial-route-style">
+      html[data-initial-screen]:not([data-initial-screen='home']) #homeScreen {
+        display: none !important;
+      }
+      html[data-initial-screen='policy'] #policyScreen,
+      html[data-initial-screen='board'] #boardScreen,
+      html[data-initial-screen='catalog'] #catalogScreen,
+      html[data-initial-screen='archive'] #archiveScreen,
+      html[data-initial-screen='thread'] #threadScreen,
+      html[data-initial-screen='register'] #registerScreen,
+      html[data-initial-screen='login'] #loginScreen,
+      html[data-initial-screen='forgot'] #forgotScreen,
+      html[data-initial-screen='account'] #accountScreen,
+      html[data-initial-screen='messages'] #messagesScreen,
+      html[data-initial-screen='admin'] #adminScreen {
+        display: block !important;
+      }
+    </style>
+  </head>

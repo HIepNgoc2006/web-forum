@@ -10,8 +10,7 @@ Thanks for your interest. This guide covers the essentials; see
 ## Setup
 
 ```bash
-npm install
-npm --prefix backend install
+npm ci
 npm --prefix frontend install
 cp .env.example .env   # then fill in values
 ```
@@ -20,15 +19,15 @@ cp .env.example .env   # then fill in values
 
 ```bash
 npm run dev            # backend on port 3000 (watch mode)
-npm run dev:frontend   # Vite frontend, proxies /api and /events to backend
+npm run dev:frontend   # Next frontend on port 3001, proxies backend traffic
 ```
 
 ## Before You Submit
 
 ```bash
-npm test               # backend test suite (node:test)
-npm run check          # backend syntax checks + frontend ESLint
-npm run build          # frontend production build
+npm test               # backend and frontend unit tests
+npm run check          # script/backend checks + frontend typecheck
+npm run build          # backend and frontend production builds
 ```
 
 `npm run release:verify` chains tests, checks, build, and the browser smoke test.
@@ -37,10 +36,10 @@ npm run build          # frontend production build
 
 - Modern ESM TypeScript, 2-space indentation, single quotes, trailing semicolons.
 - kebab-case filenames (`forum-service.ts`); camelCase for functions/variables.
-- Business rules live in `backend/src/core/`; route/socket wiring in
+- Business rules live in `backend/src/core/`; HTTP/SSE wiring lives in
   `backend/src/server/`.
-- Keep the frontend plain Vite/vanilla DOM unless a refactor is explicitly
-  requested. UI text is Vietnamese.
+- Keep frontend work in the Next App Router package and preserve its legacy DOM
+  shell, same-origin proxy contracts, and Vietnamese UI text.
 - Add tests under `backend/test/` as `*.test.ts` and import them from
   `backend/test/run-tests.ts`.
 

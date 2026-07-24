@@ -25,6 +25,14 @@ type JsonResponse = {
       scope?: string;
       label?: string;
     };
+    sources?: Array<{
+      kind?: string;
+      label?: string;
+      href?: string;
+      threadId?: string;
+      globalNumber?: number;
+    }>;
+    followUps?: string[];
   };
   error?: {
     message?: string;
@@ -128,11 +136,21 @@ test('POST /api/ai/chat grounds a thread answer in redacted public context', asy
     const body = await readJson(response);
 
     assert.equal(response.status, 200);
-    assert.deepEqual(Object.keys(body.data ?? {}).sort(), ['answer', 'context']);
+    assert.deepEqual(Object.keys(body.data ?? {}).sort(), ['answer', 'context', 'followUps', 'sources']);
     assert.equal(body.data?.answer, 'Câu trả lời có căn cứ.');
     assert.equal(body.data?.context?.scope, 'thread');
     assert.equal(typeof body.data?.context?.label, 'string');
     assert.notEqual(body.data?.context?.label, '');
+    assert.ok(Array.isArray(body.data?.sources));
+    assert.ok((body.data?.sources?.length ?? 0) >= 2);
+    assert.ok(Array.isArray(body.data?.followUps));
+    assert.ok((body.data?.followUps?.length ?? 0) >= 1);
+    assert.ok(
+      body.data?.sources?.every(
+        (source) => typeof source.href === 'string' && source.href.startsWith('#thread/')
+      )
+    );
+    assert.ok(body.data?.sources?.some((source) => String(source.href).includes('?p=')));
 
     assert.equal(ai.answers.length, 1);
     const captured = ai.answers[0];
@@ -140,6 +158,8 @@ test('POST /api/ai/chat grounds a thread answer in redacted public context', asy
     assert.deepEqual(captured.history, history);
     assert.match(captured.context, /THREAD_PUBLIC_MARKER/);
     assert.match(captured.context, /THREAD_REPLY_MARKER/);
+    assert.match(captured.context, /#thread\//);
+    assert.match(captured.context, /chi tiết:/);
     assert.equal(captured.context.includes('student@example.com'), false);
     assert.equal(captured.context.includes('0901234567'), false);
     assert.match(captured.context, /\[email da an\]/);
@@ -240,6 +260,102 @@ test('POST /api/ai/chat site context excludes hidden, pending, deleted, and priv
     ]) {
       assert.equal(providerPayload.includes(excluded), false, `${excluded} leaked to the AI provider`);
     }
+  });
+});
+
+test('POST /api/ai/chat includes quote links, attachments, post links, and similar threads', async () => {
+  await withChatServer(async (baseUrl, { ai, service, store }) => {
+    const primary = await service.createThread({
+      boardSlug: 'hoc-tap',
+      subject: 'Ôn thi cuối kỳ toán rời rạc',
+      body: 'PRIMARY_THREAD_MARKER chia sẻ đề cương ôn thi cuối kỳ toán rời rạc cho sinh viên. https://example.com/de-cuong',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.40',
+      posterToken: 'primary-poster'
+    } as Parameters<typeof service.createThread>[0]);
+    const similar = await service.createThread({
+      boardSlug: 'hoc-tap',
+      subject: 'Đề cương toán rời rạc cuối kỳ',
+      body: 'SIMILAR_THREAD_MARKER cũng bàn đề cương ôn thi cuối kỳ toán rời rạc cho sinh viên.',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.41',
+      posterToken: 'similar-poster'
+    } as Parameters<typeof service.createThread>[0]);
+    const quoted = await service.createComment({
+      threadId: primary.thread.id,
+      body: 'QUOTE_TARGET_MARKER đây là mốc lịch ôn tập.',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.42',
+      posterToken: 'quote-poster'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.createComment({
+      threadId: primary.thread.id,
+      body: `REPLY_WITH_QUOTE >>${quoted.comment.globalNumber} mình đồng ý với mốc này.`,
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.43',
+      posterToken: 'reply-poster'
+    } as Parameters<typeof service.createComment>[0]);
+
+    const state = await store.read();
+    const primaryRecord = state.threads.find((thread) => thread.id === primary.thread.id);
+    assert.ok(primaryRecord);
+    primaryRecord.images = [
+      {
+        name: 'de-cuong.png',
+        type: 'image/png',
+        storage: 'local',
+        storageKey: 'test/de-cuong.png',
+        url: '/uploads/test/de-cuong.png'
+      }
+    ];
+    primaryRecord.image = primaryRecord.images[0];
+    primaryRecord.links = [
+      {
+        url: 'https://example.com/de-cuong',
+        domain: 'example.com',
+        kind: 'og',
+        title: 'Đề cương mẫu'
+      }
+    ];
+    await store.write(state);
+
+    const response = await fetch(`${baseUrl}/api/ai/chat`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        question: 'Tìm chủ đề tương tự và tóm tắt trích dẫn cùng file đính kèm.',
+        scope: 'thread',
+        threadId: primary.thread.id,
+        posterToken: 'chat-poster'
+      })
+    });
+    const body = await readJson(response);
+
+    assert.equal(response.status, 200);
+    assert.equal(ai.answers.length, 1);
+    const context = ai.answers[0].context;
+    assert.match(context, new RegExp(`#thread/${primary.thread.id}`));
+    assert.match(context, /de-cuong\.png/);
+    assert.match(context, /đính kèm:/);
+    assert.match(context, /trích dẫn >>/);
+    assert.match(context, /example\.com/);
+    assert.match(context, /Chủ đề công khai tương tự/);
+    assert.match(context, new RegExp(`#thread/${similar.thread.id}`));
+    assert.match(context, /QUOTE_TARGET_MARKER|REPLY_WITH_QUOTE/);
+
+    assert.ok(body.data?.sources?.some((source) => source.kind === 'similar'));
+    assert.ok(
+      body.data?.sources?.some(
+        (source) => source.href === `#thread/${encodeURIComponent(similar.thread.id)}`
+      )
+    );
+    assert.ok(
+      body.data?.sources?.some(
+        (source) =>
+          source.href ===
+          `#thread/${encodeURIComponent(primary.thread.id)}?p=${encodeURIComponent(String(primary.thread.globalNumber))}`
+      )
+    );
   });
 });
 

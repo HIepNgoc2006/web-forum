@@ -294,6 +294,9 @@ export function securityConfigStatus({
 // Warnings that must block startup in production. Each corresponds to a
 // predictable/default/forgeable secret that would silently weaken security.
 const PRODUCTION_FATAL_WARNINGS = new Set([
+  'admin_auth_not_configured',
+  'admin_username_default_or_missing',
+  'admin_password_weak_or_missing',
   'jwt_secret_default_or_missing',
   'jwt_secret_short',
   'moderation_fingerprint_secret_falls_back_to_jwt',

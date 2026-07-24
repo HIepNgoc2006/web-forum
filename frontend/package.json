@@ -3,34 +3,44 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "description": "Primary standalone Next.js frontend for 36chan-web.",
   "scripts": {
-    "dev": "vite",
-    "test": "node --test test/poll-options.test.ts test/comment-composer-mode.test.ts test/comment-draft.test.ts test/router.test.ts test/media-tokens.test.ts",
-    "build": "vite build",
-    "lint": "eslint --flag unstable_native_nodejs_ts_config .",
-    "preview": "vite preview",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "generate:shell": "node scripts/generate-legacy-shell.mjs",
+    "predev": "npm run generate:shell",
+    "dev": "next dev --hostname 127.0.0.1 --port 3001",
+    "prebuild": "npm run generate:shell",
+    "build": "next build",
+    "postbuild": "node scripts/prepare-standalone.mjs",
+    "pretypecheck": "npm run generate:shell",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "node --test test/routes.test.ts test/legacy-head.test.ts test/account-settings.test.ts test/dm-regressions.test.ts test/notifications.test.ts test/ai-errors.test.ts",
+    "test:browser": "node scripts/browser-smoke.mjs",
+    "test:browser-notifications": "node scripts/browser-notifications.mjs",
+    "test:all": "npm run typecheck && npm test && npm run build && npm run test:browser && npm run test:browser-notifications",
+    "start": "node scripts/start-standalone.mjs"
   },
   "dependencies": {
     "@simplewebauthn/browser": "^13.3.0",
-    "axios": "^1.16.1",
+    "36chan-web": "file:..",
+    "next": "16.2.11",
     "react": "^19.2.6",
     "react-dom": "^19.2.6",
-    "react-router-dom": "^7.15.1",
     "socket.io-client": "^4.8.3"
   },
   "devDependencies": {
-    "@eslint/js": "^10.0.1",
+    "@types/node": "^22.18.0",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
-    "eslint": "^10.3.0",
-    "eslint-plugin-react-hooks": "^7.1.1",
-    "eslint-plugin-react-refresh": "^0.5.2",
-    "globals": "^17.6.0",
     "@typescript/native": "npm:typescript@^7.0.2",
-    "typescript": "npm:@typescript/typescript6@^6.0.2",
-    "typescript-eslint": "^8.62.1",
-    "vite": "^8.0.12"
+    "typescript": "npm:@typescript/typescript6@^6.0.2"
+  },
+  "overrides": {
+    "next": {
+      "postcss": "8.5.22",
+      "sharp": "0.35.3"
+    }
+  },
+  "engines": {
+    "node": ">=22.18.0"
   }
 }

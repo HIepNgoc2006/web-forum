@@ -49,8 +49,22 @@ function createTestMemoryStore(state?: any) {
   return createMemoryStore(state as Parameters<typeof createMemoryStore>[0]) as any;
 }
 
+const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgo=';
+const JPEG_DATA_URL = 'data:image/jpeg;base64,/9j/4A==';
+const AVIF_DATA_URL = 'data:image/avif;base64,AAAAGGZ0eXBhdmlmAAAAAGF2aWY=';
+const WEBM_DATA_URL = 'data:video/webm;base64,GkXfow==';
+
+function jpegDataUrlOfSize(size: number) {
+  const bytes = Buffer.alloc(size);
+  bytes.set([0xff, 0xd8, 0xff]);
+  return `data:image/jpeg;base64,${bytes.toString('base64')}`;
+}
+
 const safeAi = {
   async moderate() {
+    return { status: 'Safe', labels: [] };
+  },
+  async moderateImage() {
     return { status: 'Safe', labels: [] };
   },
   async summarize() {
@@ -211,6 +225,8 @@ test('mongo store declares production persistence models without opening a conne
         'Appeal',
         'Board',
         'Comment',
+        'DmConversation',
+        'DmMessage',
         'ModerationAction',
         'Report',
         'Sanction',
@@ -248,7 +264,7 @@ test('mongo full-state replacement uses one session and omits empty optional ema
     }
   });
   const models = Object.fromEntries(
-    ['Board', 'User', 'Thread', 'Comment', 'ModerationAction', 'Report', 'Appeal', 'Sanction', 'AiUsage', 'AiSummaryCache']
+    ['Board', 'User', 'Thread', 'Comment', 'ModerationAction', 'Report', 'Appeal', 'Sanction', 'DmConversation', 'DmMessage', 'AiUsage', 'AiSummaryCache']
       .map((name) => [name, collectionModel(name)])
   ) as any;
   models.StateMeta = {
@@ -731,6 +747,9 @@ test('uploaded image OCR moderation flags PII without sending raw OCR secrets', 
       moderateCalls.push(text);
       return { status: 'Safe', labels: [] };
     },
+    async moderateImage() {
+      return { status: 'Safe', labels: [] };
+    },
     async caption(media, mode) {
       captionRequest = { media, mode };
       return 'Email me@example.com, sdt 0901234567';
@@ -749,7 +768,7 @@ test('uploaded image OCR moderation flags PII without sending raw OCR secrets', 
     image: {
       name: 'secret.png',
       type: 'image/png',
-      dataUrl: `data:image/png;base64,${Buffer.from('image-bytes').toString('base64')}`,
+      dataUrl: PNG_DATA_URL,
       spoiler: true
     },
     captchaToken: 'captcha-secret-token',
@@ -803,7 +822,7 @@ test('uploaded image safety labels can hold comments for moderation', async () =
     body: 'Tra loi co anh',
     image: {
       type: 'image/jpeg',
-      dataUrl: `data:image/jpeg;base64,${Buffer.from('unsafe-image').toString('base64')}`
+      dataUrl: JPEG_DATA_URL
     },
     captchaToken: 'dev-pass',
     ip: '203.0.113.11'
@@ -842,7 +861,7 @@ test('upload moderation attempts any image MIME type accepted by uploads', async
     body: 'Anh AVIF',
     image: {
       type: 'image/avif',
-      dataUrl: `data:image/avif;base64,${Buffer.from('avif-image').toString('base64')}`
+      dataUrl: AVIF_DATA_URL
     },
     captchaToken: 'dev-pass',
     ip: '203.0.113.12'
@@ -927,7 +946,7 @@ test('createAiClient uses free Google Translate when AI is not configured', asyn
   }
 });
 
-test('upload moderation degrades safely when image AI is not configured', async () => {
+test('upload moderation queues media when image AI is not configured', async () => {
   const keys = [
     'AI_PROVIDER',
     'GOOGLE_AI_API_KEY',
@@ -954,15 +973,16 @@ test('upload moderation degrades safely when image AI is not configured', async 
       body: 'Noi dung an toan',
       image: {
         type: 'image/png',
-        dataUrl: `data:image/png;base64,${Buffer.from('image').toString('base64')}`
+        dataUrl: PNG_DATA_URL
       },
       captchaToken: 'dev-pass',
       ip: '203.0.113.12'
     });
 
-    assert.equal(created.status, 'published');
-    assert.equal(created.thread.isPending, false);
-    assert.deepEqual(created.thread.moderationLabels, []);
+    assert.equal(created.status, 'pending');
+    assert.equal(created.thread.isPending, true);
+    assert.equal(created.thread.moderationStatus, 'Unavailable');
+    assert.deepEqual(created.thread.moderationLabels, ['Media Scan Unavailable', 'OCR Scan Unavailable']);
   } finally {
     for (const key of keys) {
       if (originalEnv[key] === undefined) {
@@ -1257,7 +1277,7 @@ test('tripcode is parsed from display name, name part is sanitized, and image sp
     boardSlug: 'hoc-tap',
     body: 'Thread co tripcode va anh spoiler',
     displayName: 'Sinh vien#bi-mat',
-    image: { type: 'image/png', dataUrl: 'data:image/png;base64,aGVsbG8=', spoiler: true },
+    image: { type: 'image/png', dataUrl: PNG_DATA_URL, spoiler: true },
     captchaToken: 'dev-pass',
     ip: '203.0.113.7',
     posterToken: 'browser-a'
@@ -1321,14 +1341,14 @@ test('image spoiler flags survive storage drivers that return fresh metadata', a
       {
         name: 'spoiler.png',
         type: 'image/png',
-        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        dataUrl: PNG_DATA_URL,
         sizeBytes: 5,
         spoiler: true
       },
       {
         name: 'plain.png',
         type: 'image/png',
-        dataUrl: 'data:image/png;base64,aGVsbG8=',
+        dataUrl: PNG_DATA_URL,
         sizeBytes: 5,
         spoiler: false
       }
@@ -1343,7 +1363,7 @@ test('image spoiler flags survive storage drivers that return fresh metadata', a
     image: {
       name: 'reply.png',
       type: 'image/png',
-      dataUrl: 'data:image/png;base64,aGVsbG8=',
+      dataUrl: PNG_DATA_URL,
       sizeBytes: 5,
       spoiler: true
     },
@@ -1723,7 +1743,7 @@ test('board thread list includes latest reply previews and omitted media counts'
   const first = await service.createComment({
     threadId: created.thread.id,
     body: 'Reply preview 1',
-    image: { name: 'omitted.png', type: 'image/png', dataUrl: 'data:image/png;base64,AAAA', sizeBytes: 3 },
+    image: { name: 'omitted.png', type: 'image/png', dataUrl: PNG_DATA_URL, sizeBytes: 3 },
     captchaToken: 'dev-pass',
     ip: '203.0.113.8'
   });
@@ -1771,17 +1791,20 @@ test('board thread list supports server-side sort and filter modes before pagina
   const image = await service.createThread({
     boardSlug: 'hoc-tap',
     body: 'Thread co anh',
-    image: { name: 'filter.png', type: 'image/png', dataUrl: 'data:image/png;base64,AAAA', sizeBytes: 3 },
+    image: { name: 'filter.png', type: 'image/png', dataUrl: PNG_DATA_URL, sizeBytes: 3 },
     captchaToken: 'dev-pass',
     ip: '203.0.113.12'
   });
   const video = await service.createThread({
     boardSlug: 'hoc-tap',
     body: 'Thread co video',
-    image: { name: 'filter.webm', type: 'video/webm', dataUrl: 'data:video/webm;base64,AAAA', sizeBytes: 3 },
+    image: { name: 'filter.webm', type: 'video/webm', dataUrl: WEBM_DATA_URL, sizeBytes: 3 },
     captchaToken: 'dev-pass',
     ip: '203.0.113.13'
   });
+  assert.equal(video.status, 'pending');
+  assert.deepEqual(video.thread.moderationLabels, ['Video Review Required']);
+  await service.approvePending(video.thread.id);
   const poll = await service.createThread({ boardSlug: 'hoc-tap', body: 'Thread co poll', pollOptions: ['Co', 'Khong'], captchaToken: 'dev-pass', ip: '203.0.113.14' });
 
   const created = await service.listThreads('hoc-tap', { sort: 'created' });
@@ -1968,14 +1991,14 @@ test('thread image metadata is sanitized and returned with public thread data', 
     image: {
       name: 'ten\u0000anh.png',
       type: 'IMAGE/PNG',
-      dataUrl: 'data:image/png;base64,AAAA',
+      dataUrl: PNG_DATA_URL,
       sizeBytes: '2048',
       width: '640.4',
       height: 999999,
       thumbnail: {
         name: 'thumb\u0000.jpg',
         type: 'IMAGE/JPEG',
-        dataUrl: 'data:image/jpeg;base64,AAA=',
+        dataUrl: JPEG_DATA_URL,
         sizeBytes: '2',
         width: '160.8',
         height: '90.2'
@@ -1987,7 +2010,7 @@ test('thread image metadata is sanitized and returned with public thread data', 
   assert.deepEqual(created.thread.image, {
     name: 'tenanh.png',
     type: 'image/png',
-    dataUrl: 'data:image/png;base64,AAAA',
+    dataUrl: PNG_DATA_URL,
     spoiler: false,
     sizeBytes: 2048,
     width: 640,
@@ -1995,7 +2018,7 @@ test('thread image metadata is sanitized and returned with public thread data', 
     thumbnail: {
       name: 'thumb.jpg',
       type: 'image/jpeg',
-      dataUrl: 'data:image/jpeg;base64,AAA=',
+      dataUrl: JPEG_DATA_URL,
       sizeBytes: 2,
       width: 161,
       height: 90
@@ -2030,14 +2053,14 @@ test('comment image metadata is sanitized and returned with public comment data'
     image: {
       name: 'reply\u0000.png',
       type: 'IMAGE/PNG',
-      dataUrl: 'data:image/png;base64,AAAA',
+      dataUrl: PNG_DATA_URL,
       sizeBytes: '4096',
       width: '320.4',
       height: 240,
       thumbnail: {
         name: 'rthumb\u0000.jpg',
         type: 'IMAGE/JPEG',
-        dataUrl: 'data:image/jpeg;base64,AAA=',
+        dataUrl: JPEG_DATA_URL,
         sizeBytes: '2',
         width: '80.8',
         height: '60.2'
@@ -2048,7 +2071,7 @@ test('comment image metadata is sanitized and returned with public comment data'
   assert.deepEqual(reply.comment.image, {
     name: 'reply.png',
     type: 'image/png',
-    dataUrl: 'data:image/png;base64,AAAA',
+    dataUrl: PNG_DATA_URL,
     spoiler: false,
     sizeBytes: 4096,
     width: 320,
@@ -2056,7 +2079,7 @@ test('comment image metadata is sanitized and returned with public comment data'
     thumbnail: {
       name: 'rthumb.jpg',
       type: 'image/jpeg',
-      dataUrl: 'data:image/jpeg;base64,AAA=',
+      dataUrl: JPEG_DATA_URL,
       sizeBytes: 2,
       width: 81,
       height: 60
@@ -2086,23 +2109,26 @@ test('thread supports multiple media attachments while keeping image compatibili
       {
         name: 'one.png',
         type: 'image/png',
-        dataUrl: 'data:image/png;base64,AAAA',
+        dataUrl: PNG_DATA_URL,
         sizeBytes: 3
       },
       {
         name: 'clip.webm',
         type: 'video/webm',
-        dataUrl: 'data:video/webm;base64,BBBB',
+        dataUrl: WEBM_DATA_URL,
         sizeBytes: 3,
         thumbnail: {
           name: 'clip-poster.jpg',
           type: 'image/jpeg',
-          dataUrl: 'data:image/jpeg;base64,AAA=',
+          dataUrl: JPEG_DATA_URL,
           sizeBytes: 2
         }
       }
     ]
   });
+  assert.equal(created.status, 'pending');
+  assert.deepEqual(created.thread.moderationLabels, ['Video Review Required']);
+  await service.approvePending(created.thread.id);
   const detail = await service.getThread(created.thread.id);
 
   assert.equal(created.thread.images.length, 2);
@@ -2128,14 +2154,14 @@ test('invalid image metadata falls back to safe values', async () => {
     image: {
       name: 'fallback.jpg',
       type: 'image/jpeg',
-      dataUrl: 'data:image/jpeg;base64,AAAA',
+      dataUrl: JPEG_DATA_URL,
       sizeBytes: 'not-a-number',
       width: -1,
       height: 0
     }
   });
 
-  assert.equal(created.thread.image.sizeBytes, 3);
+  assert.equal(created.thread.image.sizeBytes, 4);
   assert.equal(Object.hasOwn(created.thread.image, 'width'), false);
   assert.equal(Object.hasOwn(created.thread.image, 'height'), false);
 });
@@ -2167,11 +2193,11 @@ test('image size limits use defaults when env values are invalid', async () => {
           image: {
             name: 'image.jpg',
             type: 'image/jpeg',
-            dataUrl: 'data:image/jpeg;base64,AAAA',
+            dataUrl: JPEG_DATA_URL,
             thumbnail: {
               name: 'thumb.jpg',
               type: 'image/jpeg',
-              dataUrl: `data:image/jpeg;base64,${'A'.repeat(120_001)}`
+              dataUrl: jpegDataUrlOfSize(120_001)
             }
           }
         }),
@@ -2218,8 +2244,7 @@ test('image uploads reject files larger than MAX_IMAGE_BYTES', async () => {
           image: {
             name: 'large.jpg',
             type: 'image/jpeg',
-            // 24 base64 chars => 18 decoded bytes > 12
-            dataUrl: `data:image/jpeg;base64,${'A'.repeat(24)}`
+            dataUrl: jpegDataUrlOfSize(18)
           }
         }),
       (error) => {
@@ -2253,7 +2278,7 @@ test('image filenames strip HTML-sensitive characters before storage', async () 
     image: {
       name: '<img src=x onerror=alert(1)>.png',
       type: 'image/png',
-      dataUrl: 'data:image/png;base64,AAAA'
+      dataUrl: PNG_DATA_URL
     }
   });
 
@@ -3355,27 +3380,25 @@ test('account and board reads use targeted store hooks when available', async ()
   assert.equal(calls.some((call) => Array.isArray(call) && call[0] === 'upsertAdminAccount'), true);
 });
 
-test('2FA login uses targeted user read when available', async () => {
-  let readUserId = null;
+test('2FA login challenge and verification run under the mutation lock', async () => {
+  const memoryStore = createTestMemoryStore({
+    users: [{
+      id: 'user-2fa',
+      username: 'adminfixture',
+      role: 'admin',
+      twoFactorEnabled: true,
+      twoFactorSecret: 'targeted-secret',
+      settings: {},
+      createdAt: '2026-05-22T07:00:00.000Z',
+      updatedAt: '2026-05-22T07:30:00.000Z'
+    }]
+  });
+  let lockCalls = 0;
   const store = {
-    async readUser(userId) {
-      readUserId = userId;
-      return {
-        id: 'user-2fa',
-        username: 'adminfixture',
-        role: 'admin',
-        twoFactorEnabled: true,
-        twoFactorSecret: 'targeted-secret',
-        settings: {},
-        createdAt: '2026-05-22T07:00:00.000Z',
-        updatedAt: '2026-05-22T07:30:00.000Z'
-      };
-    },
-    async read() {
-      throw new Error('full read should not be used');
-    },
-    async write() {
-      throw new Error('write should not be used');
+    ...memoryStore,
+    async withMutationLock(callback) {
+      lockCalls += 1;
+      return callback();
     }
   };
   const service = createTestForumService({
@@ -3389,13 +3412,20 @@ test('2FA login uses targeted user read when available', async () => {
     }
   });
 
-  const result = await service.verify2FALogin('user-2fa', '123456');
+  const challenge = await service.begin2FALogin('user-2fa');
+  const result = await service.verify2FALogin(
+    'user-2fa',
+    '123456',
+    challenge.challengeId
+  );
 
-  assert.equal(readUserId, 'user-2fa');
+  assert.equal(lockCalls, 2);
   assert.equal(result.ok, true);
   assert.equal(result.account.username, 'adminfixture');
   assert.equal(result.account.role, 'owner');
   assert.equal(result.account.twoFactorEnabled, true);
+  const state = await store.read();
+  assert.equal(state.users[0].twoFactorChallengeId, null);
 });
 
 test('admin login account bootstrap uses targeted store hook when available', async () => {
@@ -3692,7 +3722,13 @@ test('admin approval uses targeted store hook when available', async () => {
   assert.equal(calls[0].createdAt, '2026-05-22T08:00:00.000Z');
   assert.equal(thread.globalNumber, pendingThread.globalNumber);
   assert.equal(comment.globalNumber, pendingComment.globalNumber);
-  assert.deepEqual(realtime.events.map((item) => item.event), ['thread:created', 'comment:created', 'thread:bumped']);
+  assert.deepEqual(realtime.events.map((item) => item.event), [
+    'moderation:event',
+    'thread:created',
+    'moderation:event',
+    'comment:created',
+    'thread:bumped'
+  ]);
 });
 
 
@@ -3806,6 +3842,56 @@ test('expired event boards auto archive active threads and reject new posts', as
       }),
     /Bảng sự kiện đã kết thúc/
   );
+});
+
+test('event expiry archival preserves a write that lands after the public read', async () => {
+  const backingStore = createTestMemoryStore();
+  let armed = false;
+  let raced = false;
+  let concurrentNextGlobalNumber = 0;
+  const store = {
+    type: 'memory',
+    async read() {
+      const snapshot = await backingStore.read();
+      if (armed && !raced) {
+        raced = true;
+        const latest = structuredClone(snapshot);
+        concurrentNextGlobalNumber = latest.nextGlobalNumber + 10;
+        latest.nextGlobalNumber = concurrentNextGlobalNumber;
+        await backingStore.write(latest);
+      }
+      return snapshot;
+    },
+    async write(state) {
+      await backingStore.write(state);
+    }
+  };
+  const dates = [
+    new Date('2026-07-20T08:00:00.000Z'),
+    new Date('2026-08-01T08:00:00.000Z'),
+    new Date('2026-08-01T08:01:00.000Z')
+  ];
+  const service = createTestForumService({
+    store,
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => dates.shift() ?? new Date('2026-08-01T08:01:00.000Z')
+  });
+  await service.createThread({
+    boardSlug: 'thi-cuoi-ky',
+    body: 'Thread truoc khi het su kien',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  armed = true;
+  const active = await service.listThreads('thi-cuoi-ky');
+  const finalState = await backingStore.read();
+
+  assert.equal(raced, true);
+  assert.equal(active.length, 0);
+  assert.equal(finalState.threads[0].archivedReason, 'event-ended');
+  assert.equal(finalState.nextGlobalNumber, concurrentNextGlobalNumber);
 });
 
 test('archived threads reject new comments', async () => {
@@ -5001,6 +5087,18 @@ test('assertProductionSecrets throws in production with insecure config and neve
       posterProofSecret: 'proof-secret'
     });
     assert.ok(Array.isArray(ok.warnings));
+
+    assert.throws(
+      () => assertProductionSecrets({
+        jwtSecret: 'a'.repeat(40),
+        adminUsername: 'root',
+        adminPassword: 'short',
+        hcaptchaSecret: 'hc-secret',
+        moderationFingerprintSecret: 'mod-secret',
+        posterProofSecret: 'proof-secret'
+      }),
+      /admin_password_weak_or_missing/
+    );
   } finally {
     for (const key of Object.keys(originalEnv)) {
       if (originalEnv[key] === undefined) {
@@ -5924,6 +6022,38 @@ test('account locks after repeated failed logins and unlocks after the window', 
   clock += 15 * 60 * 1000 + 1000;
   const account = await service.loginAccount({ username: 'lock_target', password: 'correct-horse-battery', captchaToken: 'dev-pass' });
   assert.equal(account.username, 'lock_target');
+});
+
+test('concurrent failed logins cannot lose attempt increments', async () => {
+  const service = createTestForumService({
+    store: createTestMemoryStore(),
+    ai: safeAi,
+    realtime: createEvents(),
+    now: () => new Date('2026-05-22T08:00:00.000Z')
+  });
+  await service.registerAccount({
+    username: 'parallel_lock_target',
+    password: 'correct-horse-battery',
+    captchaToken: 'dev-pass',
+    ip: '203.0.113.7'
+  });
+
+  const attempts = await Promise.allSettled(
+    Array.from({ length: 5 }, () => service.loginAccount({
+      username: 'parallel_lock_target',
+      password: 'wrong',
+      captchaToken: 'dev-pass'
+    }))
+  );
+  assert.equal(attempts.every((result) => result.status === 'rejected'), true);
+  await assert.rejects(
+    () => service.loginAccount({
+      username: 'parallel_lock_target',
+      password: 'correct-horse-battery',
+      captchaToken: 'dev-pass'
+    }),
+    (error) => asServiceError(error).statusCode === 429
+  );
 });
 
 test('a successful login resets the failed-attempt counter', async () => {

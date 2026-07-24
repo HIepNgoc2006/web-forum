@@ -9,6 +9,7 @@ import { normalizeState } from './forum-store.ts';
 type Logger = (entry: Record<string, unknown>) => void;
 type BackupStore = {
   read: () => Promise<unknown> | unknown;
+  withMutationLock?: <T>(callback: () => Promise<T>) => Promise<T>;
 };
 type ImageStorage = {
   type?: string;
@@ -229,8 +230,13 @@ export async function runBackupJob({
   const startedAt = startedAtDate.toISOString();
   const id = backupId(startedAtDate);
   const resolvedDestination = path.resolve(destination);
-  const state = normalizeState(await store.read());
-  const uploads = await uploadManifest({ imageStorage, imageStorageDriver, uploadRoot });
+  const readSources = async () => ({
+    state: normalizeState(await store.read()),
+    uploads: await uploadManifest({ imageStorage, imageStorageDriver, uploadRoot })
+  });
+  const { state, uploads } = storeDriver === 'mongo' && store.withMutationLock
+    ? await store.withMutationLock(readSources)
+    : await readSources();
   const s3BackupConfirmed = s3.backupConfirmed === true
     || String(s3.backupConfirmed ?? '').toLowerCase() === 'true';
   const metadata = {

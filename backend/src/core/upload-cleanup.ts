@@ -8,6 +8,7 @@ type ForumPostLike = {
 type ForumStateLike = {
   threads?: unknown;
   comments?: unknown;
+  dmMessages?: unknown;
 };
 
 type UploadMediaLike = {
@@ -20,6 +21,7 @@ type UploadCleanupStorage = {
   type?: string;
   listKeys: () => Promise<unknown[]>;
   deleteKey: (storageKey: string) => Promise<unknown>;
+  getLastModified?: (storageKey: string) => Promise<unknown>;
 };
 
 type UploadCleanupCandidate = {
@@ -28,6 +30,10 @@ type UploadCleanupCandidate = {
 
 type UploadCleanupFailure = UploadCleanupCandidate & {
   error: string;
+};
+
+type UploadCleanupSkipped = UploadCleanupCandidate & {
+  reason: 'referenced-on-recheck' | 'minimum-age' | 'age-unavailable';
 };
 
 type UploadCleanupResult = {
@@ -39,6 +45,7 @@ type UploadCleanupResult = {
   referenced: number;
   candidates: UploadCleanupCandidate[];
   deleted: UploadCleanupCandidate[];
+  skipped: UploadCleanupSkipped[];
   failures: UploadCleanupFailure[];
 };
 
@@ -54,6 +61,9 @@ type CleanupOrphanUploadsOptions = {
   dryRun?: boolean;
   logger?: UploadCleanupLogger;
   now?: () => Date;
+  minimumAgeMs?: number;
+  readState?: () => Promise<ForumStateLike>;
+  withMutationLock?: <T>(callback: () => Promise<T>) => Promise<T>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -92,7 +102,7 @@ function addReferencedKey(keys: Set<string>, media: unknown, storage?: UploadSto
 
 export function collectReferencedUploadKeys(state: ForumStateLike = {}, { storage }: CollectReferencedOptions = {}): Set<string> {
   const keys = new Set<string>();
-  for (const collection of [state.threads, state.comments]) {
+  for (const collection of [state.threads, state.comments, state.dmMessages]) {
     if (!Array.isArray(collection)) {
       continue;
     }
@@ -110,7 +120,10 @@ export async function cleanupOrphanUploads({
   imageStorage,
   dryRun = true,
   logger = () => undefined,
-  now = () => new Date()
+  now = () => new Date(),
+  minimumAgeMs = 0,
+  readState,
+  withMutationLock
 }: CleanupOrphanUploadsOptions = {}): Promise<UploadCleanupResult> {
   if (!state || typeof state !== 'object') {
     throw new Error('Forum state is required');
@@ -136,28 +149,66 @@ export async function cleanupOrphanUploads({
     referenced: referencedKeys.size,
     candidates,
     deleted: [],
+    skipped: [],
     failures: []
   };
 
   logger({ event: 'upload_cleanup_started', dryRun: result.dryRun, storageType: result.storageType });
 
-  for (const candidate of candidates) {
-    if (dryRun) {
+  if (dryRun) {
+    for (const candidate of candidates) {
       logger({ event: 'upload_cleanup_candidate', storageKey: candidate.storageKey });
-      continue;
     }
+  } else {
+    const sweep = async () => {
+      const authoritativeState = readState ? await readState() : state;
+      const currentReferences = collectReferencedUploadKeys(authoritativeState, { storage: storageName });
+      const checkedAt = now().getTime();
+      const safeMinimumAgeMs = Math.max(0, Number(minimumAgeMs) || 0);
+      for (const candidate of candidates) {
+        if (currentReferences.has(candidate.storageKey)) {
+          const skipped = { ...candidate, reason: 'referenced-on-recheck' as const };
+          result.skipped.push(skipped);
+          logger({ event: 'upload_cleanup_skipped', ...skipped });
+          continue;
+        }
+        if (safeMinimumAgeMs > 0) {
+          const rawLastModified = await imageStorage.getLastModified?.(candidate.storageKey);
+          const lastModified = rawLastModified instanceof Date
+            ? rawLastModified.getTime()
+            : new Date(String(rawLastModified || '')).getTime();
+          if (!Number.isFinite(lastModified)) {
+            const skipped = { ...candidate, reason: 'age-unavailable' as const };
+            result.skipped.push(skipped);
+            logger({ event: 'upload_cleanup_skipped', ...skipped });
+            continue;
+          }
+          if (checkedAt - lastModified < safeMinimumAgeMs) {
+            const skipped = { ...candidate, reason: 'minimum-age' as const };
+            result.skipped.push(skipped);
+            logger({ event: 'upload_cleanup_skipped', ...skipped });
+            continue;
+          }
+        }
 
-    try {
-      await imageStorage.deleteKey(candidate.storageKey);
-      result.deleted.push(candidate);
-      logger({ event: 'upload_cleanup_deleted', storageKey: candidate.storageKey });
-    } catch (error) {
-      const failure = {
-        storageKey: candidate.storageKey,
-        error: error instanceof Error ? error.message : String(error)
-      };
-      result.failures.push(failure);
-      logger({ event: 'upload_cleanup_failed', ...failure });
+        try {
+          await imageStorage.deleteKey(candidate.storageKey);
+          result.deleted.push(candidate);
+          logger({ event: 'upload_cleanup_deleted', storageKey: candidate.storageKey });
+        } catch (error) {
+          const failure = {
+            storageKey: candidate.storageKey,
+            error: error instanceof Error ? error.message : String(error)
+          };
+          result.failures.push(failure);
+          logger({ event: 'upload_cleanup_failed', ...failure });
+        }
+      }
+    };
+    if (withMutationLock) {
+      await withMutationLock(sweep);
+    } else {
+      await sweep();
     }
   }
 
@@ -169,6 +220,7 @@ export async function cleanupOrphanUploads({
     scanned: result.scanned,
     candidates: result.candidates.length,
     deleted: result.deleted.length,
+    skipped: result.skipped.length,
     failures: result.failures.length
   });
   return result;

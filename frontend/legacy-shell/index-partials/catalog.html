@@ -1,0 +1,48 @@
+      <section id="catalogScreen" class="screen" aria-labelledby="catalogTitle">
+        <div class="catalog-page-title">
+          <h1 id="catalogTitle"></h1>
+          <p id="catalogSubtitle" class="catalog-page-subtitle">Danh mục</p>
+          <p id="catalogDescription" class="muted">Danh mục bảng</p>
+        </div>
+        <div class="catalog-toolbar">
+          [<a id="catalogReturnTop" href="#board/confession">Quay lại</a>]
+          [<button class="link-button" data-catalog-refresh type="button">Cập nhật</button>]
+        </div>
+        <div class="catalog-controls">
+          <div class="catalog-controls-search">
+            <input id="catalogSearchInput" type="search" placeholder="Tìm OP..." autocomplete="off" aria-label="Tìm OP trong danh mục" />
+          </div>
+          <div class="catalog-controls-row">
+            <span class="board-control-label">Sắp xếp theo:</span>
+            <div class="catalog-control-group" role="group" aria-label="Sắp xếp">
+              <button class="link-button" data-catalog-sort="recommended" type="button">Đề xuất</button>
+              <button class="link-button" data-catalog-sort="bump" type="button">Thứ tự đẩy lên</button>
+              <button class="link-button" data-catalog-sort="latest-reply" type="button">Trả lời mới nhất</button>
+              <button class="link-button" data-catalog-sort="created" type="button">Ngày tạo</button>
+              <button class="link-button" data-catalog-sort="replies" type="button">Số trả lời</button>
+              <button class="link-button" data-catalog-sort="files" type="button">Số tệp</button>
+            </div>
+          </div>
+          <div class="catalog-controls-row">
+            <span class="board-control-label">Lọc:</span>
+            <div class="catalog-control-group" role="group" aria-label="Lọc">
+              <button class="link-button" data-catalog-filter="all" type="button">Tất cả</button>
+              <button class="link-button" data-catalog-filter="image" type="button">Có tệp</button>
+              <button class="link-button" data-catalog-filter="video" type="button">Có video</button>
+              <button class="link-button" data-catalog-filter="poll" type="button">Có thăm dò</button>
+              <button class="link-button" data-catalog-filter="unread" type="button">Chưa đọc</button>
+            </div>
+            <span class="board-control-label">Cỡ ảnh:</span>
+            <div class="catalog-control-group" role="group" aria-label="Cỡ ảnh">
+              <button class="link-button" data-catalog-size="small" type="button">Nhỏ</button>
+              <button class="link-button" data-catalog-size="large" type="button">Lớn</button>
+            </div>
+          </div>
+        </div>
+        <div id="catalogGrid" class="catalog-grid"></div>
+        <div class="catalog-toolbar catalog-toolbar-bottom">
+          [<a id="catalogReturnBottom" href="#board/confession">Quay lại</a>]
+          [<button class="link-button" data-scroll-page-top type="button">Lên đầu</button>]
+          [<button class="link-button" data-catalog-refresh type="button">Cập nhật</button>]
+        </div>
+      </section>

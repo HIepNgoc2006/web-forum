@@ -10,6 +10,7 @@
     "test": "node test/run-tests.ts",
     "build": "tsc -p tsconfig.build.json",
     "check": "node scripts/check-syntax.ts",
+    "smoke:realtime-live": "node scripts/realtime-live-smoke.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "migrate:images": "node scripts/migrate-inline-images.ts",
     "cleanup:uploads": "node scripts/cleanup-orphan-uploads.ts",
@@ -40,6 +41,7 @@
   "devDependencies": {
     "@types/node": "^26.1.0",
     "@typescript/native": "npm:typescript@^7.0.2",
+    "socket.io-client": "^4.8.3",
     "typescript": "npm:@typescript/typescript6@^6.0.2"
   }
 }

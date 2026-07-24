@@ -2,70 +2,69 @@
 
 ## Project Structure & Module Organization
 
-This repository is an npm workspace for the 36chan web app. `backend/` contains the Node.js API, realtime server, moderation, persistence, and static serving. Core backend logic lives in `backend/src/core/`, HTTP and realtime glue in `backend/src/server/`, and the entry point is `backend/server.ts`. Backend tests live in `backend/test/`. `frontend/` is a Vite browser UI with `frontend/src/app.ts`, decomposed frontend modules under `frontend/src/`, `frontend/src/styles.css`, and `frontend/index.html` as the app shell. If HTML partials are used, keep them as static/build-time authoring files, not runtime templates. `phase-tracking/` contains roadmap, ADRs, API inventory, backup/restore notes, and progress tracking. `.code-review-graph/` contains the local code review graph database and generated graph artifacts. Generated runtime data such as `backend/data/forum.json`, logs, and `.env` files are ignored.
+This repository contains the 36chan web app. `backend/` contains the Node.js API, realtime server, moderation, persistence, and upload/static serving. Core backend logic lives in `backend/src/core/`, HTTP and realtime glue in `backend/src/server/`, and the entry point is `backend/server.ts`. Backend tests live in `backend/test/`. `frontend/` is the primary Next.js App Router runtime and serves the Vite-derived legacy shell at all supported UI routes; `/legacy` remains a direct alias. `phase-tracking/` contains roadmap, ADRs, API inventory, backup/restore notes, and progress tracking. `.code-review-graph/` contains the local code review graph database and generated graph artifacts. Generated runtime data such as `backend/data/forum.json`, logs, and `.env` files are ignored.
 
 ## Architecture Overview
 
-`backend/server.ts` is the composition root: it loads `.env` (hand-parsed, no dotenv), selects drivers from env, and dependency-injects a store, AI client, realtime hub, and image storage into `createForumService`, then injects that service plus auth secrets into `createHttpServer`. To trace any request, start there and follow the injected object.
+`backend/server.ts` is the composition root: it loads `.env` (hand-parsed, no dotenv), selects drivers from env, and dependency-injects a store, AI client, Socket.IO realtime hub, shared realtime state, and image storage into `createForumService`, then injects that service plus auth secrets into `createHttpServer`. To trace any request, start there and follow the injected object.
 
 Swappable interfaces (pick by env, same shape across implementations):
 - **Store** (`forum-store.ts` memory/json, `mongo-store.ts`): all expose `read()` / `write(normalizeState(...))`. The model is whole-state read-modify-write — `forum-service.ts` loads the full forum snapshot, mutates, and writes it back; all business rules live there. `STORE_DRIVER` defaults to `json` in dev but production **requires** `mongo` (server throws otherwise).
 - **AI** (`ai.ts`): `google` or `openai-compatible` provider, auto-detected from env keys; moderation has a local heuristic fallback so it works with no key, but summary/suggestions need a key.
 - **Image storage** (`image-storage.ts`): `local` disk (served at `/uploads/*`) or `s3`-compatible.
+- **Realtime state** (`server/realtime-state.ts`): in-memory for local/single-instance use or Redis/Upstash via `REALTIME_REDIS_URL`. Redis owns derived presence TTLs, connection metadata, per-user realtime rate limits, unread-count cache, and Pub/Sub fan-out; Mongo/JSON remains authoritative for messages and read state.
 
 Gotchas:
-- `express` and `socket.io` are in `backend/package.json` but **not used for routing**. HTTP is a hand-rolled `node:http` router in `server/http-app.ts` (custom `ok`/`fail` helpers, byte-capped `readJson`, Vietnamese error strings). Realtime is **Server-Sent Events** in `server/realtime.ts` (`text/event-stream`, `publish()` broadcasts) — not WebSockets.
-- The current frontend baseline is a **Vite static shell plus TypeScript modules**: `frontend/index.html` provides stable DOM anchors and `frontend/src/app.ts` composes modular feature helpers with hash-based routing (`#board/...`, `#thread/...`). React, JSX, routers, or frameworks are allowed only through the frontend architecture guidelines below.
+- HTTP remains a hand-rolled `node:http` router in `server/http-app.ts`; Express is not used for routing. Socket.IO attaches to that same HTTP server at `/socket.io` for bidirectional/private events. `/events` remains a public-only SSE compatibility endpoint and must never receive DM, notification, moderation, or presence events.
+- The production frontend runtime is **Next.js App Router** in `frontend/`. Supported UI routes are rewritten before filesystem routing to the Vite-derived legacy shell, while `/api`, `/socket.io`, `/events`, `/uploads`, and `/feeds` proxy to `BACKEND_ORIGIN`. The production front proxy sends `/socket.io` polling and sanitized WebSocket upgrades directly to the backend. The shell is also available directly at `/legacy`.
 - Auth is layered: JWT admin tokens, separate account tokens, TOTP 2FA (`totp-service.ts`), and WebAuthn passkeys (`webauthn-service.ts`). Moderation uses hashed IP/poster fingerprints (`security.ts`) — raw IPs and tokens are never returned to public clients or sent to AI.
 
 ## Build, Test, and Development Commands
 
 Use Node.js 22.18.0 or newer. Backend source-mode TypeScript relies on Node built-in type stripping.
 
-- `npm run dev`: start the backend in watch mode on port 3000.
-- `npm run dev:frontend`: start the Vite frontend; it proxies `/api` and `/events` to the backend.
-- `npm test`: run backend tests through `backend/test/run-tests.ts`.
-- `npm run build`: build backend compiled output into `backend/dist`, then build the frontend with Vite.
+- `npm run dev` or `npm run dev:backend`: start the backend in watch mode on port 3000.
+- `npm run dev:frontend`: start the primary Next frontend on port 3001; run the backend separately.
+
+- `npm test`: run backend and primary Next unit tests.
+- `npm run build`: build backend compiled output into `backend/dist`, then build the primary Next frontend.
 - `npm run build:backend`: compile backend TypeScript source to `backend/dist` with rewritten ESM import extensions.
-- `npm run build:frontend`: build the frontend with Vite.
-- `npm run check`: run backend syntax checks and frontend ESLint.
-- `npm --prefix backend install` and `npm --prefix frontend install`: install workspace dependencies when needed.
+- `npm run build:frontend`: build Next.
+- `npm run test:e2e`: run the Next browser smoke.
+- `npm start`: build, then supervise the loopback backend on 3000, private Next on 3002, and the public forwarding-header-sanitizing proxy on 3001.
+- `npm run check`: run script/backend checks and the primary Next typecheck.
+- Run `npm ci` for the root/backend workspace and `npm --prefix frontend ci` for the separately locked Next package.
 
 ## Coding Style & Naming Conventions
 
-Use modern ESM TypeScript. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.ts`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and route/socket wiring in `backend/src/server/`. Frontend changes should preserve the current Vite/static-shell behavior unless a scoped frontend architecture change explicitly asks to introduce React, JSX, a router, or a framework.
+Use modern ESM TypeScript. Match the existing 2-space indentation, single quotes, trailing semicolons in application and test code, and concise named exports. Prefer kebab-case filenames such as `forum-service.ts`; use camelCase for functions and variables. Keep business rules in `backend/src/core/` and HTTP/SSE wiring in `backend/src/server/`. Primary frontend work belongs in `frontend/legacy/` and `frontend/legacy-shell/` while legacy-only mode is active.
 
-## Frontend Architecture Evolution Guidelines
+## Frontend Architecture Guidelines
 
-The current frontend default is Vite + static `index.html` shell + TypeScript modules + vanilla DOM orchestration. React, JSX, routers, or frameworks may be introduced, but only as explicit, scoped architecture work.
+`frontend/` remains the approved deployment and routing boundary, and its only UI implementation is the Vite-derived legacy shell. Keep browser calls same-origin through the existing Next rewrites; do not add a separate native App Router UI unless a future task explicitly changes this architecture.
 
-Preferred path:
-1. **React/JSX islands first**: add isolated `.tsx` widgets mounted into existing DOM anchors, with typed props and no route/API behavior changes.
-2. **Feature-by-feature migration**: convert one low-risk widget, panel, or screen section per PR. Avoid whole-app rewrites.
-3. **Router later**: keep current hash routes unless a dedicated router migration issue defines compatibility, redirects, tests, and rollback.
-4. **Framework last**: Next.js or any full framework migration must start as a planning issue or POC branch, not as a direct replacement of the current Vite app.
+Rules for primary frontend work:
+- Preserve backend API payloads, Vietnamese UI text, accessibility semantics, account/admin token boundaries, Socket.IO room/event contracts, and public compatibility SSE contracts unless a task explicitly changes them.
+- Keep `/legacy` working as the in-app compatibility route.
 
-Rules for React/JSX work:
-- Add React/JSX support in its own PR before converting existing UI.
-- Prefer isolated mount nodes and `mountReactIslands()`-style composition over replacing the whole app shell.
-- Keep `frontend/index.html` or its build-time partials as the stable shell unless a dedicated PR proves a safe alternative.
-- Preserve existing DOM IDs/classes, Vietnamese UI text, accessibility attributes, hash routes, and API payloads unless the issue explicitly says otherwise.
-- Do not introduce React Router, Next.js, Remix, Astro, Svelte, or another framework in the same PR as a simple widget conversion.
-- Do not move HTML into runtime template injection just to reduce file size. HTML partials should be static/build-time only.
-- Do not add production dependencies without explaining why they are necessary and why a smaller Vite/local alternative is insufficient.
-- New React components should avoid `AnyRecord` except at legacy boundaries; define explicit prop types.
-- If a React island duplicates existing vanilla behavior, keep the old behavior until validation proves the island is equivalent, then remove the old path in the same PR or a follow-up cleanup.
+- Do not add another router or frontend framework. Next App Router is the production routing boundary.
+- Keep `BACKEND_ORIGIN` server-only; browser code should use same-origin proxy paths.
+- Do not add production dependencies without explaining why local Next/React/browser capabilities are insufficient.
+- Avoid `AnyRecord` outside compatibility boundaries; define explicit component and API types.
 
-Rules for router/framework work:
-- Create a planning issue before implementation. Include deployment impact, build output, routing compatibility, browser smoke coverage, rollback plan, and whether the backend static serving path changes.
-- Keep current hash-route compatibility until a migration PR explicitly updates tests and user-facing links.
-- A Next.js/framework POC should live in a clearly separated branch or directory and must not break the existing Vite build until the migration is approved.
-- Framework adoption must update `AGENTS.md`, README/deployment docs, CI scripts, and release verification commands in the same planning sequence.
+Rules for routing and deployment work:
+- The legacy shell is primary at `/` and every supported clean entry route; preserve `/legacy` as a direct alias until a dedicated removal decision.
+- `BACKEND_ORIGIN` affects rewrite output during `next build`; the stamped build value must match runtime or startup fails.
+- Keep the supervised backend loopback-only. The public proxy owns the exposed port and overwrites forwarding headers before Next/backend trust them.
+- Use `START_BACKEND=0` only for a separately deployed backend built with the same `BACKEND_ORIGIN`.
+- Deployment changes must update `AGENTS.md`, README, CI, container health checks, and production commands together.
+- Preserve host port 3000 for users; the supervised Next process listens on 3001 and the backend listens on container/local port 3000.
 
-Validation for frontend architecture PRs:
-- Run `npm run typecheck`, `npm run check`, `npm run build`, `npm test`, and `npm run test:e2e` when frontend behavior, routing, build setup, or UI rendering changes.
+Validation for primary frontend or cutover changes:
+- Run `npm run typecheck`, `npm run check`, `npm run build`, `npm test`, and `npm run test:e2e`.
+
 - Include screenshots or browser-smoke notes for visible UI changes.
-- Request review for route/hash regressions, DOM ID/class changes, API payload changes, accessibility changes, accidental UI text changes, and bundle/build regressions.
+- Request review for clean-route regressions, `/legacy` regressions, API payload changes, accessibility changes, and server/client boundary mistakes.
 
 ## TypeScript Migration Guidelines
 
@@ -104,14 +103,14 @@ Backend TypeScript source-mode rules:
 
 ## Testing Guidelines
 
-Backend tests use Node's built-in `node:test` with `node:assert/strict`. Name files `*.test.ts` under `backend/test/`; if you add a new test file, import it from `backend/test/run-tests.ts`. Cover moderation, security, formatting, and HTTP behavior when those areas change. Run `npm test` for backend behavior and `npm run check` before submitting changes. Run a single suite directly with `node --test backend/test/http.test.ts` (each `*.test.ts` is self-contained and also imported by `run-tests.ts`). `npm run release:verify` chains tests, checks, build, and the `scripts/browser-smoke.mts` e2e smoke.
+Backend tests use Node's built-in `node:test` with `node:assert/strict`. Name files `*.test.ts` under `backend/test/`; if you add a new test file, import it from `backend/test/run-tests.ts`. Cover moderation, security, formatting, and HTTP behavior when those areas change. Run `npm test` for backend and primary Next behavior and `npm run check` before submitting changes. Run a single backend suite directly with `node --test backend/test/http.test.ts`. `npm run release:verify` chains primary tests/checks/build/Next smoke and then the explicit legacy verification gate.
 
 ## Review Guidelines
 
 For repo-wide reviews, do a read-only audit first. Do not edit files until a separate correction pass is requested. Start by mapping:
 - runtime entry points and dependency injection from `backend/server.ts`
 - HTTP routes, request parsing, response helpers, and byte/body limits in `backend/src/server/http-app.ts`
-- Server-Sent Events flow in `backend/src/server/realtime.ts`
+- Socket.IO/SSE routing in `backend/src/server/realtime.ts`, Redis-derived state in `realtime-state.ts`, and the production WebSocket upgrade path in `front-proxy.ts`
 - auth, admin, account token, TOTP, and WebAuthn boundaries
 - moderation, rate limiting, fingerprinting, and IP/token privacy rules
 - store drivers, whole-state read-modify-write behavior, normalization, migrations, and backup/restore paths
@@ -193,4 +192,4 @@ The history uses short imperative messages, sometimes with Conventional Commit p
 
 ## Security & Configuration Tips
 
-Do not commit secrets or local data. Keep `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`, `HCAPTCHA_SITE_KEY`, `HCAPTCHA_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `JWT_SECRET`, `PORT`, and `STATIC_ROOT` in local environment files. Automated agents in this workspace should prefix shell commands with `rtk`.
+Do not commit secrets or local data. Keep `GOOGLE_AI_API_KEY`, `GOOGLE_AI_MODEL`, `HCAPTCHA_SITE_KEY`, `HCAPTCHA_SECRET`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `JWT_SECRET`, `METRICS_TOKEN`, `MONGO_ROOT_PASSWORD`, `MONGO_APP_PASSWORD`, `MONGO_REPLICA_SET_KEY`, `MONGODB_URI`, `PORT`, `STATIC_ROOT`, and `BACKEND_ORIGIN` in local environment files. Production Compose must keep Mongo authentication, the least-privilege application user, and the replica-set key enabled. Automated agents in this workspace should prefix shell commands with `rtk`.

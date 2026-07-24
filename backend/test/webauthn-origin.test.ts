@@ -5,7 +5,11 @@ import type { AddressInfo } from 'node:net';
 
 import { createForumService } from '../src/core/forum-service.ts';
 import { createMemoryStore } from '../src/core/forum-store.ts';
-import { createHttpServer } from '../src/server/http-app.ts';
+import {
+  createHttpServer,
+  resolvePublicOrigin,
+  resolveWebAuthnContext
+} from '../src/server/http-app.ts';
 
 async function withServer(callback) {
   const service = createForumService({
@@ -46,6 +50,42 @@ async function withServer(callback) {
 }
 
 describe('WebAuthn origin validation', () => {
+  it('prefers APP_BASE_URL over request and forwarded hosts', () => {
+    const request = {
+      headers: {
+        host: '127.0.0.1:3000',
+        'x-forwarded-host': 'forwarded.example',
+        'x-forwarded-proto': 'http'
+      },
+      socket: {}
+    } as unknown as Parameters<typeof resolvePublicOrigin>[0];
+    const context = resolveWebAuthnContext(request, {
+      NODE_ENV: 'production',
+      TRUST_PROXY: '1',
+      APP_BASE_URL: 'https://forum.example/some-path'
+    } as NodeJS.ProcessEnv);
+    assert.deepEqual(context, { origin: 'https://forum.example', rpID: 'forum.example' });
+  });
+
+  it('uses forwarded host and protocol only for trusted proxies', () => {
+    const request = {
+      headers: {
+        host: '127.0.0.1:3000',
+        'x-forwarded-host': 'forum.example',
+        'x-forwarded-proto': 'https'
+      },
+      socket: {}
+    } as unknown as Parameters<typeof resolvePublicOrigin>[0];
+    assert.equal(
+      resolvePublicOrigin(request, { NODE_ENV: 'production', TRUST_PROXY: '1' } as NodeJS.ProcessEnv),
+      'https://forum.example'
+    );
+    assert.equal(
+      resolvePublicOrigin(request, { NODE_ENV: 'production', TRUST_PROXY: '0' } as NodeJS.ProcessEnv),
+      'http://127.0.0.1:3000'
+    );
+  });
+
   it('returns a client error for malformed login origins', async () => {
     await withServer(async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/auth/webauthn/login-verify`, {

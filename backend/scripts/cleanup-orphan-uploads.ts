@@ -20,6 +20,15 @@ function readOption(argv, name, fallback) {
   return argv[index + 1];
 }
 
+function readMinimumAgeMs(argv, env) {
+  const raw = readOption(argv, '--minimum-age-hours', env.UPLOAD_CLEANUP_MINIMUM_AGE_HOURS ?? '24');
+  const hours = Number(raw);
+  if (!Number.isFinite(hours) || hours < 0) {
+    throw new Error('Upload cleanup minimum age must be a non-negative number of hours');
+  }
+  return Math.floor(hours * 60 * 60 * 1000);
+}
+
 export function parseCleanupArgs(argv = process.argv, env = process.env) {
   const requestedDryRun = argv.includes('--dry-run');
   const deleteMode = argv.includes('--delete');
@@ -40,6 +49,7 @@ export function parseCleanupArgs(argv = process.argv, env = process.env) {
     mongoDbName: readOption(argv, '--db', undefined),
     imageStorageDriver: String(readOption(argv, '--driver', env.IMAGE_STORAGE_DRIVER ?? 'local')).toLowerCase(),
     uploadRoot: path.resolve(readOption(argv, '--upload-root', env.UPLOAD_ROOT ?? 'data/uploads')),
+    minimumAgeMs: readMinimumAgeMs(argv, env),
     publicPath: readOption(argv, '--public-path', '/uploads'),
     s3: {
       endpoint: readOption(argv, '--s3-endpoint', env.S3_ENDPOINT),
@@ -104,13 +114,24 @@ export async function runCleanupUploads(args, {
   logger = (entry) => console.log(JSON.stringify({ time: new Date().toISOString(), ...entry })),
   dependencies = {}
 } = {}) {
-  const state = await readForumStateForCleanup(args, dependencies);
-  const result = await cleanupOrphanUploads({
-    state,
-    imageStorage: createImageStorageForCleanup(args),
-    dryRun: args.dryRun,
-    logger
-  });
+  const store = createForumStateStore(args, dependencies);
+  let result;
+  try {
+    const state = await store.read();
+    result = await cleanupOrphanUploads({
+      state,
+      imageStorage: createImageStorageForCleanup(args),
+      dryRun: args.dryRun,
+      minimumAgeMs: args.minimumAgeMs,
+      readState: () => store.read(),
+      withMutationLock: !args.dryRun && typeof store.withMutationLock === 'function'
+        ? (callback) => store.withMutationLock(callback)
+        : undefined,
+      logger
+    });
+  } finally {
+    await store.close?.();
+  }
   const output = JSON.stringify(result, null, 2);
   if (args.auditPath) {
     const resolvedAuditPath = path.resolve(args.auditPath);

@@ -2,11 +2,19 @@ services:
   web:
     build:
       context: .
+      args:
+        BACKEND_ORIGIN: http://127.0.0.1:3000
     environment:
       NODE_ENV: production
-      PORT: 3000
+      BACKEND_PORT: 3000
+      BACKEND_HOST: 127.0.0.1
+      FRONTEND_PORT: 3001
+      NEXT_INTERNAL_PORT: 3002
+      START_BACKEND: "1"
+      BACKEND_ORIGIN: http://127.0.0.1:3000
+      TRUST_PROXY: "1"
       STORE_DRIVER: mongo
-      MONGODB_URI: mongodb://mongo:27017/36chan?replicaSet=rs0
+      MONGODB_URI: ${MONGODB_URI:?Set an authenticated MongoDB URI in .env before running compose}
       IMAGE_STORAGE_DRIVER: local
       UPLOAD_ROOT: data/uploads
       ADMIN_USERNAME: ${ADMIN_USERNAME:?Set ADMIN_USERNAME in .env before running compose}
@@ -23,38 +31,77 @@ services:
       AI_PROVIDER: ${AI_PROVIDER:-}
       GOOGLE_AI_API_KEY: ${GOOGLE_AI_API_KEY:-}
       GOOGLE_AI_MODEL: ${GOOGLE_AI_MODEL:-gemini-1.5-flash}
+      GOOGLE_TTS_MODEL: ${GOOGLE_TTS_MODEL:-gemini-3.1-flash-tts-preview}
+      AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD: ${AI_MODERATION_QUEUE_CONFIDENCE_THRESHOLD:-0}
       OPENAI_COMPATIBLE_API_KEY: ${OPENAI_COMPATIBLE_API_KEY:-}
       OPENAI_COMPATIBLE_BASE_URL: ${OPENAI_COMPATIBLE_BASE_URL:-}
       OPENAI_COMPATIBLE_MODEL: ${OPENAI_COMPATIBLE_MODEL:-gpt-4-turbo}
       KLIPY_API_KEY: ${KLIPY_API_KEY:-}
       MAX_IMAGE_BYTES: ${MAX_IMAGE_BYTES:-52428800}
+      RATE_LIMIT_STORE: ${RATE_LIMIT_STORE:-memory}
+      RATE_LIMIT_REDIS_URL: ${RATE_LIMIT_REDIS_URL:-}
+      RATE_LIMIT_FAILURE_MODE: ${RATE_LIMIT_FAILURE_MODE:-closed}
+      RATE_LIMIT_REDIS_PREFIX: ${RATE_LIMIT_REDIS_PREFIX:-36chan:rate-limit:}
+      REALTIME_REDIS_URL: ${REALTIME_REDIS_URL:-}
+      REALTIME_REDIS_REQUIRED: ${REALTIME_REDIS_REQUIRED:-false}
+      REALTIME_REDIS_FAILURE_MODE: ${REALTIME_REDIS_FAILURE_MODE:-closed}
+      REALTIME_REDIS_PREFIX: ${REALTIME_REDIS_PREFIX:-36chan:realtime:}
+      REALTIME_REDIS_CONNECT_TIMEOUT_MS: ${REALTIME_REDIS_CONNECT_TIMEOUT_MS:-5000}
+      REALTIME_PRESENCE_TTL_SECONDS: ${REALTIME_PRESENCE_TTL_SECONDS:-45}
+      REALTIME_UNREAD_TTL_SECONDS: ${REALTIME_UNREAD_TTL_SECONDS:-60}
+      SOCKET_IO_MAX_BUFFER_BYTES: ${SOCKET_IO_MAX_BUFFER_BYTES:-1000000}
+      DM_SEND_RATE_LIMIT: ${DM_SEND_RATE_LIMIT:-30}
+      DM_READ_RATE_LIMIT: ${DM_READ_RATE_LIMIT:-120}
+      DM_TYPING_RATE_LIMIT: ${DM_TYPING_RATE_LIMIT:-30}
+      SOCKET_IO_ORIGINS: ${SOCKET_IO_ORIGINS:-}
+      METRICS_TOKEN: ${METRICS_TOKEN:?Set METRICS_TOKEN in .env before running compose}
+      PUBLIC_READ_CACHE_MS: ${PUBLIC_READ_CACHE_MS:-2000}
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
     ports:
-      - "3000:3000"
+      - "3000:3001"
     volumes:
       - uploads:/app/backend/data/uploads
     depends_on:
       mongo:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3001/api/health').then(async(r)=>{const b=await r.json();const d=b.data||b;process.exit(r.ok&&d.realtime?.state?.ready!==false?0:1)}).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 5
 
   mongo:
-    image: mongo:7
+    image: mongo:7.0.39@sha256:9bdaeb6dac6e7e762e84e2f84103d1f9bb078fa1ba6bde8bb9d2274f655ad173
     restart: unless-stopped
-    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all']
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: ${MONGO_ROOT_USERNAME:?Set MONGO_ROOT_USERNAME in .env}
+      MONGO_INITDB_ROOT_PASSWORD: ${MONGO_ROOT_PASSWORD:?Set MONGO_ROOT_PASSWORD in .env}
+      MONGO_INITDB_DATABASE: 36chan
+      MONGO_APP_USERNAME: ${MONGO_APP_USERNAME:?Set MONGO_APP_USERNAME in .env}
+      MONGO_APP_PASSWORD: ${MONGO_APP_PASSWORD:?Set MONGO_APP_PASSWORD in .env}
+      MONGO_REPLICA_SET_KEY: ${MONGO_REPLICA_SET_KEY:?Set MONGO_REPLICA_SET_KEY in .env}
+    entrypoint:
+      - /bin/bash
+      - -ec
+      - |
+        umask 077
+        printf '%s' "$$MONGO_REPLICA_SET_KEY" > /tmp/mongo-keyfile
+        chown mongodb:mongodb /tmp/mongo-keyfile
+        exec /usr/local/bin/docker-entrypoint.sh "$$@"
+      - --
+    command: ['mongod', '--replSet', 'rs0', '--bind_ip_all', '--auth', '--keyFile', '/tmp/mongo-keyfile']
     volumes:
       - mongo-data:/data/db
+      - ./docker/mongo-init.js:/docker-entrypoint-initdb.d/10-create-app-user.js:ro
     healthcheck:
       test:
-        - CMD
-        - mongosh
-        - --quiet
-        - --eval
+        - CMD-SHELL
         - >-
-          try { quit(rs.status().ok ? 0 : 1) } catch (error) { quit(rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok ? 0 : 1) }
+          mongosh --quiet
+          --username "$$MONGO_INITDB_ROOT_USERNAME"
+          --password "$$MONGO_INITDB_ROOT_PASSWORD"
+          --authenticationDatabase admin
+          --eval "try { quit(rs.status().ok ? 0 : 1) } catch (error) { quit(rs.initiate({_id:'rs0',members:[{_id:0,host:'mongo:27017'}]}).ok ? 0 : 1) }"
       interval: 10s
       timeout: 5s
       retries: 10

@@ -68,7 +68,8 @@ const THREAD_FIELDS = [
   'slowModeUntil',
   'slowModeSeconds',
   'isSticky',
-  'stickiedAt'
+  'stickiedAt',
+  'links'
 ];
 
 const COMMENT_FIELDS = [
@@ -91,7 +92,8 @@ const COMMENT_FIELDS = [
   'moderationStatus',
   'moderationLabels',
   'moderationConfidence',
-  'createdAt'
+  'createdAt',
+  'links'
 ];
 
 function clone<T>(value: T): T {
@@ -453,8 +455,20 @@ export async function importSeedData({
   dryRun = true,
   mode = 'skip',
   rollbackPath = null,
-  now = () => new Date()
+  now = () => new Date(),
+  lockAcquired = false
 }) {
+  if (!dryRun && !lockAcquired && typeof store.withMutationLock === 'function') {
+    return store.withMutationLock(() => importSeedData({
+      store,
+      seed,
+      dryRun,
+      mode,
+      rollbackPath,
+      now,
+      lockAcquired: true
+    }));
+  }
   const currentState = await store.read();
   const { nextState, summary } = planSeedImport(currentState, seed, { mode });
   if (dryRun) {
@@ -479,8 +493,19 @@ export async function restoreSeedRollback({
   rollbackState,
   dryRun = true,
   rollbackPath = null,
-  now = () => new Date()
+  now = () => new Date(),
+  lockAcquired = false
 }) {
+  if (!dryRun && !lockAcquired && typeof store.withMutationLock === 'function') {
+    return store.withMutationLock(() => restoreSeedRollback({
+      store,
+      rollbackState,
+      dryRun,
+      rollbackPath,
+      now,
+      lockAcquired: true
+    }));
+  }
   const currentState = await store.read();
   const restoredState = normalizeState(rollbackState);
   const result = {

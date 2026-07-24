@@ -4,30 +4,43 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   test:
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22.x
           cache: npm
 
       - name: Setup Chrome
         id: setup-chrome
-        uses: browser-actions/setup-chrome@v1
+        uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
         with:
           chrome-version: stable
 
-      - name: Install dependencies
+      - name: Install root and backend dependencies
         run: npm ci
+
+      - name: Install frontend dependencies
+        run: npm --prefix frontend ci
+
+      - name: Validate production Compose configuration
+        run: docker compose --env-file compose.env.example config --quiet
+
+      - name: Validate Socket.IO and shared realtime state
+        run: node --test backend/test/realtime.test.ts backend/test/realtime-state.test.ts backend/test/front-proxy.test.ts
 
       - name: Release verification
         run: npm run release:verify
         env:
           CHROME_PATH: ${{ steps.setup-chrome.outputs.chrome-path }}
+          REALTIME_REDIS_REQUIRED: "false"

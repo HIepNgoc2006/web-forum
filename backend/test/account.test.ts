@@ -50,6 +50,21 @@ function latestEmailCode(emailClient: ReturnType<typeof createCapturingEmailClie
   return match[1];
 }
 
+async function registerVerifiedAccount(
+  service: ReturnType<typeof createTestService>,
+  emailClient: ReturnType<typeof createCapturingEmailClient>,
+  username: string
+) {
+  const result = await service.registerAccount({
+    username,
+    email: `${username}@example.com`,
+    password: 'securepass12',
+    captchaToken: 'dev-pass'
+  });
+  await service.verifyAccountEmail(result.account.id, latestEmailCode(emailClient));
+  return result.account;
+}
+
 describe('Account registration and login', () => {
   it('registers a new account', async () => {
     const service = createTestService();
@@ -439,15 +454,21 @@ describe('Account settings', () => {
         hideThumbnails: true,
         watchedUnreadOnly: true,
         watchedSort: 'board',
-        commentComposerMode: 'normal'
+        commentComposerMode: 'normal',
+        fontSize: 'large'
       },
       notificationPreferences: {
         email: true,
         watchedThreads: false,
         boardSubscriptions: true,
-        browserWatchedThreads: true
+        browserWatchedThreads: true,
+        browserBoardSubscriptions: true,
+        browserMentions: true,
+        emailMentions: true,
+        emailDirectMessages: true
       },
-      boardSubscriptions: ['confession', 'hoc-tap', 'unknown-board', 'confession']
+      boardSubscriptions: ['confession', 'hoc-tap', 'unknown-board', 'confession'],
+      hiddenBoards: ['an-uong', 'an-uong', 'unknown-board', 'hoc-tap']
     });
     assert.strictEqual(updated.settings.theme, 'burichan');
     assert.deepStrictEqual(updated.settings.displayPreferences, {
@@ -455,15 +476,23 @@ describe('Account settings', () => {
       hideThumbnails: true,
       watchedUnreadOnly: true,
       watchedSort: 'board',
-      commentComposerMode: 'normal'
+      commentComposerMode: 'normal',
+      fontSize: 'large'
     });
     assert.deepStrictEqual(updated.settings.notificationPreferences, {
       email: false,
       watchedThreads: false,
       boardSubscriptions: true,
-      browserWatchedThreads: true
+      browserWatchedThreads: true,
+      browserBoardSubscriptions: true,
+      browserMentions: true,
+      emailMentions: true,
+      emailDirectMessages: true,
+      directMessages: true,
+      browserDirectMessages: false
     });
     assert.deepStrictEqual(updated.settings.boardSubscriptions, ['confession', 'hoc-tap']);
+    assert.deepStrictEqual(updated.settings.hiddenBoards, ['an-uong', 'hoc-tap']);
     assert.strictEqual(updated.settings.emailNotifications, false);
   });
 
@@ -472,11 +501,12 @@ describe('Account settings', () => {
     const { account } = await service.registerAccount({ username: 'testuser', password: 'securepass12', captchaToken: 'dev-pass' });
     const updated = await service.updateAccountSettings(account.id, {
       theme: 'invalid-theme',
-      displayPreferences: { commentComposerMode: 'side-panel' }
+      displayPreferences: { commentComposerMode: 'side-panel', fontSize: 'huge' }
     });
     // Should keep the default theme instead of accepting invalid
     assert.strictEqual(updated.settings.theme, 'yotsuba-b');
     assert.strictEqual(updated.settings.displayPreferences.commentComposerMode, 'floating');
+    assert.strictEqual(updated.settings.displayPreferences.fontSize, 'medium');
   });
 });
 
@@ -528,6 +558,302 @@ describe('Verified email notifications', () => {
     assert.strictEqual(emailClient.messages.length, 1);
     assert.match(emailClient.messages[0].subject, /Phản hồi mới/);
     assert.match(emailClient.messages[0].text, /https:\/\/example\.com\/#thread\//);
+  });
+
+  it('honors each board, watch, global email, and author exclusion independently', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient, appBaseUrl: 'https://example.com' });
+    const boardSubscriber = await registerVerifiedAccount(service, emailClient, 'boardsub');
+    const threadWatcher = await registerVerifiedAccount(service, emailClient, 'watcher');
+
+    await service.updateAccountSettings(boardSubscriber.id, {
+      notificationPreferences: {
+        email: true,
+        watchedThreads: false,
+        boardSubscriptions: true
+      },
+      boardSubscriptions: ['hoc-tap']
+    });
+    await service.updateAccountSettings(threadWatcher.id, {
+      notificationPreferences: {
+        email: true,
+        watchedThreads: true,
+        boardSubscriptions: false
+      },
+      boardSubscriptions: ['hoc-tap']
+    });
+    emailClient.messages.length = 0;
+
+    await service.createThread({
+      boardSlug: 'confession',
+      body: 'Khong thuoc bang da dang ky',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.20'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+
+    const thread = await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Chi nguoi dang ky bang nhan thu nay',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.21'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.flushEmailQueue();
+    assert.deepStrictEqual(emailClient.messages.map((message) => message.to), ['boardsub@example.com']);
+
+    await service.updateAccountPrivateData(threadWatcher.id, {
+      watchlist: [{ threadId: thread.thread.id, boardSlug: 'hoc-tap' }]
+    });
+    emailClient.messages.length = 0;
+    await service.createComment({
+      threadId: thread.thread.id,
+      body: 'Chi nguoi theo doi chu de nhan thu nay',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.22'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.deepStrictEqual(emailClient.messages.map((message) => message.to), ['watcher@example.com']);
+
+    emailClient.messages.length = 0;
+    await service.createComment({
+      threadId: thread.thread.id,
+      body: 'Khong gui thong bao cho chinh tac gia',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.23',
+      accountId: threadWatcher.id
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+
+    await service.updateAccountSettings(threadWatcher.id, {
+      notificationPreferences: { email: false, watchedThreads: true }
+    });
+    await service.createComment({
+      threadId: thread.thread.id,
+      body: 'Thong bao email da tat',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.24'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+  });
+
+  it('sends exact @username mentions once without partial or email-address matches', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({ emailClient, appBaseUrl: 'https://example.com' });
+    const recipient = await registerVerifiedAccount(service, emailClient, 'mention.user');
+    await service.updateAccountSettings(recipient.id, {
+      notificationPreferences: {
+        email: true,
+        watchedThreads: true,
+        boardSubscriptions: false,
+        emailMentions: true
+      }
+    });
+    emailClient.messages.length = 0;
+
+    const thread = await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Chu de de kiem tra luot nhac',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.50'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.updateAccountPrivateData(recipient.id, {
+      watchlist: [{ threadId: thread.thread.id, boardSlug: 'hoc-tap' }]
+    });
+
+    await service.createComment({
+      threadId: thread.thread.id,
+      body: '@mention.user xem lich thi moi nhe',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.51'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
+    assert.match(emailClient.messages[0].subject, /được nhắc đến/);
+    assert.match(emailClient.messages[0].text, /\?p=/);
+
+    emailClient.messages.length = 0;
+    await service.createComment({
+      threadId: thread.thread.id,
+      body: 'Khong khop @mention.user-extra va mention.user@example.com',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.52'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
+    assert.match(emailClient.messages[0].subject, /Phản hồi mới/);
+
+    emailClient.messages.length = 0;
+    await service.createComment({
+      threadId: thread.thread.id,
+      body: '@mention.user khong gui cho chinh tac gia',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.53',
+      accountId: recipient.id
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+
+    await service.updateAccountPrivateData(recipient.id, { watchlist: [] });
+    await service.updateAccountSettings(recipient.id, {
+      notificationPreferences: { email: true, emailMentions: false }
+    });
+    await service.createComment({
+      threadId: thread.thread.id,
+      body: '@mention.user da tat email luot nhac',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.54'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+  });
+
+  it('queues mention email only after moderation approval and never after deletion', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({
+      emailClient,
+      ai: { moderate: async () => ({ status: 'Flagged', labels: ['Toxic'] }) }
+    });
+    const recipient = await registerVerifiedAccount(service, emailClient, 'mentionmod');
+    await service.updateAccountSettings(recipient.id, {
+      notificationPreferences: {
+        email: true,
+        watchedThreads: false,
+        boardSubscriptions: false,
+        emailMentions: true
+      }
+    });
+    emailClient.messages.length = 0;
+
+    const approved = await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: '@mentionmod chu de dang cho duyet',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.55'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+    await service.approvePending(approved.thread.id);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
+    assert.match(emailClient.messages[0].subject, /được nhắc đến/);
+
+    emailClient.messages.length = 0;
+    const deleted = await service.createComment({
+      threadId: approved.thread.id,
+      body: '@mentionmod phan hoi se bi xoa',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.56'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.deletePending(deleted.comment.id);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+  });
+
+  it('delivers pending notifications once only after approval and never after deletion', async () => {
+    const emailClient = createCapturingEmailClient();
+    const service = createTestService({
+      emailClient,
+      appBaseUrl: 'https://example.com',
+      ai: { moderate: async () => ({ status: 'Flagged', labels: ['Toxic'] }) }
+    });
+    const account = await registerVerifiedAccount(service, emailClient, 'moderatorflow');
+    await service.updateAccountSettings(account.id, {
+      notificationPreferences: {
+        email: true,
+        watchedThreads: true,
+        boardSubscriptions: true
+      },
+      boardSubscriptions: ['hoc-tap']
+    });
+    emailClient.messages.length = 0;
+
+    const pendingThread = await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Chu de dang cho duyet',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.30'
+    } as Parameters<typeof service.createThread>[0]);
+    assert.strictEqual(pendingThread.status, 'pending');
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+
+    await service.approvePending(pendingThread.thread.id);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
+    assert.match(emailClient.messages[0].subject, /Chủ đề mới/);
+
+    await service.updateAccountPrivateData(account.id, {
+      watchlist: [{ threadId: pendingThread.thread.id, boardSlug: 'hoc-tap' }]
+    });
+    emailClient.messages.length = 0;
+    const pendingComment = await service.createComment({
+      threadId: pendingThread.thread.id,
+      body: 'Phan hoi dang cho duyet',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.31'
+    } as Parameters<typeof service.createComment>[0]);
+    assert.strictEqual(pendingComment.status, 'pending');
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+
+    await service.approvePending(pendingComment.comment.id);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
+    assert.match(emailClient.messages[0].subject, /Phản hồi mới/);
+
+    emailClient.messages.length = 0;
+    const deletedComment = await service.createComment({
+      threadId: pendingThread.thread.id,
+      body: 'Phan hoi se bi xoa',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.32'
+    } as Parameters<typeof service.createComment>[0]);
+    await service.deletePending(deletedComment.comment.id);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 0);
+  });
+
+  it('keeps posting and later notification batches healthy after an email delivery failure', async () => {
+    const emailClient = createCapturingEmailClient();
+    const originalSend = emailClient.send;
+    let failNotifications = false;
+    emailClient.send = async (message) => {
+      if (failNotifications) {
+        throw new Error('temporary email outage');
+      }
+      return originalSend.call(emailClient, message);
+    };
+    const service = createTestService({ emailClient });
+    const account = await registerVerifiedAccount(service, emailClient, 'mailretry');
+    await service.updateAccountSettings(account.id, {
+      notificationPreferences: { email: true, boardSubscriptions: true },
+      boardSubscriptions: ['hoc-tap']
+    });
+    emailClient.messages.length = 0;
+
+    failNotifications = true;
+    const duringOutage = await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Bai van duoc dang khi email loi',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.40'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(duringOutage.status, 'published');
+    assert.strictEqual(emailClient.messages.length, 0);
+
+    failNotifications = false;
+    await service.createThread({
+      boardSlug: 'hoc-tap',
+      body: 'Lo email sau phuc hoi van hoat dong',
+      captchaToken: 'dev-pass',
+      ip: '203.0.113.41'
+    } as Parameters<typeof service.createThread>[0]);
+    await service.flushEmailQueue();
+    assert.strictEqual(emailClient.messages.length, 1);
   });
 });
 

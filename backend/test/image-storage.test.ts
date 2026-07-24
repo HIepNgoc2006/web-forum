@@ -130,7 +130,7 @@ describe('createS3ImageStorage', () => {
     assert.strictEqual(result.dataUrl, undefined);
   });
 
-  it('save uses specific extensions for common and unknown image MIME types', async () => {
+  it('save derives extensions only from the upload MIME allowlist', async () => {
     const calls: FetchCall[] = [];
     const mockFetch = async (url: string | URL | Request, options: RequestInit = {}) => {
       calls.push({
@@ -147,10 +147,12 @@ describe('createS3ImageStorage', () => {
     });
     const cases = [
       ['image/avif', '.avif'],
-      ['image/heic', '.heic'],
-      ['image/heif', '.heif'],
-      ['image/svg+xml', '.svg'],
-      ['image/vnd.custom-format', '.custom-format']
+      ['image/png', '.png'],
+      ['image/jpeg', '.jpg'],
+      ['image/gif', '.gif'],
+      ['image/webp', '.webp'],
+      ['video/mp4', '.mp4'],
+      ['video/webm', '.webm']
     ];
 
     for (const [type, extension] of cases) {
@@ -162,6 +164,18 @@ describe('createS3ImageStorage', () => {
       });
       assert.strictEqual(result.storageKey.endsWith(extension), true);
       assert.strictEqual(calls.at(-1)?.headers['content-type'], type);
+    }
+
+    for (const type of ['image/html', 'image/svg+xml', 'image/vnd.custom-format']) {
+      await assert.rejects(
+        () => storage.save({
+          name: 'payload',
+          type,
+          dataUrl: `data:${type};base64,AAAA`,
+          sizeBytes: 3
+        }),
+        (error: any) => error.statusCode === 415
+      );
     }
   });
 

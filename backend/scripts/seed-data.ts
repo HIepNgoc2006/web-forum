@@ -38,6 +38,7 @@ Options:
   --in <path>                 Import input path
   --dry-run                   Validate and summarize import without writing (default)
   --write                     Apply import
+  --maintenance-confirmed     Confirm production writes run during a maintenance window
   --replace                   Replace matching boards/posts instead of skipping duplicates
   --rollback <path>           Rollback snapshot path for write imports
   --public-boards-only        Exclude hidden boards during export
@@ -63,6 +64,11 @@ export function parseSeedArgs(argv = process.argv, env = process.env) {
   if (!['json', 'mongo'].includes(storeDriver)) {
     throw new Error('STORE_DRIVER must be either json or mongo.');
   }
+  const maintenanceConfirmed = argv.includes('--maintenance-confirmed')
+    || /^(1|true|yes|on)$/i.test(String(env.SEED_MAINTENANCE_CONFIRMED || ''));
+  if (env.NODE_ENV === 'production' && write && !maintenanceConfirmed) {
+    throw new Error('Production seed writes require --maintenance-confirmed');
+  }
 
   const dataPath = path.resolve(readOption(argv, '--data', defaultForumPath));
   return {
@@ -75,6 +81,7 @@ export function parseSeedArgs(argv = process.argv, env = process.env) {
     dryRun: command === 'import' || command === 'restore' ? !write : false,
     mode: argv.includes('--replace') ? 'replace' : 'skip',
     rollbackPath: readOption(argv, '--rollback', null),
+    maintenanceConfirmed,
     includeHiddenBoards: !argv.includes('--public-boards-only'),
     help: false
   };

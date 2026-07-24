@@ -75,6 +75,42 @@ describe('backup job', () => {
     assert.equal(writes.length, 0);
   });
 
+  it('holds the Mongo mutation lock while reading state and upload metadata', async () => {
+    const root = await tempDir();
+    let lockHeld = false;
+    const store = {
+      async withMutationLock(callback) {
+        lockHeld = true;
+        try {
+          return await callback();
+        } finally {
+          lockHeld = false;
+        }
+      },
+      async read() {
+        assert.equal(lockHeld, true);
+        return memoryStore().read();
+      }
+    };
+    const result = await runBackupJob({
+      store,
+      imageStorage: {
+        type: 's3-compatible',
+        async listKeys() {
+          assert.equal(lockHeld, true);
+          return [];
+        }
+      },
+      destination: root,
+      storeDriver: 'mongo',
+      imageStorageDriver: 's3',
+      dryRun: true
+    });
+
+    assert.equal(result.counts.threads, 1);
+    assert.equal(lockHeld, false);
+  });
+
   it('writes state, upload manifest, and backup metadata for local uploads', async () => {
     const root = await tempDir();
     const uploadRoot = path.join(root, 'uploads');

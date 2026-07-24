@@ -10,6 +10,7 @@ import { createForumService } from '../src/core/forum-service.ts';
 import { createMemoryStore } from '../src/core/forum-store.ts';
 import { createLocalImageStorage } from '../src/core/image-storage.ts';
 import { BOARDS } from '../src/core/config.ts';
+import * as totpService from '../src/core/totp-service.ts';
 import { createHttpServer } from '../src/server/http-app.ts';
 
 type LooseJson = {
@@ -38,12 +39,20 @@ type WithServerOptions = {
   forceConnectionClose?: boolean;
 };
 
+const PNG_DATA_URL = 'data:image/png;base64,iVBORw0KGgo=';
+const JPEG_DATA_URL = 'data:image/jpeg;base64,/9j/4A==';
+const AVIF_DATA_URL = 'data:image/avif;base64,AAAAGGZ0eXBhdmlmAAAAAGF2aWY=';
+const WEBM_DATA_URL = 'data:video/webm;base64,GkXfow==';
+
 async function readJson(response: Response): Promise<LooseJson> {
   return response.json() as Promise<LooseJson>;
 }
 
 const safeAi = {
   async moderate() {
+    return { status: 'Safe', labels: [] };
+  },
+  async moderateImage() {
     return { status: 'Safe', labels: [] };
   },
   async summarize() {
@@ -744,18 +753,46 @@ test('http capcode is granted to admins but denied to regular and anonymous post
     assert.equal(userThread.status, 201);
     assert.equal(userThreadBody.data.thread.capcode, null);
 
-    // Verified admin gets the capcode stamped.
+    // A password-only admin cannot stamp a trusted capcode.
     const login = await fetch(`${baseUrl}/api/admin/login`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ username: 'admin', password: 'pass' })
     });
     const loginBody = await readJson(login);
+    const unverifiedAdminThread = await fetch(baseUrl + '/api/boards/hoc-tap/threads', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer ' + loginBody.data.token
+      },
+      body: JSON.stringify({ body: 'Token chua xac minh', captchaToken: 'dev-pass', capcode: true })
+    });
+    const unverifiedAdminThreadBody = await readJson(unverifiedAdminThread);
+    assert.equal(unverifiedAdminThread.status, 201);
+    assert.equal(unverifiedAdminThreadBody.data.thread.capcode, null);
+
+    const setup = await fetch(baseUrl + '/api/account/2fa/setup', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + loginBody.data.token }
+    });
+    const setupBody = await readJson(setup);
+    const verified = await fetch(baseUrl + '/api/account/2fa/verify', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: 'Bearer ' + loginBody.data.token
+      },
+      body: JSON.stringify({ code: totpService.generateTOTP(setupBody.data.secret) })
+    });
+    const verifiedBody = await readJson(verified);
+
+    // A step-up verified admin gets the capcode stamped.
     const adminThread = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
       method: 'POST',
       headers: {
         'content-type': 'application/json',
-        authorization: `Bearer ${loginBody.data.token}`
+        authorization: 'Bearer ' + verifiedBody.data.token
       },
       body: JSON.stringify({ body: 'Thong bao chinh thuc', captchaToken: 'dev-pass', capcode: true })
     });
@@ -1211,9 +1248,14 @@ test('http account api registers, logs in and saves private settings', async () 
             email: true,
             watchedThreads: false,
             boardSubscriptions: true,
-            browserWatchedThreads: true
+            browserWatchedThreads: true,
+            browserBoardSubscriptions: true,
+            browserMentions: true,
+            emailMentions: true,
+            emailDirectMessages: true
           },
-          boardSubscriptions: ['confession', 'an-uong', 'not-a-board']
+          boardSubscriptions: ['confession', 'an-uong', 'not-a-board'],
+          hiddenBoards: ['hoc-tap', 'hoc-tap', 'not-a-board', 'confession']
         }
       })
     });
@@ -1228,15 +1270,23 @@ test('http account api registers, logs in and saves private settings', async () 
       hideThumbnails: false,
       watchedUnreadOnly: true,
       watchedSort: 'recent',
-      commentComposerMode: 'normal'
+      commentComposerMode: 'normal',
+      fontSize: 'medium'
     });
     assert.deepEqual(settingsBody.data.settings.notificationPreferences, {
       email: false,
       watchedThreads: false,
       boardSubscriptions: true,
-      browserWatchedThreads: true
+      browserWatchedThreads: true,
+      browserBoardSubscriptions: true,
+      browserMentions: true,
+      emailMentions: true,
+      emailDirectMessages: true,
+      directMessages: true,
+      browserDirectMessages: false
     });
     assert.deepEqual(settingsBody.data.settings.boardSubscriptions, ['confession', 'an-uong']);
+    assert.deepEqual(settingsBody.data.settings.hiddenBoards, ['hoc-tap', 'confession']);
 
     const me = await fetch(`${baseUrl}/api/account/me`, {
       headers: { authorization: `Bearer ${loginBody.data.token}` }
@@ -1245,6 +1295,7 @@ test('http account api registers, logs in and saves private settings', async () 
     assert.equal(me.status, 200);
     assert.equal(meBody.data.settings.theme, 'burichan');
     assert.deepEqual(meBody.data.settings.boardSubscriptions, ['confession', 'an-uong']);
+    assert.deepEqual(meBody.data.settings.hiddenBoards, ['hoc-tap', 'confession']);
 
     const logout = await fetch(`${baseUrl}/api/account/logout`, {
       method: 'POST',
@@ -1786,7 +1837,7 @@ test('http account owners can edit their own post body and media with private hi
           {
             name: 'before.png',
             type: 'image/png',
-            dataUrl: 'data:image/png;base64,AAAA',
+            dataUrl: PNG_DATA_URL,
             sizeBytes: 3
           }
         ]
@@ -1817,7 +1868,7 @@ test('http account owners can edit their own post body and media with private hi
           {
             name: 'after.png',
             type: 'image/png',
-            dataUrl: 'data:image/png;base64,BBBB',
+            dataUrl: PNG_DATA_URL,
             sizeBytes: 3
           }
         ]
@@ -1879,6 +1930,7 @@ test('http posting rejects reserved display names', async () => {
 });
 
 test('http account registration requires JWT configuration before mutating users', async () => {
+  const store = createMemoryStore();
   await withServer(
     async (baseUrl) => {
       const registered = await fetch(`${baseUrl}/api/account/register`, {
@@ -1890,11 +1942,10 @@ test('http account registration requires JWT configuration before mutating users
       assert.equal(registered.status, 503);
       assert.match(registeredBody.error.message, /JWT_SECRET/);
 
-      const health = await fetch(`${baseUrl}/api/health`);
-      const healthBody = await readJson(health);
-      assert.equal(healthBody.data.store.users, 0);
+      const state = await store.read();
+      assert.equal(state.users.length, 0);
     },
-    { jwtSecret: '' }
+    { jwtSecret: '', store }
   );
 });
 
@@ -1918,7 +1969,24 @@ test('http health exposes deployment readiness without secrets', async () => {
 
   try {
     await withServer(async (baseUrl) => {
-      const health = await fetch(`${baseUrl}/api/health`);
+      const publicHealth = await fetch(`${baseUrl}/api/health`);
+      const publicBody = await readJson(publicHealth);
+      assert.equal(publicHealth.status, 200);
+      assert.equal(publicHealth.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(publicBody.data, { status: 'ok', ready: true });
+
+      const deniedAdminHealth = await fetch(`${baseUrl}/api/admin/health`);
+      assert.equal(deniedAdminHealth.status, 401);
+
+      const login = await fetch(`${baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'pass' })
+      });
+      const loginBody = await readJson(login);
+      const health = await fetch(`${baseUrl}/api/admin/health`, {
+        headers: { authorization: `Bearer ${loginBody.data.token}` }
+      });
       const body = await readJson(health);
       const payload = body.data;
       const serialized = JSON.stringify(payload);
@@ -1935,7 +2003,6 @@ test('http health exposes deployment readiness without secrets', async () => {
       assert.equal(payload.imageStorage.configured, true);
       assert.equal(payload.captcha.provider, 'hcaptcha');
       assert.equal(payload.captcha.configured, true);
-      assert.equal(payload.security.hcaptchaConfigured, true);
       assert.equal(serialized.includes('openai-secret-key'), false);
       assert.equal(serialized.includes('hcaptcha-secret-value'), false);
       assert.equal(serialized.includes('ai-secret.example.test'), false);
@@ -1985,7 +2052,12 @@ test('http metrics exposes scrapeable realtime counters and alert thresholds', a
   };
 
   const previousMetricsToken = process.env.METRICS_TOKEN;
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
   process.env.METRICS_TOKEN = 'metrics-test-token';
+  console.warn = (...args: unknown[]) => {
+    warnings.push(args);
+  };
   try {
     await withServer(
       async (baseUrl) => {
@@ -2011,12 +2083,15 @@ test('http metrics exposes scrapeable realtime counters and alert thresholds', a
         assert.equal(body.includes('secret'), false);
 
         const alias = await fetch(`${baseUrl}/api/metrics?token=metrics-test-token`);
-        assert.equal(alias.status, 200);
-        assert.match(await alias.text(), /chan36_sse_connections_total 120/);
+        assert.equal(alias.status, 401);
       },
       { realtime }
     );
+    const serializedWarnings = JSON.stringify(warnings);
+    assert.equal(serializedWarnings.includes('metrics-test-token'), false);
+    assert.equal(serializedWarnings.includes('%5BREDACTED%5D'), true);
   } finally {
+    console.warn = originalWarn;
     if (previousMetricsToken === undefined) {
       delete process.env.METRICS_TOKEN;
     } else {
@@ -2156,7 +2231,7 @@ test('http account owner can remove only post files', async () => {
         image: {
           name: 'self-delete-file.png',
           type: 'image/png',
-          dataUrl: 'data:image/png;base64,AAAA',
+          dataUrl: PNG_DATA_URL,
           sizeBytes: 3
         }
       })
@@ -2222,12 +2297,12 @@ test('http file-only deletion removes local upload bytes and thumbnails', async 
           image: {
             name: 'delete-me.png',
             type: 'image/png',
-            dataUrl: 'data:image/png;base64,AAAA',
+            dataUrl: PNG_DATA_URL,
             sizeBytes: 3,
             thumbnail: {
               name: 'delete-me-thumb.jpg',
               type: 'image/jpeg',
-              dataUrl: 'data:image/jpeg;base64,AAA=',
+              dataUrl: JPEG_DATA_URL,
               sizeBytes: 2
             }
           }
@@ -2646,12 +2721,27 @@ test('http board thread list supports filter query with pagination', async () =>
     });
     const image = await createThread({
       body: 'Thread co anh',
-      image: { name: 'filter-image.png', type: 'image/png', dataUrl: 'data:image/png;base64,AAAA', sizeBytes: 3 }
+      image: { name: 'filter-image.png', type: 'image/png', dataUrl: PNG_DATA_URL, sizeBytes: 8 }
     });
     const video = await createThread({
       body: 'Thread co video',
-      image: { name: 'filter-video.webm', type: 'video/webm', dataUrl: 'data:video/webm;base64,AAAA', sizeBytes: 3 }
+      image: { name: 'filter-video.webm', type: 'video/webm', dataUrl: WEBM_DATA_URL, sizeBytes: 4 }
     });
+    const adminLogin = await fetch(`${baseUrl}/api/admin/login`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ username: 'admin', password: 'pass' })
+    });
+    const adminLoginBody = await readJson(adminLogin);
+    const approvedVideo = await fetch(`${baseUrl}/api/admin/pending/${video.id}/approve`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${adminLoginBody.data.token}`,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({ reason: 'Manual video review passed' })
+    });
+    assert.equal(approvedVideo.status, 200);
     const poll = await createThread({ body: 'Thread co tham do', pollOptions: ['Co', 'Khong'] });
 
     const media = await fetch(baseUrl + '/api/boards/hoc-tap/threads?filter=media&page=1&pageSize=1');
@@ -2867,15 +2957,8 @@ test('http api exposes health without leaking secrets', async () => {
     const serialized = JSON.stringify(healthBody.data);
 
     assert.equal(health.status, 200);
-    assert.equal(healthBody.data.status, 'ok');
-    assert.equal(healthBody.data.store.type, 'json');
-    assert.equal(healthBody.data.store.configured, true);
-    assert.equal(healthBody.data.store.ready, true);
-    assert.equal(typeof healthBody.data.ai.configured, 'boolean');
-    assert.equal(healthBody.data.security.adminConfigured, true);
-    assert.equal(healthBody.data.security.hcaptchaConfigured, false);
-    assert.ok(healthBody.data.security.warnings.includes('jwt_secret_default_or_missing'));
-    assert.ok(healthBody.data.security.warnings.includes('hcaptcha_not_configured'));
+    assert.equal(health.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(healthBody.data, { status: 'ok', ready: true });
     assert.equal(serialized.includes('GOOGLE_AI_API_KEY'), false);
     assert.equal(serialized.includes('MONGODB_URI'), false);
     assert.equal(serialized.includes('data/uploads-test'), false);
@@ -2907,10 +2990,8 @@ test('http api returns 503 when health is degraded', async () => {
       const serialized = JSON.stringify(healthBody.data);
 
       assert.equal(health.status, 503);
-      assert.equal(healthBody.data.status, 'degraded');
-      assert.equal(healthBody.data.store.type, 'mongo');
-      assert.equal(healthBody.data.store.ready, false);
-      assert.equal(healthBody.data.store.error, 'unavailable');
+      assert.equal(health.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(healthBody.data, { status: 'degraded', ready: false });
       assert.equal(serialized.includes('mongodb://'), false);
       assert.equal(serialized.includes('user:secret@example.test'), false);
     },
@@ -2929,7 +3010,7 @@ test('http api stores image metadata from thread creation payloads', async () =>
         image: {
           name: 'anh.png',
           type: 'image/png',
-          dataUrl: 'data:image/png;base64,AAAA',
+          dataUrl: PNG_DATA_URL,
           sizeBytes: 4096,
           width: 320,
           height: 240
@@ -3001,14 +3082,14 @@ test('http api stores uploaded images on local disk and serves them from /upload
             image: {
               name: 'anh.avif',
               type: 'image/avif',
-              dataUrl: 'data:image/avif;base64,AAAA',
+              dataUrl: AVIF_DATA_URL,
               sizeBytes: 3,
               width: 1,
               height: 1,
               thumbnail: {
                 name: 'anh-thumb.jpg',
                 type: 'image/jpeg',
-                dataUrl: 'data:image/jpeg;base64,AAA=',
+                dataUrl: JPEG_DATA_URL,
                 sizeBytes: 2,
                 width: 1,
                 height: 1
@@ -3027,20 +3108,28 @@ test('http api stores uploaded images on local disk and serves them from /upload
         assert.equal(image.thumbnail.url.startsWith('/uploads/'), true);
         assert.equal(image.thumbnail.storageKey.includes('.thumb.'), true);
         assert.equal(image.storageKey.endsWith('.avif'), true);
-        assert.equal((await fs.readFile(path.join(uploadRoot, image.storageKey))).length, 3);
-        assert.equal((await fs.readFile(path.join(uploadRoot, image.thumbnail.storageKey))).length, 2);
+        assert.equal((await fs.readFile(path.join(uploadRoot, image.storageKey))).length, 20);
+        assert.equal((await fs.readFile(path.join(uploadRoot, image.thumbnail.storageKey))).length, 4);
 
         const imageResponse = await fetch(`${baseUrl}${image.url}`);
         assert.equal(imageResponse.status, 200);
         assert.equal(imageResponse.headers.get('content-type'), 'image/avif');
-        assert.equal((await imageResponse.arrayBuffer()).byteLength, 3);
+        assert.equal((await imageResponse.arrayBuffer()).byteLength, 20);
 
         const thumbnailResponse = await fetch(`${baseUrl}${image.thumbnail.url}`);
         assert.equal(thumbnailResponse.status, 200);
         assert.equal(thumbnailResponse.headers.get('content-type'), 'image/jpeg');
-        assert.equal((await thumbnailResponse.arrayBuffer()).byteLength, 2);
+        assert.equal((await thumbnailResponse.arrayBuffer()).byteLength, 4);
 
-        const health = await fetch(`${baseUrl}/api/health`);
+        const login = await fetch(`${baseUrl}/api/admin/login`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ username: 'admin', password: 'pass' })
+        });
+        const loginBody = await readJson(login);
+        const health = await fetch(`${baseUrl}/api/admin/health`, {
+          headers: { authorization: `Bearer ${loginBody.data.token}` }
+        });
         const healthBody = await readJson(health);
         const serializedHealth = JSON.stringify(healthBody.data);
         assert.equal(health.status, 200);
@@ -3075,12 +3164,12 @@ test('http api stores uploaded video media on local disk and serves it from /upl
               {
                 name: 'clip.webm',
                 type: 'video/webm',
-                dataUrl: 'data:video/webm;base64,AAAA',
+                dataUrl: WEBM_DATA_URL,
                 sizeBytes: 3,
                 thumbnail: {
                   name: 'clip-poster.jpg',
                   type: 'image/jpeg',
-                  dataUrl: 'data:image/jpeg;base64,AAA=',
+                  dataUrl: JPEG_DATA_URL,
                   sizeBytes: 2,
                   width: 1,
                   height: 1
@@ -3098,12 +3187,12 @@ test('http api stores uploaded video media on local disk and serves it from /upl
         assert.equal(video.dataUrl, undefined);
         assert.equal(video.url.endsWith('.webm'), true);
         assert.equal(video.thumbnail.url.endsWith('.thumb.jpg'), true);
-        assert.equal((await fs.readFile(path.join(uploadRoot, video.storageKey))).length, 3);
+        assert.equal((await fs.readFile(path.join(uploadRoot, video.storageKey))).length, 4);
 
         const videoResponse = await fetch(`${baseUrl}${video.url}`);
         assert.equal(videoResponse.status, 200);
         assert.equal(videoResponse.headers.get('content-type'), 'video/webm');
-        assert.equal((await videoResponse.arrayBuffer()).byteLength, 3);
+        assert.equal((await videoResponse.arrayBuffer()).byteLength, 4);
       },
       {
         uploadRoot,
@@ -3164,7 +3253,10 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
     const json = await fetch(`${baseUrl}/feeds/latest.json?limit=1`);
     const jsonBody = await readJson(json);
     const forwardedJson = await fetch(`${baseUrl}/feeds/latest.json?limit=1`, {
-      headers: { 'x-forwarded-proto': 'https, http' }
+      headers: {
+        'x-forwarded-host': 'forum.example',
+        'x-forwarded-proto': 'https, http'
+      }
     });
     const forwardedJsonBody = await readJson(forwardedJson);
     assert.equal(json.status, 200);
@@ -3173,8 +3265,8 @@ test('http api exposes latest public posts as JSON Feed and RSS', async () => {
     assert.equal(jsonBody.items.length, 1);
     assert.equal(jsonBody.items[0].title, 'Tin feed XML /an-uong/');
     assert.equal(forwardedJson.status, 200);
-    assert.equal(forwardedJsonBody.feed_url.startsWith('https://'), true);
-    assert.equal(forwardedJsonBody.items[0].url.startsWith('https://'), true);
+    assert.equal(forwardedJsonBody.feed_url, 'https://forum.example/feeds/latest.json');
+    assert.equal(forwardedJsonBody.items[0].url.startsWith('https://forum.example/'), true);
 
     const rss = await fetch(`${baseUrl}/feeds/latest.rss?limit=1`);
     const rssBody = await rss.text();

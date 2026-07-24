@@ -60,7 +60,8 @@ async function withServer(
     store: createMemoryStore(),
     ai: { moderate: async () => ({ status: 'Safe', labels: [] }) },
     realtime,
-    now
+    now,
+    dmEncryptionSecret: jwtSecret
   });
   const server = createHttpServer({
     service,
@@ -158,23 +159,35 @@ describe('Forum Service 2FA Functions', () => {
     assert.equal(verifyResult.account.twoFactorEnabled, true);
 
     // Verify login works with valid code
-    const loginVerify = await service.verify2FALogin(account.id, validCode);
+    const loginChallenge = await service.begin2FALogin(account.id);
+    const loginVerify = await service.verify2FALogin(
+      account.id,
+      validCode,
+      loginChallenge.challengeId
+    );
     assert.equal(loginVerify.ok, true);
 
     // Verify login fails with invalid code
+    const invalidChallenge = await service.begin2FALogin(account.id);
     await assert.rejects(
-      () => service.verify2FALogin(account.id, '000000'),
+      () => service.verify2FALogin(account.id, '000000', invalidChallenge.challengeId),
       (error) => isServiceError(error, 400)
     );
 
     // Verify backup code login
     const firstBackup = setup.backupCodes[0];
-    const backupVerify = await service.verifyBackupCodeLogin(account.id, firstBackup);
+    const backupChallenge = await service.begin2FALogin(account.id);
+    const backupVerify = await service.verifyBackupCodeLogin(
+      account.id,
+      firstBackup,
+      backupChallenge.challengeId
+    );
     assert.equal(backupVerify.ok, true);
 
     // Second use of the same backup code fails
+    const reuseChallenge = await service.begin2FALogin(account.id);
     await assert.rejects(
-      () => service.verifyBackupCodeLogin(account.id, firstBackup),
+      () => service.verifyBackupCodeLogin(account.id, firstBackup, reuseChallenge.challengeId),
       (error) => isServiceError(error, 400)
     );
 
@@ -201,6 +214,34 @@ describe('Forum Service 2FA Functions', () => {
 
     const updated = await service.getAccount(account.id);
     assert.equal(updated.twoFactorEnabled, false);
+  });
+
+  it('locks concurrent invalid 2FA attempts to the account challenge', async () => {
+    const service = createTestService();
+    const { account } = await service.registerAccount({
+      username: 'totpbudget',
+      password: 'securepass12',
+      captchaToken: 'dev-pass'
+    });
+    const setup = await service.generate2FASetup(account.id);
+    await service.verify2FASetup(account.id, totpService.generateTOTP(setup.secret));
+    const challenge = await service.begin2FALogin(account.id);
+
+    const attempts = await Promise.allSettled(
+      Array.from({ length: 5 }, () => service.verify2FALogin(
+        account.id,
+        'not-a-code',
+        challenge.challengeId
+      ))
+    );
+    const statusCodes = attempts.map((result) => (
+      result.status === 'rejected' ? (result.reason as { statusCode?: number }).statusCode : 200
+    ));
+    assert.deepEqual(statusCodes.sort(), [400, 400, 400, 400, 429]);
+    await assert.rejects(
+      () => service.begin2FALogin(account.id),
+      (error) => isServiceError(error, 429)
+    );
   });
 });
 
@@ -269,11 +310,33 @@ describe('HTTP 2FA Integration API', () => {
       assert.equal(verifySuccessRes.status, 200);
       assert.ok(verifySuccessBody.data.token);
 
-      // 7. Verify login using backup code
+      // A successful challenge is single-use.
+      const replayRes = await fetch(`${baseUrl}/api/auth/2fa/totp-login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ tempToken: loginBody.data.tempToken, code: validCode })
+      });
+      assert.equal(replayRes.status, 400);
+
+      // 7. Start a fresh challenge and verify login using a backup code.
+      const backupChallengeRes = await fetch(`${baseUrl}/api/account/login`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          username: 'user2fa',
+          password: 'strong-2fa-pass',
+          captchaToken: 'dev-pass'
+        })
+      });
+      const backupChallengeBody = await readApiBody(backupChallengeRes);
+      assert.equal(backupChallengeRes.status, 200);
       const backupLoginRes = await fetch(`${baseUrl}/api/auth/2fa/backup-login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tempToken: loginBody.data.tempToken, code: backupCodes[0] })
+        body: JSON.stringify({
+          tempToken: backupChallengeBody.data.tempToken,
+          code: backupCodes[0]
+        })
       });
       const backupLoginBody = await readApiBody(backupLoginRes);
       assert.equal(backupLoginRes.status, 200);
@@ -283,7 +346,10 @@ describe('HTTP 2FA Integration API', () => {
       const backupReuseRes = await fetch(`${baseUrl}/api/auth/2fa/backup-login`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ tempToken: loginBody.data.tempToken, code: backupCodes[0] })
+        body: JSON.stringify({
+          tempToken: backupChallengeBody.data.tempToken,
+          code: backupCodes[0]
+        })
       });
       assert.equal(backupReuseRes.status, 400);
     });
@@ -331,6 +397,18 @@ describe('HTTP 2FA Integration API', () => {
       const accessBlockedBody = await readApiBody(accessBlockedRes);
       assert.equal(accessBlockedRes.status, 401);
       assert.equal(accessBlockedBody.error.requires2FA, true);
+
+      const replacementSetupRes = await fetch(baseUrl + '/api/account/2fa/setup', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + tempToken }
+      });
+      assert.equal(replacementSetupRes.status, 401);
+
+      const attackerPasskeyRes = await fetch(baseUrl + '/api/account/passkeys/register-options', {
+        method: 'POST',
+        headers: { authorization: 'Bearer ' + tempToken }
+      });
+      assert.equal(attackerPasskeyRes.status, 401);
 
       // Verify and upgrade token
       const verifyRes = await fetch(`${baseUrl}/api/auth/2fa/totp-login`, {

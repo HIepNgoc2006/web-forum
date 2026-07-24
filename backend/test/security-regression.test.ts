@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
 import { test } from 'node:test';
 import type { AddressInfo } from 'node:net';
 
@@ -49,8 +52,9 @@ async function withServer(
   {
     ai = safeAi,
     now = () => new Date('2026-05-22T08:00:00.000Z'),
-    jwtSecret = 'test-secret-long-enough-for-jwt'
-  }: { ai?: TestAi; now?: () => Date; jwtSecret?: string } = {}
+    jwtSecret = 'test-secret-long-enough-for-jwt',
+    uploadRoot
+  }: { ai?: TestAi; now?: () => Date; jwtSecret?: string; uploadRoot?: string } = {}
 ) {
   const realtime = { publish() {}, count: () => 0 };
   const service = createForumService({
@@ -64,7 +68,8 @@ async function withServer(
     realtime,
     jwtSecret,
     adminUsername: 'admin',
-    adminPassword: 'secure-admin-password-12'
+    adminPassword: 'secure-admin-password-12',
+    ...(uploadRoot ? { uploadRoot } : {})
   } as Parameters<typeof createHttpServer>[0]);
   server.listen(0);
   await once(server, 'listening');
@@ -171,6 +176,9 @@ test('security: API responses include baseline browser security headers', async 
     assert.match(csp, /default-src 'self'/);
     assert.match(csp, /frame-ancestors 'none'/);
     assert.match(csp, /object-src 'none'/);
+    // Click-to-load YouTube / Vimeo players on posts.
+    assert.match(csp, /frame-src[^;]*youtube-nocookie\.com/);
+    assert.match(csp, /frame-src[^;]*player\.vimeo\.com/);
   });
 });
 
@@ -210,12 +218,17 @@ test('security: thread creation rejects invalid image MIME types', async () => {
   await withServer(async (baseUrl) => {
     const invalidMimes = [
       { type: 'image/svg+xml', name: 'payload.svg' },
+      {
+        type: 'image/html',
+        name: 'payload.html',
+        dataUrl: 'data:image/html;base64,PGh0bWw+PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0PjwvaHRtbD4='
+      },
       { type: 'application/javascript', name: 'malware.js' },
       { type: 'text/html', name: 'page.html' },
       { type: 'application/x-executable', name: 'malware.exe' }
     ];
 
-    for (const { type, name } of invalidMimes) {
+    for (const { type, name, dataUrl } of invalidMimes) {
       const created = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
@@ -225,7 +238,7 @@ test('security: thread creation rejects invalid image MIME types', async () => {
           image: {
             name,
             type,
-            dataUrl: 'data:application/octet-stream;base64,AAAA',
+            dataUrl: dataUrl || 'data:application/octet-stream;base64,AAAA',
             sizeBytes: 100,
             width: 1,
             height: 1
@@ -236,6 +249,84 @@ test('security: thread creation rejects invalid image MIME types', async () => {
       assert.notEqual(created.status, 201, `Should reject MIME type: ${type}`);
     }
   });
+});
+
+test('security: production metrics rejects loopback requests when METRICS_TOKEN is missing', async () => {
+  const previousToken = process.env.METRICS_TOKEN;
+  const previousNodeEnv = process.env.NODE_ENV;
+  const previousDmKey = process.env.DM_ENCRYPTION_KEY;
+  delete process.env.METRICS_TOKEN;
+  process.env.NODE_ENV = 'production';
+  process.env.DM_ENCRYPTION_KEY = 'metrics-production-test-key-material';
+  try {
+    await withServer(async (baseUrl) => {
+      const response = await fetch(baseUrl + '/metrics');
+      assert.equal(response.status, 401);
+    });
+  } finally {
+    if (previousNodeEnv === undefined) {
+      delete process.env.NODE_ENV;
+    } else {
+      process.env.NODE_ENV = previousNodeEnv;
+    }
+    if (previousToken === undefined) {
+      delete process.env.METRICS_TOKEN;
+    } else {
+      process.env.METRICS_TOKEN = previousToken;
+    }
+    if (previousDmKey === undefined) {
+      delete process.env.DM_ENCRYPTION_KEY;
+    } else {
+      process.env.DM_ENCRYPTION_KEY = previousDmKey;
+    }
+  }
+});
+
+test('security: thread creation verifies data-URL MIME and magic bytes', async () => {
+  await withServer(async (baseUrl) => {
+    const payloads = [
+      {
+        type: 'image/png',
+        dataUrl: 'data:image/jpeg;base64,/9j/4A=='
+      },
+      {
+        type: 'image/png',
+        dataUrl: 'data:image/png;base64,PGh0bWw+PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg=='
+      }
+    ];
+    for (const image of payloads) {
+      const response = await fetch(`${baseUrl}/api/boards/hoc-tap/threads`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          body: 'Thread voi magic bytes khong hop le',
+          captchaToken: 'dev-pass',
+          image: { name: 'payload.png', ...image }
+        })
+      });
+      assert.equal(response.status, 400);
+    }
+  });
+});
+
+test('security: unknown uploaded files are served as sandboxed attachments', async () => {
+  const uploadRoot = await fs.mkdtemp(path.join(os.tmpdir(), '36chan-upload-security-'));
+  try {
+    await fs.writeFile(
+      path.join(uploadRoot, 'rogue.html'),
+      '<script>globalThis.compromised = true</script>'
+    );
+    await withServer(async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/uploads/rogue.html`);
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('content-type'), 'application/octet-stream');
+      assert.equal(response.headers.get('content-disposition'), 'attachment');
+      assert.match(String(response.headers.get('content-security-policy')), /sandbox/);
+      assert.match(String(response.headers.get('content-security-policy')), /default-src 'none'/);
+    }, { uploadRoot });
+  } finally {
+    await fs.rm(uploadRoot, { recursive: true, force: true });
+  }
 });
 
 test('security: thread creation rejects oversized image payloads', async () => {

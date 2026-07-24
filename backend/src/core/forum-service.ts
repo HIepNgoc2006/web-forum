@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 
 import {
   BOARDS,
@@ -24,22 +25,56 @@ import { redactSensitiveText } from './ai.ts';
 import { assertAccountPassword } from './account-password-policy.ts';
 import {
   MAX_DM_CONVERSATIONS_PER_USER,
+  MAX_DM_GROUP_INVITE_BATCH,
+  MAX_DM_GROUP_PARTICIPANTS,
+  MAX_DM_MEDIA_PER_MESSAGE,
   MAX_DM_MESSAGE_PAGE,
+  MAX_DM_SEARCH_RESULTS,
+  canDeleteDmMessage,
+  canEditDmMessage,
+  canKickMember,
+  canManageGroupMembers,
   conversationIncludesUser,
+  conversationIsHiddenFor,
+  conversationIsMutedFor,
+  conversationKind,
   countUnreadForUser,
   createDmConversationRecord,
   createDmMessageRecord,
+  createGroupConversationRecord,
+  dmPreviewFromBody,
+  dmServiceError,
+  encryptStoredBody,
   ensureDmCollections,
+  assertDmBodyMediaTokens,
+  extractDmLinks,
+  getMemberRole,
+  getUserDmBlockedIds,
+  hideConversationForUser,
+  isDmBlockedBetween,
   normalizeDmBody,
+  normalizeDmReaction,
+  normalizeDmRoles,
   normalizeParticipantIds,
   participantKeyFor,
+  recomputeConversationLastMessage,
+  removeParticipantFromConversation,
+  sanitizeGroupTitle,
   serializeDmConversation,
   serializeDmMessage,
-  trimConversationMessages
+  setConversationMuted,
+  trimConversationMessages,
+  unhideConversationForAll,
+  unhideConversationForUser
 } from './dm.ts';
 import { resolveDmEncryptionSecret } from './dm-crypto.ts';
 import { createDisabledEmailClient } from './email.ts';
 import { createInlineImageStorage } from './image-storage.ts';
+import {
+  buildPostLinks,
+  fetchLinkPreview,
+  serializePostLinks
+} from './link-preview.ts';
 import { createModerationFingerprint, createPosterHash, createPosterProofHash, createTripcode, verifyHcaptcha } from './security.ts';
 import { normalizeBody, parsePostText, sanitizeText } from './text-format.ts';
 import * as defaultTotp from './totp-service.ts';
@@ -48,6 +83,18 @@ import type { BoardConfig, SiteContent, ThreadLifecycle } from './config.ts';
 import type { EmailClient, EmailMessage } from './email.ts';
 
 type AnyRecord = Record<string, any>;
+
+type RealtimeStateAdapter = {
+  consumeUserRateLimit?: (
+    userId: string,
+    action: string,
+    options: { limit: number; windowMs: number }
+  ) => Promise<{ allowed: boolean; retryAfterMs: number }>;
+  getUnreadCount?: (userId: string) => Promise<number | null>;
+  setUnreadCount?: (userId: string, count: number) => Promise<void>;
+  invalidateUnreadCount?: (userId: string) => Promise<void>;
+  health?: () => { failureMode?: 'open' | 'closed' };
+};
 
 type ForumServiceOptions = {
   store: any;
@@ -64,6 +111,7 @@ type ForumServiceOptions = {
   moderationConfidenceThreshold?: number;
   randomInt?: typeof crypto.randomInt;
   dmEncryptionSecret?: string;
+  realtimeState?: RealtimeStateAdapter;
 };
 
 declare global {
@@ -77,6 +125,17 @@ const noopLogger = (_entry?: AnyRecord) => {};
 const noopRealtime: AnyRecord = {
   publish(_event?: string, _payload?: unknown) {},
   count: () => 0
+};
+const noopRealtimeState: RealtimeStateAdapter = {
+  async consumeUserRateLimit() {
+    return { allowed: true, retryAfterMs: 0 };
+  },
+  async getUnreadCount() {
+    return null;
+  },
+  async setUnreadCount() {},
+  async invalidateUnreadCount() {},
+  health: () => ({ failureMode: 'open' })
 };
 const PULSE_STOP_WORDS = new Set([
   'anh',
@@ -119,6 +178,9 @@ const ACCOUNT_USERNAME_PATTERN = /^[a-z0-9][a-z0-9._-]{2,31}$/;
 const ACCOUNT_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
 const MAX_FAILED_LOGINS = 5;
 const LOGIN_LOCKOUT_MS = 15 * 60 * 1000;
+const MAX_FAILED_TWO_FACTOR_ATTEMPTS = 5;
+const TWO_FACTOR_LOCKOUT_MS = 15 * 60 * 1000;
+const TWO_FACTOR_CHALLENGE_TTL_MS = 5 * 60 * 1000;
 const EMAIL_OTP_TTL_MS = 15 * 60 * 1000;
 const EMAIL_OTP_RESEND_COOLDOWN_MS = 60 * 1000;
 const EMAIL_OTP_MAX_ATTEMPTS = 5;
@@ -138,11 +200,16 @@ const MAX_ACCOUNT_REPLY_TEMPLATE_LENGTH = 5_000;
 const ACCOUNT_DISPLAY_PREFS = ['compactThreads', 'hideThumbnails', 'watchedUnreadOnly'];
 const ACCOUNT_WATCHED_SORTS = new Set(['unread', 'recent', 'board']);
 const ACCOUNT_COMMENT_COMPOSER_MODES = new Set(['floating', 'normal']);
+const ACCOUNT_FONT_SIZES = new Set(['small', 'medium', 'large', 'xlarge']);
 const ACCOUNT_NOTIFICATION_PREFS = [
   'email',
   'watchedThreads',
   'boardSubscriptions',
   'browserWatchedThreads',
+  'browserBoardSubscriptions',
+  'browserMentions',
+  'emailMentions',
+  'emailDirectMessages',
   'directMessages',
   'browserDirectMessages'
 ];
@@ -153,8 +220,15 @@ const MAX_DICE_ROLLS_PER_POST = 6;
 const MAX_DICE_COUNT = 20;
 const MAX_DICE_SIDES = 1_000;
 const MAX_DICE_MODIFIER = 999;
+const SUPPORTED_IMAGE_TYPES = new Set([
+  'image/jpeg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'image/avif'
+]);
 const SUPPORTED_VIDEO_TYPES = new Set(['video/mp4', 'video/webm']);
-const UNSAFE_IMAGE_TYPES = new Set(['image/svg+xml']);
+const SUPPORTED_MEDIA_TYPES = new Set([...SUPPORTED_IMAGE_TYPES, ...SUPPORTED_VIDEO_TYPES]);
 const REPORT_CATEGORIES = new Set(['Spam', 'Toxic', 'PII', 'Fake News', 'Illegal', 'Other']);
 const APPEAL_RESOLUTION_STATUSES = new Set(['accepted', 'rejected']);
 const PRIORITY_FILTERS = new Set(['high', 'medium', 'low']);
@@ -449,6 +523,69 @@ function dataUrlBytes(dataUrl = '') {
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 
+function mediaBytesStartWith(bytes, signature) {
+  return bytes.length >= signature.length
+    && signature.every((value, index) => bytes[index] === value);
+}
+
+function mediaAsciiAt(bytes, offset, value) {
+  return bytes.length >= offset + value.length
+    && bytes.subarray(offset, offset + value.length).toString('ascii') === value;
+}
+
+function matchesMediaMagicBytes(type, bytes) {
+  switch (type) {
+    case 'image/jpeg':
+      return mediaBytesStartWith(bytes, [0xff, 0xd8, 0xff]);
+    case 'image/png':
+      return mediaBytesStartWith(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    case 'image/gif':
+      return mediaAsciiAt(bytes, 0, 'GIF87a') || mediaAsciiAt(bytes, 0, 'GIF89a');
+    case 'image/webp':
+      return mediaAsciiAt(bytes, 0, 'RIFF') && mediaAsciiAt(bytes, 8, 'WEBP');
+    case 'image/avif': {
+      if (!mediaAsciiAt(bytes, 4, 'ftyp')) {
+        return false;
+      }
+      for (let offset = 8; offset + 4 <= Math.min(bytes.length, 64); offset += 4) {
+        const brand = bytes.subarray(offset, offset + 4).toString('ascii');
+        if (brand === 'avif' || brand === 'avis') {
+          return true;
+        }
+      }
+      return false;
+    }
+    case 'video/mp4':
+      return mediaAsciiAt(bytes, 4, 'ftyp')
+        && !mediaAsciiAt(bytes, 8, 'avif')
+        && !mediaAsciiAt(bytes, 8, 'avis');
+    case 'video/webm':
+      return mediaBytesStartWith(bytes, [0x1a, 0x45, 0xdf, 0xa3]);
+    default:
+      return false;
+  }
+}
+
+function parseStrictMediaDataUrl(dataUrl, expectedType, errorMessage) {
+  const raw = String(dataUrl || '');
+  const match = raw.match(/^data:([^;,]+);base64,([A-Za-z0-9+/]+={0,2})$/i);
+  if (!match || match[1].toLowerCase() !== expectedType || match[2].length % 4 !== 0) {
+    const error = new Error(errorMessage);
+    error.statusCode = 400;
+    throw error;
+  }
+  const bytes = Buffer.from(match[2], 'base64');
+  if (bytes.length === 0 || bytes.toString('base64') !== match[2] || !matchesMediaMagicBytes(expectedType, bytes)) {
+    const error = new Error(errorMessage);
+    error.statusCode = 400;
+    throw error;
+  }
+  return {
+    bytes,
+    dataUrl: `data:${expectedType};base64,${match[2]}`
+  };
+}
+
 function sanitizePositiveInteger(value, max) {
   const number = Number(value);
   if (!Number.isFinite(number) || number <= 0) {
@@ -732,17 +869,23 @@ function defaultAccountSettings() {
       hideThumbnails: false,
       watchedUnreadOnly: false,
       watchedSort: 'unread',
-      commentComposerMode: 'floating'
+      commentComposerMode: 'floating',
+      fontSize: 'medium'
     },
     notificationPreferences: {
       email: false,
       watchedThreads: true,
       boardSubscriptions: false,
       browserWatchedThreads: false,
+      browserBoardSubscriptions: false,
+      browserMentions: false,
+      emailMentions: false,
+      emailDirectMessages: false,
       directMessages: true,
       browserDirectMessages: false
     },
-    boardSubscriptions: []
+    boardSubscriptions: [],
+    hiddenBoards: []
   };
 }
 
@@ -776,7 +919,8 @@ function normalizeAccountSettings(state: AnyRecord, settings: AnyRecord = {}, cu
         ? current.notificationPreferences
         : {})
     },
-    boardSubscriptions: normalizeBoardSubscriptionSlugs(current.boardSubscriptions || defaults.boardSubscriptions, state)
+    boardSubscriptions: normalizeBoardSubscriptionSlugs(current.boardSubscriptions || defaults.boardSubscriptions, state),
+    hiddenBoards: normalizeBoardSubscriptionSlugs(current.hiddenBoards || defaults.hiddenBoards, state)
   };
   if (typeof current.emailNotifications === 'boolean' && !current.notificationPreferences) {
     safe.notificationPreferences.email = current.emailNotifications;
@@ -808,6 +952,9 @@ function normalizeAccountSettings(state: AnyRecord, settings: AnyRecord = {}, cu
     if (ACCOUNT_COMMENT_COMPOSER_MODES.has(settings.displayPreferences.commentComposerMode)) {
       safe.displayPreferences.commentComposerMode = settings.displayPreferences.commentComposerMode;
     }
+    if (ACCOUNT_FONT_SIZES.has(String(settings.displayPreferences.fontSize || ''))) {
+      safe.displayPreferences.fontSize = String(settings.displayPreferences.fontSize);
+    }
   }
   if (settings.notificationPreferences && typeof settings.notificationPreferences === 'object') {
     for (const key of ACCOUNT_NOTIFICATION_PREFS) {
@@ -819,6 +966,9 @@ function normalizeAccountSettings(state: AnyRecord, settings: AnyRecord = {}, cu
   }
   if (Array.isArray(settings.boardSubscriptions)) {
     safe.boardSubscriptions = normalizeBoardSubscriptionSlugs(settings.boardSubscriptions, state);
+  }
+  if (Array.isArray(settings.hiddenBoards)) {
+    safe.hiddenBoards = normalizeBoardSubscriptionSlugs(settings.hiddenBoards, state);
   }
   return safe;
 }
@@ -1579,10 +1729,7 @@ function serializePoll(poll) {
 }
 
 function supportedMediaType(type) {
-  if (UNSAFE_IMAGE_TYPES.has(type)) {
-    return false;
-  }
-  return type.startsWith('image/') || SUPPORTED_VIDEO_TYPES.has(type);
+  return SUPPORTED_MEDIA_TYPES.has(type);
 }
 
 function assertPostBodySize(value) {
@@ -1606,17 +1753,12 @@ function validateMedia(media) {
     throw error;
   }
 
-  const dataUrl = media.dataUrl ?? '';
-  const dataPrefix = type.startsWith('video/') ? 'data:video/' : 'data:image/';
-  if (!dataUrl.startsWith(dataPrefix)) {
-    const error = new Error('Dữ liệu tệp không hợp lệ');
-    error.statusCode = 400;
-    throw error;
-  }
+  const parsedData = parseStrictMediaDataUrl(media.dataUrl, type, 'Dữ liệu tệp không hợp lệ');
+  const dataUrl = parsedData.dataUrl;
 
   const maxBytes = readPositiveInteger(process.env.MAX_IMAGE_BYTES, DEFAULT_MAX_IMAGE_BYTES);
   // Limit by decoded payload size (file size), not base64 data-URL string length.
-  if (dataUrlBytes(dataUrl) > maxBytes) {
+  if (parsedData.bytes.length > maxBytes) {
     const error = new Error(type.startsWith('image/') ? 'Ảnh quá lớn' : 'Video quá lớn');
     error.statusCode = 413;
     throw error;
@@ -1627,7 +1769,7 @@ function validateMedia(media) {
     type,
     dataUrl,
     spoiler: Boolean(media.spoiler),
-    sizeBytes: sanitizePositiveInteger(media.sizeBytes, maxBytes) ?? dataUrlBytes(dataUrl)
+    sizeBytes: sanitizePositiveInteger(media.sizeBytes, maxBytes) ?? parsedData.bytes.length
   };
 
   const width = sanitizePositiveInteger(media.width, 20_000);
@@ -1680,12 +1822,21 @@ function uniqueModerationLabels(results) {
   return [...labels];
 }
 
+function unavailableModeration(label = 'Media Scan Unavailable') {
+  return { status: 'Unavailable', labels: [label] };
+}
+
 function mergeModerationResults(...results: any[]): AnyRecord {
   const confidences = results
     .map((result) => Number(result?.confidence))
     .filter((confidence) => Number.isFinite(confidence));
+  const status = results.some((result) => result?.status === 'Flagged')
+    ? 'Flagged'
+    : results.length === 0 || results.some((result) => result?.status === 'Unavailable')
+      ? 'Unavailable'
+      : 'Safe';
   const merged: AnyRecord = {
-    status: results.some((result) => result?.status === 'Flagged') ? 'Flagged' : 'Safe',
+    status,
     labels: uniqueModerationLabels(results)
   };
   return confidences.length ? { ...merged, confidence: Math.max(...confidences) } : merged;
@@ -1707,7 +1858,9 @@ async function moderateOcrText(ai, text) {
 async function scanImageForModeration(ai, media) {
   const image = imageMediaForAi(media);
   if (!image) {
-    return { status: 'Safe', labels: [] };
+    return unavailableModeration(
+      media?.type?.startsWith('video/') ? 'Video Review Required' : 'Media Scan Unavailable'
+    );
   }
 
   const results = [];
@@ -1715,22 +1868,29 @@ async function scanImageForModeration(ai, media) {
     try {
       results.push(await ai.moderateImage(image));
     } catch {
-      // Image AI is optional for upload moderation; text moderation still runs.
+      results.push(unavailableModeration());
     }
+  } else {
+    results.push(unavailableModeration());
   }
 
   if (typeof ai.caption === 'function') {
     try {
       results.push(await moderateOcrText(ai, await ai.caption(image, 'ocr')));
     } catch {
-      // Missing vision/OCR support must not block otherwise valid uploads.
+      results.push(unavailableModeration('OCR Scan Unavailable'));
     }
+  } else {
+    results.push(unavailableModeration('OCR Scan Unavailable'));
   }
 
   return mergeModerationResults(...results);
 }
 
 async function scanUploadsForModeration(ai, safeMedia) {
+  if (!safeMedia.length) {
+    return { status: 'Safe', labels: [] };
+  }
   const results = [];
   for (const media of safeMedia) {
     results.push(await scanImageForModeration(ai, media));
@@ -1744,21 +1904,17 @@ function validateImageThumbnail(thumbnail) {
   }
 
   const type = String(thumbnail.type ?? '').toLowerCase();
-  if (!type.startsWith('image/') || UNSAFE_IMAGE_TYPES.has(type)) {
+  if (!SUPPORTED_IMAGE_TYPES.has(type)) {
     const error = new Error('Thumbnail ảnh không hợp lệ');
     error.statusCode = 400;
     throw error;
   }
 
-  const dataUrl = thumbnail.dataUrl ?? '';
-  if (!dataUrl.startsWith('data:image/')) {
-    const error = new Error('Dữ liệu thumbnail không hợp lệ');
-    error.statusCode = 400;
-    throw error;
-  }
+  const parsedData = parseStrictMediaDataUrl(thumbnail.dataUrl, type, 'Dữ liệu thumbnail không hợp lệ');
+  const dataUrl = parsedData.dataUrl;
 
   const maxBytes = readPositiveInteger(process.env.MAX_THUMBNAIL_BYTES, DEFAULT_MAX_THUMBNAIL_BYTES);
-  if (Buffer.byteLength(dataUrl) > maxBytes) {
+  if (parsedData.bytes.length > maxBytes) {
     const error = new Error('Thumbnail ảnh quá lớn');
     error.statusCode = 413;
     throw error;
@@ -1768,7 +1924,7 @@ function validateImageThumbnail(thumbnail) {
     name: sanitizeFileName(thumbnail.name || 'thumbnail.jpg'),
     type,
     dataUrl,
-    sizeBytes: sanitizePositiveInteger(thumbnail.sizeBytes, maxBytes) ?? dataUrlBytes(dataUrl)
+    sizeBytes: sanitizePositiveInteger(thumbnail.sizeBytes, maxBytes) ?? parsedData.bytes.length
   };
 
   const width = sanitizePositiveInteger(thumbnail.width, 2_000);
@@ -1843,6 +1999,7 @@ function serializeThread(thread, comments) {
     votes: publicVotes(thread),
     reactions: publicReactions(thread),
     diceRolls: Array.isArray(thread.diceRolls) ? thread.diceRolls : [],
+    links: serializePostLinks(thread.links),
     replyCount: publicComments.length,
     previewComments: previewComments.map((comment) => serializeComment(comment, thread)),
     omittedReplyCount: omittedComments.length,
@@ -1863,7 +2020,8 @@ function serializeComment(comment, thread = null) {
     bodyLines: parsePostText(comment.body),
     votes: publicVotes(comment),
     reactions: publicReactions(comment),
-    diceRolls: Array.isArray(comment.diceRolls) ? comment.diceRolls : []
+    diceRolls: Array.isArray(comment.diceRolls) ? comment.diceRolls : [],
+    links: serializePostLinks(comment.links)
   };
 }
 
@@ -2625,6 +2783,9 @@ function serializeAppeal(appeal, state) {
 }
 
 function shouldQueueModeration(moderation, threshold) {
+  if (moderation.status === 'Unavailable') {
+    return true;
+  }
   if (moderation.status !== 'Flagged') {
     return false;
   }
@@ -2665,6 +2826,9 @@ const CHAT_CONTEXT_MAX_CHARS = 16_000;
 const CHAT_CONTEXT_TEXT_MAX_CHARS = 600;
 const CHAT_BOARD_THREAD_LIMIT = 24;
 const CHAT_THREAD_COMMENT_LIMIT = 30;
+const CHAT_SIMILAR_THREAD_LIMIT = 5;
+const CHAT_SIMILAR_MIN_SCORE = 0.08;
+const CHAT_SOURCE_LIMIT = 24;
 const CHAT_SCOPES = new Set(['site', 'board', 'thread']);
 const CHAT_PAGES = new Set([
   'home',
@@ -2679,6 +2843,13 @@ const CHAT_PAGES = new Set([
   'account',
   'admin'
 ]);
+const CHAT_SIMILAR_QUESTION_RE =
+  /tương tự|tuong tu|giống|giong|similar|related|cùng chủ đề|cung chu de|gợi ý thread|goi y thread/i;
+const CHAT_SUMMARY_QUESTION_RE =
+  /tóm tắt|tom tat|summary|summarize|ý chính|y chinh|điểm chính|diem chinh|nội dung chính|noi dung chinh/i;
+const CHAT_ATTACHMENT_QUESTION_RE =
+  /đính kèm|dinh kem|file|ảnh|anh|hình|hinh|media|attachment|link ngoài|link ngoai|url/i;
+const CHAT_QUOTE_QUESTION_RE = /trích dẫn|trich dan|>>|quote|báo giá|bao gia|trích|trich/i;
 
 function chatRequestError(message: string, statusCode = 400) {
   const error = new Error(message);
@@ -2756,6 +2927,51 @@ function createChatContextWriter(maxChars = CHAT_CONTEXT_MAX_CHARS) {
   };
 }
 
+function createChatSourceCollector(limit = CHAT_SOURCE_LIMIT) {
+  const sources: AnyRecord[] = [];
+  const seen = new Set<string>();
+  return {
+    add(source: AnyRecord) {
+      const href = String(source?.href || '').trim();
+      if (!href || !href.startsWith('#thread/') || sources.length >= limit) {
+        return false;
+      }
+      const key = `${source.kind || 'post'}:${href}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      sources.push({
+        kind: source.kind === 'similar' ? 'similar' : source.kind === 'thread' ? 'thread' : 'post',
+        label: compactChatText(source.label || href, 120),
+        href: href.slice(0, 400),
+        threadId: String(source.threadId || '').slice(0, 120),
+        ...(Number.isFinite(Number(source.globalNumber))
+          ? { globalNumber: Number(source.globalNumber) }
+          : {})
+      });
+      return true;
+    },
+    list() {
+      return sources;
+    }
+  };
+}
+
+function chatThreadHref(threadId: unknown) {
+  const id = String(threadId ?? '').trim();
+  return id ? `#thread/${encodeURIComponent(id)}` : '';
+}
+
+function chatPostHref(threadId: unknown, globalNumber: unknown) {
+  const base = chatThreadHref(threadId);
+  const number = Number(globalNumber);
+  if (!base || !Number.isSafeInteger(number) || number <= 0) {
+    return base;
+  }
+  return `${base}?p=${encodeURIComponent(String(number))}`;
+}
+
 function referencedChatPostNumbers(question = '') {
   const values = new Set<number>();
   for (const match of String(question).matchAll(/(?:>>|No\.?\s*)(\d{1,12})/gi)) {
@@ -2765,6 +2981,303 @@ function referencedChatPostNumbers(question = '') {
     }
   }
   return values;
+}
+
+function quotedPostNumbersFromBody(body = '') {
+  const values = new Set<number>();
+  for (const match of String(body).matchAll(/>>(\d{1,12})/g)) {
+    const value = Number(match[1]);
+    if (Number.isSafeInteger(value) && value > 0) {
+      values.add(value);
+    }
+  }
+  return values;
+}
+
+function chatAttachmentSummary(post: AnyRecord) {
+  const items = mediaItems(post);
+  if (!items.length) {
+    return '';
+  }
+  return items
+    .slice(0, 4)
+    .map((item, index) => {
+      const name = compactChatText(item?.name || item?.originalName || item?.filename || `file-${index + 1}`, 80);
+      const type = compactChatText(item?.type || item?.mimeType || 'file', 48);
+      const spoiler = item?.spoiler ? ', spoiler' : '';
+      return `${name} (${type}${spoiler})`;
+    })
+    .join('; ');
+}
+
+function chatExternalLinksSummary(post: AnyRecord) {
+  const links = serializePostLinks(post?.links);
+  if (!links.length) {
+    return '';
+  }
+  return links
+    .slice(0, 4)
+    .map((link) => {
+      const title = compactChatText(link.title || link.domain || link.url, 100);
+      const url = compactChatText(link.url, 180);
+      const kind = compactChatText(link.kind || 'link', 24);
+      return `${title} <${url}> [${kind}]`;
+    })
+    .join('; ');
+}
+
+function chatPostMetaSuffix(post: AnyRecord) {
+  const parts: string[] = [];
+  const quotes = [...quotedPostNumbersFromBody(post?.body)].slice(0, 8);
+  if (quotes.length) {
+    parts.push(`trích dẫn >>${quotes.join(', >>')}`);
+  }
+  const attachments = chatAttachmentSummary(post);
+  if (attachments) {
+    parts.push(`đính kèm: ${attachments}`);
+  }
+  const externalLinks = chatExternalLinksSummary(post);
+  if (externalLinks) {
+    parts.push(`link: ${externalLinks}`);
+  }
+  return parts.length ? ` | ${parts.join(' | ')}` : '';
+}
+
+function formatChatPostLine(post: AnyRecord, threadId: unknown, bodyMax = CHAT_CONTEXT_TEXT_MAX_CHARS) {
+  const href = chatPostHref(threadId, post.globalNumber);
+  return `- No.${post.globalNumber} (chi tiết: ${href}): ${compactChatText(post.body, bodyMax)}${chatPostMetaSuffix(post)}`;
+}
+
+function formatChatThreadLine(thread: AnyRecord, state: AnyRecord, { includeBoard = false } = {}) {
+  const href = chatThreadHref(thread.id);
+  const replyCount = publicReplyCount(state, thread.id);
+  const boardPart = includeBoard ? ` tại /${compactChatText(thread.boardSlug, 80)}/` : '';
+  const subject = compactChatText(thread.subject, 180);
+  return `- No.${thread.globalNumber}${boardPart} (mở: ${href}, ${replyCount} phản hồi): ${subject} ${compactChatText(thread.body)}${chatPostMetaSuffix(thread)}`;
+}
+
+function chatTokenSet(text: unknown) {
+  return new Set(pulseKeywords(String(text ?? '')));
+}
+
+function chatTokenJaccard(left: Set<string>, right: Set<string>) {
+  if (!left.size || !right.size) {
+    return 0;
+  }
+  let intersection = 0;
+  for (const token of left) {
+    if (right.has(token)) {
+      intersection += 1;
+    }
+  }
+  return intersection / (left.size + right.size - intersection);
+}
+
+function scoreTextAgainstQuestion(text: unknown, questionTokens: Set<string>) {
+  if (!questionTokens.size) {
+    return 0;
+  }
+  const haystack = String(text ?? '');
+  const textTokens = chatTokenSet(haystack);
+  let hits = 0;
+  for (const token of questionTokens) {
+    if (textTokens.has(token) || haystack.toLowerCase().includes(token)) {
+      hits += 1;
+    }
+  }
+  return hits / questionTokens.size;
+}
+
+function readCachedChatBullets(state: AnyRecord, cacheKey: string) {
+  const cached = state?.aiSummaryCache?.[cacheKey];
+  if (!cached || !Array.isArray(cached.bullets)) {
+    return [];
+  }
+  return cached.bullets
+    .map((bullet: unknown) => compactChatText(bullet, 280))
+    .filter(Boolean)
+    .slice(0, 8);
+}
+
+function pushCachedSummary(writer: { push: (value: unknown) => boolean }, label: string, bullets: string[]) {
+  if (!bullets.length) {
+    return false;
+  }
+  writer.push(`${label} (đã cache; chỉ tham khảo, có thể cũ hơn bài mới):`);
+  for (const bullet of bullets) {
+    writer.push(`• ${bullet}`);
+  }
+  return true;
+}
+
+function selectThreadCommentsForChat(comments: AnyRecord[], question: string, limit = CHAT_THREAD_COMMENT_LIMIT) {
+  if (!comments.length || limit <= 0) {
+    return [];
+  }
+  const referencedNumbers = referencedChatPostNumbers(question);
+  for (const comment of comments.slice(-Math.min(comments.length, limit * 2))) {
+    for (const number of quotedPostNumbersFromBody(comment?.body)) {
+      referencedNumbers.add(number);
+    }
+  }
+  const referenced = comments.filter((comment) => referencedNumbers.has(Number(comment.globalNumber)));
+  const remainingSlots = Math.max(0, limit - referenced.length);
+  if (!remainingSlots) {
+    return uniqueById(referenced)
+      .sort((left, right) => Number(left.globalNumber) - Number(right.globalNumber))
+      .slice(-limit);
+  }
+
+  const questionTokens = chatTokenSet(question);
+  const recentPool = comments.slice(-Math.max(limit * 2, 20));
+  const relevantPool =
+    questionTokens.size > 0
+      ? [...comments]
+          .map((comment) => ({
+            comment,
+            score: scoreTextAgainstQuestion(
+              `${comment.body || ''} ${chatAttachmentSummary(comment)} ${chatExternalLinksSummary(comment)}`,
+              questionTokens
+            )
+          }))
+          .filter((entry) => entry.score > 0)
+          .sort(
+            (left, right) =>
+              right.score - left.score || Number(right.comment.globalNumber) - Number(left.comment.globalNumber)
+          )
+          .map((entry) => entry.comment)
+      : [];
+
+  const relevantCount = Math.min(remainingSlots, Math.max(Math.ceil(remainingSlots * 0.55), questionTokens.size ? 4 : 0));
+  const relevant = relevantPool.slice(0, relevantCount);
+  const recentCount = Math.max(0, remainingSlots - relevant.length);
+  const recent = recentPool.slice(-recentCount);
+  return uniqueById([...referenced, ...relevant, ...recent])
+    .sort((left, right) => Number(left.globalNumber) - Number(right.globalNumber))
+    .slice(-limit);
+}
+
+function rankThreadsForChat(
+  threads: AnyRecord[],
+  question: string,
+  {
+    limit,
+    fallbackSort
+  }: {
+    limit: number;
+    fallbackSort: (left: AnyRecord, right: AnyRecord) => number;
+  }
+) {
+  if (!threads.length || limit <= 0) {
+    return [];
+  }
+  const questionTokens = chatTokenSet(question);
+  if (!questionTokens.size) {
+    return [...threads].sort(fallbackSort).slice(0, limit);
+  }
+  return [...threads]
+    .map((thread) => ({
+      thread,
+      score: scoreTextAgainstQuestion(
+        `${thread.subject || ''} ${thread.body || ''} ${chatAttachmentSummary(thread)}`,
+        questionTokens
+      )
+    }))
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return fallbackSort(left.thread, right.thread);
+    })
+    .slice(0, limit)
+    .map((entry) => entry.thread);
+}
+
+function rankChatSources(sources: AnyRecord[], question: string, limit = 12) {
+  if (!Array.isArray(sources) || !sources.length) {
+    return [];
+  }
+  const questionTokens = chatTokenSet(question);
+  const scored = sources.map((source, index) => ({
+    source,
+    index,
+    score:
+      scoreTextAgainstQuestion(`${source.label || ''} ${source.href || ''}`, questionTokens) +
+      (source.kind === 'post' ? 0.05 : 0) +
+      (source.kind === 'similar' && CHAT_SIMILAR_QUESTION_RE.test(question) ? 0.15 : 0)
+  }));
+  scored.sort((left, right) => right.score - left.score || left.index - right.index);
+  // Keep OP-ish early sources if scores are flat: fall back to original order for top slice mix
+  const top = scored.slice(0, limit).map((entry) => entry.source);
+  return top;
+}
+
+function buildChatFollowUps(scope: string, question: string) {
+  const q = String(question || '');
+  if (scope === 'thread') {
+    const followUps = [
+      'Tóm tắt ngắn hơn bằng 3 gạch đầu dòng.',
+      'Những ý nào còn tranh luận?',
+      'Tìm chủ đề tương tự.',
+      'Bài nào có đính kèm hoặc link đáng xem?'
+    ];
+    if (CHAT_SUMMARY_QUESTION_RE.test(q)) {
+      return ['Điểm nào chưa rõ trong thread?', 'Tìm chủ đề tương tự.', 'Có file/link đính kèm không?'];
+    }
+    if (CHAT_SIMILAR_QUESTION_RE.test(q)) {
+      return ['Tóm tắt chủ đề hiện tại.', 'So sánh nhanh với chủ đề tương tự đầu tiên.'];
+    }
+    if (CHAT_ATTACHMENT_QUESTION_RE.test(q) || CHAT_QUOTE_QUESTION_RE.test(q)) {
+      return ['Tóm tắt nội dung chính của thread.', 'Tìm chủ đề tương tự.'];
+    }
+    return followUps;
+  }
+  if (scope === 'board') {
+    return [
+      'Chủ đề nào đáng đọc nhất lúc này?',
+      'Tóm tắt các chủ đề đang hiển thị.',
+      'Chủ đề nào có đính kèm?',
+      'Bảng này dành cho nội dung gì?'
+    ];
+  }
+  return [
+    'Tôi nên bắt đầu từ bảng nào?',
+    'Gợi ý vài chủ đề gần đây để đọc.',
+    '36chan hoạt động như thế nào?',
+    'Trang nội quy nói gì quan trọng?'
+  ];
+}
+
+function findSimilarPublicThreads(
+  state: AnyRecord,
+  sourceThread: AnyRecord,
+  { limit = CHAT_SIMILAR_THREAD_LIMIT, boardOnly = false } = {}
+) {
+  const sourceTokens = chatTokenSet(`${sourceThread.subject || ''} ${sourceThread.body || ''}`);
+  if (sourceTokens.size < 2) {
+    return [];
+  }
+  return state.threads
+    .filter(
+      (thread) =>
+        thread.id !== sourceThread.id &&
+        publicThread(state, thread) &&
+        !thread.isArchived &&
+        (!boardOnly || thread.boardSlug === sourceThread.boardSlug)
+    )
+    .map((thread) => ({
+      thread,
+      score: chatTokenJaccard(sourceTokens, chatTokenSet(`${thread.subject || ''} ${thread.body || ''}`))
+    }))
+    .filter((entry) => entry.score >= CHAT_SIMILAR_MIN_SCORE)
+    .sort(
+      (left, right) =>
+        right.score - left.score ||
+        String(right.thread.bumpedAt || right.thread.createdAt || '').localeCompare(
+          String(left.thread.bumpedAt || left.thread.createdAt || '')
+        )
+    )
+    .slice(0, limit);
 }
 
 function boardChatHeader(writer, board, page = 'board') {
@@ -2778,12 +3291,17 @@ function boardChatHeader(writer, board, page = 'board') {
   if (rules.length) {
     writer.push(`Nội quy riêng của bảng: ${rules.map((rule) => compactChatText(rule, 240)).filter(Boolean).join(' | ')}`);
   }
+  writer.push(
+    'Hướng dẫn liên kết: dùng link hash #thread/{id} hoặc #thread/{id}?p={No.} để dẫn người dùng xem chi tiết bài gốc.'
+  );
 }
 
-function buildSiteChatContext(state: AnyRecord, page = 'home') {
+function buildSiteChatContext(state: AnyRecord, page = 'home', question = '') {
   const writer = createChatContextWriter();
+  const sources = createChatSourceCollector();
   const siteContent = normalizeSiteContent(state.adminSettings?.siteContent ?? DEFAULT_SITE_CONTENT);
   writer.push(`Trang hiện tại: ${page}. Đây là 36chan, diễn đàn ảnh ẩn danh cho sinh viên Việt Nam.`);
+  writer.push(`Câu hỏi người dùng (để ưu tiên ngữ cảnh phù hợp): ${compactChatText(question, 400)}`);
   writer.push(`Tiêu đề chính sách: ${compactChatText(siteContent.policyTitle, 180)}`);
   writer.push(`Giới thiệu chính sách: ${compactChatText(siteContent.policySubtitle, 400)}`);
   writer.push(`Nội quy: ${siteContent.rules.map((line) => compactChatText(line, 300)).join(' | ')}`);
@@ -2794,31 +3312,58 @@ function buildSiteChatContext(state: AnyRecord, page = 'home') {
   writer.push(`Góp ý: ${siteContent.feedback.map((line) => compactChatText(line, 300)).join(' | ')}`);
   writer.push(`Liên hệ: ${siteContent.contact.map((line) => compactChatText(line, 300)).join(' | ')}`);
   writer.push(`Cảnh báo PII: ${compactChatText(siteContent.pii, 800)}`);
+  writer.push(
+    'Hướng dẫn liên kết: khi nhắc chủ đề, dùng #thread/{id}; khi nhắc bài, dùng #thread/{id}?p={No.} để người dùng bấm xem chi tiết.'
+  );
 
   const boards = state.boards.filter(publicBoard);
+  const questionTokens = chatTokenSet(question);
+  const rankedBoards = questionTokens.size
+    ? [...boards]
+        .map((board) => ({
+          board,
+          score: scoreTextAgainstQuestion(
+            `${board.name || ''} ${board.description || ''} ${(board.rules || []).join(' ')}`,
+            questionTokens
+          )
+        }))
+        .sort((left, right) => right.score - left.score)
+        .map((entry) => entry.board)
+    : boards;
   writer.push('Các bảng công khai:');
-  for (const board of boards) {
+  for (const board of rankedBoards) {
     writer.push(
       `- ${compactChatText(board.path || `/${board.slug}/`, 80)} ${compactChatText(board.name || board.slug, 120)}: ${compactChatText(board.description, 280)}`
     );
   }
 
-  const recentThreads = state.threads
-    .filter((thread) => publicThread(state, thread) && !thread.isArchived)
-    .sort((left, right) => String(right.bumpedAt || right.createdAt || '').localeCompare(String(left.bumpedAt || left.createdAt || '')))
-    .slice(0, 12);
-  if (recentThreads.length) {
-    writer.push('Một số chủ đề công khai gần đây:');
-    for (const thread of recentThreads) {
-      writer.push(
-        `- No.${thread.globalNumber} tại /${compactChatText(thread.boardSlug, 80)}/: ${compactChatText(thread.subject, 160)} ${compactChatText(thread.body)}`
-      );
+  const candidateThreads = state.threads.filter((thread) => publicThread(state, thread) && !thread.isArchived);
+  const rankedThreads = rankThreadsForChat(candidateThreads, question, {
+    limit: 12,
+    fallbackSort: (left, right) =>
+      String(right.bumpedAt || right.createdAt || '').localeCompare(String(left.bumpedAt || left.createdAt || ''))
+  });
+  if (rankedThreads.length) {
+    writer.push(
+      questionTokens.size
+        ? 'Chủ đề công khai liên quan/gần đây (đã xếp theo độ khớp câu hỏi):'
+        : 'Một số chủ đề công khai gần đây:'
+    );
+    for (const thread of rankedThreads) {
+      writer.push(formatChatThreadLine(thread, state, { includeBoard: true }));
+      sources.add({
+        kind: 'thread',
+        label: `Chủ đề No.${thread.globalNumber}`,
+        href: chatThreadHref(thread.id),
+        threadId: thread.id,
+        globalNumber: thread.globalNumber
+      });
     }
   }
-  return { scope: 'site', label: '36chan', context: writer.text() };
+  return { scope: 'site', label: '36chan', context: writer.text(), sources: sources.list() };
 }
 
-function buildBoardChatContext(state: AnyRecord, boardSlug: unknown, page = 'board') {
+function buildBoardChatContext(state: AnyRecord, boardSlug: unknown, page = 'board', question = '') {
   const slug = String(boardSlug ?? '').trim();
   if (!slug) {
     throw chatRequestError('Thiếu bảng cho chatbot');
@@ -2828,18 +3373,32 @@ function buildBoardChatContext(state: AnyRecord, boardSlug: unknown, page = 'boa
     throw chatRequestError('Không tìm thấy bảng', 404);
   }
   const writer = createChatContextWriter();
+  const sources = createChatSourceCollector();
   boardChatHeader(writer, board, page);
+  writer.push(`Câu hỏi người dùng (để ưu tiên ngữ cảnh phù hợp): ${compactChatText(question, 400)}`);
+  pushCachedSummary(writer, 'Tóm tắt bảng đã cache', readCachedChatBullets(state, `board:${slug}`));
   const archived = page === 'archive';
-  const threads = state.threads
-    .filter((thread) => thread.boardSlug === slug && publicPost(thread) && Boolean(thread.isArchived) === archived)
-    .sort(compareBoardThreads)
-    .slice(0, CHAT_BOARD_THREAD_LIMIT);
-  writer.push(archived ? 'Các chủ đề công khai trong kho lưu trữ:' : 'Các chủ đề công khai đang hoạt động:');
+  const boardThreads = state.threads.filter(
+    (thread) => thread.boardSlug === slug && publicPost(thread) && Boolean(thread.isArchived) === archived
+  );
+  const threads = rankThreadsForChat(boardThreads, question, {
+    limit: CHAT_BOARD_THREAD_LIMIT,
+    fallbackSort: compareBoardThreads
+  });
+  writer.push(
+    archived
+      ? 'Các chủ đề công khai trong kho lưu trữ (ưu tiên khớp câu hỏi):'
+      : 'Các chủ đề công khai đang hoạt động (ưu tiên khớp câu hỏi):'
+  );
   for (const thread of threads) {
-    const replyCount = publicReplyCount(state, thread.id);
-    writer.push(
-      `- No.${thread.globalNumber} (threadId ${compactChatText(thread.id, 120)}, ${replyCount} phản hồi): ${compactChatText(thread.subject, 180)} ${compactChatText(thread.body)}`
-    );
+    writer.push(formatChatThreadLine(thread, state));
+    sources.add({
+      kind: 'thread',
+      label: `No.${thread.globalNumber}${thread.subject ? ` · ${compactChatText(thread.subject, 60)}` : ''}`,
+      href: chatThreadHref(thread.id),
+      threadId: thread.id,
+      globalNumber: thread.globalNumber
+    });
   }
   if (!threads.length) {
     writer.push('Hiện chưa có chủ đề công khai phù hợp trong phạm vi này.');
@@ -2847,7 +3406,8 @@ function buildBoardChatContext(state: AnyRecord, boardSlug: unknown, page = 'boa
   return {
     scope: 'board',
     label: `${compactChatText(board.path || `/${board.slug}/`, 80)} ${compactChatText(board.name || board.slug, 120)}`.trim(),
-    context: writer.text()
+    context: writer.text(),
+    sources: sources.list()
   };
 }
 
@@ -2862,35 +3422,126 @@ function buildThreadChatContext(state: AnyRecord, threadId: unknown, question: s
   }
   const board = findBoard(state, thread.boardSlug, { publicOnly: true });
   const writer = createChatContextWriter();
+  const sources = createChatSourceCollector();
   if (board) {
     boardChatHeader(writer, board, 'thread');
   }
-  writer.push(`Chủ đề hiện tại: No.${thread.globalNumber}, threadId ${compactChatText(thread.id, 120)}.`);
-  if (thread.subject) {
-    writer.push(`Tiêu đề: ${compactChatText(thread.subject, 220)}`);
+  // Prefer subject; fall back to body preview so labels match the public UI title.
+  const subject = compactChatText(thread.subject || '', 220);
+  const bodyPreview = compactChatText(thread.body || '', 80);
+  const title = subject || bodyPreview;
+  const threadHref = chatThreadHref(thread.id);
+  writer.push(`Câu hỏi người dùng (để ưu tiên phản hồi liên quan): ${compactChatText(question, 400)}`);
+  if (title) {
+    writer.push(
+      `Chủ đề hiện tại: No.${thread.globalNumber}, tiêu đề "${compactChatText(title, 220)}" (mở: ${threadHref}).`
+    );
+  } else {
+    writer.push(`Chủ đề hiện tại: No.${thread.globalNumber} (mở: ${threadHref}).`);
   }
-  writer.push(`Bài mở đầu: ${compactChatText(thread.body, 1_000)}`);
+  pushCachedSummary(writer, 'Tóm tắt thread đã cache', readCachedChatBullets(state, `thread:${id}`));
+  writer.push(`Bài mở đầu (chi tiết: ${chatPostHref(thread.id, thread.globalNumber)}): ${compactChatText(thread.body, 1_000)}${chatPostMetaSuffix(thread)}`);
+  sources.add({
+    kind: 'post',
+    label: `OP No.${thread.globalNumber}`,
+    href: chatPostHref(thread.id, thread.globalNumber),
+    threadId: thread.id,
+    globalNumber: thread.globalNumber
+  });
 
   const comments = state.comments
     .filter((comment) => comment.threadId === id && publicPost(comment))
     .sort((left, right) => Number(left.globalNumber) - Number(right.globalNumber));
+  const commentsByNumber = new Map(comments.map((comment) => [Number(comment.globalNumber), comment]));
+  const selected = selectThreadCommentsForChat(comments, question, CHAT_THREAD_COMMENT_LIMIT);
   const referencedNumbers = referencedChatPostNumbers(question);
-  const referenced = comments.filter((comment) => referencedNumbers.has(Number(comment.globalNumber)));
-  const recentLimit = Math.max(0, CHAT_THREAD_COMMENT_LIMIT - referenced.length);
-  const selected = uniqueById([...referenced, ...comments.slice(-recentLimit)])
-    .sort((left, right) => Number(left.globalNumber) - Number(right.globalNumber))
-    .slice(-CHAT_THREAD_COMMENT_LIMIT);
-  writer.push(`Phản hồi công khai (${comments.length} tổng cộng, cung cấp ${selected.length} phản hồi liên quan/gần nhất):`);
+  for (const post of [thread, ...selected]) {
+    for (const number of quotedPostNumbersFromBody(post?.body)) {
+      referencedNumbers.add(number);
+    }
+  }
+
+  writer.push(
+    `Phản hồi công khai (${comments.length} tổng cộng, cung cấp ${selected.length} phản hồi liên quan/trích dẫn/gần nhất):`
+  );
   for (const comment of selected) {
-    writer.push(`- No.${comment.globalNumber}: ${compactChatText(comment.body)}`);
+    writer.push(formatChatPostLine(comment, thread.id));
+    sources.add({
+      kind: 'post',
+      label: `No.${comment.globalNumber}`,
+      href: chatPostHref(thread.id, comment.globalNumber),
+      threadId: thread.id,
+      globalNumber: comment.globalNumber
+    });
   }
   if (!selected.length) {
     writer.push('Chủ đề chưa có phản hồi công khai.');
   }
+
+  // If quotes point to posts outside the selected window, append short targets.
+  const missingQuoteTargets: AnyRecord[] = [];
+  for (const number of referencedNumbers) {
+    if (number === Number(thread.globalNumber) || selected.some((item) => Number(item.globalNumber) === number)) {
+      continue;
+    }
+    const comment = commentsByNumber.get(number);
+    if (comment) {
+      missingQuoteTargets.push(comment);
+    }
+    if (missingQuoteTargets.length >= 8) {
+      break;
+    }
+  }
+  if (missingQuoteTargets.length) {
+    writer.push('Bài được trích dẫn (>>No.) ngoài cửa sổ phản hồi đã chọn:');
+    for (const comment of missingQuoteTargets) {
+      writer.push(formatChatPostLine(comment, thread.id, 360));
+      sources.add({
+        kind: 'post',
+        label: `No.${comment.globalNumber}`,
+        href: chatPostHref(thread.id, comment.globalNumber),
+        threadId: thread.id,
+        globalNumber: comment.globalNumber
+      });
+    }
+  }
+
+  const similarLimit = CHAT_SIMILAR_QUESTION_RE.test(String(question || ''))
+    ? CHAT_SIMILAR_THREAD_LIMIT
+    : Math.min(3, CHAT_SIMILAR_THREAD_LIMIT);
+  const similar = findSimilarPublicThreads(state, thread, { limit: similarLimit, boardOnly: false });
+  if (similar.length) {
+    writer.push('Chủ đề công khai tương tự (điểm giao từ khóa; chỉ tham khảo):');
+    for (const entry of similar) {
+      const similarTitle =
+        compactChatText(entry.thread.subject || '', 120) || compactChatText(entry.thread.body || '', 80) || `No.${entry.thread.globalNumber}`;
+      writer.push(
+        `- No.${entry.thread.globalNumber} tại /${compactChatText(entry.thread.boardSlug, 80)}/ (mở: ${chatThreadHref(entry.thread.id)}, điểm ${entry.score.toFixed(2)}): ${similarTitle}`
+      );
+      sources.add({
+        kind: 'similar',
+        label: `Tương tự No.${entry.thread.globalNumber}`,
+        href: chatThreadHref(entry.thread.id),
+        threadId: entry.thread.id,
+        globalNumber: entry.thread.globalNumber
+      });
+    }
+  } else if (CHAT_SIMILAR_QUESTION_RE.test(String(question || ''))) {
+    writer.push('Không tìm thấy chủ đề công khai tương tự đủ gần trong dữ liệu hiện có.');
+  }
+
+  writer.push(
+    'Gợi ý trả lời: mở đầu bằng câu trả lời trực tiếp; trích No. + link #thread/...; nêu đính kèm/trích dẫn nếu liên quan; kết thúc bằng 1 gợi ý bước tiếp theo ngắn.'
+  );
+
+  const threadLabel = title
+    ? `Chủ đề "${title.length > 48 ? `${title.slice(0, 45).trimEnd()}...` : title}"`
+    : `Chủ đề No.${thread.globalNumber}`;
   return {
     scope: 'thread',
-    label: `Chủ đề No.${thread.globalNumber}`,
-    context: writer.text()
+    label: threadLabel,
+    context: writer.text(),
+    sources: sources.list()
   };
 }
 
@@ -2902,9 +3553,9 @@ function buildChatContext(
     return buildThreadChatContext(state, threadId, question);
   }
   if (scope === 'board') {
-    return buildBoardChatContext(state, boardSlug, page);
+    return buildBoardChatContext(state, boardSlug, page, question);
   }
-  return buildSiteChatContext(state, page);
+  return buildSiteChatContext(state, page, question);
 }
 
 function aiBudgetKey({ kind, ip = '', posterToken = '', actor = 'public', createdAt }) {
@@ -3104,7 +3755,8 @@ export function createForumService({
   webauthn = defaultWebAuthn,
   moderationConfidenceThreshold = readModerationConfidenceThreshold(),
   randomInt = crypto.randomInt,
-  dmEncryptionSecret
+  dmEncryptionSecret,
+  realtimeState = noopRealtimeState
 }: ForumServiceOptions) {
   const dmSecret = (() => {
     try {
@@ -3118,6 +3770,10 @@ export function createForumService({
   // Tokens are cleaned up after 14 days (matching JWT maxAge).
   const revokedTokens = new Map();
   const TOKEN_TTL_MS = 14 * 24 * 60 * 60 * 1000;
+  const mutationRealtimeEvents = new AsyncLocalStorage<Array<{
+    event: string;
+    payload: AnyRecord;
+  }>>();
 
   function cleanExpiredRevocations() {
     const cutoff = now().getTime() - TOKEN_TTL_MS;
@@ -3128,11 +3784,99 @@ export function createForumService({
     }
   }
 
+  function publishRealtime(event: string, payload: AnyRecord): void {
+    const pending = mutationRealtimeEvents.getStore();
+    if (pending) {
+      pending.push({ event, payload });
+    } else {
+      realtime.publish(event, payload);
+    }
+  }
+
   function logEvent(event: string, payload: AnyRecord = {}) {
+    if (
+      event.startsWith('moderation.') ||
+      event.startsWith('admin.moderation') ||
+      event.startsWith('appeal.') ||
+      event.startsWith('report.')
+    ) {
+      const realtimeEvent = {
+        kind: event,
+        occurredAt: now().toISOString(),
+        ...payload
+      };
+      publishRealtime('moderation:event', realtimeEvent);
+    }
     if (logger === noopLogger) {
       return;
     }
     logger({ event, ...payload });
+  }
+
+  async function enforceRealtimeUserRateLimit(
+    accountId: string,
+    action: string,
+    { limit, windowMs }: { limit: number; windowMs: number }
+  ): Promise<void> {
+    if (!accountId || !realtimeState.consumeUserRateLimit) {
+      return;
+    }
+    let result;
+    try {
+      result = await realtimeState.consumeUserRateLimit(accountId, action, { limit, windowMs });
+    } catch (cause) {
+      logEvent('realtime.rate_limit.failure', {
+        action,
+        message: cause instanceof Error ? cause.message : String(cause)
+      });
+      const error = new Error('Dịch vụ giới hạn realtime tạm thời không khả dụng');
+      error.statusCode = 503;
+      throw error;
+    }
+    if (!result.allowed) {
+      const error = new Error('Bạn thao tác quá nhanh. Vui lòng thử lại sau.');
+      error.statusCode = 429;
+      error.retryAfter = Math.max(1, Math.ceil(Number(result.retryAfterMs || 0) / 1000));
+      throw error;
+    }
+  }
+
+  async function cachedUnreadCount(accountId: string): Promise<number | null> {
+    if (!realtimeState.getUnreadCount) {
+      return null;
+    }
+    try {
+      return await realtimeState.getUnreadCount(accountId);
+    } catch (cause) {
+      logEvent('realtime.unread_cache.read_failed', {
+        message: cause instanceof Error ? cause.message : String(cause)
+      });
+      return null;
+    }
+  }
+
+  async function cacheUnreadCount(accountId: string, count: number): Promise<void> {
+    try {
+      await realtimeState.setUnreadCount?.(accountId, count);
+    } catch (cause) {
+      logEvent('realtime.unread_cache.write_failed', {
+        message: cause instanceof Error ? cause.message : String(cause)
+      });
+    }
+  }
+
+  async function invalidateUnreadCounts(accountIds: string[]): Promise<void> {
+    await Promise.all(
+      [...new Set(accountIds.map(String).filter(Boolean))].map(async (accountId) => {
+        try {
+          await realtimeState.invalidateUnreadCount?.(accountId);
+        } catch (cause) {
+          logEvent('realtime.unread_cache.invalidate_failed', {
+            message: cause instanceof Error ? cause.message : String(cause)
+          });
+        }
+      })
+    );
   }
 
   // Serialize the whole read-modify-write. Mongo additionally supplies a
@@ -3140,7 +3884,7 @@ export function createForumService({
   let mutateQueue = Promise.resolve();
   let emailQueue = Promise.resolve();
   function mutate(callback: (state: AnyRecord) => any, { write = null }: AnyRecord = {}) {
-    const execute = async () => {
+    const execute = () => mutationRealtimeEvents.run([], async () => {
       const state = await store.read();
       const result = await callback(state);
       if (write) {
@@ -3148,8 +3892,11 @@ export function createForumService({
       } else {
         await store.write(state);
       }
+      for (const realtimeEvent of mutationRealtimeEvents.getStore() ?? []) {
+        realtime.publish(realtimeEvent.event, realtimeEvent.payload);
+      }
       return result;
-    };
+    });
     const run = mutateQueue.then(() => (
       typeof store.withMutationLock === 'function'
         ? store.withMutationLock(execute)
@@ -3201,6 +3948,123 @@ export function createForumService({
 
   function serializeCurrentAccount(state: AnyRecord, user: AnyRecord = {}) {
     return serializeAccount(state, user, now());
+  }
+
+  function clearTwoFactorChallenge(user: AnyRecord) {
+    user.twoFactorChallengeId = null;
+    user.twoFactorChallengeExpiresAt = null;
+  }
+
+  function clearTwoFactorLoginFailures(user: AnyRecord) {
+    user.failedTwoFactorAttempts = 0;
+    user.twoFactorLockedUntil = null;
+  }
+
+  async function completeTwoFactorLogin(userId, challengeId, verifyFactor) {
+    const outcome = await mutate(async (state) => {
+      const user = state.users.find((item) => item.id === userId);
+      if (!user) {
+        return {
+          write: false,
+          error: { message: 'Không tìm thấy tài khoản', statusCode: 404 }
+        };
+      }
+
+      const checkedAt = now();
+      const lockedUntil = user.twoFactorLockedUntil
+        ? new Date(user.twoFactorLockedUntil).getTime()
+        : 0;
+      if (lockedUntil && lockedUntil > checkedAt.getTime()) {
+        return {
+          write: false,
+          error: {
+            message: 'Xác thực 2FA tạm thời bị khóa do nhập sai nhiều lần. Vui lòng thử lại sau.',
+            statusCode: 429,
+            retryAfter: Math.ceil((lockedUntil - checkedAt.getTime()) / 1000)
+          }
+        };
+      }
+
+      const challengeExpiresAt = new Date(user.twoFactorChallengeExpiresAt || 0).getTime();
+      const providedChallenge = Buffer.from(String(challengeId || ''));
+      const expectedChallenge = Buffer.from(String(user.twoFactorChallengeId || ''));
+      const challengeMatches = Boolean(
+        challengeId
+        && user.twoFactorChallengeId
+        && providedChallenge.length === expectedChallenge.length
+        && crypto.timingSafeEqual(providedChallenge, expectedChallenge)
+      );
+      if (!challengeMatches || !Number.isFinite(challengeExpiresAt) || challengeExpiresAt <= checkedAt.getTime()) {
+        const shouldClear = Boolean(
+          user.twoFactorChallengeId
+          && Number.isFinite(challengeExpiresAt)
+          && challengeExpiresAt <= checkedAt.getTime()
+        );
+        if (shouldClear) {
+          clearTwoFactorChallenge(user);
+          user.updatedAt = checkedAt.toISOString();
+        }
+        return {
+          write: shouldClear,
+          error: {
+            message: 'Yêu cầu xác thực đã hết hạn hoặc không hợp lệ',
+            statusCode: 400
+          }
+        };
+      }
+
+      const factor = verifyFactor(user);
+      if (!factor.available) {
+        return {
+          write: false,
+          error: { message: factor.message, statusCode: 400 }
+        };
+      }
+      if (!factor.valid) {
+        user.failedTwoFactorAttempts = (user.failedTwoFactorAttempts || 0) + 1;
+        let retryAfter;
+        let statusCode = 400;
+        let message = factor.message;
+        if (user.failedTwoFactorAttempts >= MAX_FAILED_TWO_FACTOR_ATTEMPTS) {
+          user.failedTwoFactorAttempts = 0;
+          user.twoFactorLockedUntil = new Date(
+            checkedAt.getTime() + TWO_FACTOR_LOCKOUT_MS
+          ).toISOString();
+          clearTwoFactorChallenge(user);
+          retryAfter = Math.ceil(TWO_FACTOR_LOCKOUT_MS / 1000);
+          statusCode = 429;
+          message = 'Xác thực 2FA tạm thời bị khóa do nhập sai nhiều lần. Vui lòng thử lại sau.';
+        }
+        user.updatedAt = checkedAt.toISOString();
+        return {
+          write: true,
+          error: { message, statusCode, retryAfter }
+        };
+      }
+
+      factor.consume?.();
+      clearTwoFactorChallenge(user);
+      clearTwoFactorLoginFailures(user);
+      user.updatedAt = checkedAt.toISOString();
+      return {
+        write: true,
+        result: { ok: true, account: serializeCurrentAccount(state, user) }
+      };
+    }, {
+      write: async (state, result) => {
+        if (result.write) {
+          await store.write(state);
+        }
+      }
+    });
+
+    if (outcome.error) {
+      const error = new Error(outcome.error.message);
+      error.statusCode = outcome.error.statusCode;
+      error.retryAfter = outcome.error.retryAfter;
+      throw error;
+    }
+    return outcome.result;
   }
 
   function createEmailChallenge(user: AnyRecord, purpose: string, email: string) {
@@ -3295,11 +4159,26 @@ export function createForumService({
     }
   }
 
+  function postMentionsAccount(body: unknown, username: unknown) {
+    const safeUsername = normalizeAccountUsername(String(username ?? ''));
+    if (!ACCOUNT_USERNAME_PATTERN.test(safeUsername)) {
+      return false;
+    }
+    const escapedUsername = safeUsername.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&');
+    return new RegExp(
+      `(^|[^a-z0-9._-])@${escapedUsername}(?![a-z0-9._-])`,
+      'i'
+    ).test(String(body || '').normalize('NFKC'));
+  }
+
   function postNotificationMessages(state: AnyRecord, { kind, thread, comment, authorAccountId }: AnyRecord) {
     const board = findBoard(state, thread.boardSlug);
     const boardLabel = board?.path || `/${thread.boardSlug}/`;
     const baseUrl = String(appBaseUrl || '').replace(/\/+$/, '');
     const threadUrl = `${baseUrl}/#thread/${encodeURIComponent(thread.id)}`;
+    const postUrl = comment?.globalNumber
+      ? `${threadUrl}?p=${encodeURIComponent(comment.globalNumber)}`
+      : threadUrl;
     const preview = safePrivateString(comment?.body || thread.subject || thread.body, 180);
     const messages: EmailMessage[] = [];
 
@@ -3314,20 +4193,58 @@ export function createForumService({
       const watchesThread = normalizeAccountWatchlist(user.privateData?.watchlist)
         .some((item) => item.threadId === thread.id);
       const subscribedToBoard = settings.boardSubscriptions.includes(thread.boardSlug);
-      const shouldSend = kind === 'comment'
+      const followsPost = kind === 'comment'
         ? settings.notificationPreferences.watchedThreads && watchesThread
         : settings.notificationPreferences.boardSubscriptions && subscribedToBoard;
-      if (!shouldSend) {
+      const mentioned = settings.notificationPreferences.emailMentions &&
+        postMentionsAccount(comment?.body || thread.body, user.username);
+      if (!followsPost && !mentioned) {
         continue;
       }
-      const subject = kind === 'comment'
-        ? `Phản hồi mới trong ${boardLabel}`
-        : `Chủ đề mới trong ${boardLabel}`;
+      const subject = mentioned
+        ? `Bạn được nhắc đến trên ${boardLabel}`
+        : kind === 'comment'
+          ? `Phản hồi mới trong ${boardLabel}`
+          : `Chủ đề mới trong ${boardLabel}`;
       messages.push({
         to: user.email,
         subject,
-        text: `${subject}\n\n${preview}\n\n${threadUrl}`,
-        html: `<p><strong>${escapeEmailHtml(subject)}</strong></p><p>${escapeEmailHtml(preview)}</p><p><a href="${escapeEmailHtml(threadUrl)}">Mở chủ đề trên 36chan</a></p>`
+        text: `${subject}\n\n${preview}\n\n${postUrl}`,
+        html: `<p><strong>${escapeEmailHtml(subject)}</strong></p><p>${escapeEmailHtml(preview)}</p><p><a href="${escapeEmailHtml(postUrl)}">Mở bài viết trên 36chan</a></p>`
+      });
+    }
+    return messages;
+  }
+
+  function directMessageNotificationMessages(
+    state: AnyRecord,
+    { conversation, sender }: AnyRecord
+  ): EmailMessage[] {
+    const baseUrl = String(appBaseUrl || '').replace(/\/+$/, '');
+    const conversationUrl = `${baseUrl}/#messages/${encodeURIComponent(conversation.id)}`;
+    const senderUsername = String(sender?.username || 'ai đó');
+    const subject = `Tin nhắn mới từ @${senderUsername}`;
+    const messages: EmailMessage[] = [];
+    for (const participantId of normalizeParticipantIds(conversation.participantIds)) {
+      if (participantId === sender?.id || conversationIsMutedFor(conversation, participantId)) {
+        continue;
+      }
+      const user = state.users.find((item: AnyRecord) => item.id === participantId);
+      if (!user?.email || !user.emailVerifiedAt || user.disabled) {
+        continue;
+      }
+      const settings = normalizeAccountSettings(state, {}, user.settings);
+      if (
+        !settings.notificationPreferences.email ||
+        !settings.notificationPreferences.emailDirectMessages
+      ) {
+        continue;
+      }
+      messages.push({
+        to: user.email,
+        subject,
+        text: `${subject}\n\nBạn có tin nhắn riêng mới. Nội dung tin nhắn không được đưa vào email.\n\n${conversationUrl}`,
+        html: `<p><strong>${escapeEmailHtml(subject)}</strong></p><p>Bạn có tin nhắn riêng mới. Nội dung tin nhắn không được đưa vào email.</p><p><a href="${escapeEmailHtml(conversationUrl)}">Mở tin nhắn trên 36chan</a></p>`
       });
     }
     return messages;
@@ -3348,7 +4265,7 @@ export function createForumService({
           kind: 'thread',
           thread,
           authorAccountId: thread.accountId
-        }), 'board-subscription');
+        }), 'post-notification');
         return;
       }
       const comment = state.comments.find((item) => item.id === postId && !item.isPending && !item.isDeleted);
@@ -3363,7 +4280,7 @@ export function createForumService({
         thread,
         comment,
         authorAccountId: comment.accountId
-      }), 'watched-thread');
+      }), 'post-notification');
     } catch {
       logEvent('email.notification.prepare.failed', { postType });
     }
@@ -3408,7 +4325,7 @@ export function createForumService({
       const thread = activeThreads.shift();
       archiveThreadRecord(thread, 'board-limit', archivedAt);
       archivedThreads.push(thread);
-      realtime.publish('thread:archived', { thread: serializeThread(thread, state.comments) });
+      publishRealtime('thread:archived', { thread: serializeThread(thread, state.comments) });
     }
     return archivedThreads;
   }
@@ -3424,10 +4341,32 @@ export function createForumService({
       .filter((thread) => thread.boardSlug === boardSlug && activePublicThread(thread))
       .forEach((thread) => {
         archiveThreadRecord(thread, 'event-ended', archivedAt);
-        realtime.publish('thread:archived', { thread: serializeThread(thread, state.comments) });
+        publishRealtime('thread:archived', { thread: serializeThread(thread, state.comments) });
         changed = true;
     });
     return changed;
+  }
+
+  function hasExpiredEventThreads(state, boardSlug, checkedAt) {
+    const board = state.boards.find((item) => item.slug === boardSlug);
+    return boardEventEnded(board, checkedAt)
+      && state.threads.some((thread) => thread.boardSlug === boardSlug && activePublicThread(thread));
+  }
+
+  async function stateAfterArchivingExpiredEvents(state, boardSlugs, checkedAt) {
+    const slugs = [...new Set(boardSlugs.map(String).filter(Boolean))];
+    if (!slugs.some((boardSlug) => hasExpiredEventThreads(state, boardSlug, checkedAt))) {
+      return state;
+    }
+    // Re-read and archive under the same local queue / distributed mutation
+    // lease used by writes. Never persist the stale snapshot from the public
+    // read that first noticed an expired event.
+    return mutate(async (latestState) => {
+      for (const boardSlug of slugs) {
+        archiveExpiredEventThreads(latestState, boardSlug, checkedAt);
+      }
+      return latestState;
+    });
   }
 
   function restoreDeletedPostRecord(
@@ -3459,13 +4398,13 @@ export function createForumService({
 
     if (found.postType === 'thread') {
       if (!found.post.isPending && publicThread(state, found.post)) {
-        realtime.publish('thread:created', { thread: serializeThread(found.post, state.comments) });
+        publishRealtime('thread:created', { thread: serializeThread(found.post, state.comments) });
       }
     } else {
       const parent = state.threads.find((thread) => thread.id === found.post.threadId);
       if (!found.post.isPending && parent && publicThread(state, parent)) {
-        realtime.publish('thread:updated', { thread: serializeThread(parent, state.comments) });
-        realtime.publish('comment:created', { threadId: parent.id, comment: serializeComment(found.post, parent) });
+        publishRealtime('thread:updated', { thread: serializeThread(parent, state.comments) });
+        publishRealtime('comment:created', { threadId: parent.id, comment: serializeComment(found.post, parent) });
       }
     }
 
@@ -3478,16 +4417,14 @@ export function createForumService({
 
   return {
     async getHomeSnapshot() {
-      const state = await store.read();
+      let state = await store.read();
       const referenceDate = now();
       const checkedAt = referenceDate.toISOString();
-      let archivedExpiredThreads = false;
-      for (const board of state.boards.filter(publicBoard)) {
-        archivedExpiredThreads = archiveExpiredEventThreads(state, board.slug, checkedAt) || archivedExpiredThreads;
-      }
-      if (archivedExpiredThreads) {
-        await store.write(state);
-      }
+      state = await stateAfterArchivingExpiredEvents(
+        state,
+        state.boards.filter(publicBoard).map((board) => board.slug),
+        checkedAt
+      );
       return homeSnapshotFromState(state, { lifecycle, referenceDate, realtime });
     },
 
@@ -3638,7 +4575,14 @@ export function createForumService({
         readImageStorageHealth(imageStorage),
         readEmailClientHealth(emailClient)
       ]);
-      const ready = storeHealth.ready !== false && imageStorageHealth.ready !== false;
+      const realtimeHealth = realtime.metrics?.() ?? {
+        clients: realtime.count?.() ?? 0,
+        boards: realtime.boardCounts?.() ?? {}
+      };
+      const ready =
+        storeHealth.ready !== false &&
+        imageStorageHealth.ready !== false &&
+        realtimeHealth.state?.ready !== false;
       return {
         status: ready ? 'ok' : 'degraded',
         checkedAt: now().toISOString(),
@@ -3649,10 +4593,7 @@ export function createForumService({
         },
         imageStorage: imageStorageHealth,
         email: emailHealth,
-        realtime: realtime.metrics?.() ?? {
-          clients: realtime.count?.() ?? 0,
-          boards: realtime.boardCounts?.() ?? {}
-        }
+        realtime: realtimeHealth
       };
     },
 
@@ -3976,53 +4917,80 @@ export function createForumService({
     async loginAccount({ username, password, captchaToken, ip }: AnyRecord = {}) {
       await requireCaptcha(captchaToken, ip);
       const safeUsername = normalizeAccountUsername(username);
-      const state = await store.read();
-      const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
-
-      const lockedUntil = user && user.lockedUntil ? new Date(user.lockedUntil).getTime() : 0;
-      if (lockedUntil && lockedUntil > now().getTime()) {
-        const retryAfter = Math.ceil((lockedUntil - now().getTime()) / 1000);
-        const error = new Error('Tài khoản tạm thời bị khóa do đăng nhập sai nhiều lần. Vui lòng thử lại sau.');
-        error.statusCode = 429;
-        error.retryAfter = retryAfter;
-        throw error;
-      }
-
-      // Always run a PBKDF2 verification so the timing of a missing-user login
-      // matches that of an existing user with the wrong password (prevents
-      // username enumeration via response latency).
-      const passwordOk = user
-        ? verifyAccountPassword(password, user.passwordHash)
-        : (verifyAccountPassword(password, DUMMY_PASSWORD_HASH), false);
-
-      if (!user || !passwordOk) {
-        if (user) {
-          user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-          if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
-            user.lockedUntil = new Date(now().getTime() + LOGIN_LOCKOUT_MS).toISOString();
-            user.failedLoginAttempts = 0;
-          }
-          user.updatedAt = now().toISOString();
-          await store.write(state);
+      const outcome = await mutate(async (state) => {
+        const user = state.users.find((item) => normalizeAccountUsername(item.username) === safeUsername);
+        const checkedAt = now();
+        const lockedUntil = user?.lockedUntil ? new Date(user.lockedUntil).getTime() : 0;
+        if (lockedUntil && lockedUntil > checkedAt.getTime()) {
+          return {
+            write: false,
+            error: {
+              message: 'Tài khoản tạm thời bị khóa do đăng nhập sai nhiều lần. Vui lòng thử lại sau.',
+              statusCode: 429,
+              retryAfter: Math.ceil((lockedUntil - checkedAt.getTime()) / 1000)
+            }
+          };
         }
-        const error = new Error('Tên tài khoản hoặc mật khẩu không đúng');
-        error.statusCode = 401;
+
+        // Always run a PBKDF2 verification so the timing of a missing-user
+        // login matches an existing user with the wrong password.
+        const passwordOk = user
+          ? verifyAccountPassword(password, user.passwordHash)
+          : (verifyAccountPassword(password, DUMMY_PASSWORD_HASH), false);
+
+        if (!user || !passwordOk) {
+          if (user) {
+            user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
+            if (user.failedLoginAttempts >= MAX_FAILED_LOGINS) {
+              user.lockedUntil = new Date(checkedAt.getTime() + LOGIN_LOCKOUT_MS).toISOString();
+              user.failedLoginAttempts = 0;
+            }
+            user.updatedAt = checkedAt.toISOString();
+          }
+          return {
+            write: Boolean(user),
+            error: {
+              message: 'Tên tài khoản hoặc mật khẩu không đúng',
+              statusCode: 401
+            }
+          };
+        }
+
+        if (user.disabled) {
+          return {
+            write: false,
+            error: {
+              message: 'Tài khoản đã bị vô hiệu hóa',
+              statusCode: 403
+            }
+          };
+        }
+
+        const shouldResetFailures = Boolean(user.failedLoginAttempts || user.lockedUntil);
+        if (shouldResetFailures) {
+          user.failedLoginAttempts = 0;
+          user.lockedUntil = null;
+          user.updatedAt = checkedAt.toISOString();
+        }
+        return {
+          write: shouldResetFailures,
+          account: serializeCurrentAccount(state, user)
+        };
+      }, {
+        write: async (state, result) => {
+          if (result.write) {
+            await store.write(state);
+          }
+        }
+      });
+
+      if (outcome.error) {
+        const error = new Error(outcome.error.message);
+        error.statusCode = outcome.error.statusCode;
+        error.retryAfter = outcome.error.retryAfter;
         throw error;
       }
-
-      if (user.disabled) {
-        const error = new Error('Tài khoản đã bị vô hiệu hóa');
-        error.statusCode = 403;
-        throw error;
-      }
-
-      if (user.failedLoginAttempts || user.lockedUntil) {
-        user.failedLoginAttempts = 0;
-        user.lockedUntil = null;
-        user.updatedAt = now().toISOString();
-        await store.write(state);
-      }
-      return serializeCurrentAccount(state, user);
+      return outcome.account;
     },
 
     async resetAccountPasswordWithRecoveryCode({ username, recoveryCode, newPassword, captchaToken, ip }: AnyRecord = {}) {
@@ -4356,11 +5324,74 @@ export function createForumService({
       return this.updatePrivilegedUser(userId, { disabled: true }, { actor, actorId });
     },
 
-    async generate2FASetup(userId) {
+    async begin2FALogin(userId) {
+      return mutate(async (state) => {
+        const user = state.users.find((item) => item.id === userId);
+        if (!user) {
+          const error = new Error('Không tìm thấy tài khoản');
+          error.statusCode = 404;
+          throw error;
+        }
+        if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+          const error = new Error('Tài khoản chưa kích hoạt 2FA');
+          error.statusCode = 400;
+          throw error;
+        }
+
+        const checkedAt = now();
+        const lockedUntil = user.twoFactorLockedUntil
+          ? new Date(user.twoFactorLockedUntil).getTime()
+          : 0;
+        if (lockedUntil && lockedUntil > checkedAt.getTime()) {
+          const error = new Error(
+            'Xác thực 2FA tạm thời bị khóa do nhập sai nhiều lần. Vui lòng thử lại sau.'
+          );
+          error.statusCode = 429;
+          error.retryAfter = Math.ceil((lockedUntil - checkedAt.getTime()) / 1000);
+          throw error;
+        }
+        if (lockedUntil) {
+          clearTwoFactorLoginFailures(user);
+        }
+
+        const challengeId = crypto.randomUUID();
+        const expiresAt = new Date(
+          checkedAt.getTime() + TWO_FACTOR_CHALLENGE_TTL_MS
+        ).toISOString();
+        user.twoFactorChallengeId = challengeId;
+        user.twoFactorChallengeExpiresAt = expiresAt;
+        user.updatedAt = checkedAt.toISOString();
+        return {
+          account: serializeCurrentAccount(state, user),
+          challengeId,
+          expiresAt
+        };
+      });
+    },
+
+    async getAccountMfaState(userId) {
+      const user = (await store.read()).users.find((item) => item.id === userId);
+      if (!user) {
+        const error = new Error('Phiên đăng nhập không còn hợp lệ');
+        error.statusCode = 401;
+        throw error;
+      }
+      return {
+        totpEnabled: Boolean(user.twoFactorEnabled),
+        passkeyCount: Array.isArray(user.passkeys) ? user.passkeys.length : 0
+      };
+    },
+
+    async generate2FASetup(userId, { verifiedStepUp = false }: AnyRecord = {}) {
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
           const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!verifiedStepUp && (user.twoFactorEnabled || (user.passkeys || []).length > 0)) {
+          const error = new Error('Yêu cầu xác thực 2FA trước khi thay đổi phương thức xác thực');
           error.statusCode = 401;
           throw error;
         }
@@ -4376,11 +5407,16 @@ export function createForumService({
       });
     },
 
-    async verify2FASetup(userId, code) {
+    async verify2FASetup(userId, code, { verifiedStepUp = false }: AnyRecord = {}) {
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
           const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!verifiedStepUp && (user.twoFactorEnabled || (user.passkeys || []).length > 0)) {
+          const error = new Error('Yêu cầu xác thực 2FA trước khi thay đổi phương thức xác thực');
           error.statusCode = 401;
           throw error;
         }
@@ -4400,6 +5436,8 @@ export function createForumService({
         user.twoFactorEnabled = true;
         user.tempTwoFactorSecret = null;
         user.tempBackupCodes = null;
+        clearTwoFactorChallenge(user);
+        clearTwoFactorLoginFailures(user);
         bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
 
@@ -4408,54 +5446,46 @@ export function createForumService({
       });
     },
 
-    async verify2FALogin(userId, code) {
-      const { state, user } = await readUserById(userId);
-      if (!user) {
-        const error = new Error('Không tìm thấy tài khoản');
-        error.statusCode = 404;
-        throw error;
-      }
-      if (!user.twoFactorEnabled || !user.twoFactorSecret) {
-        const error = new Error('Tài khoản chưa kích hoạt 2FA');
-        error.statusCode = 400;
-        throw error;
-      }
-      if (!totp.verifyTOTP(code, user.twoFactorSecret)) {
-        const error = new Error('Mã xác thực 2FA không chính xác');
-        error.statusCode = 400;
-        throw error;
-      }
-      return { ok: true, account: serializeCurrentAccount(state, user) };
+    async verify2FALogin(userId, code, challengeId) {
+      return completeTwoFactorLogin(userId, challengeId, (user) => {
+        if (!user.twoFactorEnabled || !user.twoFactorSecret) {
+          return {
+            available: false,
+            valid: false,
+            message: 'Tài khoản chưa kích hoạt 2FA'
+          };
+        }
+        return {
+          available: true,
+          valid: totp.verifyTOTP(code, user.twoFactorSecret),
+          message: 'Mã xác thực 2FA không chính xác'
+        };
+      });
     },
 
-    async verifyBackupCodeLogin(userId, code) {
-      return mutate(async (state) => {
-        const user = state.users.find((item) => item.id === userId);
-        if (!user) {
-          const error = new Error('Không tìm thấy tài khoản');
-          error.statusCode = 404;
-          throw error;
-        }
+    async verifyBackupCodeLogin(userId, code, challengeId) {
+      return completeTwoFactorLogin(userId, challengeId, (user) => {
         if (!user.twoFactorEnabled || !user.backupCodes || user.backupCodes.length === 0) {
-          const error = new Error('Tài khoản chưa kích hoạt 2FA hoặc không có mã dự phòng');
-          error.statusCode = 400;
-          throw error;
+          return {
+            available: false,
+            valid: false,
+            message: 'Tài khoản chưa kích hoạt 2FA hoặc không có mã dự phòng'
+          };
         }
-
         const normalizedCode = String(code).toUpperCase().trim();
         const hashedInput = crypto.createHash('sha256').update(normalizedCode).digest('hex');
         const index = user.backupCodes.indexOf(hashedInput);
-        if (index === -1) {
-          const error = new Error('Mã dự phòng không hợp lệ');
-          error.statusCode = 400;
-          throw error;
-        }
-
-        user.backupCodes.splice(index, 1);
-        user.updatedAt = now().toISOString();
-
-        logEvent('account.2fa.backupCodeUsed', { username: user.username });
-        return { ok: true, account: serializeCurrentAccount(state, user) };
+        return {
+          available: true,
+          valid: index !== -1,
+          message: 'Mã dự phòng không hợp lệ',
+          consume: index === -1
+            ? undefined
+            : () => {
+                user.backupCodes.splice(index, 1);
+                logEvent('account.2fa.backupCodeUsed', { username: user.username });
+              }
+        };
       });
     },
 
@@ -4476,6 +5506,8 @@ export function createForumService({
         user.twoFactorEnabled = false;
         user.twoFactorSecret = null;
         user.backupCodes = null;
+        clearTwoFactorChallenge(user);
+        clearTwoFactorLoginFailures(user);
         bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
 
@@ -4496,6 +5528,8 @@ export function createForumService({
         user.twoFactorEnabled = false;
         user.twoFactorSecret = null;
         user.backupCodes = null;
+        clearTwoFactorChallenge(user);
+        clearTwoFactorLoginFailures(user);
         bumpAccountAuthEpoch(user);
         user.updatedAt = now().toISOString();
         logEvent('account.2fa.adminReset', { username: user.username });
@@ -4503,11 +5537,16 @@ export function createForumService({
       });
     },
 
-    async generateWebAuthnRegisterOptions(userId, rpID) {
+    async generateWebAuthnRegisterOptions(userId, rpID, { verifiedStepUp = false }: AnyRecord = {}) {
       return mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
           const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!verifiedStepUp && (user.twoFactorEnabled || (user.passkeys || []).length > 0)) {
+          const error = new Error('Yêu cầu xác thực 2FA trước khi thay đổi phương thức xác thực');
           error.statusCode = 401;
           throw error;
         }
@@ -4518,11 +5557,16 @@ export function createForumService({
       });
     },
 
-    async verifyWebAuthnRegisterResponse(userId, { body, origin, rpID }) {
+    async verifyWebAuthnRegisterResponse(userId, { body, origin, rpID, verifiedStepUp = false }) {
       const outcome = await mutate(async (state) => {
         const user = state.users.find((item) => item.id === userId);
         if (!user) {
           const error = new Error('Phiên đăng nhập không còn hợp lệ');
+          error.statusCode = 401;
+          throw error;
+        }
+        if (!verifiedStepUp && (user.twoFactorEnabled || (user.passkeys || []).length > 0)) {
+          const error = new Error('Yêu cầu xác thực 2FA trước khi thay đổi phương thức xác thực');
           error.statusCode = 401;
           throw error;
         }
@@ -4765,7 +5809,7 @@ export function createForumService({
     },
 
     async listThreads(boardSlug: string, options: AnyRecord = {}) {
-      const state = await store.read();
+      let state = await store.read();
       if (!findBoard(state, boardSlug, { publicOnly: true })) {
         const error = new Error('Không tìm thấy bảng');
         error.statusCode = 404;
@@ -4773,8 +5817,11 @@ export function createForumService({
       }
 
       const checkedAt = now().toISOString();
-      if (archiveExpiredEventThreads(state, boardSlug, checkedAt)) {
-        await store.write(state);
+      state = await stateAfterArchivingExpiredEvents(state, [boardSlug], checkedAt);
+      if (!findBoard(state, boardSlug, { publicOnly: true })) {
+        const error = new Error('Không tìm thấy bảng');
+        error.statusCode = 404;
+        throw error;
       }
       const term = normalizeSearchTerm(options.q);
       const sort = normalizeBoardThreadSort(options.sort);
@@ -4792,8 +5839,8 @@ export function createForumService({
     },
 
     async listArchivedThreads(boardSlug) {
-      const state = await store.read();
-      const board = findBoard(state, boardSlug);
+      let state = await store.read();
+      let board = findBoard(state, boardSlug);
       if (!board || board.isHidden || !boardRetentionPolicy(board, lifecycle).publicArchive) {
         const error = new Error('Không tìm thấy bảng');
         error.statusCode = 404;
@@ -4801,8 +5848,12 @@ export function createForumService({
       }
 
       const checkedAt = now().toISOString();
-      if (archiveExpiredEventThreads(state, boardSlug, checkedAt)) {
-        await store.write(state);
+      state = await stateAfterArchivingExpiredEvents(state, [boardSlug], checkedAt);
+      board = findBoard(state, boardSlug);
+      if (!board || board.isHidden || !boardRetentionPolicy(board, lifecycle).publicArchive) {
+        const error = new Error('Không tìm thấy bảng');
+        error.statusCode = 404;
+        throw error;
       }
       return state.threads
         .filter((thread) => thread.boardSlug === boardSlug && archivedPublicThread(thread))
@@ -4821,7 +5872,7 @@ export function createForumService({
 
         archiveThreadRecord(thread, reason, now().toISOString());
         const serialized = serializeThread(thread, state.comments);
-        realtime.publish('thread:archived', { thread: serialized });
+        publishRealtime('thread:archived', { thread: serialized });
         return serialized;
       });
     },
@@ -4854,7 +5905,7 @@ export function createForumService({
           actor
         });
         const serialized = serializeThread(thread, state.comments);
-        realtime.publish('thread:updated', { thread: serialized });
+        publishRealtime('thread:updated', { thread: serialized });
         return serialized;
       });
     },
@@ -4887,7 +5938,7 @@ export function createForumService({
           actor
         });
         const serialized = serializeThread(thread, state.comments);
-        realtime.publish('thread:updated', { thread: serialized });
+        publishRealtime('thread:updated', { thread: serialized });
         return serialized;
       });
     },
@@ -4929,6 +5980,7 @@ export function createForumService({
       const poll = createPoll(pollOptions);
       const postingOptions = parsePostingOptions(options);
       const diceRolls = createDiceRolls(normalizedBody, randomInt);
+      const postLinks = await buildPostLinks(normalizedBody);
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
       const createdAt = now().toISOString();
       assertEventBoardOpen(board, createdAt);
@@ -4962,6 +6014,7 @@ export function createForumService({
           poll,
           pollVotes: poll ? {} : undefined,
           diceRolls,
+          links: postLinks,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId: id, salt: daySalt(new Date(createdAt)), posterToken }),
@@ -5007,7 +6060,7 @@ export function createForumService({
 
         if (!thread.isPending) {
           postCreateDelta.updatedThreads.push(...enforceBoardThreadCap(state, boardSlug, createdAt));
-          realtime.publish('thread:created', { thread: serializeThread(thread, state.comments) });
+          publishRealtime('thread:created', { thread: serializeThread(thread, state.comments) });
           postCreateDelta.notificationMessages = postNotificationMessages(state, {
             kind: 'thread',
             thread,
@@ -5040,16 +6093,20 @@ export function createForumService({
     },
 
     async getThread(threadId: string, options: AnyRecord = {}) {
-      const state = await store.read();
-      const thread = state.threads.find((item) => item.id === threadId && publicThread(state, item));
+      let state = await store.read();
+      let thread = state.threads.find((item) => item.id === threadId && publicThread(state, item));
       if (!thread) {
         const error = new Error('Không tìm thấy chủ đề');
         error.statusCode = 404;
         throw error;
       }
       const checkedAt = now().toISOString();
-      if (archiveExpiredEventThreads(state, thread.boardSlug, checkedAt)) {
-        await store.write(state);
+      state = await stateAfterArchivingExpiredEvents(state, [thread.boardSlug], checkedAt);
+      thread = state.threads.find((item) => item.id === threadId && publicThread(state, item));
+      if (!thread) {
+        const error = new Error('Không tìm thấy chủ đề');
+        error.statusCode = 404;
+        throw error;
       }
 
       const serializedThread = serializeThread(thread, state.comments);
@@ -5148,6 +6205,7 @@ export function createForumService({
       const createdAt = now().toISOString();
       const postingOptions = parsePostingOptions(options);
       const diceRolls = createDiceRolls(normalizedBody, randomInt);
+      const postLinks = await buildPostLinks(normalizedBody);
       const { displayName: normalizedDisplayName, tripcode } = parseDisplayNameWithTripcode(displayName);
       const postCreateDelta = {
         comment: null,
@@ -5198,6 +6256,7 @@ export function createForumService({
           image: storedImages[0] ?? null,
           images: storedImages,
           diceRolls,
+          links: postLinks,
           authorFingerprint,
           globalNumber: nextNumber(state),
           posterHash: createPosterHash({ ip, threadId, salt: daySalt(new Date(createdAt)), posterToken }),
@@ -5242,7 +6301,7 @@ export function createForumService({
         postCreateDelta.appeals.push(issuedAppeal.appeal);
 
         if (!comment.isPending) {
-          realtime.publish('comment:created', { threadId, comment: serializeComment(comment, thread) });
+          publishRealtime('comment:created', { threadId, comment: serializeComment(comment, thread) });
           postCreateDelta.notificationMessages = postNotificationMessages(state, {
             kind: 'comment',
             thread,
@@ -5252,12 +6311,12 @@ export function createForumService({
           if (!postingOptions.sage && repliesBeforeCreate < retentionPolicy.bumpLimit) {
             thread.bumpedAt = createdAt;
             postCreateDelta.updatedThreads.push(thread);
-            realtime.publish('thread:bumped', { thread: serializeThread(thread, state.comments) });
+            publishRealtime('thread:bumped', { thread: serializeThread(thread, state.comments) });
           }
         }
         if (slowModeRaised) {
           postCreateDelta.updatedThreads.push(thread);
-          realtime.publish('thread:updated', { thread: serializeThread(thread, state.comments) });
+          publishRealtime('thread:updated', { thread: serializeThread(thread, state.comments) });
         }
 
         return {
@@ -5317,7 +6376,7 @@ export function createForumService({
         thread.poll.updatedAt = now().toISOString();
         thread.pollVotes[fingerprint] = option.id;
         const serialized = serializeThread(thread, state.comments);
-        realtime.publish('thread:updated', { thread: serialized });
+        publishRealtime('thread:updated', { thread: serialized });
         return serialized.poll;
       });
     },
@@ -5482,10 +6541,10 @@ export function createForumService({
         const myVote = post.voters[voterKey] ?? null;
 
         if (found.postType === 'thread') {
-          realtime.publish('thread:updated', { thread: serializeThread(post, state.comments) });
+          publishRealtime('thread:updated', { thread: serializeThread(post, state.comments) });
         } else {
           const thread = state.threads.find((item) => item.id === post.threadId);
-          realtime.publish('comment:updated', {
+          publishRealtime('comment:updated', {
             threadId: post.threadId,
             comment: serializeComment(post, thread)
           });
@@ -5525,10 +6584,10 @@ export function createForumService({
         const myReaction = post.reactionVoters[voterKey] ?? null;
 
         if (found.postType === 'thread') {
-          realtime.publish('thread:updated', { thread: serializeThread(post, state.comments) });
+          publishRealtime('thread:updated', { thread: serializeThread(post, state.comments) });
         } else {
           const thread = state.threads.find((item) => item.id === post.threadId);
-          realtime.publish('comment:updated', {
+          publishRealtime('comment:updated', {
             threadId: post.threadId,
             comment: serializeComment(post, thread)
           });
@@ -5583,7 +6642,7 @@ export function createForumService({
         });
 
         if (found.postType === 'thread') {
-          realtime.publish('thread:updated', {
+          publishRealtime('thread:updated', {
             threadId: found.post.id,
             boardSlug: found.post.boardSlug,
             deleted: !fileOnly,
@@ -5591,7 +6650,7 @@ export function createForumService({
           });
         } else {
           const parent = state.threads.find((thread) => thread.id === found.post.threadId);
-          realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+          publishRealtime('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
         }
         return { ok: true, fileOnly: Boolean(fileOnly), globalNumber: found.post.globalNumber };
       });
@@ -5829,14 +6888,14 @@ export function createForumService({
         });
 
         if (found.postType === 'thread') {
-          realtime.publish('thread:updated', { thread: serializeThread(found.post, state.comments) });
+          publishRealtime('thread:updated', { thread: serializeThread(found.post, state.comments) });
         } else {
           const parent = state.threads.find((thread) => thread.id === found.post.threadId);
-          realtime.publish('comment:updated', {
+          publishRealtime('comment:updated', {
             threadId: found.post.threadId,
             comment: serializeComment(found.post, parent)
           });
-          realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+          publishRealtime('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
         }
         return {
           ok: true,
@@ -5890,7 +6949,7 @@ export function createForumService({
         });
 
         if (found.postType === 'thread') {
-          realtime.publish('thread:updated', {
+          publishRealtime('thread:updated', {
             threadId: found.post.id,
             boardSlug: found.post.boardSlug,
             deleted: !fileOnly,
@@ -5898,7 +6957,7 @@ export function createForumService({
           });
         } else {
           const parent = state.threads.find((thread) => thread.id === found.post.threadId);
-          realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+          publishRealtime('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
         }
         return { ok: true, fileOnly: Boolean(fileOnly), globalNumber: found.post.globalNumber };
       });
@@ -5925,6 +6984,7 @@ export function createForumService({
         error.statusCode = 400;
         throw error;
       }
+      const postLinks = await buildPostLinks(normalizedBody);
 
       return mutate(async (state) => {
         const found = findAnyPostByGlobalNumber(state, globalNumber);
@@ -5948,6 +7008,7 @@ export function createForumService({
           );
 
         found.post.body = normalizedBody;
+        found.post.links = postLinks;
         found.post.editedAt = editedAt;
         found.post.editedBy = 'anonymous';
         found.post.editReason = 'self-edit';
@@ -5985,14 +7046,14 @@ export function createForumService({
 
         if (!found.post.isPending) {
           if (found.postType === 'thread') {
-            realtime.publish('thread:updated', { thread: serializeThread(found.post, state.comments) });
+            publishRealtime('thread:updated', { thread: serializeThread(found.post, state.comments) });
           } else {
             const parent = state.threads.find((thread) => thread.id === found.post.threadId);
-            realtime.publish('comment:updated', {
+            publishRealtime('comment:updated', {
               threadId: found.post.threadId,
               comment: serializeComment(found.post, parent)
             });
-            realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+            publishRealtime('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
           }
         }
 
@@ -6034,6 +7095,7 @@ export function createForumService({
       }
       const shouldReplaceImages = Boolean(replaceImages);
       const safeImages = shouldReplaceImages ? validateMediaList({ image, images }) : [];
+      const postLinks = await buildPostLinks(normalizedBody);
       let previousMedia = [];
       let newMedia = [];
       let committed = false;
@@ -6073,6 +7135,7 @@ export function createForumService({
           );
 
         found.post.body = normalizedBody;
+        found.post.links = postLinks;
         if (shouldReplaceImages) {
           found.post.image = storedImages[0] ?? null;
           found.post.images = storedImages;
@@ -6115,14 +7178,14 @@ export function createForumService({
 
         if (!found.post.isPending) {
           if (found.postType === 'thread') {
-            realtime.publish('thread:updated', { thread: serializeThread(found.post, state.comments) });
+            publishRealtime('thread:updated', { thread: serializeThread(found.post, state.comments) });
           } else {
             const parent = state.threads.find((thread) => thread.id === found.post.threadId);
-            realtime.publish('comment:updated', {
+            publishRealtime('comment:updated', {
               threadId: found.post.threadId,
               comment: serializeComment(found.post, parent)
             });
-            realtime.publish('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
+            publishRealtime('thread:updated', { thread: parent ? serializeThread(parent, state.comments) : null });
           }
         }
 
@@ -6355,7 +7418,7 @@ export function createForumService({
             actor
           });
           const thread = serializeThread(approved.post, approved.comments ?? []);
-          realtime.publish('thread:created', { thread });
+          publishRealtime('thread:created', { thread });
           await queueApprovedPostNotifications('thread', approved.post.id);
           return thread;
         }
@@ -6367,8 +7430,8 @@ export function createForumService({
             actor
           });
           const comment = serializeComment(approved.post, approved.parent);
-          realtime.publish('comment:created', { threadId: approved.parent.id, comment });
-          realtime.publish('thread:bumped', { thread: serializeThread(approved.parent, approved.comments ?? []) });
+          publishRealtime('comment:created', { threadId: approved.parent.id, comment });
+          publishRealtime('thread:bumped', { thread: serializeThread(approved.parent, approved.comments ?? []) });
           await queueApprovedPostNotifications('comment', approved.post.id);
           return comment;
         }
@@ -6397,7 +7460,7 @@ export function createForumService({
             globalNumber: thread.globalNumber,
             actor
           });
-          realtime.publish('thread:created', { thread: serializeThread(thread, state.comments) });
+          publishRealtime('thread:created', { thread: serializeThread(thread, state.comments) });
           return serializeThread(thread, state.comments);
         }
 
@@ -6428,8 +7491,8 @@ export function createForumService({
             globalNumber: comment.globalNumber,
             actor
           });
-          realtime.publish('comment:created', { threadId: parent.id, comment: serializeComment(comment, parent) });
-          realtime.publish('thread:bumped', { thread: serializeThread(parent, state.comments) });
+          publishRealtime('comment:created', { threadId: parent.id, comment: serializeComment(comment, parent) });
+          publishRealtime('thread:bumped', { thread: serializeThread(parent, state.comments) });
           return serializeComment(comment, parent);
         }
 
@@ -6675,16 +7738,21 @@ export function createForumService({
       });
       const answer = String(await ai.answer(safeQuestion, chatContext.context, safeHistory))
         .trim()
-        .slice(0, 4_000);
+        .slice(0, 5_000);
       if (!answer) {
         throw chatRequestError('AI chưa trả về câu trả lời. Vui lòng thử lại.', 502);
       }
+      const rawSources = Array.isArray(chatContext.sources) ? chatContext.sources.slice(0, CHAT_SOURCE_LIMIT) : [];
+      const sources = rankChatSources(rawSources, safeQuestion, 12);
+      const followUps = buildChatFollowUps(chatContext.scope, safeQuestion).slice(0, 4);
       return {
         answer,
         context: {
           scope: chatContext.scope,
           label: chatContext.label
-        }
+        },
+        sources,
+        followUps
       };
     },
 
@@ -7031,7 +8099,11 @@ export function createForumService({
       const state = await store.read();
       ensureDmCollections(state);
       return state.dmConversations
-        .filter((conversation: AnyRecord) => conversationIncludesUser(conversation, accountId))
+        .filter(
+          (conversation: AnyRecord) =>
+            conversationIncludesUser(conversation, accountId) &&
+            !conversationIsHiddenFor(conversation, accountId)
+        )
         .map((conversation: AnyRecord) => serializeDmConversation(conversation, state, accountId, dmSecret))
         .sort((left: AnyRecord, right: AnyRecord) =>
           String(right.lastMessageAt || right.updatedAt || '').localeCompare(
@@ -7046,8 +8118,14 @@ export function createForumService({
         error.statusCode = 401;
         throw error;
       }
+      const cached = await cachedUnreadCount(accountId);
+      if (cached !== null) {
+        return { unreadCount: cached };
+      }
       const state = await store.read();
-      return { unreadCount: countUnreadForUser(state, accountId) };
+      const unreadCount = countUnreadForUser(state, accountId);
+      await cacheUnreadCount(accountId, unreadCount);
+      return { unreadCount };
     },
 
     async openDmConversation(accountId: string, { username }: AnyRecord = {}) {
@@ -7085,6 +8163,9 @@ export function createForumService({
           error.statusCode = 400;
           throw error;
         }
+        if (isDmBlockedBetween(state, me.id, peer.id)) {
+          throw dmServiceError('Không thể nhắn tin vì một bên đã chặn', 403);
+        }
 
         const key = participantKeyFor(me.id, peer.id);
         let conversation = state.dmConversations.find(
@@ -7106,6 +8187,8 @@ export function createForumService({
             from: me.username,
             to: peer.username
           });
+        } else {
+          unhideConversationForUser(conversation, accountId);
         }
         return serializeDmConversation(conversation, state, accountId, dmSecret);
       });
@@ -7140,7 +8223,7 @@ export function createForumService({
         messages = messages.filter((item: AnyRecord) => item.createdAt < beforeTs);
       }
       const page = messages.slice(-safeLimit).map((item: AnyRecord) =>
-        serializeDmMessage(item, dmSecret)
+        serializeDmMessage(item, dmSecret, state, accountId)
       );
       return {
         conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
@@ -7149,18 +8232,32 @@ export function createForumService({
       };
     },
 
-    async sendDmMessage(accountId: string, conversationId: string, { body }: AnyRecord = {}) {
+    async sendDmMessage(
+      accountId: string,
+      conversationId: string,
+      { body, image, images, replyToId }: AnyRecord = {}
+    ) {
       if (!accountId) {
         const error = new Error('Vui lòng đăng nhập tài khoản');
         error.statusCode = 401;
         throw error;
       }
+      await enforceRealtimeUserRateLimit(accountId, 'dm:send', {
+        limit: readPositiveInteger(process.env.DM_SEND_RATE_LIMIT, 30),
+        windowMs: 60_000
+      });
       const text = normalizeDmBody(body);
-      if (!text) {
+      assertDmBodyMediaTokens(text);
+      const safeImages = validateMediaList({ image, images }).slice(0, MAX_DM_MEDIA_PER_MESSAGE);
+      if (!text && !safeImages.length) {
         const error = new Error('Nội dung tin nhắn không được để trống');
         error.statusCode = 400;
         throw error;
       }
+      const safeReplyToId = String(replyToId || '').trim() || null;
+      const storedImages = safeImages.length
+        ? await saveMediaList(imageStorage, safeImages)
+        : [];
 
       const result = await mutate(async (state) => {
         ensureDmCollections(state);
@@ -7178,13 +8275,33 @@ export function createForumService({
           error.statusCode = 404;
           throw error;
         }
+        if (conversationKind(conversation) === 'direct') {
+          const peerId = normalizeParticipantIds(conversation.participantIds).find(
+            (id) => id !== accountId
+          );
+          if (peerId && isDmBlockedBetween(state, accountId, peerId)) {
+            throw dmServiceError('Không thể nhắn tin vì một bên đã chặn', 403);
+          }
+        }
+        if (safeReplyToId) {
+          const parent = state.dmMessages.find(
+            (item: AnyRecord) =>
+              item.id === safeReplyToId && item.conversationId === conversationId
+          );
+          if (!parent || parent.deletedAt) {
+            throw dmServiceError('Tin nhắn được trả lời không tồn tại');
+          }
+        }
         const createdAt = now().toISOString();
         const message = createDmMessageRecord({
           conversationId,
           senderId: accountId,
-          body: text,
+          body: text || (storedImages.length ? '[Ảnh]' : ''),
           createdAt,
-          secret: dmSecret
+          secret: dmSecret,
+          images: storedImages,
+          replyToId: safeReplyToId,
+          links: extractDmLinks(text)
         });
         state.dmMessages.push(message);
         conversation.updatedAt = createdAt;
@@ -7193,6 +8310,7 @@ export function createForumService({
         conversation.lastCiphertext = message.ciphertext;
         conversation.lastIv = message.iv;
         conversation.lastAuthTag = message.authTag;
+        unhideConversationForAll(conversation);
         if (!conversation.unreadBy || typeof conversation.unreadBy !== 'object') {
           conversation.unreadBy = {};
         }
@@ -7210,16 +8328,34 @@ export function createForumService({
           messageId: message.id,
           sender: me.username
         });
+        const participantIds = normalizeParticipantIds(conversation.participantIds);
         return {
           conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
-          message: serializeDmMessage(message, dmSecret),
-          participantIds: normalizeParticipantIds(conversation.participantIds),
-          senderUsername: me.username
+          message: serializeDmMessage(message, dmSecret, state, accountId),
+          participantIds,
+          unreadCounts: Object.fromEntries(
+            participantIds.map((participantId) => [
+              participantId,
+              countUnreadForUser(state, participantId)
+            ])
+          ),
+          senderUsername: me.username,
+          notificationMessages: directMessageNotificationMessages(state, {
+            conversation,
+            sender: me
+          })
         };
       });
 
-      // Notification-only SSE payload — never include decrypted body on the wire broadcast.
-      realtime.publish('dm:message', {
+      await Promise.all(
+        Object.entries(result.unreadCounts).map(([participantId, unreadCount]) =>
+          cacheUnreadCount(participantId, Number(unreadCount))
+        )
+      );
+      queueEmails(result.notificationMessages, 'direct-message');
+
+      // Notification-only Socket.IO payload — never include decrypted body in fan-out.
+      publishRealtime('dm:message', {
         conversationId,
         messageId: result.message.id,
         senderId: accountId,
@@ -7240,8 +8376,13 @@ export function createForumService({
         error.statusCode = 401;
         throw error;
       }
-      return mutate(async (state) => {
+      await enforceRealtimeUserRateLimit(accountId, 'dm:read', {
+        limit: readPositiveInteger(process.env.DM_READ_RATE_LIMIT, 120),
+        windowMs: 60_000
+      });
+      const result = await mutate(async (state) => {
         ensureDmCollections(state);
+        const me = state.users.find((item: AnyRecord) => item.id === accountId);
         const conversation = state.dmConversations.find(
           (item: AnyRecord) => item.id === conversationId
         );
@@ -7265,9 +8406,804 @@ export function createForumService({
             message.readBy.push(accountId);
           }
         }
+        const readAt = now().toISOString();
+        conversation.updatedAt = readAt;
+        return {
+          conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
+          participantIds: normalizeParticipantIds(conversation.participantIds),
+          readerUsername: String(me?.username || ''),
+          readAt,
+          lastReadMessageId: String(conversation.lastMessageId || ''),
+          unreadCount: countUnreadForUser(state, accountId)
+        };
+      });
+      await cacheUnreadCount(accountId, result.unreadCount);
+      publishRealtime('dm:read', {
+        conversationId,
+        readerId: accountId,
+        readerUsername: result.readerUsername,
+        participantIds: result.participantIds,
+        readAt: result.readAt,
+        lastReadMessageId: result.lastReadMessageId
+      });
+      return result.conversation;
+    },
+
+    async createDmGroup(
+      accountId: string,
+      { title, usernames }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const safeTitle = sanitizeGroupTitle(title);
+      if (!safeTitle) {
+        throw dmServiceError('Vui lòng nhập tên nhóm');
+      }
+      const rawNames = Array.isArray(usernames)
+        ? usernames
+        : String(usernames || '')
+            .split(/[\s,;]+/)
+            .filter(Boolean);
+      const requested = [
+        ...new Set(
+          rawNames
+            .map((name: unknown) =>
+              normalizeAccountUsername(String(name ?? '').replace(/^@+/, ''))
+            )
+            .filter(Boolean)
+        )
+      ].slice(0, MAX_DM_GROUP_INVITE_BATCH);
+
+      return mutate(async (state) => {
+        ensureDmCollections(state);
+        const me = state.users.find((item: AnyRecord) => item.id === accountId);
+        if (!me || me.disabled) {
+          throw dmServiceError('Phiên đăng nhập không còn hợp lệ', 401);
+        }
+        const peerIds: string[] = [];
+        for (const username of requested) {
+          if (normalizeAccountUsername(me.username) === username) {
+            continue;
+          }
+          const peer = state.users.find(
+            (item: AnyRecord) => normalizeAccountUsername(item.username) === username
+          );
+          if (!peer || peer.disabled) {
+            throw dmServiceError(`Không tìm thấy tài khoản @${username}`, 404);
+          }
+          peerIds.push(peer.id);
+        }
+        if (peerIds.length < 1) {
+          throw dmServiceError('Nhóm cần ít nhất một thành viên khác');
+        }
+        const participantIds = normalizeParticipantIds([me.id, ...peerIds]);
+        if (participantIds.length > MAX_DM_GROUP_PARTICIPANTS) {
+          throw dmServiceError(`Nhóm tối đa ${MAX_DM_GROUP_PARTICIPANTS} thành viên`);
+        }
+        const mineCount = state.dmConversations.filter((item: AnyRecord) =>
+          conversationIncludesUser(item, me.id)
+        ).length;
+        if (mineCount >= MAX_DM_CONVERSATIONS_PER_USER) {
+          throw dmServiceError('Đã đạt giới hạn số cuộc trò chuyện');
+        }
+        const createdAt = now().toISOString();
+        const conversation = createGroupConversationRecord({
+          title: safeTitle,
+          createdBy: me.id,
+          participantIds,
+          createdAt
+        });
+        state.dmConversations.push(conversation);
+        logEvent('dm.group.create', {
+          conversationId: conversation.id,
+          owner: me.username,
+          members: participantIds.length
+        });
+        return serializeDmConversation(conversation, state, accountId, dmSecret);
+      });
+    },
+
+    async inviteDmGroupMembers(
+      accountId: string,
+      conversationId: string,
+      { usernames }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const rawNames = Array.isArray(usernames)
+        ? usernames
+        : String(usernames || '')
+            .split(/[\s,;]+/)
+            .filter(Boolean);
+      const requested = [
+        ...new Set(
+          rawNames
+            .map((name: unknown) =>
+              normalizeAccountUsername(String(name ?? '').replace(/^@+/, ''))
+            )
+            .filter(Boolean)
+        )
+      ].slice(0, MAX_DM_GROUP_INVITE_BATCH);
+      if (!requested.length) {
+        throw dmServiceError('Nhập ít nhất một @username để mời');
+      }
+
+      return mutate(async (state) => {
+        ensureDmCollections(state);
+        const me = state.users.find((item: AnyRecord) => item.id === accountId);
+        if (!me || me.disabled) {
+          throw dmServiceError('Phiên đăng nhập không còn hợp lệ', 401);
+        }
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        if (conversationKind(conversation) !== 'group') {
+          throw dmServiceError('Chỉ nhóm mới có thể mời thành viên');
+        }
+        const actorRole = getMemberRole(conversation, accountId);
+        if (!canManageGroupMembers(actorRole)) {
+          throw dmServiceError('Bạn không có quyền mời thành viên', 403);
+        }
+        const ids = normalizeParticipantIds(conversation.participantIds);
+        const roles = normalizeDmRoles(conversation.roles, ids, conversation.createdBy);
+        for (const username of requested) {
+          if (normalizeAccountUsername(me.username) === username) {
+            continue;
+          }
+          const peer = state.users.find(
+            (item: AnyRecord) => normalizeAccountUsername(item.username) === username
+          );
+          if (!peer || peer.disabled) {
+            throw dmServiceError(`Không tìm thấy tài khoản @${username}`, 404);
+          }
+          if (ids.includes(peer.id)) {
+            continue;
+          }
+          if (ids.length >= MAX_DM_GROUP_PARTICIPANTS) {
+            throw dmServiceError(`Nhóm tối đa ${MAX_DM_GROUP_PARTICIPANTS} thành viên`);
+          }
+          ids.push(peer.id);
+          roles[peer.id] = 'member';
+          if (!conversation.unreadBy || typeof conversation.unreadBy !== 'object') {
+            conversation.unreadBy = {};
+          }
+          conversation.unreadBy[peer.id] = 0;
+        }
+        conversation.participantIds = normalizeParticipantIds(ids);
+        conversation.roles = normalizeDmRoles(roles, conversation.participantIds, conversation.createdBy);
+        conversation.updatedAt = now().toISOString();
+        logEvent('dm.group.invite', {
+          conversationId,
+          actor: me.username,
+          members: conversation.participantIds.length
+        });
+        return serializeDmConversation(conversation, state, accountId, dmSecret);
+      });
+    },
+
+    async leaveDmConversation(accountId: string, conversationId: string) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const result = await mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        if (conversationKind(conversation) === 'direct') {
+          throw dmServiceError('Chat 1-1 không hỗ trợ rời nhóm — chỉ dùng cho nhóm');
+        }
+        const { emptied } = removeParticipantFromConversation(conversation, accountId);
+        conversation.updatedAt = now().toISOString();
+        if (emptied) {
+          state.dmConversations = state.dmConversations.filter(
+            (item: AnyRecord) => item.id !== conversationId
+          );
+          state.dmMessages = state.dmMessages.filter(
+            (item: AnyRecord) => item.conversationId !== conversationId
+          );
+          logEvent('dm.group.delete', { conversationId, reason: 'empty' });
+          return { left: true, deleted: true, conversation: null };
+        }
+        logEvent('dm.group.leave', { conversationId, userId: accountId });
+        return { left: true, deleted: false, conversation: null };
+      });
+      await invalidateUnreadCounts([accountId]);
+      return result;
+    },
+
+    async kickDmGroupMember(
+      accountId: string,
+      conversationId: string,
+      { userId, username }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const result = await mutate(async (state) => {
+        ensureDmCollections(state);
+        const me = state.users.find((item: AnyRecord) => item.id === accountId);
+        if (!me || me.disabled) {
+          throw dmServiceError('Phiên đăng nhập không còn hợp lệ', 401);
+        }
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        if (conversationKind(conversation) !== 'group') {
+          throw dmServiceError('Chỉ nhóm mới có thể kick thành viên');
+        }
+        const actorRole = getMemberRole(conversation, accountId);
+        let targetId = String(userId || '').trim();
+        if (!targetId && username) {
+          const safeUsername = normalizeAccountUsername(String(username).replace(/^@+/, ''));
+          const peer = state.users.find(
+            (item: AnyRecord) => normalizeAccountUsername(item.username) === safeUsername
+          );
+          targetId = peer?.id || '';
+        }
+        if (!targetId || !conversationIncludesUser(conversation, targetId)) {
+          throw dmServiceError('Không tìm thấy thành viên cần kick', 404);
+        }
+        const targetRole = getMemberRole(conversation, targetId);
+        if (!canKickMember(actorRole, targetRole, accountId, targetId)) {
+          throw dmServiceError('Bạn không có quyền kick thành viên này', 403);
+        }
+        removeParticipantFromConversation(conversation, targetId);
+        conversation.updatedAt = now().toISOString();
+        logEvent('dm.group.kick', {
+          conversationId,
+          actor: me.username,
+          targetId
+        });
+        return {
+          conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
+          targetId
+        };
+      });
+      await invalidateUnreadCounts([result.targetId]);
+      return result.conversation;
+    },
+
+    async updateDmGroup(
+      accountId: string,
+      conversationId: string,
+      { title }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const safeTitle = sanitizeGroupTitle(title);
+      if (!safeTitle) {
+        throw dmServiceError('Tên nhóm không hợp lệ');
+      }
+      return mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        if (conversationKind(conversation) !== 'group') {
+          throw dmServiceError('Chỉ nhóm mới có thể đổi tên');
+        }
+        if (!canManageGroupMembers(getMemberRole(conversation, accountId))) {
+          throw dmServiceError('Bạn không có quyền đổi tên nhóm', 403);
+        }
+        conversation.title = safeTitle;
+        conversation.updatedAt = now().toISOString();
+        logEvent('dm.group.rename', { conversationId, title: safeTitle });
+        return serializeDmConversation(conversation, state, accountId, dmSecret);
+      });
+    },
+
+    async setDmGroupMemberRole(
+      accountId: string,
+      conversationId: string,
+      { userId, username, role }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const nextRole = String(role || '').toLowerCase();
+      if (nextRole !== 'admin' && nextRole !== 'member') {
+        throw dmServiceError('Vai trò phải là admin hoặc member');
+      }
+      return mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        if (conversationKind(conversation) !== 'group') {
+          throw dmServiceError('Chỉ nhóm mới có phân quyền');
+        }
+        if (getMemberRole(conversation, accountId) !== 'owner') {
+          throw dmServiceError('Chỉ chủ nhóm mới đổi vai trò', 403);
+        }
+        let targetId = String(userId || '').trim();
+        if (!targetId && username) {
+          const safeUsername = normalizeAccountUsername(String(username).replace(/^@+/, ''));
+          const peer = state.users.find(
+            (item: AnyRecord) => normalizeAccountUsername(item.username) === safeUsername
+          );
+          targetId = peer?.id || '';
+        }
+        if (!targetId || !conversationIncludesUser(conversation, targetId)) {
+          throw dmServiceError('Không tìm thấy thành viên', 404);
+        }
+        if (targetId === accountId) {
+          throw dmServiceError('Không thể đổi vai trò của chính chủ nhóm');
+        }
+        const ids = normalizeParticipantIds(conversation.participantIds);
+        const roles = normalizeDmRoles(conversation.roles, ids, conversation.createdBy);
+        roles[targetId] = nextRole as 'admin' | 'member';
+        conversation.roles = roles;
+        conversation.updatedAt = now().toISOString();
+        logEvent('dm.group.role', {
+          conversationId,
+          targetId,
+          role: nextRole
+        });
+        return serializeDmConversation(conversation, state, accountId, dmSecret);
+      });
+    },
+
+    async editDmMessage(
+      accountId: string,
+      conversationId: string,
+      messageId: string,
+      { body }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const text = normalizeDmBody(body);
+      if (!text) {
+        throw dmServiceError('Nội dung tin nhắn không được để trống');
+      }
+      assertDmBodyMediaTokens(text);
+      const editedAt = now().toISOString();
+      const result = await mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        const message = state.dmMessages.find(
+          (item: AnyRecord) =>
+            item.id === messageId && item.conversationId === conversationId
+        );
+        if (!message) {
+          throw dmServiceError('Không tìm thấy tin nhắn', 404);
+        }
+        if (!canEditDmMessage(message, accountId, Date.parse(editedAt))) {
+          throw dmServiceError(
+            'Không thể sửa tin nhắn (chỉ người gửi, trong 30 phút, tin chưa xóa)',
+            403
+          );
+        }
+        const encrypted = encryptStoredBody(text, dmSecret);
+        message.ciphertext = encrypted.ciphertext;
+        message.iv = encrypted.iv;
+        message.authTag = encrypted.authTag;
+        message.editedAt = editedAt;
+        if (conversation.lastMessageId === message.id) {
+          conversation.lastCiphertext = message.ciphertext;
+          conversation.lastIv = message.iv;
+          conversation.lastAuthTag = message.authTag;
+        }
+        conversation.updatedAt = editedAt;
+        unhideConversationForAll(conversation);
+        logEvent('dm.message.edit', {
+          conversationId,
+          messageId,
+          senderId: accountId
+        });
+        return {
+          conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
+          message: serializeDmMessage(message, dmSecret, state, accountId),
+          participantIds: normalizeParticipantIds(conversation.participantIds)
+        };
+      });
+      publishRealtime('dm:message-updated', {
+        conversationId,
+        messageId: result.message.id,
+        senderId: accountId,
+        participantIds: result.participantIds,
+        editedAt,
+        deleted: false
+      });
+      return {
+        conversation: result.conversation,
+        message: result.message
+      };
+    },
+
+    async deleteDmMessage(accountId: string, conversationId: string, messageId: string) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const deletedAt = now().toISOString();
+      const result = await mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        const message = state.dmMessages.find(
+          (item: AnyRecord) =>
+            item.id === messageId && item.conversationId === conversationId
+        );
+        if (!message) {
+          throw dmServiceError('Không tìm thấy tin nhắn', 404);
+        }
+        if (!canDeleteDmMessage(message, conversation, accountId)) {
+          throw dmServiceError('Bạn không có quyền xóa tin nhắn này', 403);
+        }
+        message.deletedAt = deletedAt;
+        message.deletedBy = accountId;
+        // Clear ciphertext so deleted content is not recoverable from disk snapshot.
+        const redacted = encryptStoredBody('', dmSecret);
+        message.ciphertext = redacted.ciphertext;
+        message.iv = redacted.iv;
+        message.authTag = redacted.authTag;
+        recomputeConversationLastMessage(state, conversation);
+        conversation.updatedAt = deletedAt;
+        logEvent('dm.message.delete', {
+          conversationId,
+          messageId,
+          actorId: accountId
+        });
+        return {
+          conversation: serializeDmConversation(conversation, state, accountId, dmSecret),
+          message: serializeDmMessage(message, dmSecret, state, accountId),
+          participantIds: normalizeParticipantIds(conversation.participantIds)
+        };
+      });
+      publishRealtime('dm:message-deleted', {
+        conversationId,
+        messageId: result.message.id,
+        senderId: accountId,
+        participantIds: result.participantIds,
+        deletedAt
+      });
+      return {
+        conversation: result.conversation,
+        message: result.message
+      };
+    },
+
+    /**
+     * Hide conversation for the current user (default), or hard-delete a group
+     * when the owner sets hard=true.
+     */
+    async deleteDmConversation(
+      accountId: string,
+      conversationId: string,
+      { hard = false }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const result = await mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        const kind = conversationKind(conversation);
+        const wantHard = Boolean(hard);
+        if (wantHard) {
+          if (kind !== 'group') {
+            throw dmServiceError('Chỉ chủ nhóm mới xóa hẳn nhóm (chat 1-1 chỉ ẩn cho bạn)');
+          }
+          if (getMemberRole(conversation, accountId) !== 'owner') {
+            throw dmServiceError('Chỉ chủ nhóm mới xóa hẳn nhóm', 403);
+          }
+          const participantIds = normalizeParticipantIds(conversation.participantIds);
+          state.dmConversations = state.dmConversations.filter(
+            (item: AnyRecord) => item.id !== conversationId
+          );
+          state.dmMessages = state.dmMessages.filter(
+            (item: AnyRecord) => item.conversationId !== conversationId
+          );
+          logEvent('dm.conversation.hard-delete', {
+            conversationId,
+            actorId: accountId,
+            kind
+          });
+          return {
+            deleted: true,
+            hard: true,
+            conversation: null,
+            cacheUserIds: participantIds,
+            realtimePayload: {
+              conversationId,
+              participantIds,
+              hard: true
+            }
+          };
+        }
+        hideConversationForUser(conversation, accountId);
+        conversation.updatedAt = now().toISOString();
+        logEvent('dm.conversation.hide', {
+          conversationId,
+          actorId: accountId,
+          kind
+        });
+        return {
+          deleted: true,
+          hard: false,
+          conversation: null,
+          cacheUserIds: [accountId],
+          realtimePayload: null
+        };
+      });
+      await invalidateUnreadCounts(result.cacheUserIds);
+      if (result.realtimePayload) {
+        publishRealtime('dm:conversation-deleted', result.realtimePayload);
+      }
+      return {
+        deleted: result.deleted,
+        hard: result.hard,
+        conversation: result.conversation
+      };
+    },
+
+    async setDmConversationMuted(
+      accountId: string,
+      conversationId: string,
+      { muted = true }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      return mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        setConversationMuted(conversation, accountId, Boolean(muted));
         conversation.updatedAt = now().toISOString();
         return serializeDmConversation(conversation, state, accountId, dmSecret);
       });
+    },
+
+    async setDmUserBlocked(
+      accountId: string,
+      { userId, username, blocked = true }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      return mutate(async (state) => {
+        const me = state.users.find((item: AnyRecord) => item.id === accountId);
+        if (!me || me.disabled) {
+          throw dmServiceError('Phiên đăng nhập không còn hợp lệ', 401);
+        }
+        let targetId = String(userId || '').trim();
+        if (!targetId && username) {
+          const safeUsername = normalizeAccountUsername(String(username).replace(/^@+/, ''));
+          const peer = state.users.find(
+            (item: AnyRecord) => normalizeAccountUsername(item.username) === safeUsername
+          );
+          targetId = peer?.id || '';
+        }
+        if (!targetId || targetId === accountId) {
+          throw dmServiceError('Không tìm thấy tài khoản cần chặn');
+        }
+        const target = state.users.find((item: AnyRecord) => item.id === targetId);
+        if (!target) {
+          throw dmServiceError('Không tìm thấy tài khoản cần chặn', 404);
+        }
+        const set = new Set(getUserDmBlockedIds(me));
+        if (blocked) {
+          set.add(targetId);
+        } else {
+          set.delete(targetId);
+        }
+        me.dmBlockedUserIds = [...set];
+        me.updatedAt = now().toISOString();
+        logEvent(blocked ? 'dm.block' : 'dm.unblock', {
+          actorId: accountId,
+          targetId
+        });
+        return {
+          blocked: Boolean(blocked),
+          userId: targetId,
+          username: target.username,
+          blockedUserIds: me.dmBlockedUserIds
+        };
+      });
+    },
+
+    async listDmBlockedUsers(accountId: string) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const state = await store.read();
+      const me = state.users.find((item: AnyRecord) => item.id === accountId);
+      if (!me) {
+        throw dmServiceError('Phiên đăng nhập không còn hợp lệ', 401);
+      }
+      const ids = getUserDmBlockedIds(me);
+      return {
+        users: ids.map((id) => {
+          const user = state.users.find((item: AnyRecord) => item.id === id);
+          return user
+            ? { id: user.id, username: user.username }
+            : { id, username: 'đã-xóa' };
+        })
+      };
+    },
+
+    async reactDmMessage(
+      accountId: string,
+      conversationId: string,
+      messageId: string,
+      { reaction }: AnyRecord = {}
+    ) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const reactionType = normalizeDmReaction(reaction);
+      if (!reactionType) {
+        throw dmServiceError('Biểu cảm không hợp lệ');
+      }
+      const result = await mutate(async (state) => {
+        ensureDmCollections(state);
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === conversationId
+        );
+        if (!conversation || !conversationIncludesUser(conversation, accountId)) {
+          throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+        }
+        const message = state.dmMessages.find(
+          (item: AnyRecord) =>
+            item.id === messageId && item.conversationId === conversationId
+        );
+        if (!message || message.deletedAt) {
+          throw dmServiceError('Không tìm thấy tin nhắn', 404);
+        }
+        if (!message.reactionVoters || typeof message.reactionVoters !== 'object') {
+          message.reactionVoters = {};
+        }
+        if (message.reactionVoters[accountId] === reactionType) {
+          delete message.reactionVoters[accountId];
+        } else {
+          message.reactionVoters[accountId] = reactionType;
+        }
+        return {
+          message: serializeDmMessage(message, dmSecret, state, accountId),
+          participantIds: normalizeParticipantIds(conversation.participantIds)
+        };
+      });
+      publishRealtime('dm:message-updated', {
+        conversationId,
+        messageId,
+        participantIds: result.participantIds,
+        reason: 'reaction'
+      });
+      return { message: result.message };
+    },
+
+    async signalDmTyping(accountId: string, conversationId: string) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      await enforceRealtimeUserRateLimit(accountId, 'dm:typing', {
+        limit: readPositiveInteger(process.env.DM_TYPING_RATE_LIMIT, 30),
+        windowMs: 10_000
+      });
+      const state = await store.read();
+      ensureDmCollections(state);
+      const me = state.users.find((item: AnyRecord) => item.id === accountId);
+      const conversation = state.dmConversations.find(
+        (item: AnyRecord) => item.id === conversationId
+      );
+      if (!me || !conversation || !conversationIncludesUser(conversation, accountId)) {
+        throw dmServiceError('Không tìm thấy cuộc trò chuyện', 404);
+      }
+      const participantIds = normalizeParticipantIds(conversation.participantIds);
+      publishRealtime('dm:typing', {
+        conversationId,
+        userId: accountId,
+        username: me.username,
+        participantIds,
+        expiresAt: new Date(Date.now() + 4000).toISOString()
+      });
+      return { ok: true };
+    },
+
+    async searchDmMessages(accountId: string, { q = '', limit = 20 }: AnyRecord = {}) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      const query = String(q || '')
+        .trim()
+        .toLowerCase()
+        .slice(0, 100);
+      if (query.length < 2) {
+        throw dmServiceError('Từ khóa tìm kiếm cần ít nhất 2 ký tự');
+      }
+      const state = await store.read();
+      ensureDmCollections(state);
+      const safeLimit = Math.max(1, Math.min(Number(limit) || 20, MAX_DM_SEARCH_RESULTS));
+      const myConversationIds = new Set(
+        state.dmConversations
+          .filter(
+            (conversation: AnyRecord) =>
+              conversationIncludesUser(conversation, accountId) &&
+              !conversationIsHiddenFor(conversation, accountId)
+          )
+          .map((conversation: AnyRecord) => conversation.id)
+      );
+      const hits: AnyRecord[] = [];
+      const sorted = [...state.dmMessages].sort((left: AnyRecord, right: AnyRecord) =>
+        String(right.createdAt || '').localeCompare(String(left.createdAt || ''))
+      );
+      for (const message of sorted) {
+        if (hits.length >= safeLimit) {
+          break;
+        }
+        if (!myConversationIds.has(message.conversationId) || message.deletedAt) {
+          continue;
+        }
+        const serialized = serializeDmMessage(message, dmSecret, state, accountId);
+        const haystack = `${serialized.body} ${serialized.senderUsername}`.toLowerCase();
+        if (!haystack.includes(query)) {
+          continue;
+        }
+        const conversation = state.dmConversations.find(
+          (item: AnyRecord) => item.id === message.conversationId
+        );
+        hits.push({
+          message: serialized,
+          conversation: conversation
+            ? serializeDmConversation(conversation, state, accountId, dmSecret)
+            : null
+        });
+      }
+      return { results: hits, q: query };
+    },
+
+    async getLinkPreview({ url }: AnyRecord = {}) {
+      return fetchLinkPreview(url);
+    },
+
+    async getDmLinkPreview(accountId: string, { url }: AnyRecord = {}) {
+      if (!accountId) {
+        throw dmServiceError('Vui lòng đăng nhập tài khoản', 401);
+      }
+      try {
+        return await fetchLinkPreview(url);
+      } catch (error) {
+        const statusCode = Number((error as { statusCode?: number })?.statusCode || 400);
+        throw dmServiceError(String((error as Error)?.message || 'URL không hợp lệ'), statusCode);
+      }
     }
   };
 }

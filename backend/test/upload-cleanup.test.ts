@@ -59,11 +59,24 @@ describe('collectReferencedUploadKeys', () => {
             storageKey: 'comment.png'
           }
         }
+      ],
+      dmMessages: [
+        {
+          images: [
+            {
+              storage: 'local',
+              storageKey: 'dm.png',
+              thumbnail: { storage: 'local', storageKey: 'dm.thumb.jpg' }
+            }
+          ]
+        }
       ]
     };
 
     assert.deepStrictEqual([...collectReferencedUploadKeys(state, { storage: 'local' })].sort(), [
       'comment.png',
+      'dm.png',
+      'dm.thumb.jpg',
       'thread.png',
       'thread.thumb.jpg'
     ]);
@@ -80,6 +93,7 @@ describe('cleanup upload CLI state source', () => {
     assert.strictEqual(args.storeDriver, 'mongo');
     assert.strictEqual(args.imageStorageDriver, 's3');
     assert.strictEqual(args.dryRun, true);
+    assert.strictEqual(args.minimumAgeMs, 24 * 60 * 60 * 1000);
   });
 
   it('rejects conflicting dry-run and delete flags', () => {
@@ -192,6 +206,71 @@ describe('cleanupOrphanUploads local storage', () => {
     assert.deepStrictEqual(result.deleted, [{ storageKey: 'orphan.png' }]);
     assert.strictEqual(await fs.readFile(path.join(root, 'keep.png'), 'utf8'), 'keep');
     await assert.rejects(() => fs.access(path.join(root, 'orphan.png')), /ENOENT/);
+  });
+
+  it('rechecks authoritative references under the mutation lock before delete', async () => {
+    let locked = false;
+    let deleted = false;
+    const imageStorage = {
+      type: 'local-disk',
+      async listKeys() {
+        return ['claimed-by-dm.png'];
+      },
+      async deleteKey() {
+        deleted = true;
+      }
+    };
+    const result = await cleanupOrphanUploads({
+      state: { threads: [], comments: [], dmMessages: [] },
+      imageStorage,
+      dryRun: false,
+      readState: async () => ({
+        threads: [],
+        comments: [],
+        dmMessages: [{
+          image: { storage: 'local', storageKey: 'claimed-by-dm.png' }
+        }]
+      }),
+      withMutationLock: async (callback) => {
+        locked = true;
+        return callback();
+      }
+    });
+
+    assert.strictEqual(locked, true);
+    assert.strictEqual(deleted, false);
+    assert.deepStrictEqual(result.skipped, [{
+      storageKey: 'claimed-by-dm.png',
+      reason: 'referenced-on-recheck'
+    }]);
+  });
+
+  it('keeps unreferenced uploads that are newer than the grace period', async () => {
+    let deleted = false;
+    const result = await cleanupOrphanUploads({
+      state: { threads: [], comments: [], dmMessages: [] },
+      imageStorage: {
+        type: 'local-disk',
+        async listKeys() {
+          return ['fresh.png'];
+        },
+        async deleteKey() {
+          deleted = true;
+        },
+        async getLastModified() {
+          return new Date('2026-07-24T01:30:00.000Z');
+        }
+      },
+      dryRun: false,
+      minimumAgeMs: 60 * 60 * 1000,
+      now: () => new Date('2026-07-24T02:00:00.000Z')
+    });
+
+    assert.strictEqual(deleted, false);
+    assert.deepStrictEqual(result.skipped, [{
+      storageKey: 'fresh.png',
+      reason: 'minimum-age'
+    }]);
   });
 
   it('rejects unsafe local keys before deleting', async () => {

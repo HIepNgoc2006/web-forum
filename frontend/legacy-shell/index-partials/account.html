@@ -1,0 +1,460 @@
+      <section id="registerScreen" class="screen account-screen" aria-labelledby="registerTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/register/</p>
+            <h1 id="registerTitle">Đăng ký tài khoản</h1>
+            <p class="muted">Tài khoản là tùy chọn để đồng bộ cài đặt và tiện ích riêng. Đăng bài ẩn danh vẫn dùng được khi chưa đăng nhập.</p>
+          </div>
+        </div>
+        <form id="registerForm" class="login-panel stack">
+          <div id="registerError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản</span>
+            <input id="registerUsername" autocomplete="username" maxlength="32" />
+          </label>
+          <label class="field-row">
+            <span>Email</span>
+            <input id="registerEmail" type="email" autocomplete="email" maxlength="254" required />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu</span>
+            <input id="registerPassword" type="password" autocomplete="new-password" aria-describedby="registerPasswordHint" required />
+          </label>
+          <label class="field-row">
+            <span>Xác nhận mật khẩu</span>
+            <input id="registerPasswordConfirmation" type="password" autocomplete="new-password" aria-describedby="registerPasswordHint" required />
+          </label>
+          <p id="registerPasswordHint" class="muted account-hint">Mật khẩu cần ít nhất 10 ký tự, không trùng tên tài khoản và không dùng mật khẩu quá phổ biến hoặc quá đơn giản.</p>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <div class="captcha-cell">
+              <input id="registerCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="registerCaptcha"></div>
+            </div>
+          </div>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đăng ký</button>
+          </div>
+          <p class="account-secondary-links">
+            <span class="bracket-link">[<a href="#login">Đã có tài khoản</a>]</span>
+          </p>
+          <p class="account-note">Username tài khoản không tự động hiện trên bài public. Tên hiển thị khi đăng bài vẫn là trường riêng và mặc định là Anonymous.</p>
+        </form>
+        <div id="registerRecoveryNotice" class="login-panel stack hidden" role="status">
+          <h2>Lưu mã khôi phục của bạn</h2>
+          <p class="muted">Đây là cách duy nhất để đặt lại mật khẩu nếu bạn quên. Mã chỉ hiển thị một lần — hãy lưu ở nơi an toàn.</p>
+          <p id="registerVerificationStatus" class="muted">Bạn có thể dùng tài khoản ngay. Hãy xác nhận email trong cài đặt trong vòng 15 phút.</p>
+          <code id="registerRecoveryCode" class="recovery-code"></code>
+          <div class="form-actions account-actions">
+            <button id="registerRecoveryCopy" class="ghost-button" type="button">[Sao chép]</button>
+            <button id="registerRecoveryContinue" class="primary-button" type="button">Tôi đã lưu mã, tiếp tục</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="loginScreen" class="screen account-screen" aria-labelledby="accountLoginTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/login/</p>
+            <h1 id="accountLoginTitle">Đăng nhập tài khoản</h1>
+            <p class="muted">Bỏ qua bước này nếu chỉ muốn đọc hoặc đăng bài ẩn danh trên các bảng public.</p>
+          </div>
+        </div>
+        <form id="accountLoginForm" class="login-panel stack">
+          <div id="accountLoginError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản</span>
+            <input id="accountUsername" autocomplete="username" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu</span>
+            <input id="accountPassword" type="password" autocomplete="current-password" />
+          </label>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <div class="captcha-cell">
+              <input id="accountLoginCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="accountLoginCaptcha"></div>
+            </div>
+          </div>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đăng nhập</button>
+            <button id="loginPasskeyButton" class="ghost-button" type="button">[Đăng nhập Passkey]</button>
+          </div>
+          <p class="account-secondary-links">
+            <span class="bracket-link">[<a href="#register">Tạo tài khoản</a>]</span>
+            <span class="bracket-link">[<a href="#forgot">Quên mật khẩu</a>]</span>
+          </p>
+        </form>
+        <form id="account2FAVerifyForm" class="login-panel stack hidden">
+          <div id="account2FAVerifyError" class="form-error hidden" role="alert"></div>
+          <p class="muted">Tài khoản này đã kích hoạt bảo mật 2 lớp. Vui lòng nhập mã xác thực từ ứng dụng của bạn.</p>
+          <div id="totpInputSection" class="stack">
+            <label class="field-row otp-field-row">
+              <span>Mã 2FA (6 chữ số)</span>
+              <input id="login2FACode" class="otp-code-input" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Xác thực</button>
+              <button id="useBackupCodeLink" class="link-button" type="button">[Dùng mã dự phòng]</button>
+            </div>
+          </div>
+          <div id="backupCodeInputSection" class="stack hidden">
+            <label class="field-row">
+              <span>Mã dự phòng (8 ký tự)</span>
+              <input id="loginBackupCode" maxlength="10" placeholder="Mã dự phòng" style="font-size:18px; text-align:center; text-transform:uppercase;" type="text" />
+            </label>
+            <div class="form-actions account-actions">
+              <button id="submitBackupCodeButton" class="primary-button" type="button">Xác thực bằng mã dự phòng</button>
+              <button id="useTotpLink" class="link-button" type="button">[Quay lại nhập mã 2FA]</button>
+            </div>
+          </div>
+        </form>
+      </section>
+
+      <section id="forgotScreen" class="screen account-screen" aria-labelledby="forgotTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/forgot/</p>
+            <h1 id="forgotTitle">Quên mật khẩu</h1>
+            <p class="muted">Dùng mã khôi phục đã lưu hoặc mã OTP gửi tới email đã xác nhận. Sau khi đặt lại, bạn sẽ nhận một mã khôi phục mới.</p>
+          </div>
+        </div>
+        <form id="forgotPasswordForm" class="login-panel stack">
+          <h2>Dùng mã khôi phục</h2>
+          <div id="forgotError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản</span>
+            <input id="forgotUsername" autocomplete="username" maxlength="32" />
+          </label>
+          <label class="field-row">
+            <span>Mã khôi phục</span>
+            <input id="forgotRecoveryCode" autocomplete="off" placeholder="VD: A1B2C-3D4E5-F6789-0ABCD" style="text-transform:uppercase;" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu mới</span>
+            <input id="forgotNewPassword" type="password" autocomplete="new-password" />
+          </label>
+          <p class="muted account-hint">Mật khẩu cần ít nhất 10 ký tự, không trùng tên tài khoản và không dùng mật khẩu quá phổ biến hoặc quá đơn giản.</p>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <div class="captcha-cell">
+              <input id="forgotCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="forgotCaptcha"></div>
+            </div>
+          </div>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đặt lại mật khẩu</button>
+          </div>
+          <p class="account-secondary-links">
+            <span class="bracket-link">[<a href="#login">Quay lại đăng nhập</a>]</span>
+          </p>
+        </form>
+        <form id="forgotEmailRequestForm" class="login-panel stack">
+          <h2>Dùng email đã xác nhận</h2>
+          <div id="forgotEmailRequestError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản hoặc email</span>
+            <input id="forgotEmailIdentifier" autocomplete="username" maxlength="254" />
+          </label>
+          <div class="field-row captcha-field">
+            <span>Xác minh</span>
+            <div class="captcha-cell">
+              <input id="forgotEmailRequestCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+              <div class="captcha-widget hidden" data-hcaptcha-target="forgotEmailRequestCaptcha"></div>
+            </div>
+          </div>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Gửi mã OTP</button>
+          </div>
+        </form>
+        <form id="forgotEmailConfirmForm" class="login-panel stack hidden">
+          <h2>Nhập mã OTP</h2>
+          <div id="forgotEmailConfirmError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Tài khoản hoặc email</span>
+            <input id="forgotEmailConfirmIdentifier" autocomplete="username" maxlength="254" readonly />
+          </label>
+          <label class="field-row otp-field-row">
+            <span>Mã OTP</span>
+            <input id="forgotEmailCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+          </label>
+          <label class="field-row">
+            <span>Mật khẩu mới</span>
+            <input id="forgotEmailNewPassword" type="password" autocomplete="new-password" />
+          </label>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Đặt lại mật khẩu</button>
+            <button id="forgotEmailStartOver" class="ghost-button" type="button">[Gửi mã khác]</button>
+          </div>
+        </form>
+        <div id="forgotSuccess" class="login-panel stack hidden" role="status">
+          <h2>Đã đặt lại mật khẩu</h2>
+          <p class="muted">Mã cũ đã hết hiệu lực. Đây là mã khôi phục mới — lưu lại nơi an toàn:</p>
+          <code id="forgotNewRecoveryCode" class="recovery-code"></code>
+          <div class="form-actions account-actions">
+            <button id="forgotRecoveryCopy" class="ghost-button" type="button">[Sao chép]</button>
+            <a class="primary-button" href="#login">Đăng nhập</a>
+          </div>
+        </div>
+      </section>
+
+      <section id="accountScreen" class="screen account-screen" aria-labelledby="accountTitle">
+        <div class="screen-head">
+          <div>
+            <p class="path-chip">/account/settings/</p>
+            <h1 id="accountTitle">Cài đặt tài khoản</h1>
+            <p id="accountStatus" class="muted">Tài khoản tùy chọn cho dữ liệu riêng.</p>
+          </div>
+        </div>
+        <div id="accountLoggedOut" class="login-panel account-guest-notice stack">
+          <p class="account-note">Bạn chưa đăng nhập tài khoản. Vẫn có thể đọc và đăng bài ẩn danh bình thường.</p>
+          <p class="account-actions">
+            <span class="bracket-link">[<a href="#login">Đăng nhập</a>]</span>
+            <span class="bracket-link">[<a href="#register">Đăng ký</a>]</span>
+          </p>
+        </div>
+        <div id="reactAccountPreferencesSummary" class="react-island" data-react-island="account-preferences-summary"></div>
+        <form id="accountSettingsForm" class="login-panel account-settings-panel stack hidden">
+          <div id="accountSettingsError" class="form-error hidden" role="alert"></div>
+          <label class="field-row">
+            <span>Giao diện</span>
+            <select id="accountTheme">
+              <option value="yotsuba-b">Yotsuba B</option>
+              <option value="yotsuba">Yotsuba</option>
+              <option value="tomorrow">Tomorrow</option>
+              <option value="burichan">Burichan</option>
+            </select>
+          </label>
+          <label class="field-row">
+            <span>Cỡ chữ</span>
+            <select id="accountFontSize">
+              <option value="small">Nhỏ</option>
+              <option value="medium" selected>Vừa (mặc định)</option>
+              <option value="large">Lớn</option>
+              <option value="xlarge">Rất lớn</option>
+            </select>
+            <small class="muted">Áp dụng trên toàn trang: bài mở đầu, bình luận, ô soạn chủ đề/phản hồi, tin nhắn và biểu mẫu.</small>
+          </label>
+          <label class="field-row">
+            <span>Bảng nhà</span>
+            <select id="accountHomeBoard"></select>
+          </label>
+          <div class="field-row checkbox-row">
+            <span>Đồng bộ</span>
+            <div class="field-row-options">
+              <label><input id="accountSyncDrafts" type="checkbox" /> Bản nháp riêng tư</label>
+            </div>
+          </div>
+          <div class="field-row checkbox-row">
+            <span>Hiển thị</span>
+            <div class="field-row-options">
+              <label><input id="accountCompactThreads" type="checkbox" /> Chế độ gọn</label>
+              <label><input id="accountHideThumbnails" type="checkbox" /> Ẩn ảnh thu nhỏ</label>
+              <label><input id="accountWatchedUnreadOnly" type="checkbox" /> Danh sách theo dõi chỉ hiện mục chưa đọc</label>
+            </div>
+          </div>
+          <label class="field-row">
+            <span>Sắp xếp danh sách theo dõi</span>
+            <select id="accountWatchedSort">
+              <option value="unread">Chưa đọc trước</option>
+              <option value="recent">Mới cập nhật</option>
+              <option value="board">Theo bảng</option>
+            </select>
+          </label>
+          <label class="field-row">
+            <span>Khung bình luận</span>
+            <select id="accountCommentComposerMode">
+              <option value="floating">Cửa sổ nổi</option>
+              <option value="normal">Bình thường (trong trang)</option>
+            </select>
+            <small class="muted">Áp dụng cho nút Trả lời, số bài, thanh công cụ và phím tắt R.</small>
+          </label>
+          <div class="field-row checkbox-row">
+            <span>Thông báo</span>
+            <div class="field-row-options">
+              <label><input id="accountEmailNotifications" type="checkbox" aria-describedby="accountEmailNotificationStatus" disabled /> Email: bật thông báo</label>
+              <label><input id="accountNotifyWatchedThreads" type="checkbox" /> Email: chủ đề đang theo dõi</label>
+              <label><input id="accountNotifyBoardSubscriptions" type="checkbox" /> Email: bảng đang theo dõi</label>
+              <label><input id="accountEmailNotifyMentions" type="checkbox" disabled /> Email: lượt nhắc @tên</label>
+              <label><input id="accountEmailNotifyDirectMessages" type="checkbox" disabled /> Email: tin nhắn riêng</label>
+              <label><input id="accountNotifyDirectMessages" type="checkbox" /> Trong trang: tin nhắn riêng</label>
+              <label><input id="accountBrowserNotifyWatchedThreads" type="checkbox" /> Trình duyệt: chủ đề đang theo dõi</label>
+              <label><input id="accountBrowserNotifyBoardSubscriptions" type="checkbox" /> Trình duyệt: bảng đang theo dõi</label>
+              <label><input id="accountBrowserNotifyMentions" type="checkbox" /> Trình duyệt: lượt nhắc @tên</label>
+              <label><input id="accountBrowserNotifyDirectMessages" type="checkbox" /> Trình duyệt: tin nhắn riêng</label>
+            </div>
+          </div>
+          <p id="accountEmailNotificationStatus" class="account-note">Đăng nhập và xác nhận email để bật thông báo email.</p>
+          <p id="accountBrowserNotificationsStatus" class="account-note">Tắt thông báo trình duyệt cho chủ đề đang theo dõi.</p>
+          <div class="field-row account-board-settings">
+            <span>Bảng theo dõi</span>
+            <div id="accountBoardSubscriptions" class="account-board-subscriptions"></div>
+          </div>
+          <div class="field-row account-board-settings">
+            <span>Ẩn bảng khỏi trang chủ / thanh điều hướng</span>
+            <div id="accountHiddenBoards" class="account-board-subscriptions" data-account-hidden-boards></div>
+            <small class="muted">Bảng đã ẩn vẫn mở được bằng link trực tiếp. Theo dõi và email không bị ảnh hưởng.</small>
+          </div>
+          <div class="form-actions account-actions">
+            <button class="primary-button" type="submit">Lưu cài đặt</button>
+            <button id="accountSettingsLogout" class="ghost-button" type="button">[Đăng xuất]</button>
+          </div>
+          <p class="account-note">Cài đặt này không đổi tên hiển thị khi đăng bài và không được đưa vào bài viết công khai.</p>
+        </form>
+        <section id="browserHiddenPanel" class="login-panel account-settings-panel stack" aria-labelledby="browserHiddenTitle">
+          <h2 id="browserHiddenTitle">Nội dung đã ẩn</h2>
+          <p class="muted account-hidden-help">Ẩn bài/chủ đề chỉ lưu trên <strong>trình duyệt này</strong> (không cần tài khoản). Sau khi ẩn, vẫn còn dòng báo đỏ <strong>[Hiện lại]</strong> trên bảng/chủ đề. Danh sách bên dưới cũng có nút khôi phục.</p>
+          <div id="browserHiddenSummary" class="account-private-grid"></div>
+          <div class="form-actions account-actions account-hidden-actions">
+            <button class="ghost-button" data-clear-hidden-posts type="button">[Hiện lại hết bài ẩn]</button>
+            <button class="ghost-button" data-clear-hidden-threads type="button">[Hiện lại hết chủ đề ẩn]</button>
+          </div>
+        </section>
+        <section id="accountPasskeysPanel" class="login-panel account-settings-panel stack hidden" aria-labelledby="accountPasskeysTitle">
+          <h2 id="accountPasskeysTitle">Thiết bị xác thực (Passkey)</h2>
+          <div id="accountPasskeysList" class="account-private-grid"></div>
+          <div class="form-actions account-actions">
+            <button id="addPasskeyButton" class="primary-button" type="button">Thêm Passkey mới</button>
+          </div>
+        </section>
+        <section id="accountEmailPanel" class="login-panel account-settings-panel stack hidden" aria-labelledby="accountEmailTitle">
+          <h2 id="accountEmailTitle">Email tài khoản</h2>
+          <p id="accountEmailStatus" class="muted"></p>
+          <form id="accountEmailVerifyForm" class="stack hidden">
+            <div id="accountEmailVerifyError" class="form-error hidden" role="alert"></div>
+            <label class="field-row otp-field-row">
+              <span>Mã OTP</span>
+              <input id="accountEmailVerifyCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Xác nhận email</button>
+              <button id="accountEmailResend" class="ghost-button" type="button">[Gửi lại mã]</button>
+            </div>
+          </form>
+          <form id="accountEmailChangeForm" class="stack">
+            <div id="accountEmailChangeError" class="form-error hidden" role="alert"></div>
+            <label class="field-row">
+              <span>Email mới</span>
+              <input id="accountEmailNewEmail" type="email" autocomplete="email" maxlength="254" />
+            </label>
+            <label class="field-row">
+              <span>Mật khẩu hiện tại</span>
+              <input id="accountEmailChangePassword" type="password" autocomplete="current-password" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Gửi mã tới email mới</button>
+            </div>
+          </form>
+          <form id="accountEmailChangeConfirmForm" class="stack hidden">
+            <div id="accountEmailChangeConfirmError" class="form-error hidden" role="alert"></div>
+            <label class="field-row otp-field-row">
+              <span>Mã OTP email mới</span>
+              <input id="accountEmailChangeCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Xác nhận đổi email</button>
+            </div>
+          </form>
+        </section>
+        <section id="accountRecoveryPanel" class="login-panel account-settings-panel stack hidden" aria-labelledby="accountRecoveryTitle">
+          <h2 id="accountRecoveryTitle">Mã khôi phục</h2>
+          <p class="muted">Mã khôi phục dùng để đặt lại mật khẩu khi bạn quên. Tạo mã mới sẽ vô hiệu hóa mã cũ. Nhập mật khẩu hiện tại để tạo mã mới.</p>
+          <form id="recoveryCodeForm" class="stack">
+            <div id="recoveryCodeError" class="form-error hidden" role="alert"></div>
+            <label class="field-row">
+              <span>Mật khẩu hiện tại</span>
+              <input id="recoveryCodePassword" type="password" autocomplete="current-password" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Tạo mã khôi phục mới</button>
+            </div>
+          </form>
+          <div id="recoveryCodeResult" class="stack hidden" role="status">
+            <p class="muted">Mã khôi phục mới (chỉ hiển thị một lần):</p>
+            <code id="recoveryCodeResultValue" class="recovery-code"></code>
+            <div class="form-actions account-actions">
+              <button id="recoveryCodeCopy" class="ghost-button" type="button">[Sao chép]</button>
+            </div>
+          </div>
+          <form id="recoveryEmailRequestForm" class="stack hidden">
+            <h3>Tạo lại bằng email đã xác nhận</h3>
+            <div id="recoveryEmailRequestError" class="form-error hidden" role="alert"></div>
+            <div class="field-row captcha-field">
+              <span>Xác minh</span>
+              <div class="captcha-cell">
+                <input id="recoveryEmailRequestCaptcha" class="reply-captcha-token" value="dev-pass" autocomplete="off" aria-label="Mã xác minh" />
+                <div class="captcha-widget hidden" data-hcaptcha-target="recoveryEmailRequestCaptcha"></div>
+              </div>
+            </div>
+            <div class="form-actions account-actions">
+              <button class="ghost-button" type="submit">[Gửi OTP qua email]</button>
+            </div>
+          </form>
+          <form id="recoveryEmailConfirmForm" class="stack hidden">
+            <div id="recoveryEmailConfirmError" class="form-error hidden" role="alert"></div>
+            <label class="field-row otp-field-row">
+              <span>Mã OTP</span>
+              <input id="recoveryEmailCode" class="otp-code-input" inputmode="numeric" maxlength="6" autocomplete="one-time-code" />
+            </label>
+            <div class="form-actions account-actions">
+              <button class="primary-button" type="submit">Tạo mã khôi phục mới</button>
+            </div>
+          </form>
+        </section>
+        <section id="accountPrivateDataPanel" class="login-panel account-settings-panel stack hidden" aria-labelledby="accountPrivateDataTitle">
+          <h2 id="accountPrivateDataTitle">Dữ liệu đồng bộ</h2>
+          <div id="accountPrivateDataSummary" class="account-private-grid"></div>
+          <div class="form-actions account-actions account-private-actions">
+            <button class="ghost-button" data-clear-account-private="watchlist" type="button">[Xóa watchlist]</button>
+            <button class="ghost-button" data-clear-account-private="savedSearches" type="button">[Xóa tìm kiếm]</button>
+            <button class="ghost-button" data-clear-account-private="drafts" type="button">[Xóa drafts]</button>
+            <button class="ghost-button" data-clear-account-private="contentFilters" type="button">[Xóa bộ lọc]</button>
+            <button class="ghost-button" data-clear-account-private="replyTemplates" type="button">[Xóa mẫu]</button>
+            <button class="ghost-button" data-clear-account-private="posterNotes" type="button">[Xóa ghi chú ID]</button>
+            <button class="ghost-button" data-clear-account-private="hiddenPosts" type="button">[Xóa bài ẩn]</button>
+            <button class="ghost-button" data-clear-account-private="hiddenThreads" type="button">[Xóa chủ đề ẩn]</button>
+            <button class="ghost-button" data-clear-account-private="" type="button">[Xóa tất cả]</button>
+          </div>
+        </section>
+        <section id="accountTwoFactorPanel" class="login-panel account-settings-panel stack hidden" aria-labelledby="accountTwoFactorTitle">
+          <h2 id="accountTwoFactorTitle">Bảo mật 2 lớp (TOTP 2FA)</h2>
+          <div id="account2FADisabledSection" class="stack account-2fa-section">
+            <p class="muted">2FA hiện tại đang TẮT. Bật 2FA giúp bảo vệ tài khoản của bạn khỏi truy cập trái phép.</p>
+            <div class="form-actions account-actions">
+              <button id="enable2FAButton" class="primary-button account-2fa-primary" type="button">Bắt đầu thiết lập 2FA</button>
+            </div>
+          </div>
+          <div id="account2FASetupSection" class="stack account-2fa-section hidden">
+            <p class="muted">Quét mã QR bằng ứng dụng xác thực (Google Authenticator, Microsoft Authenticator, v.v.):</p>
+            <div class="account-2fa-qr">
+              <img id="qrcodeImage" src="" alt="Mã QR thiết lập 2FA" />
+            </div>
+            <p class="muted account-2fa-manual">Hoặc nhập mã khóa thủ công: <code id="manualSecretCode" class="account-2fa-secret"></code></p>
+            <div class="account-2fa-backup stack">
+              <p class="account-2fa-backup-title">LƯU Ý: LƯU TRỮ MÃ DỰ PHÒNG</p>
+              <p class="muted">Lưu lại các mã dự phòng sau. Mỗi mã chỉ sử dụng được một lần để khôi phục tài khoản nếu bạn mất thiết bị 2FA.</p>
+              <textarea id="backupCodesDisplay" class="account-2fa-backup-codes" readonly rows="5"></textarea>
+            </div>
+            <div class="field-row otp-field-row">
+              <span>Nhập mã 2FA xác nhận</span>
+              <input id="verify2FACode" class="otp-code-input otp-code-input-compact" maxlength="6" placeholder="Mã 6 chữ số" type="text" />
+            </div>
+            <div class="form-actions account-actions">
+              <button id="verify2FASetupButton" class="primary-button" type="button">Xác nhận và kích hoạt</button>
+              <button id="cancel2FASetupButton" class="ghost-button" type="button">Hủy</button>
+            </div>
+          </div>
+          <div id="account2FAEnabledSection" class="stack account-2fa-section hidden">
+            <p class="muted account-2fa-enabled-status">✔ 2FA hiện tại đang BẬT trên tài khoản của bạn.</p>
+            <p class="muted">Nếu muốn tắt 2FA, nhập mật khẩu xác nhận bên dưới:</p>
+            <div class="field-row">
+              <span>Nhập mật khẩu</span>
+              <input id="disable2FAPassword" class="account-2fa-password" placeholder="Mật khẩu tài khoản" type="password" />
+            </div>
+            <div class="form-actions account-actions">
+              <button id="disable2FAButton" class="ghost-button account-2fa-disable" type="button">[Hủy kích hoạt 2FA]</button>
+            </div>
+          </div>
+        </section>
+      </section>

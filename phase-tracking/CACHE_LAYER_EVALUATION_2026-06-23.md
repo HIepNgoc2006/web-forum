@@ -2,6 +2,15 @@
 
 Issue: #229 - Evaluate Redis/cache layer for catalog, AI summaries, and rate counters
 
+## 2026-07-23 realtime update
+
+ADR 0003 adds Redis/Upstash for a separate, reconstructible realtime boundary:
+presence/connection TTLs, per-user realtime rate limits, unread-count cache, and
+Pub/Sub fan-out. This does not change the decisions below for catalog or AI
+summary caching, and MongoDB remains authoritative for DM/unread/read state.
+Multi-instance production now requires both the existing shared HTTP limiter
+configuration and `REALTIME_REDIS_REQUIRED=true` with a TLS Redis protocol URL.
+
 ## Decision
 
 Redis is not required for the controlled beta while the backend runs as a
@@ -103,5 +112,7 @@ Before broad multi-instance traffic:
       auth/posting/AI routes on a single backend instance with load-balancer
       routing that does not multiply limits.
 - [ ] Add Redis/shared-limiter availability metrics and alerts.
+- [x] Implement shared realtime presence, connection metadata, per-user limits,
+      unread cache, Pub/Sub fan-out, readiness metrics, and fail-required mode.
 - [ ] Re-check catalog/list latency after Mongo read pagination and production
       traffic metrics are available.

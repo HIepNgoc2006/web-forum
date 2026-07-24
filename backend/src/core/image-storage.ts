@@ -11,22 +11,11 @@ type UploadError = Error & {
 const DEFAULT_S3_REQUEST_TIMEOUT_MS = 10_000;
 
 const IMAGE_EXTENSIONS = new Map([
-  ['image/apng', 'apng'],
   ['image/avif', 'avif'],
-  ['image/bmp', 'bmp'],
   ['image/png', 'png'],
   ['image/jpeg', 'jpg'],
-  ['image/jpg', 'jpg'],
   ['image/gif', 'gif'],
-  ['image/heic', 'heic'],
-  ['image/heif', 'heif'],
-  ['image/jxl', 'jxl'],
-  ['image/svg+xml', 'svg'],
-  ['image/tiff', 'tiff'],
-  ['image/vnd.microsoft.icon', 'ico'],
   ['image/webp', 'webp'],
-  ['image/x-icon', 'ico'],
-  ['image/x-ms-bmp', 'bmp'],
   ['video/mp4', 'mp4'],
   ['video/webm', 'webm']
 ]);
@@ -75,18 +64,9 @@ function imageExtension(image) {
   if (knownExtension) {
     return knownExtension;
   }
-  if (!type.startsWith('image/')) {
-    return 'img';
-  }
-  const subtype = type.slice('image/'.length).split(';')[0];
-  const safeExtension = subtype
-    .replace(/^x-/, '')
-    .replace(/^vnd\./, '')
-    .replace(/\+xml$/, '')
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 32);
-  return safeExtension || 'img';
+  const error: UploadError = new Error('Unsupported upload media type');
+  error.statusCode = 415;
+  throw error;
 }
 
 function sha256Hex(value) {
@@ -251,6 +231,11 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
     await fs.rm(resolvedPath, { force: true });
   }
 
+  async function getLastModified(key) {
+    const { resolvedPath } = assertSafeLocalKey(resolvedRoot, key);
+    return (await fs.stat(resolvedPath)).mtime;
+  }
+
   async function health() {
     await fs.mkdir(resolvedRoot, { recursive: true });
     await fs.access(resolvedRoot);
@@ -267,6 +252,7 @@ export function createLocalImageStorage({ root = path.resolve('data/uploads'), p
     save,
     listKeys,
     deleteKey,
+    getLastModified,
     health
   };
 }
@@ -472,6 +458,22 @@ export function createS3ImageStorage({
     }
   }
 
+  async function getLastModified(key) {
+    const normalizedKey = normalizeStorageKey(key);
+    if (!normalizedKey) {
+      throw new Error('Unsafe S3 upload key');
+    }
+    if (normalizedPrefix && normalizedKey !== normalizedPrefix && !normalizedKey.startsWith(normalizedPrefix + '/')) {
+      throw new Error('S3 upload key is outside configured prefix');
+    }
+    const response = await signedRequest('HEAD', requestUrlFor(normalizedKey));
+    if (!response.ok) {
+      return null;
+    }
+    const value = response.headers?.get?.('last-modified');
+    return value ? new Date(value) : null;
+  }
+
   async function save(image) {
     if (!image) {
       return null;
@@ -560,6 +562,7 @@ export function createS3ImageStorage({
     save,
     listKeys,
     deleteKey,
+    getLastModified,
     health
   };
 }

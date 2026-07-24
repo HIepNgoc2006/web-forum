@@ -1,0 +1,64 @@
+    <div id="aiChatWidget" class="ai-chat-widget">
+      <button
+        id="aiChatLauncher"
+        class="ai-chat-launcher"
+        type="button"
+        aria-controls="aiChatPanel"
+        aria-expanded="false"
+        aria-haspopup="dialog"
+        aria-label="AI Hỏi AI, mở trợ lý AI"
+      >
+        <span class="ai-chat-launcher-icon" aria-hidden="true">AI</span>
+        <span>Hỏi AI</span>
+      </button>
+
+      <section
+        id="aiChatPanel"
+        class="ai-chat-panel"
+        role="dialog"
+        aria-modal="false"
+        aria-labelledby="aiChatTitle"
+        aria-describedby="aiChatDescription"
+        hidden
+      >
+        <header class="ai-chat-header">
+          <div class="ai-chat-heading">
+            <h2 id="aiChatTitle">Trợ lý AI 36chan</h2>
+            <p id="aiChatContext" class="ai-chat-context" aria-live="polite">Ngữ cảnh: toàn trang</p>
+          </div>
+          <div class="ai-chat-header-actions">
+            <button id="aiChatClear" type="button" title="Xóa cuộc trò chuyện">Xóa</button>
+            <button id="aiChatClose" type="button" aria-label="Đóng trợ lý AI">×</button>
+          </div>
+        </header>
+
+        <p id="aiChatDescription" class="ai-chat-visually-hidden">
+          Hỏi về nội dung công khai trên trang, bảng hoặc chủ đề hiện tại.
+        </p>
+        <div id="aiChatPrompts" class="ai-chat-prompts" aria-label="Câu hỏi gợi ý"></div>
+        <div
+          id="aiChatMessages"
+          class="ai-chat-messages"
+          role="log"
+          aria-live="polite"
+          aria-relevant="additions text"
+          data-i18n-ignore
+        ></div>
+
+        <form id="aiChatForm" class="ai-chat-form">
+          <label class="ai-chat-visually-hidden" for="aiChatInput">Câu hỏi cho trợ lý AI</label>
+          <textarea
+            id="aiChatInput"
+            rows="2"
+            maxlength="1000"
+            placeholder="Hỏi tóm tắt, chủ đề tương tự, đính kèm, hoặc một ý cụ thể..."
+            aria-describedby="aiChatStatus"
+          ></textarea>
+          <div class="ai-chat-form-footer">
+            <span id="aiChatStatus" class="ai-chat-status" role="status" aria-live="polite"></span>
+            <button id="aiChatSend" class="ai-chat-send" type="submit">Gửi</button>
+          </div>
+        </form>
+      </section>
+    </div>
+    <script type="module" src="/src/chatbot.ts"></script>

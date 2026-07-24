@@ -3,7 +3,9 @@
 **/.env.*
 !.env.example
 backend/data
-frontend/dist
+frontend/.next
+frontend/out
+frontend/tsconfig.tsbuildinfo
 .git
 .github
 .code-review-graph

@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { AsyncLocalStorage } from 'node:async_hooks';
 import mongoose from 'mongoose';
 import type { ClientSession, Connection, Model, SchemaOptions } from 'mongoose';
 
@@ -60,6 +61,13 @@ type AppendPostCreateDelta = {
 
 type StatusError = Error & {
   statusCode?: number;
+};
+
+type MutationLockContext = {
+  owner: string;
+  fence: number;
+  lost: boolean;
+  fencedWriteCommitted: boolean;
 };
 
 const DEFAULT_MUTATION_LOCK_LEASE_MS = 120_000;
@@ -476,6 +484,7 @@ export function createMongoStore({
   let connectionPromise: Promise<Connection> | undefined;
   let queue: Promise<unknown> = Promise.resolve();
   const instanceId = crypto.randomUUID();
+  const mutationLockContext = new AsyncLocalStorage<MutationLockContext>();
   const lockLeaseMs = positiveInteger(
     mutationLockLeaseMs ?? process.env.MONGO_MUTATION_LOCK_LEASE_MS,
     DEFAULT_MUTATION_LOCK_LEASE_MS,
@@ -530,52 +539,62 @@ export function createMongoStore({
           $set: {
             lockOwner: owner,
             lockExpiresAt: new Date(now.getTime() + lockLeaseMs)
-          }
+          },
+          $inc: { lockFence: 1 }
         },
         { upsert: true, new: true }
       ).lean();
-      return lock?.lockOwner === owner;
+      return lock?.lockOwner === owner ? Number(lock.lockFence) : null;
     } catch (error: any) {
       if (error?.code === 11000) {
-        return false;
+        return null;
       }
       throw error;
     }
   }
 
   async function runWithMutationLock<T>(callback: () => Promise<T>) {
+    if (mutationLockContext.getStore()) {
+      return callback();
+    }
     const models = await getModels();
     const owner = instanceId + ':' + crypto.randomUUID();
     const deadline = Date.now() + lockTimeoutMs;
-    while (!(await acquireMutationLock(models, owner))) {
+    let fence: number | null = null;
+    while (!(fence = await acquireMutationLock(models, owner))) {
       if (Date.now() >= deadline) {
         throw new Error('Timed out after ' + lockTimeoutMs + 'ms waiting for the MongoDB mutation lock.');
       }
       await wait(Math.min(lockRetryMs, Math.max(1, deadline - Date.now())));
     }
 
-    let lockLost = false;
+    const context: MutationLockContext = {
+      owner,
+      fence,
+      lost: false,
+      fencedWriteCommitted: false
+    };
     let renewal = Promise.resolve();
     const renew = () => {
       renewal = renewal.then(async () => {
         const result = await models.StateMeta.updateOne(
-          { _id: 'mutation-lock', lockOwner: owner },
+          { _id: 'mutation-lock', lockOwner: owner, lockFence: fence },
           { $set: { lockExpiresAt: new Date(Date.now() + lockLeaseMs) } }
         );
         if (result.matchedCount !== 1) {
-          lockLost = true;
+          context.lost = true;
         }
       }).catch(() => {
-        lockLost = true;
+        context.lost = true;
       });
     };
     const heartbeat = setInterval(renew, Math.max(1_000, Math.floor(lockLeaseMs / 3)));
     heartbeat.unref?.();
 
     try {
-      const result = await callback();
+      const result = await mutationLockContext.run(context, callback);
       await renewal;
-      if (lockLost) {
+      if (context.lost && !context.fencedWriteCommitted) {
         throw new Error('Lost the MongoDB mutation lock before the operation completed.');
       }
       return result;
@@ -583,10 +602,54 @@ export function createMongoStore({
       clearInterval(heartbeat);
       await renewal;
       await models.StateMeta.updateOne(
-        { _id: 'mutation-lock', lockOwner: owner },
+        { _id: 'mutation-lock', lockOwner: owner, lockFence: fence },
         { $unset: { lockOwner: '', lockExpiresAt: '' } }
       ).catch(() => undefined);
     }
+  }
+
+  async function assertMutationFence(models: MongoModels, session: ClientSession, context: MutationLockContext) {
+    if (context.lost) {
+      throw new Error('Lost the MongoDB mutation lock before the write started.');
+    }
+    const lock = await models.StateMeta.findOneAndUpdate(
+      {
+        _id: 'mutation-lock',
+        lockOwner: context.owner,
+        lockFence: context.fence,
+        lockExpiresAt: { $gt: new Date() }
+      },
+      {
+        $set: {
+          lastFencedWriteAt: new Date(),
+          lastFencedWriteToken: context.fence
+        }
+      },
+      { new: true, session }
+    ).lean();
+    if (!lock) {
+      context.lost = true;
+      throw new Error('Lost the MongoDB mutation lock before commit.');
+    }
+  }
+
+  async function runFencedWrite<T>(callback: (models: MongoModels, session: ClientSession) => Promise<T>): Promise<T> {
+    const context = mutationLockContext.getStore();
+    if (!context) {
+      return runWithMutationLock(() => runFencedWrite(callback));
+    }
+    return enqueue(async () => {
+      const connection = await getConnection();
+      const models = await getModels();
+      const result = await runMongoTransaction(connection, async (session) => {
+        await assertMutationFence(models, session, context);
+        const value = await callback(models, session);
+        await assertMutationFence(models, session, context);
+        return value;
+      });
+      context.fencedWriteCommitted = true;
+      return result;
+    });
   }
 
   async function ensureBoards(models) {
@@ -1152,19 +1215,13 @@ export function createMongoStore({
     },
 
     async write(nextState: unknown) {
-      return enqueue<ForumState>(async () => {
-        const connection = await getConnection();
-        const models = await getModels();
-        return runMongoTransaction(connection, (session) => replaceMongoState(models, nextState, session));
-      });
+      return runFencedWrite((models, session) => replaceMongoState(models, nextState, session));
     },
 
     async appendPostCreate(delta: AppendPostCreateDelta) {
-      return enqueue<ForumState>(async () => {
-        const connection = await getConnection();
-        const models = await getModels();
+      return runFencedWrite(async (models, session) => {
         await ensureBoards(models);
-        return runMongoTransaction(connection, (session) => appendMongoPostCreate(models, delta, session));
+        return appendMongoPostCreate(models, delta, session);
       });
     },
 
