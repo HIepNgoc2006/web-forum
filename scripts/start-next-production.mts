@@ -128,7 +128,7 @@ function supervise(
 
 const commonEnv: NodeJS.ProcessEnv = { ...process.env, NODE_ENV: 'production' };
 if (startBackend) {
-  supervise('backend', process.execPath, [path.join(backendRoot, 'server.ts')], {
+  supervise('backend', process.execPath, ['--experimental-strip-types', path.join(backendRoot, 'server.ts')], {
     cwd: backendRoot,
     env: {
       ...commonEnv,
