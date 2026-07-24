@@ -25,7 +25,7 @@ const legacyUiRewrites = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  output: 'standalone',
+  output: process.env.VERCEL === '1' ? undefined : 'standalone',
   distDir: '.next',
   outputFileTracingRoot: packageRoot,
   poweredByHeader: false,
