@@ -33,7 +33,7 @@
     "seed:restore": "npm --prefix backend run seed:restore --"
   },
   "engines": {
-    "node": ">=22.18.0"
+    "node": ">=20.0.0"
   },
   "devDependencies": {
     "@typescript/native": "npm:typescript@^7.0.2",
