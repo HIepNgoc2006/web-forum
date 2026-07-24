@@ -45,12 +45,10 @@ function resolveStaticRoot(): string {
 
 const uploadRoot = path.resolve(process.env.UPLOAD_ROOT ?? 'data/uploads');
 const productionMode = process.env.NODE_ENV === 'production';
-const storeDriver = String(process.env.STORE_DRIVER ?? (productionMode ? 'mongo' : 'json')).toLowerCase();
+// In production, default to mongo if MONGODB_URI is set, otherwise allow json fallback
+const storeDriver = String(process.env.STORE_DRIVER ?? (process.env.MONGODB_URI ? 'mongo' : 'json')).toLowerCase();
 if (!['json', 'mongo'].includes(storeDriver)) {
   throw new Error('STORE_DRIVER must be either json or mongo.');
-}
-if (productionMode && storeDriver !== 'mongo') {
-  throw new Error('Production requires STORE_DRIVER=mongo. JSON is only for local/dev/demo fallback.');
 }
 const imageStorageDriver = String(process.env.IMAGE_STORAGE_DRIVER ?? 'local').toLowerCase();
 const forceConnectionClose = String(process.env.HTTP_FORCE_CONNECTION_CLOSE ?? (productionMode ? 'true' : 'false')).toLowerCase() === 'true';

@@ -1642,6 +1642,11 @@ export function createHttpServer({
         return;
       }
 
+      if (request.method === 'GET' && (routePath === '/api/health' || routePath === '/health')) {
+        ok(response, { status: 'ok', uptime: process.uptime(), timestamp: new Date().toISOString() });
+        return;
+      }
+
       if (request.method === 'GET' && routePath === '/api/boards/hot') {
         ok(response, await service.listHotBoards(url.searchParams.get('limit') ?? 8));
         return;
