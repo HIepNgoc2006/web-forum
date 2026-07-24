@@ -37,11 +37,11 @@ RUN npm --prefix frontend ci --omit=dev --ignore-scripts
 
 COPY backend ./backend
 COPY --from=build /app/backend/dist ./backend/dist
-COPY scripts/start-next-production.mts ./scripts/start-next-production.mts
+COPY scripts/start-next-production.mjs ./scripts/start-next-production.mjs
 COPY frontend/next.config.mjs ./frontend/next.config.mjs
 COPY frontend/public ./frontend/public
 COPY --from=build /app/frontend/.next ./frontend/.next
 
 EXPOSE 3001
 
-CMD ["node", "--experimental-strip-types", "scripts/start-next-production.mts"]
+CMD ["node", "scripts/start-next-production.mjs"]
