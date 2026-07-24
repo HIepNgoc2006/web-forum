@@ -31,7 +31,7 @@ function enabled(value: string | undefined, fallback: boolean): boolean {
 }
 
 const backendPort = port('BACKEND_PORT', 3000);
-const frontendPort = port('FRONTEND_PORT', 3001);
+const frontendPort = port('FRONTEND_PORT', port('PORT', 3001));
 const nextInternalPort = port('NEXT_INTERNAL_PORT', 3002);
 if (frontendPort === nextInternalPort) throw new Error('FRONTEND_PORT và NEXT_INTERNAL_PORT phải khác nhau');
 const backendHost = process.env.BACKEND_HOST || '127.0.0.1';

@@ -1234,7 +1234,12 @@ async function sendIndexResponse(
   indexPath: string,
   initialHomeSnapshot?: () => Promise<unknown>
 ) {
-  const source = await fs.readFile(indexPath, 'utf8');
+  let source = '<!DOCTYPE html><html><head><title>36chan</title></head><body><div id="root"></div></body></html>';
+  try {
+    source = await fs.readFile(indexPath, 'utf8');
+  } catch {
+    // Return fallback HTML if index.html does not exist on disk
+  }
   let html = source;
   if (source.includes(INITIAL_HOME_SNAPSHOT_MARKER) && typeof initialHomeSnapshot === 'function') {
     try {
