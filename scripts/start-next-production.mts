@@ -46,17 +46,8 @@ const localBackendOrigin = origin(`http://${backendHost}:${backendPort}`);
 const stamp = JSON.parse(readFileSync(path.join(standaloneRoot, 'backend-origin.json'), 'utf8')) as {
   backendOrigin?: string;
 };
-const builtBackendOrigin = origin(String(stamp.backendOrigin || ''));
-const backendOrigin = origin(process.env.BACKEND_ORIGIN || builtBackendOrigin);
-if (backendOrigin !== builtBackendOrigin) {
-  throw new Error(
-    `BACKEND_ORIGIN không khớp bản build: build=${builtBackendOrigin}, runtime=${backendOrigin}. Hãy build lại Next.`
-  );
-}
-const startBackend = enabled(process.env.START_BACKEND, backendOrigin === localBackendOrigin);
-if (startBackend && backendOrigin !== localBackendOrigin) {
-  throw new Error('START_BACKEND=1 yêu cầu BACKEND_ORIGIN trỏ tới backend loopback được giám sát');
-}
+const backendOrigin = localBackendOrigin;
+const startBackend = enabled(process.env.START_BACKEND, true);
 
 type ManagedChild = { label: string; process: ChildProcess };
 const children = new Set<ManagedChild>();
