@@ -41,4 +41,4 @@ COPY --from=build /app/frontend/.next ./frontend/.next
 
 EXPOSE 3001
 
-CMD ["node", "scripts/start-next-production.mts"]
+CMD ["node", "--experimental-strip-types", "scripts/start-next-production.mts"]
