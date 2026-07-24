@@ -58,10 +58,21 @@ function proxyTarget(origin: string): ProxyTarget {
   };
 }
 
-function isSocketIoPath(requestUrl: string | undefined): boolean {
+function isBackendPath(requestUrl: string | undefined): boolean {
   try {
     const pathname = new URL(requestUrl || '/', 'http://localhost').pathname;
-    return pathname === '/socket.io' || pathname.startsWith('/socket.io/');
+    return (
+      pathname === '/socket.io' ||
+      pathname.startsWith('/socket.io/') ||
+      pathname === '/api' ||
+      pathname.startsWith('/api/') ||
+      pathname === '/events' ||
+      pathname.startsWith('/events/') ||
+      pathname === '/uploads' ||
+      pathname.startsWith('/uploads/') ||
+      pathname === '/feeds' ||
+      pathname.startsWith('/feeds/')
+    );
   } catch {
     return false;
   }
@@ -120,7 +131,7 @@ export function createProductionFrontProxy({
   const realtimeTarget = realtimeTargetOrigin ? proxyTarget(realtimeTargetOrigin) : null;
 
   const server = http.createServer((request, response) => {
-    const target = realtimeTarget && isSocketIoPath(request.url)
+    const target = realtimeTarget && isBackendPath(request.url)
       ? realtimeTarget
       : frontendTarget;
     const proxyRequest = requestTransport(target).request(
@@ -157,7 +168,7 @@ export function createProductionFrontProxy({
     request.pipe(proxyRequest);
   });
   server.on('upgrade', (request, clientSocket, head) => {
-    if (!realtimeTarget || !isSocketIoPath(request.url)) {
+    if (!realtimeTarget || !isBackendPath(request.url)) {
       clientSocket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
       return;
     }
