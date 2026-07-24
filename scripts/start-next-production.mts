@@ -146,8 +146,15 @@ if (startBackend) {
     }
   });
 }
-supervise('frontend', process.execPath, [path.join(standaloneRoot, 'server.js')], {
-  cwd: standaloneRoot,
+const standaloneServer = [
+  path.join(standaloneRoot, 'server.js'),
+  path.join(standaloneRoot, 'frontend', 'server.js'),
+].find((p) => fs.existsSync(p));
+if (!standaloneServer) {
+  throw new Error(`Không tìm thấy server.js của Next standalone trong ${standaloneRoot}`);
+}
+supervise('frontend', process.execPath, [standaloneServer], {
+  cwd: path.dirname(standaloneServer),
   env: {
     ...commonEnv,
     PORT: String(nextInternalPort),
