@@ -30,7 +30,7 @@ function enabled(value: string | undefined, fallback: boolean): boolean {
   return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
-const frontendPort = port('FRONTEND_PORT', port('PORT', 3000));
+const frontendPort = port('PORT', port('FRONTEND_PORT', 3000));
 const backendPort = port('BACKEND_PORT', frontendPort === 3000 ? 3003 : 3000);
 const nextInternalPort = port('NEXT_INTERNAL_PORT', 3002);
 if (frontendPort === nextInternalPort || backendPort === frontendPort) {
