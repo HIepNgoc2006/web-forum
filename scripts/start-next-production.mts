@@ -43,9 +43,10 @@ if (!['127.0.0.1', '::1', 'localhost'].includes(backendHost)) {
 const frontendHost = process.env.FRONTEND_HOST || '0.0.0.0';
 const nextInternalHost = '127.0.0.1';
 const localBackendOrigin = origin(`http://${backendHost}:${backendPort}`);
-const stamp = JSON.parse(readFileSync(path.join(standaloneRoot, 'backend-origin.json'), 'utf8')) as {
-  backendOrigin?: string;
-};
+const stampPath = path.join(standaloneRoot, 'backend-origin.json');
+const stamp = fs.existsSync(stampPath)
+  ? (JSON.parse(readFileSync(stampPath, 'utf8')) as { backendOrigin?: string })
+  : {};
 const backendOrigin = localBackendOrigin;
 const startBackend = enabled(process.env.START_BACKEND, true);
 
