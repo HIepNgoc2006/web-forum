@@ -6,7 +6,7 @@
     "backend"
   ],
   "scripts": {
-    "dev": "npm --prefix backend run dev",
+    "dev": "npx -y concurrently -k -n \"backend,frontend\" -c \"cyan,magenta\" \"npm --prefix backend run dev\" \"npm --prefix frontend run dev\"",
     "dev:backend": "npm --prefix backend run dev",
     "dev:frontend": "npm --prefix frontend run dev -- --port 3001",
     "start": "npm run build && node scripts/start-next-production.mts",

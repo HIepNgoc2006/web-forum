@@ -16,14 +16,26 @@ export const metadata: Metadata = {
   title: '36chan',
   description:
     'Diễn đàn ảnh sinh viên ẩn danh theo thời gian thực, có kiểm duyệt an toàn.',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'black-translucent',
+    title: '36chan',
+  },
   icons: {
-    icon: '/favicon.svg',
+    icon: [
+      { url: '/favicon.svg', type: 'image/svg+xml' },
+      { url: '/icon-192.png', sizes: '192x192', type: 'image/png' },
+      { url: '/icon-512.png', sizes: '512x512', type: 'image/png' }
+    ],
+    apple: '/icon-192.png',
   },
 };
 
 export const viewport: Viewport = {
   width: 'device-width',
   initialScale: 1,
+  themeColor: '#121214',
 };
 
 export default async function RootLayout({ children }: { children: ReactNode }) {
@@ -34,12 +46,21 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
         <script
           id="legacy-initial-route-script"
           nonce={nonce}
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{ __html: LEGACY_INITIAL_ROUTE_SCRIPT }}
         />
         <script
           id="legacy-initial-body-class-script"
           nonce={nonce}
+          suppressHydrationWarning
           dangerouslySetInnerHTML={{ __html: LEGACY_BODY_CLASS_SCRIPT }}
+        />
+        <script
+          id="pwa-register-script"
+          nonce={nonce}
+          suppressHydrationWarning
+          src="/pwa-register.js"
+          defer
         />
         {children}
       </body>

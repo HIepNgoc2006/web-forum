@@ -526,12 +526,21 @@ export function createMongoStore({
   async function acquireMutationLock(models: MongoModels, owner: string) {
     const now = new Date();
     try {
+      await models.StateMeta.updateOne(
+        { _id: 'mutation-lock' },
+        { $setOnInsert: { _id: 'mutation-lock' } },
+        { upsert: true }
+      ).catch(() => {});
+
       const lock = await models.StateMeta.findOneAndUpdate(
         {
           _id: 'mutation-lock',
           $or: [
             { lockOwner: owner },
+            { lockOwner: { $exists: false } },
+            { lockOwner: null },
             { lockExpiresAt: { $exists: false } },
+            { lockExpiresAt: null },
             { lockExpiresAt: { $lte: now } }
           ]
         },
@@ -542,7 +551,7 @@ export function createMongoStore({
           },
           $inc: { lockFence: 1 }
         },
-        { upsert: true, new: true }
+        { new: true }
       ).lean();
       return lock?.lockOwner === owner ? Number(lock.lockFence) : null;
     } catch (error: any) {
@@ -556,6 +565,15 @@ export function createMongoStore({
   async function runWithMutationLock<T>(callback: () => Promise<T>) {
     if (mutationLockContext.getStore()) {
       return callback();
+    }
+    if (process.env.DISABLE_MUTATION_LOCK === '1') {
+      const context: MutationLockContext = {
+        owner: 'disabled',
+        fence: 1,
+        lost: false,
+        fencedWriteCommitted: false
+      };
+      return mutationLockContext.run(context, callback);
     }
     const models = await getModels();
     const owner = instanceId + ':' + crypto.randomUUID();
@@ -609,6 +627,9 @@ export function createMongoStore({
   }
 
   async function assertMutationFence(models: MongoModels, session: ClientSession, context: MutationLockContext) {
+    if (process.env.DISABLE_MUTATION_LOCK === '1') {
+      return;
+    }
     if (context.lost) {
       throw new Error('Lost the MongoDB mutation lock before the write started.');
     }
