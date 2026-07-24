@@ -30,10 +30,12 @@ function enabled(value: string | undefined, fallback: boolean): boolean {
   return /^(1|true|yes|on)$/i.test(value.trim());
 }
 
-const backendPort = port('BACKEND_PORT', 3000);
-const frontendPort = port('FRONTEND_PORT', port('PORT', 3001));
+const frontendPort = port('FRONTEND_PORT', port('PORT', 3000));
+const backendPort = port('BACKEND_PORT', frontendPort === 3000 ? 3003 : 3000);
 const nextInternalPort = port('NEXT_INTERNAL_PORT', 3002);
-if (frontendPort === nextInternalPort) throw new Error('FRONTEND_PORT và NEXT_INTERNAL_PORT phải khác nhau');
+if (frontendPort === nextInternalPort || backendPort === frontendPort) {
+  throw new Error('FRONTEND_PORT, BACKEND_PORT và NEXT_INTERNAL_PORT phải khác nhau');
+}
 const backendHost = process.env.BACKEND_HOST || '127.0.0.1';
 if (!['127.0.0.1', '::1', 'localhost'].includes(backendHost)) {
   throw new Error('BACKEND_HOST phải là địa chỉ loopback trong chế độ giám sát');
