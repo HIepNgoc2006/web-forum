@@ -110,10 +110,9 @@ function supervise(label, command, args, options) {
   });
   child.process.once('exit', (code, signal) => {
     children.delete(child);
-    if (!stopping) {
-      const exitCode = typeof code === 'number' && code !== 0 ? code : 1;
+    if (!stopping && code !== 0 && signal !== 'SIGTERM' && signal !== 'SIGINT') {
       shutdown(
-        exitCode,
+        typeof code === 'number' ? code : 1,
         'SIGTERM',
         `${label} đã dừng ngoài dự kiến (code=${code ?? 'null'}, signal=${signal ?? 'none'})`
       );
