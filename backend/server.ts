@@ -23,7 +23,10 @@ import { assertProductionSecrets } from './src/core/security.ts';
 const securityStatus = assertProductionSecrets({
   jwtSecret: process.env.JWT_SECRET || 'a_very_strong_random_jwt_secret_key_36chan_2026_prod_secure_32chars',
   adminUsername: process.env.ADMIN_USERNAME || 'hiep_admin_36chan',
-  adminPassword: process.env.ADMIN_PASSWORD || 'AdminPassword@2026SecureKey'
+  adminPassword: process.env.ADMIN_PASSWORD || 'AdminPassword@2026SecureKey',
+  hcaptchaSecret: process.env.HCAPTCHA_SECRET || '0x0000000000000000000000000000000000000000',
+  moderationFingerprintSecret: process.env.MODERATION_FINGERPRINT_SECRET || 'moderation_fingerprint_secret_key_36chan_2026_prod_secure_32chars',
+  posterProofSecret: process.env.POSTER_PROOF_SECRET || 'poster_proof_secret_key_36chan_2026_prod_secure_32chars'
 });
 if (securityStatus.warnings.length > 0) {
   console.log(
