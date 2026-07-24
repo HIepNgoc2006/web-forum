@@ -27,7 +27,7 @@ const legacyUiRewrites = [
 const nextConfig = {
   output: process.env.VERCEL === '1' ? undefined : 'standalone',
   distDir: '.next',
-  outputFileTracingRoot: packageRoot,
+  outputFileTracingRoot: process.env.VERCEL === '1' ? path.join(packageRoot, '..') : packageRoot,
   poweredByHeader: false,
   reactStrictMode: true,
   async rewrites() {
