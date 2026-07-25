@@ -24,10 +24,11 @@ const legacyUiRewrites = [
 ];
 
 /** @type {import('next').NextConfig} */
+const isVercel = Boolean(process.env.VERCEL);
 const nextConfig = {
-  output: process.env.VERCEL === '1' ? undefined : 'standalone',
+  output: isVercel ? undefined : 'standalone',
   distDir: '.next',
-  outputFileTracingRoot: process.env.VERCEL === '1' ? path.join(packageRoot, '..') : packageRoot,
+  outputFileTracingRoot: isVercel ? path.join(packageRoot, '..') : packageRoot,
   poweredByHeader: false,
   reactStrictMode: true,
   async rewrites() {
