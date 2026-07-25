@@ -5,7 +5,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const packageRoot = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
-if (process.env.VERCEL === '1') {
+if (Boolean(process.env.VERCEL)) {
   console.log('Vercel build detected: skipping standalone preparation.');
   process.exit(0);
 }
