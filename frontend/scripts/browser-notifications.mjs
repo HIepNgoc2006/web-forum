@@ -282,8 +282,11 @@ async function main() {
   const chrome = spawn(browserPath, [
     '--headless=new',
     '--disable-gpu',
+    '--disable-dev-shm-usage',
+    '--no-sandbox',
     '--no-first-run',
     '--no-default-browser-check',
+    '--remote-allow-origins=*',
     `--remote-debugging-port=${debugPort}`,
     `--user-data-dir=${profile}`,
     origin
