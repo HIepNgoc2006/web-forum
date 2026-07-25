@@ -327,7 +327,11 @@ async function main() {
       chrome.kill('SIGKILL');
     }
     await closeServer(server);
-    await rm(profile, { recursive: true, force: true });
+    try {
+      await rm(profile, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
+    } catch {
+      // Ignore temporary file locking delays on Windows teardown
+    }
   }
 }
 
