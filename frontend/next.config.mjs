@@ -28,7 +28,7 @@ const isVercel = Boolean(process.env.VERCEL);
 const nextConfig = {
   output: isVercel ? undefined : 'standalone',
   distDir: '.next',
-  outputFileTracingRoot: isVercel ? path.join(packageRoot, '..') : packageRoot,
+  outputFileTracingRoot: packageRoot,
   poweredByHeader: false,
   reactStrictMode: true,
   async rewrites() {
